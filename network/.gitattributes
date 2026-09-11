@@ -1,0 +1,3 @@
+# Prevent Windows CRLF from breaking WSL/Linux shell scripts.
+*.sh text eol=lf
+*.bash text eol=lf
