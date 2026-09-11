@@ -308,6 +308,18 @@ jobs:
           limit-severities-for-sarif: true
           output: security-results/code-scanning/trivy-secret-changes.sarif
 
+      - name: Report new IaC regressions
+        if: always() && steps.changed-files.outputs.iac_count != '0'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          skip-setup-trivy: true
+          scan-type: fs
+          scan-ref: .security-iac-changes
+          scanners: misconfig
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          format: table
+
       - name: Block new IaC regressions
         if: always() && steps.changed-files.outputs.iac_count != '0'
         uses: aquasecurity/trivy-action@v0.36.0
