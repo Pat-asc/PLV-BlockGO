@@ -1,4 +1,5 @@
 FROM node:20-slim
+
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
@@ -17,6 +18,7 @@ WORKDIR /app
 RUN python3 -m venv /opt/blockgo-venv
 
 ENV PATH="/opt/blockgo-venv/bin:$PATH"
+ENV PYTHONDONTWRITEBYTECODE=1
 COPY package*.json ./
 COPY requirements.txt ./
 
@@ -26,13 +28,18 @@ RUN python -m pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir --upgrade "setuptools>=78.1.1"
 
-COPY . .
+COPY --chown=node:node . .
+
+RUN chown -R node:node /app
 
 EXPOSE 4000 4001 4002 4003 4004 4005
 
 ENV PORT=4000
 ENV NODE_ENV=production
 ENV NODE_OPTIONS="--max-old-space-size=256 --expose-gc"
+
+USER node
+
 HEALTHCHECK \
     --interval=30s \
     --timeout=5s \
