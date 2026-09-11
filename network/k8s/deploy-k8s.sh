@@ -3864,6 +3864,9 @@ repair_fabric_storage() {
             if ensure_peer_ready "$deployment" "$namespace" "$failure_type"; then
                 continue
             fi
+
+            # A lock/transient repair can expose deeper ledgerProvider corruption.
+            # Re-read the final crash signature after the bounded repair ladder.
             sleep 2
             post_failure_type="$(peer_recoverable_corruption_type "$deployment" "$namespace" || true)"
             if [[ "$failure_type" == "ledger-provider" || "$post_failure_type" == "ledger-provider" ]]; then

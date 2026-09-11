@@ -56,7 +56,10 @@ fi
 CHANNEL_BLOCK="${ARTIFACTS_DIR}/${CHANNEL_NAME}.block"
 
 if [[ "$PROFILE" == "local" ]]; then
-    export KUBECTL_REMOTE_COMMAND_WEBSOCKETS="${KUBECTL_REMOTE_COMMAND_WEBSOCKETS:-false}"
+    # Docker Desktop Kubernetes 1.36.x + cri-dockerd can break kubectl exec/cp
+    # with ExtendWebSocketsToKubelet. Prefer direct Docker container streaming
+    # locally; production/GKE keeps the normal Kubernetes exec/cp path.
+    export BLOCKGO_LOCAL_EXEC_MODE="${BLOCKGO_LOCAL_EXEC_MODE:-docker}"
 fi
 
 # Git Bash / MSYS can rewrite kubectl remote paths such as
@@ -94,6 +97,67 @@ latest_peer_pod() {
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | awk 'NF {p=$0} END {print p}'
 }
 
+local_container_id() {
+    local pod="$1"
+    local container_name="${2:-peer}"
+    local cid=""
+
+    command -v docker >/dev/null 2>&1 || return 1
+
+    cid="$(docker ps \
+        --filter "label=io.kubernetes.pod.name=${pod}" \
+        --filter "label=io.kubernetes.container.name=${container_name}" \
+        --format '{{.ID}}' 2>/dev/null | head -n1)"
+
+    if [[ -z "$cid" ]]; then
+        cid="$(docker ps --format '{{.ID}} {{.Names}}' 2>/dev/null | \
+            awk -v pod="$pod" -v cname="$container_name" \
+            '$0 ~ pod && $0 ~ ("k8s_" cname "_") {print $1; exit}')"
+    fi
+
+    [[ -n "$cid" ]] || return 1
+    printf '%s\n' "$cid"
+}
+
+remote_exec() {
+    local namespace="$1"
+    local pod="$2"
+    local container_name="$3"
+    shift 3
+
+    if [[ "$PROFILE" == "local" && "${BLOCKGO_LOCAL_EXEC_MODE:-docker}" == "docker" ]]; then
+        local cid=""
+        cid="$(local_container_id "$pod" "$container_name")" || {
+            echo "ERROR: Could not resolve Docker container for ${namespace}/${pod} container ${container_name}." >&2
+            return 1
+        }
+        docker exec "$cid" "$@"
+    else
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" \
+            kubectl exec -n "$namespace" "$pod" -c "$container_name" -- "$@"
+    fi
+}
+
+remote_cp_to() {
+    local namespace="$1"
+    local pod="$2"
+    local container_name="$3"
+    local source="$4"
+    local destination="$5"
+
+    if [[ "$PROFILE" == "local" && "${BLOCKGO_LOCAL_EXEC_MODE:-docker}" == "docker" ]]; then
+        local cid=""
+        cid="$(local_container_id "$pod" "$container_name")" || {
+            echo "ERROR: Could not resolve Docker container for ${namespace}/${pod} container ${container_name}." >&2
+            return 1
+        }
+        docker cp "$source" "${cid}:${destination}"
+    else
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" \
+            kubectl cp "$source" "$namespace/$pod:$destination" -c "$container_name"
+    fi
+}
+
 peer_exec() {
     local namespace="$1"
     local pod="$2"
@@ -101,7 +165,7 @@ peer_exec() {
     local tls_override="$4"
     shift 4
 
-    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$namespace" "$pod" -c peer -- env \
+    remote_exec "$namespace" "$pod" peer env \
         CORE_PEER_TLS_ENABLED=true \
         CORE_PEER_TLS_ROOTCERT_FILE=/var/hyperledger/tls/ca.crt \
         CORE_PEER_TLS_SERVERHOSTOVERRIDE="$tls_override" \
@@ -115,9 +179,21 @@ prepare_admin_msp() {
     local namespace="$1"
     local pod="$2"
     local admin_msp="$3"
+    local attempt
+    local max_attempts="${KUBECTL_STREAM_RETRIES:-5}"
 
-    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$namespace" "$pod" -c peer -- rm -rf /tmp/blockgo-admin-msp >/dev/null
-    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl cp "$admin_msp" "$namespace/$pod:/tmp/blockgo-admin-msp" -c peer >/dev/null
+    for attempt in $(seq 1 "$max_attempts"); do
+        if remote_exec "$namespace" "$pod" peer rm -rf /tmp/blockgo-admin-msp >/dev/null \
+        && remote_cp_to "$namespace" "$pod" peer "$admin_msp" /tmp/blockgo-admin-msp >/dev/null; then
+            return 0
+        fi
+
+        echo "[RETRY] peer container exec/copy failed for ${namespace}/${pod}; retrying MSP preparation (${attempt}/${max_attempts})..." >&2
+        sleep 3
+    done
+
+    echo "ERROR: Unable to prepare Admin MSP in ${namespace}/${pod} after ${max_attempts} attempts." >&2
+    return 1
 }
 
 wait_peer_ready() {
@@ -193,7 +269,7 @@ join_peer() {
             fi
 
             echo "[JOIN] Joining $deployment to $CHANNEL_NAME (attempt $attempt/$attempts)..."
-            MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl cp "$CHANNEL_BLOCK" "$namespace/$pod:/tmp/${CHANNEL_NAME}.block" -c peer >/dev/null
+            remote_cp_to "$namespace" "$pod" peer "$CHANNEL_BLOCK" "/tmp/${CHANNEL_NAME}.block" >/dev/null
             if peer_exec "$namespace" "$pod" "$msp_id" "$tls_override" \
                 peer channel join -b "/tmp/${CHANNEL_NAME}.block"; then
                 # A successful proposal can return before the ledger is fully caught up.
