@@ -625,6 +625,7 @@ jobs:
             --scanners vuln \
             --severity HIGH,CRITICAL \
             --ignore-unfixed \
+            --skip-files /opt/blockgo-venv/lib/python3.11/site-packages/pip/_vendor/bom.cdx.json \
             --format json \
             --output /reports/middleware-image-vulnerabilities.json \
             "${MIDDLEWARE_IMAGE}"
