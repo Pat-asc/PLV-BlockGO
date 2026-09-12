@@ -21,8 +21,12 @@ RUN apk add --no-cache --upgrade \
     bash \
     ca-certificates \
     libcrypto3 \
-    libssl3
+    libssl3 && \
+    addgroup -S -g 10001 blockgo && \
+    adduser -S -D -H -u 10001 -G blockgo blockgo
 
-COPY --from=builder /app/registrar_cc .
+COPY --from=builder --chown=10001:10001 /app/registrar_cc .
+
+USER 10001:10001
 
 CMD ["./registrar_cc"]
