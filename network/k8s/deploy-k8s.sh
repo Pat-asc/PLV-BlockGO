@@ -21,12 +21,40 @@ SCRIPT_DIR="$(dirname "$SCRIPT_SOURCE")"
 NETWORK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$NETWORK_ROOT"
 
+compute_local_source_revision() {
+    if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        local head fingerprint
+        head="$(git rev-parse --short=12 HEAD 2>/dev/null || printf 'workspace')"
+        fingerprint="$(
+            {
+                git diff --binary HEAD -- ../middleware ../client-app ../frontend ../chaincode 2>/dev/null || true
+                git diff --cached --binary -- ../middleware ../client-app ../frontend ../chaincode 2>/dev/null || true
+                while IFS= read -r -d '' file; do
+                    printf '%s\0' "$file"
+                    git hash-object "$file" 2>/dev/null || true
+                done < <(
+                    git ls-files --others --exclude-standard -z --                         ../middleware ../client-app ../frontend ../chaincode 2>/dev/null || true
+                )
+            } | git hash-object --stdin 2>/dev/null || true
+        )"
+        printf '%s-%s\n' "$head" "${fingerprint:0:12}"
+        return
+    fi
+
+    # The project is normally a Git checkout. Keep a stable fallback rather than a
+    # timestamp so repeated applies remain idempotent even when Git is unavailable.
+    printf 'workspace\n'
+}
+
 PROFILE="${K8S_PROFILE:-local}"
 ACTION="${1:-apply}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-20m}"
 PRODUCTION_IMAGE_REPOSITORY="${PRODUCTION_IMAGE_REPOSITORY:-}"
 PRODUCTION_IMAGE_TAG="${PRODUCTION_IMAGE_TAG:-}"
-LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-blockgo-local-$(date -u +%Y%m%d%H%M%S)}"
+LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-blockgo-local-$(compute_local_source_revision)}"
+FORCE_LOCAL_IMAGE_REBUILD="${FORCE_LOCAL_IMAGE_REBUILD:-false}"
+FORCE_LOCAL_FABRIC_RESTART="${FORCE_LOCAL_FABRIC_RESTART:-false}"
+FORCE_BOOTSTRAP_JOBS="${FORCE_BOOTSTRAP_JOBS:-false}"
 ORDERER_FAILURE_DETECTION_SECONDS="${ORDERER_FAILURE_DETECTION_SECONDS:-45}"
 ORDERER_REPAIR_POD_IMAGE="${ORDERER_REPAIR_POD_IMAGE:-alpine:latest}"
 PEER_FAILURE_DETECTION_SECONDS="${PEER_FAILURE_DETECTION_SECONDS:-45}"
@@ -45,6 +73,13 @@ PEER_REBOOTSTRAP_TARGETS="${PEER_REBOOTSTRAP_TARGETS:-}"
 PEER_REBOOTSTRAP_POD_IMAGE="${PEER_REBOOTSTRAP_POD_IMAGE:-alpine:3.20}"
 REINSTALL_CHAINCODE_AFTER_REBOOTSTRAP="${REINSTALL_CHAINCODE_AFTER_REBOOTSTRAP:-true}"
 PEER_ALLOW_PRODUCTION_REBOOTSTRAP="${PEER_ALLOW_PRODUCTION_REBOOTSTRAP:-false}"
+
+# Local testing defaults: keep one replica per stateless service and preserve memory
+# safety limits. Grafana/Prometheus observability remains enabled in local testing.
+LOCAL_FAIL_ON_MEMORY_PRESSURE="${LOCAL_FAIL_ON_MEMORY_PRESSURE:-true}"
+LOCAL_MIN_ALLOCATABLE_MEMORY_MIB="${LOCAL_MIN_ALLOCATABLE_MEMORY_MIB:-2560}"
+LOCAL_WARN_ALLOCATABLE_MEMORY_MIB="${LOCAL_WARN_ALLOCATABLE_MEMORY_MIB:-4096}"
+
 if [[ "${1:-}" == "local" || "${1:-}" == "production" ]]; then
     PROFILE="$1"
     ACTION="${2:-apply}"
@@ -184,6 +219,9 @@ echo "PLV BLOCKGO K8s Deployment Script - Hardened"
 echo "======================================"
 echo "Profile: $PROFILE"
 echo "Action: $ACTION"
+if [[ "$PROFILE" == "local" ]]; then
+    echo "Local observability: enabled (Grafana/Prometheus stack remains active)"
+fi
 echo ""
 
 validate_script_integrity() {
@@ -250,7 +288,25 @@ trap cleanup_active_repair EXIT
 trap 'cleanup_active_repair; exit 130' INT TERM
 
 cluster_preflight() {
-    local bad_nodes disk_pressure memory_pressure
+    local bad_nodes disk_pressure memory_pressure readyz_output
+
+    if ! readyz_output="$(kubectl get --raw='/readyz?verbose' 2>&1)" ||
+       ! grep -q 'readyz check passed' <<< "$readyz_output"; then
+        echo "ERROR: Kubernetes API/etcd readiness checks are not healthy."
+        echo "$readyz_output"
+        echo "Refusing to modify the cluster until the control plane is stable."
+        return 1
+    fi
+
+    local livez_output
+    if ! livez_output="$(kubectl get --raw='/livez?verbose' 2>&1)" ||
+       ! grep -q 'livez check passed' <<< "$livez_output"; then
+        echo "ERROR: Kubernetes API liveness checks are not healthy."
+        echo "$livez_output"
+        echo "Refusing to start a deployment against an unstable control plane."
+        return 1
+    fi
+
     bad_nodes="$(kubectl get nodes --no-headers 2>/dev/null | awk '$2 != "Ready" {count++} END {print count+0}')"
     disk_pressure="$(kubectl get nodes -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="DiskPressure")].status}{"\n"}{end}' 2>/dev/null | grep -c '^True$' || true)"
     memory_pressure="$(kubectl get nodes -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="MemoryPressure")].status}{"\n"}{end}' 2>/dev/null | grep -c '^True$' || true)"
@@ -266,7 +322,12 @@ cluster_preflight() {
         return 1
     fi
     if (( ${memory_pressure:-0} > 0 )); then
-        echo "WARNING: Kubernetes reports MemoryPressure. Local deployment may be unstable."
+        if [[ "$PROFILE" == "local" ]] && is_true "$LOCAL_FAIL_ON_MEMORY_PRESSURE"; then
+            echo "ERROR: Kubernetes reports MemoryPressure; refusing to start another local deployment."
+            echo "Close other workloads or increase Docker Desktop memory, then retry."
+            return 1
+        fi
+        echo "WARNING: Kubernetes reports MemoryPressure. Deployment may be unstable."
     fi
 }
 
@@ -419,6 +480,7 @@ apply_manifest_if_exists() {
 
 deploy_observability() {
     local monitoring_dir="../monitoring"
+
     if [[ ! -f "$monitoring_dir/observability-stack.yaml" ]]; then
         echo "ERROR: Observability stack manifest not found."
         exit 1
@@ -456,9 +518,61 @@ deploy_observability() {
     kubectl apply -f "$monitoring_dir/observability-stack.yaml"
 }
 
-# Local profile no longer imposes script-level RAM caps.  Kubernetes manifests may
-# still define their own resource requests/limits, but deploy-k8s.sh does not shrink them
-# or install a local LimitRange.
+configure_local_observability() {
+    if [[ "$PROFILE" != "local" ]]; then
+        return
+    fi
+
+    # Grafana uses SQLite on a PVC locally. Recreate avoids two Grafana pods touching
+    # the same database during an update. The long startup probe protects upgrades
+    # that need several minutes of schema migrations.
+    if kubectl get deployment grafana -n plv-fabric >/dev/null 2>&1; then
+        kubectl patch deployment grafana -n plv-fabric --type=strategic -p '{
+          "spec": {
+            "replicas": 1,
+            "strategy": {"type": "Recreate"},
+            "template": {
+              "spec": {
+                "containers": [{
+                  "name": "grafana",
+                  "startupProbe": {
+                    "httpGet": {
+                      "path": "/api/SystemMonitoring/grafana/api/health",
+                      "port": "http"
+                    },
+                    "periodSeconds": 10,
+                    "timeoutSeconds": 5,
+                    "failureThreshold": 90
+                  },
+                  "livenessProbe": {
+                    "httpGet": {
+                      "path": "/api/SystemMonitoring/grafana/api/health",
+                      "port": "http"
+                    },
+                    "periodSeconds": 20,
+                    "timeoutSeconds": 5,
+                    "failureThreshold": 3
+                  },
+                  "readinessProbe": {
+                    "httpGet": {
+                      "path": "/api/SystemMonitoring/grafana/api/health",
+                      "port": "http"
+                    },
+                    "periodSeconds": 10,
+                    "timeoutSeconds": 5,
+                    "failureThreshold": 6
+                  }
+                }]
+              }
+            }
+          }
+        }' >/dev/null
+    fi
+}
+
+# Local profile is intentionally conservative: source manifest memory limits stay in
+# place, stateless workloads are forced to one replica, and HPA/PDB policies are removed.
+# Grafana, Prometheus, Loki, Alloy, kube-state-metrics, and postgres-exporter remain enabled.
 
 local_pv_root() {
     local path
@@ -616,11 +730,155 @@ wait_rollout() {
     fi
 }
 
+wait_rollouts_parallel() {
+    local timeout="${1:-$ROLLOUT_TIMEOUT}"
+    shift || true
+
+    local failures=0
+    local entry namespace resource pid
+    local -a pids=()
+
+    for entry in "$@"; do
+        IFS='|' read -r namespace resource <<< "$entry"
+        (
+            if kubectl get "$resource" -n "$namespace" >/dev/null 2>&1; then
+                echo "Waiting for ${namespace}/${resource}..."
+                kubectl rollout status "$resource" -n "$namespace" --timeout="$timeout"
+            else
+                echo "Resource ${namespace}/${resource} not found. Skipping."
+            fi
+        ) &
+        pids+=("$!")
+    done
+
+    for pid in "${pids[@]}"; do
+        if ! wait "$pid"; then
+            failures=$((failures + 1))
+        fi
+    done
+
+    if (( failures > 0 )); then
+        echo "ERROR: ${failures} rollout(s) in the parallel wave failed."
+        return 1
+    fi
+}
+
+manifest_hash() {
+    local manifest="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$manifest" | awk '{print $1}'
+    elif command -v git >/dev/null 2>&1; then
+        git hash-object "$manifest"
+    else
+        echo "ERROR: sha256sum or git is required for idempotent Job hashing." >&2
+        return 1
+    fi
+}
+
+ensure_job_from_manifest() {
+    local job_name="$1"
+    local namespace="$2"
+    local manifest="$3"
+    local timeout_seconds="$4"
+    local desired_hash existing_hash succeeded
+
+    desired_hash="$(manifest_hash "$manifest")"
+
+    if kubectl get job "$job_name" -n "$namespace" >/dev/null 2>&1; then
+        existing_hash="$(
+            kubectl get job "$job_name" -n "$namespace"                 -o jsonpath='{.metadata.annotations.blockgo\.plv/spec-hash}' 2>/dev/null || true
+        )"
+        succeeded="$(
+            kubectl get job "$job_name" -n "$namespace"                 -o jsonpath='{.status.succeeded}' 2>/dev/null || true
+        )"
+
+        if ! is_true "$FORCE_BOOTSTRAP_JOBS" &&
+           [[ "$existing_hash" == "$desired_hash" ]] &&
+           [[ "${succeeded:-0}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Job ${namespace}/${job_name} already completed for manifest ${desired_hash:0:12}; skipping."
+            return 0
+        fi
+
+        echo "Job ${namespace}/${job_name} is stale, incomplete, or explicitly forced; reconciling it."
+        kubectl delete job "$job_name" -n "$namespace" --ignore-not-found --wait=true >/dev/null
+    fi
+
+    apply_manifest "$manifest"
+    kubectl annotate job "$job_name" -n "$namespace"         "blockgo.plv/spec-hash=${desired_hash}" --overwrite >/dev/null
+
+    if ! wait_for_job_completion "$job_name" "$namespace" "$timeout_seconds"; then
+        return 1
+    fi
+
+    show_job_logs "$job_name" "$namespace"
+}
+
 is_true() {
     case "${1:-}" in
         1|true|TRUE|yes|YES|on|ON) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+memory_quantity_to_mib() {
+    local quantity="${1:-}"
+    case "$quantity" in
+        *Ki) awk -v value="${quantity%Ki}" 'BEGIN { printf "%d\n", value / 1024 }' ;;
+        *Mi) awk -v value="${quantity%Mi}" 'BEGIN { printf "%d\n", value }' ;;
+        *Gi) awk -v value="${quantity%Gi}" 'BEGIN { printf "%d\n", value * 1024 }' ;;
+        *K)  awk -v value="${quantity%K}"  'BEGIN { printf "%d\n", value / 1024 }' ;;
+        *M)  awk -v value="${quantity%M}"  'BEGIN { printf "%d\n", value }' ;;
+        *G)  awk -v value="${quantity%G}"  'BEGIN { printf "%d\n", value * 1024 }' ;;
+        *)   return 1 ;;
+    esac
+}
+
+local_capacity_preflight() {
+    [[ "$PROFILE" == "local" ]] || return 0
+
+    if [[ ! "$LOCAL_MIN_ALLOCATABLE_MEMORY_MIB" =~ ^[0-9]+$ ]] || \
+       [[ ! "$LOCAL_WARN_ALLOCATABLE_MEMORY_MIB" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: LOCAL_MIN_ALLOCATABLE_MEMORY_MIB and LOCAL_WARN_ALLOCATABLE_MEMORY_MIB must be whole-number MiB values."
+        return 1
+    fi
+
+    local quantity mib total_mib=0 parsed=0
+    while IFS= read -r quantity; do
+        [[ -n "$quantity" ]] || continue
+        if mib="$(memory_quantity_to_mib "$quantity" 2>/dev/null)"; then
+            total_mib=$((total_mib + mib))
+            parsed=$((parsed + 1))
+        fi
+    done < <(
+        kubectl get nodes -o jsonpath='{range .items[*]}{.status.allocatable.memory}{"\n"}{end}' 2>/dev/null || true
+    )
+
+    if (( parsed == 0 )); then
+        echo "WARNING: Could not determine Kubernetes allocatable memory; continuing with normal readiness checks."
+        return 0
+    fi
+
+    echo "Local Kubernetes allocatable memory: ${total_mib} MiB"
+    if (( total_mib < LOCAL_MIN_ALLOCATABLE_MEMORY_MIB )); then
+        echo "ERROR: Local cluster has less than ${LOCAL_MIN_ALLOCATABLE_MEMORY_MIB} MiB allocatable memory."
+        echo "Increase Docker Desktop memory or stop other workloads before deploying BlockGo."
+        return 1
+    fi
+    if (( total_mib < LOCAL_WARN_ALLOCATABLE_MEMORY_MIB )); then
+        echo "WARNING: Less than ${LOCAL_WARN_ALLOCATABLE_MEMORY_MIB} MiB is allocatable."
+        echo "The lightweight profile will continue, but startup may be slower."
+    fi
+}
+
+clear_local_autoscaling_and_pdbs() {
+    [[ "$PROFILE" == "local" ]] || return 0
+
+    local namespace
+    echo "Removing local HPA/PDB policies so one-replica Recreate rollouts cannot deadlock..."
+    for namespace in "${NAMESPACES[@]}"; do
+        kubectl delete horizontalpodautoscaler --all -n "$namespace" --ignore-not-found >/dev/null 2>&1 || true
+        kubectl delete poddisruptionbudget --all -n "$namespace" --ignore-not-found >/dev/null 2>&1 || true
+    done
 }
 
 ipfs_pod_name() {
@@ -2082,36 +2340,9 @@ remove_local_memory_limits_from_generated_manifests() {
         return
     fi
 
-    echo "Removing local container memory limits from generated manifests..."
-    local manifest
-    local tmp_file
-    for manifest in "$TMP_K8S_DIR"/*.yaml; do
-        [[ -f "$manifest" ]] || continue
-        tmp_file="${manifest}.ram-unlimited.tmp"
-        awk '
-            function leading_spaces(s) {
-                match(s, /^[ ]*/)
-                return RLENGTH
-            }
-            {
-                current_indent = leading_spaces($0)
-                if (in_limits && $0 !~ /^[[:space:]]*$/ && current_indent <= limits_indent) {
-                    in_limits = 0
-                }
-                if ($0 ~ /^[[:space:]]*limits:[[:space:]]*$/) {
-                    in_limits = 1
-                    limits_indent = current_indent
-                    print
-                    next
-                }
-                if (in_limits && current_indent > limits_indent && $0 ~ /^[[:space:]]*memory:[[:space:]]*/) {
-                    next
-                }
-                print
-            }
-        ' "$manifest" > "$tmp_file"
-        mv "$tmp_file" "$manifest"
-    done
+    # Historical versions stripped local RAM limits. Keep the function name for
+    # compatibility with the deployment flow, but preserve the manifest safety caps.
+    echo "Keeping source manifest memory requests/limits for local safety."
 }
 
 clear_existing_local_memory_limits() {
@@ -2119,32 +2350,9 @@ clear_existing_local_memory_limits() {
         return
     fi
 
-    echo "Removing memory limits from existing local Deployments and StatefulSets..."
-    local namespace
-    local kind
-    local resource
-    local index
-    local memory_limit
-    local container_count
-
-    for namespace in "${NAMESPACES[@]}"; do
-        for kind in deployment statefulset; do
-            while IFS= read -r resource; do
-                [[ -n "$resource" ]] || continue
-                container_count="$(kubectl get "$kind/$resource" -n "$namespace" \
-                    -o jsonpath='{.spec.template.spec.containers[*].name}' 2>/dev/null | awk '{print NF}')"
-                container_count="${container_count:-0}"
-                for ((index=0; index<container_count; index++)); do
-                    memory_limit="$(kubectl get "$kind/$resource" -n "$namespace" \
-                        -o jsonpath="{.spec.template.spec.containers[$index].resources.limits.memory}" 2>/dev/null || true)"
-                    [[ -n "$memory_limit" ]] || continue
-                    kubectl patch "$kind/$resource" -n "$namespace" --type=json \
-                        -p="[{\"op\":\"remove\",\"path\":\"/spec/template/spec/containers/$index/resources/limits/memory\"}]" \
-                        >/dev/null 2>&1 || true
-                done
-            done < <(kubectl get "$kind" -n "$namespace" -o name 2>/dev/null | cut -d/ -f2)
-        done
-    done
+    # Do not remove limits from running workloads. The prepared manifests will reconcile
+    # current resources without briefly making every local container unbounded.
+    echo "Keeping existing local memory limits until manifests reconcile them."
 }
 
 prepare_manifests() {
@@ -2153,7 +2361,7 @@ prepare_manifests() {
     cp ./k8s/*.yaml "$TMP_K8S_DIR/"
 
     if [[ "$PROFILE" == "local" ]]; then
-        echo "Preparing local manifests with immutable source image tag ${LOCAL_IMAGE_TAG} and smaller storage."
+        echo "Preparing local lightweight manifests with immutable source image tag ${LOCAL_IMAGE_TAG}, one-replica apps, and smaller storage."
         cp ./k8s/01b-persistent-volumes.local-kind.yaml.example "$TMP_K8S_DIR/01b-persistent-volumes.local-kind.yaml"
         local pv_root
         pv_root="$(local_pv_root)"
@@ -2184,8 +2392,10 @@ prepare_manifests() {
         preserve_existing_local_pvc_request "$TMP_K8S_DIR/07-peer-registrar.yaml" peer-registrar-pvc plv-main-campus
         preserve_existing_local_pvc_request "$TMP_K8S_DIR/07-peer-faculty.yaml" peer-faculty-pvc plv-annex-campus
         preserve_existing_local_pvc_request "$TMP_K8S_DIR/07-peer-department.yaml" peer-department-pvc plv-pubad-campus
-        sed -i 's/replicas: [23]/replicas: 1/g' "$TMP_K8S_DIR/08-middleware-api.yaml"
-        sed -i 's/replicas: [23]/replicas: 1/g' "$TMP_K8S_DIR/14-client-app.yaml"
+        # Local testing needs only one pod per Deployment/StatefulSet. Apply this to
+        # generated manifests before kubectl sees them so the cluster never surges to the
+        # production replica count during startup.
+        sed -E -i 's/^([[:space:]]*)replicas:[[:space:]]+[2-9][0-9]*[[:space:]]*$/\1replicas: 1/' "$TMP_K8S_DIR"/*.yaml
         sed -i 's/FABRIC_CA_INSECURE_TLS: "false"/FABRIC_CA_INSECURE_TLS: "true"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
         sed -i 's/FABRIC_DISCOVERY_ENABLED: "true"/FABRIC_DISCOVERY_ENABLED: "false"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
         sed -i 's/FABRIC_HA_ENABLED: "true"/FABRIC_HA_ENABLED: "false"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
@@ -2396,12 +2606,18 @@ prepare_local_middleware_image() {
         return
     fi
 
-    echo "Building the local middleware microservices image (Docker cache enabled)..."
-    docker build \
-        -t "fabric-middleware:${LOCAL_IMAGE_TAG}" \
-        -t fabric-middleware:latest \
-        -f ../middleware/Dockerfile \
-        ../middleware
+    if ! is_true "$FORCE_LOCAL_IMAGE_REBUILD" &&
+       docker image inspect "fabric-middleware:${LOCAL_IMAGE_TAG}" >/dev/null 2>&1; then
+        echo "Local middleware image fabric-middleware:${LOCAL_IMAGE_TAG} already exists; skipping rebuild."
+        docker image tag "fabric-middleware:${LOCAL_IMAGE_TAG}" fabric-middleware:latest
+    else
+        echo "Building the local middleware microservices image (Docker cache enabled)..."
+        docker build \
+            -t "fabric-middleware:${LOCAL_IMAGE_TAG}" \
+            -t fabric-middleware:latest \
+            -f ../middleware/Dockerfile \
+            ../middleware
+    fi
 
     echo "Validating middleware microservice entrypoints..."
     docker run --rm --entrypoint node "fabric-middleware:${LOCAL_IMAGE_TAG}" -e '
@@ -2585,19 +2801,31 @@ prepare_local_application_images() {
         return
     fi
 
-    echo "Building the local client-app image from the current source..."
-    docker build \
-        -t "client-app:${LOCAL_IMAGE_TAG}" \
-        -t client-app:latest \
-        -f ../client-app/Dockerfile \
-        ../client-app
+    if ! is_true "$FORCE_LOCAL_IMAGE_REBUILD" &&
+       docker image inspect "client-app:${LOCAL_IMAGE_TAG}" >/dev/null 2>&1; then
+        echo "Local client-app image client-app:${LOCAL_IMAGE_TAG} already exists; skipping rebuild."
+        docker image tag "client-app:${LOCAL_IMAGE_TAG}" client-app:latest
+    else
+        echo "Building the local client-app image from the current source..."
+        docker build \
+            -t "client-app:${LOCAL_IMAGE_TAG}" \
+            -t client-app:latest \
+            -f ../client-app/Dockerfile \
+            ../client-app
+    fi
 
-    echo "Building the local frontend image from the current source..."
-    docker build \
-        -t "frontend:${LOCAL_IMAGE_TAG}" \
-        -t frontend:latest \
-        -f ../frontend/Dockerfile \
-        ../frontend
+    if ! is_true "$FORCE_LOCAL_IMAGE_REBUILD" &&
+       docker image inspect "frontend:${LOCAL_IMAGE_TAG}" >/dev/null 2>&1; then
+        echo "Local frontend image frontend:${LOCAL_IMAGE_TAG} already exists; skipping rebuild."
+        docker image tag "frontend:${LOCAL_IMAGE_TAG}" frontend:latest
+    else
+        echo "Building the local frontend image from the current source..."
+        docker build \
+            -t "frontend:${LOCAL_IMAGE_TAG}" \
+            -t frontend:latest \
+            -f ../frontend/Dockerfile \
+            ../frontend
+    fi
 }
 
 validate_production_image_settings() {
@@ -2755,7 +2983,7 @@ configure_local_application_rollouts() {
             continue
         fi
         kubectl patch deployment "$deployment" -n plv-fabric --type=merge \
-            -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}' >/dev/null
+            -p '{"spec":{"replicas":1,"strategy":{"type":"Recreate","rollingUpdate":null}}}' >/dev/null
     done
 
     local entry
@@ -2769,7 +2997,7 @@ configure_local_application_rollouts() {
             continue
         fi
         kubectl patch deployment "$deployment" -n "$namespace" --type=merge \
-            -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}' >/dev/null
+            -p '{"spec":{"replicas":1,"strategy":{"type":"Recreate","rollingUpdate":null}}}' >/dev/null
     done
 }
 
@@ -2788,8 +3016,12 @@ deploy_orderer() {
     local namespace="$3"
 
     apply_manifest "$manifest"
-    echo "Restarting ${namespace}/deployment/${deployment}..."
-    kubectl rollout restart "deployment/${deployment}" -n "$namespace" >/dev/null
+    if [[ "$PROFILE" == "production" ]] || is_true "$FORCE_LOCAL_FABRIC_RESTART"; then
+        echo "Restarting ${namespace}/deployment/${deployment}..."
+        kubectl rollout restart "deployment/${deployment}" -n "$namespace" >/dev/null
+    else
+        echo "Idempotent local apply: not forcing a restart of ${namespace}/deployment/${deployment}."
+    fi
     ensure_orderer_ready "$deployment" "$namespace"
 }
 
@@ -2943,12 +3175,18 @@ configure_peer_channel_endpoint_aliases() {
             return
         fi
 
-        echo "Building the local chaincode image from the current source..."
-        docker build \
-            -t "registrar-chaincode:${LOCAL_IMAGE_TAG}" \
-            -t registrar-chaincode:latest \
-            -f ../chaincode/Dockerfile \
-            ../chaincode
+        if ! is_true "$FORCE_LOCAL_IMAGE_REBUILD" &&
+           docker image inspect "registrar-chaincode:${LOCAL_IMAGE_TAG}" >/dev/null 2>&1; then
+            echo "Local chaincode image registrar-chaincode:${LOCAL_IMAGE_TAG} already exists; skipping rebuild."
+        else
+            echo "Building the local chaincode image from the current source..."
+            docker build \
+                -t "registrar-chaincode:${LOCAL_IMAGE_TAG}" \
+                -t registrar-chaincode:latest \
+                -f ../chaincode/Dockerfile \
+                ../chaincode
+        fi
+        docker image tag "registrar-chaincode:${LOCAL_IMAGE_TAG}" registrar-chaincode:latest
         docker image tag "registrar-chaincode:${LOCAL_IMAGE_TAG}" "faculty-chaincode:${LOCAL_IMAGE_TAG}"
         docker image tag "registrar-chaincode:${LOCAL_IMAGE_TAG}" "department-chaincode:${LOCAL_IMAGE_TAG}"
         docker image tag "registrar-chaincode:${LOCAL_IMAGE_TAG}" faculty-chaincode:latest
@@ -2972,18 +3210,21 @@ configure_peer_channel_endpoint_aliases() {
     fi
     apply_manifest "$TMP_K8S_DIR/02-configmap-secret.yaml"
     apply_manifest "$TMP_K8S_DIR/03-Abac.yaml"
+
+    echo "======================================"
+    echo "Phase 1/7 - Foundation"
+    echo "======================================"
     apply_manifest "$TMP_K8S_DIR/04a-postgres-primary.yaml"
+    apply_manifest "$TMP_K8S_DIR/12a-redis.yaml"
 
     echo "Waiting for PostgreSQL before applying schema migrations..."
     wait_rollout statefulset/postgres-primary plv-main-campus
-    kubectl delete job postgres-schema-migrations -n plv-main-campus --ignore-not-found --wait=true >/dev/null
-    apply_manifest "$TMP_K8S_DIR/04a-postgres-configmap.yaml"
-    if ! wait_for_job_completion postgres-schema-migrations plv-main-campus 660; then
+    if ! ensure_job_from_manifest postgres-schema-migrations plv-main-campus \
+        "$TMP_K8S_DIR/04a-postgres-configmap.yaml" 660; then
         echo "ERROR: PostgreSQL schema migrations failed."
         show_job_diagnostics postgres-schema-migrations plv-main-campus
         return 1
     fi
-    show_job_logs postgres-schema-migrations plv-main-campus
 
     if [[ "$PROFILE" == "production" ]]; then
         apply_manifest "$TMP_K8S_DIR/04b-postgres-replica-annex.yaml"
@@ -2991,9 +3232,21 @@ configure_peer_channel_endpoint_aliases() {
         apply_manifest "$TMP_K8S_DIR/04d-postgres-additional-replicas.yaml"
     fi
 
+    echo "======================================"
+    echo "Phase 2/7 - Start observability early"
+    echo "======================================"
+    # Grafana/Prometheus are independent of Fabric startup. Start them early so Grafana
+    # can perform long SQLite migrations in parallel with the rest of the deployment.
+    deploy_observability
+    configure_local_observability
+
+    echo "======================================"
+    echo "Phase 3/7 - Fabric core"
+    echo "======================================"
     apply_manifest "$TMP_K8S_DIR/05-fabric-ca.yaml"
     deploy_orderers_sequentially
     configure_orderer_channel_endpoint_aliases
+
     apply_peer_manifest "$TMP_K8S_DIR/07-peer-registrar.yaml"
     apply_peer_manifest "$TMP_K8S_DIR/07-peer-faculty.yaml"
     apply_peer_manifest "$TMP_K8S_DIR/07-peer-department.yaml"
@@ -3002,38 +3255,48 @@ configure_peer_channel_endpoint_aliases() {
     fi
     apply_couchdb_health_probes
     configure_peer_channel_endpoint_aliases
-    apply_manifest "$TMP_K8S_DIR/08-middleware-api.yaml"
+
+    echo "======================================"
+    echo "Phase 4/7 - IPFS and bootstrap jobs"
+    echo "======================================"
     apply_manifest "$TMP_K8S_DIR/09-ipfs.yaml"
     configure_local_application_rollouts
     ensure_ipfs_ready ipfs-node plv-fabric
     ensure_ipfs_ready ipfs-annex plv-annex-campus
     ensure_ipfs_ready ipfs-pubad plv-pubad-campus
     wait_rollout deployment/ipfs-ha-router plv-fabric
-    kubectl delete job ipfs-cluster-bootstrap -n plv-fabric --ignore-not-found --wait=true >/dev/null
-    apply_manifest "$TMP_K8S_DIR/09b-ipfs-cluster-bootstrap.yaml"
-    if ! wait_for_job_completion ipfs-cluster-bootstrap plv-fabric 420; then
+
+    if ! ensure_job_from_manifest ipfs-cluster-bootstrap plv-fabric \
+        "$TMP_K8S_DIR/09b-ipfs-cluster-bootstrap.yaml" 420; then
         echo "ERROR: IPFS private cluster bootstrap or pin replication failed."
         show_job_diagnostics ipfs-cluster-bootstrap plv-fabric
         return 1
     fi
-    show_job_logs ipfs-cluster-bootstrap plv-fabric
-    kubectl delete job ipfs-webui-bootstrap -n plv-fabric --ignore-not-found --wait=true >/dev/null
-    apply_manifest "$TMP_K8S_DIR/09a-ipfs-webui-bootstrap.yaml"
-    if ! wait_for_job_completion ipfs-webui-bootstrap plv-fabric 420; then
+
+    if ! ensure_job_from_manifest ipfs-webui-bootstrap plv-fabric \
+        "$TMP_K8S_DIR/09a-ipfs-webui-bootstrap.yaml" 420; then
         echo "ERROR: IPFS Web UI bootstrap failed."
         show_job_diagnostics ipfs-webui-bootstrap plv-fabric
         return 1
     fi
-    show_job_logs ipfs-webui-bootstrap plv-fabric
+
     apply_manifest "$TMP_K8S_DIR/09c-ipfs-pin-reconciler.yaml"
     apply_manifest "$TMP_K8S_DIR/10-ingress-network-policy.yaml"
-    apply_manifest "$TMP_K8S_DIR/12a-redis.yaml"
-    apply_manifest "$TMP_K8S_DIR/14-client-app.yaml"
-    apply_manifest "$TMP_K8S_DIR/12-frontend-ha.yaml"
-    apply_manifest "$TMP_K8S_DIR/13-cli.yaml"
+
+    echo "======================================"
+    echo "Phase 5/7 - Chaincode and application services"
+    echo "======================================"
     apply_manifest "$TMP_K8S_DIR/17-chaincode.yaml"
     apply_manifest "$TMP_K8S_DIR/18-faculty-chaincode.yaml"
     apply_manifest "$TMP_K8S_DIR/19-department-chaincode.yaml"
+    apply_manifest "$TMP_K8S_DIR/08-middleware-api.yaml"
+    apply_manifest "$TMP_K8S_DIR/14-client-app.yaml"
+
+    echo "======================================"
+    echo "Phase 6/7 - Frontend and utilities"
+    echo "======================================"
+    apply_manifest "$TMP_K8S_DIR/12-frontend-ha.yaml"
+    apply_manifest "$TMP_K8S_DIR/13-cli.yaml"
 
     if [[ "$PROFILE" == "production" ]]; then
         apply_manifest "$TMP_K8S_DIR/11-monitoring-pdb-quotas.yaml"
@@ -3043,97 +3306,129 @@ configure_peer_channel_endpoint_aliases() {
         apply_manifest "$TMP_K8S_DIR/15-postgres-backup.yaml"
         apply_manifest "$TMP_K8S_DIR/16-firewall-config.yaml"
     else
-        kubectl delete horizontalpodautoscaler \
-            middleware-api-hpa auth-service-hpa ledger-service-hpa grade-upload-service-hpa \
-            dotnet-api-gateway-hpa dotnet-auth-service-hpa dotnet-academic-service-hpa \
-            dotnet-grade-service-hpa dotnet-operations-service-hpa dotnet-realtime-service-hpa client-app-hpa \
-            -n plv-fabric --ignore-not-found
+        clear_local_autoscaling_and_pdbs
+        configure_local_application_rollouts
+        configure_local_observability
         echo "Skipping production-only autoscaling, ingress, backup, quota, and firewall manifests for local profile."
     fi
 
-    deploy_observability
-
-    configure_local_application_rollouts
-
-    echo "Restarting Fabric peers sequentially to reload refreshed crypto Secrets..."
-    restart_peer_and_wait peer-registrar plv-main-campus
-    restart_peer_and_wait peer-faculty plv-annex-campus
-    restart_peer_and_wait peer-department plv-pubad-campus
+    echo "======================================"
+    echo "Phase 7/7 - Converge without unnecessary restarts"
+    echo "======================================"
     if [[ "$PROFILE" == "production" ]]; then
+        echo "Production keeps explicit sequential Fabric/application restarts."
+        restart_peer_and_wait peer-registrar plv-main-campus
+        restart_peer_and_wait peer-faculty plv-annex-campus
+        restart_peer_and_wait peer-department plv-pubad-campus
         restart_peer_and_wait peer-registrar-2 plv-main-campus
         restart_peer_and_wait peer-faculty-2 plv-annex-campus
         restart_peer_and_wait peer-department-2 plv-pubad-campus
+
+        restart_deployment_and_wait registrar-chaincode plv-main-campus
+        restart_deployment_and_wait faculty-chaincode plv-annex-campus
+        restart_deployment_and_wait department-chaincode plv-pubad-campus
+
+        restart_deployment_and_wait auth-service plv-fabric
+        restart_deployment_and_wait fabric-identity-service plv-fabric
+        restart_deployment_and_wait ledger-service plv-fabric
+        restart_deployment_and_wait grade-upload-service plv-fabric
+        restart_deployment_and_wait settings-service plv-fabric
+        restart_deployment_and_wait middleware-api plv-fabric
+        restart_deployment_and_wait dotnet-auth-service plv-fabric
+        restart_deployment_and_wait dotnet-academic-service plv-fabric
+        restart_deployment_and_wait dotnet-grade-service plv-fabric
+        restart_deployment_and_wait dotnet-operations-service plv-fabric
+        restart_deployment_and_wait dotnet-realtime-service plv-fabric
+        restart_deployment_and_wait dotnet-api-gateway plv-fabric
+        restart_deployment_and_wait frontend plv-fabric
+    elif is_true "$FORCE_LOCAL_FABRIC_RESTART"; then
+        echo "FORCE_LOCAL_FABRIC_RESTART=true: restarting local Fabric peers explicitly."
+        restart_peer_and_wait peer-registrar plv-main-campus
+        restart_peer_and_wait peer-faculty plv-annex-campus
+        restart_peer_and_wait peer-department plv-pubad-campus
+    else
+        echo "Idempotent local apply: unchanged workloads are not forcibly restarted."
+        echo "Manifest/image changes will roll out automatically through Kubernetes."
     fi
 
-    echo "Restarting chaincode deployments sequentially to load the images built from current source..."
-    restart_deployment_and_wait registrar-chaincode plv-main-campus
-    restart_deployment_and_wait faculty-chaincode plv-annex-campus
-    restart_deployment_and_wait department-chaincode plv-pubad-campus
-
-    echo "Restarting application deployments sequentially..."
-    restart_deployment_and_wait auth-service plv-fabric
-    restart_deployment_and_wait fabric-identity-service plv-fabric
-    restart_deployment_and_wait ledger-service plv-fabric
-    restart_deployment_and_wait grade-upload-service plv-fabric
-    restart_deployment_and_wait settings-service plv-fabric
-    restart_deployment_and_wait middleware-api plv-fabric
-    restart_deployment_and_wait dotnet-auth-service plv-fabric
-    restart_deployment_and_wait dotnet-academic-service plv-fabric
-    restart_deployment_and_wait dotnet-grade-service plv-fabric
-    restart_deployment_and_wait dotnet-operations-service plv-fabric
-    restart_deployment_and_wait dotnet-realtime-service plv-fabric
-    restart_deployment_and_wait dotnet-api-gateway plv-fabric
-    restart_deployment_and_wait frontend plv-fabric
+    # Desired state is that the legacy monolith/HPA/PDB are absent. Repeating these
+    # deletes is safe and converges to the same state.
     kubectl delete deployment client-app -n plv-fabric --ignore-not-found >/dev/null
     kubectl delete horizontalpodautoscaler client-app-hpa -n plv-fabric --ignore-not-found >/dev/null
     kubectl delete poddisruptionbudget client-app-pdb -n plv-fabric --ignore-not-found >/dev/null
 
-    echo "Fabric and application deployments restarted sequentially."
-    echo "Manifests deployed."
+    echo "Manifests reconciled to the requested ${PROFILE} state."
 }
 
 wait_deployments() {
-    echo "Waiting for deployments to be ready..."
+    echo "Waiting for deployment dependency waves..."
+
+    echo "Wave A - foundation..."
     wait_rollout statefulset/postgres-primary plv-main-campus
     wait_rollout deployment/redis-master plv-fabric
-    wait_rollout deployment/fabric-ca-registrar plv-main-campus
-    wait_rollout deployment/fabric-ca-faculty plv-annex-campus
-    wait_rollout deployment/fabric-ca-department plv-pubad-campus
+    wait_rollouts_parallel "$ROLLOUT_TIMEOUT" \
+        "plv-main-campus|deployment/fabric-ca-registrar" \
+        "plv-annex-campus|deployment/fabric-ca-faculty" \
+        "plv-pubad-campus|deployment/fabric-ca-department"
+
+    echo "Wave B - Fabric ordering/state..."
     ensure_orderer_ready orderer-1 plv-main-campus
     ensure_orderer_ready orderer-2 plv-main-campus
     ensure_orderer_ready orderer-3 plv-annex-campus
-    wait_rollout statefulset/couchdb-registrar plv-main-campus
-    wait_rollout statefulset/couchdb-wallet-registrar plv-main-campus
-    wait_rollout statefulset/couchdb-faculty plv-annex-campus
-    wait_rollout statefulset/couchdb-wallet-faculty plv-annex-campus
-    wait_rollout statefulset/couchdb-department plv-pubad-campus
-    wait_rollout statefulset/couchdb-wallet-department plv-pubad-campus
+
+    wait_rollouts_parallel "$ROLLOUT_TIMEOUT" \
+        "plv-main-campus|statefulset/couchdb-registrar" \
+        "plv-main-campus|statefulset/couchdb-wallet-registrar" \
+        "plv-annex-campus|statefulset/couchdb-faculty" \
+        "plv-annex-campus|statefulset/couchdb-wallet-faculty" \
+        "plv-pubad-campus|statefulset/couchdb-department" \
+        "plv-pubad-campus|statefulset/couchdb-wallet-department"
+
     ensure_peer_ready_with_rebootstrap peer-registrar plv-main-campus
     ensure_peer_ready_with_rebootstrap peer-faculty plv-annex-campus
     ensure_peer_ready_with_rebootstrap peer-department plv-pubad-campus
+
+    echo "Wave C - IPFS and chaincode..."
     ensure_ipfs_ready ipfs-node plv-fabric
     ensure_ipfs_ready ipfs-annex plv-annex-campus
     ensure_ipfs_ready ipfs-pubad plv-pubad-campus
     wait_rollout deployment/ipfs-ha-router plv-fabric
-    wait_rollout deployment/auth-service plv-fabric
-    wait_rollout deployment/fabric-identity-service plv-fabric
-    wait_rollout deployment/ledger-service plv-fabric
-    wait_rollout deployment/grade-upload-service plv-fabric
-    wait_rollout deployment/settings-service plv-fabric
+    wait_rollouts_parallel "$ROLLOUT_TIMEOUT" \
+        "plv-main-campus|deployment/registrar-chaincode" \
+        "plv-annex-campus|deployment/faculty-chaincode" \
+        "plv-pubad-campus|deployment/department-chaincode"
+
+    echo "Wave D - middleware bounded services..."
+    wait_rollouts_parallel "$ROLLOUT_TIMEOUT" \
+        "plv-fabric|deployment/auth-service" \
+        "plv-fabric|deployment/fabric-identity-service" \
+        "plv-fabric|deployment/ledger-service" \
+        "plv-fabric|deployment/grade-upload-service" \
+        "plv-fabric|deployment/settings-service"
     wait_rollout deployment/middleware-api plv-fabric
-    wait_rollout deployment/dotnet-auth-service plv-fabric
-    wait_rollout deployment/dotnet-academic-service plv-fabric
-    wait_rollout deployment/dotnet-grade-service plv-fabric
-    wait_rollout deployment/dotnet-operations-service plv-fabric
-    wait_rollout deployment/dotnet-realtime-service plv-fabric
+
+    echo "Wave E - ASP.NET leaf services..."
+    wait_rollouts_parallel "$ROLLOUT_TIMEOUT" \
+        "plv-fabric|deployment/dotnet-auth-service" \
+        "plv-fabric|deployment/dotnet-academic-service" \
+        "plv-fabric|deployment/dotnet-grade-service" \
+        "plv-fabric|deployment/dotnet-operations-service" \
+        "plv-fabric|deployment/dotnet-realtime-service"
     wait_rollout deployment/dotnet-api-gateway plv-fabric
+
+    echo "Wave F - frontend..."
     wait_rollout deployment/frontend plv-fabric
-    wait_rollout deployment/prometheus plv-fabric
-    wait_rollout deployment/kube-state-metrics plv-fabric
-    wait_rollout deployment/loki plv-fabric
-    wait_rollout deployment/alloy plv-fabric
-    wait_rollout deployment/grafana plv-fabric
-    wait_rollout deployment/postgres-exporter plv-main-campus
+
+    echo "Wave G - observability final convergence..."
+    # Observability was deliberately started early, but it is only required to be ready
+    # here. This lets Grafana migrations overlap the Fabric/application startup.
+    wait_rollouts_parallel "$ROLLOUT_TIMEOUT" \
+        "plv-fabric|deployment/prometheus" \
+        "plv-fabric|deployment/kube-state-metrics" \
+        "plv-fabric|deployment/loki" \
+        "plv-fabric|deployment/alloy" \
+        "plv-fabric|deployment/grafana" \
+        "plv-main-campus|deployment/postgres-exporter"
 
     if [[ "$PROFILE" == "production" ]]; then
         wait_rollout statefulset/postgres-replica-annex plv-annex-campus
@@ -3152,7 +3447,7 @@ wait_deployments() {
         ensure_peer_ready_with_rebootstrap peer-department-2 plv-pubad-campus
     fi
 
-    echo "All requested rollouts are ready."
+    echo "All requested dependency waves are ready."
 }
 
 verify_deployed_application_revision() {
@@ -3282,7 +3577,7 @@ verify_deployed_application_revision() {
         fi
     done
 
-    echo "All custom deployments, migrations, CouchDB probes, multi-session routes, frontend features, and Grafana settings match this source revision."
+    echo "All enabled custom deployments, migrations, CouchDB probes, multi-session routes, and frontend features match this source revision."
 }
 
 bootstrap_application_accounts() {
@@ -4243,7 +4538,11 @@ main() {
         apply)
             check_kubectl
             check_cluster
+            if [[ "$PROFILE" == "local" ]]; then
+                clear_local_autoscaling_and_pdbs
+            fi
             cluster_preflight
+            local_capacity_preflight
             validate_production_zone_nodes
             validate_production_image_settings
             inject_configs
