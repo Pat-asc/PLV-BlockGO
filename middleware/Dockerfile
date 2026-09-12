@@ -1,7 +1,6 @@
-FROM node:20-slim
+FROM node:20-slim AS builder
 
 RUN apt-get update && \
-    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         python3 \
         python3-pip \
@@ -32,9 +31,24 @@ RUN python -m pip install --no-cache-dir --upgrade pip && \
         "setuptools>=78.1.1" && \
     python -m pip check
 
-COPY --chown=node:node . .
+COPY . .
 
-RUN chown -R node:node /app
+FROM node:20-slim AS runtime
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /opt/blockgo-venv /opt/blockgo-venv
+
+COPY --from=builder --chown=node:node /app /app
+
+ENV PATH="/opt/blockgo-venv/bin:$PATH"
+ENV PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 4000 4001 4002 4003 4004 4005
 
