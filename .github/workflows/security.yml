@@ -455,31 +455,114 @@ jobs:
           limit-severities-for-sarif: true
           output: security-results/code-scanning/trivy-secret-changes.sarif
 
-      - name: Report new IaC regressions
+      - name: Generate changed IaC misconfiguration JSON
         if: always() && steps.changed-files.outputs.iac_count != '0'
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          skip-setup-trivy: true
-          scan-type: fs
-          scan-ref: .security-iac-changes
-          scanners: misconfig
-          severity: HIGH,CRITICAL
-          exit-code: "0"
-          format: table
+        run: |
+          set -euo pipefail
+          mkdir -p security-results/code-scanning
 
-      - name: Block new IaC regressions
+          echo "===== CHANGED IAC FILES ====="
+          find .security-iac-changes -type f -print
+
+          timeout 10m docker run --rm \
+            --volume "$PWD:/work" \
+            --workdir /work \
+            aquasec/trivy:0.74.0 \
+            fs \
+            --scanners misconfig \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --exit-code 0 \
+            --output /work/security-results/trivy-iac-changes.json \
+            /work/.security-iac-changes
+
+      - name: Enforce changed IaC regression gate
         if: always() && steps.changed-files.outputs.iac_count != '0'
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          skip-setup-trivy: true
-          scan-type: fs
-          scan-ref: .security-iac-changes
-          scanners: misconfig
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          format: sarif
-          limit-severities-for-sarif: true
-          output: security-results/code-scanning/trivy-iac-changes.sarif
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          p = Path("security-results/trivy-iac-changes.json")
+          if not p.is_file():
+              raise SystemExit("Changed-IaC Trivy JSON report is missing.")
+
+          report = json.loads(p.read_text(encoding="utf-8"))
+          blocking = []
+
+          for result in report.get("Results", []) or []:
+              target = str(result.get("Target", ""))
+              for finding in result.get("Misconfigurations", []) or []:
+                  severity = str(finding.get("Severity", "")).upper()
+                  if severity not in {"HIGH", "CRITICAL"}:
+                      continue
+                  blocking.append({
+                      "target": target,
+                      "id": str(finding.get("ID", "")),
+                      "severity": severity,
+                      "title": str(finding.get("Title", "")),
+                      "message": str(finding.get("Message", "")),
+                  })
+
+          print()
+          print("==========================================")
+          print("Changed IaC misconfiguration gate")
+          print("==========================================")
+          print(f"Blocking findings: {len(blocking)}")
+          print()
+
+          if blocking:
+              for item in blocking:
+                  print(
+                      f"  - {item['severity']} {item['id']} "
+                      f"{item['title']} ({item['target']})"
+                  )
+                  if item["message"]:
+                      print(f"    {item['message']}")
+              sys.exit(1)
+
+          print(
+              "PASS: No HIGH/CRITICAL misconfiguration regressions "
+              "were found in changed IaC files."
+          )
+          PY
+
+      - name: Generate changed IaC SARIF for code scanning
+        if: always() && steps.changed-files.outputs.iac_count != '0'
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          mkdir -p security-results/code-scanning
+
+          set +e
+          timeout 10m docker run --rm \
+            --volume "$PWD:/work" \
+            --workdir /work \
+            aquasec/trivy:0.74.0 \
+            fs \
+            --scanners misconfig \
+            --severity HIGH,CRITICAL \
+            --format sarif \
+            --exit-code 0 \
+            --output /work/security-results/code-scanning/trivy-iac-changes.sarif \
+            /work/.security-iac-changes
+          rc=$?
+          set -e
+
+          case "$rc" in
+            0)
+              echo "Changed-IaC SARIF generated."
+              ;;
+            124)
+              echo "::warning::Changed-IaC SARIF generation timed out after 10 minutes. JSON security gate already completed."
+              ;;
+            *)
+              echo "::warning::Changed-IaC SARIF generation failed with exit code $rc. JSON security gate already completed."
+              ;;
+          esac
 
       - name: Report complete legacy secret and IaC debt
         if: always()
