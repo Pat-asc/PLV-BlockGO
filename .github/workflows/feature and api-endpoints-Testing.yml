@@ -497,7 +497,7 @@ jobs:
 
           docker tag "${MIDDLEWARE_IMAGE}" blockgo/middleware:ci
 
-          docker build --pull \
+          docker build --pull --no-cache \
             --tag blockgo/client-app:ci \
             --file client-app/Dockerfile \
             client-app
