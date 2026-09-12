@@ -1251,45 +1251,6 @@ jobs:
               echo "::error::ZAP scanner failed unexpectedly with exit code $ZAP_EXIT."
               exit "$ZAP_EXIT"
               ;;
-          esac        id: zap
-      
-        continue-on-error: true
-        env:
-          OPENAPI_PATH: ${{ steps.schema.outputs.path }}
-          ZAP_RULES_PATH: ${{ steps.zap-rules.outputs.path }}
-        run: |
-          set -uo pipefail
-          mkdir -p security-results
-
-          # The repository is mounted at /zap/wrk inside the ZAP container.
-          # Use absolute container paths for local OpenAPI/config/report files.
-          set +e
-          timeout 60m docker run             --rm             --network host             --volume "$PWD:/zap/wrk/:rw"             ghcr.io/zaproxy/zaproxy:stable             zap-api-scan.py               -t "/zap/wrk/${OPENAPI_PATH}"               -f openapi               -c "/zap/wrk/${ZAP_RULES_PATH}"               -I               -r /zap/wrk/security-results/zap-report.html               -J /zap/wrk/security-results/zap-report.json               -w /zap/wrk/security-results/zap-report.md               -T 10
-          ZAP_EXIT=$?
-          set -e
-
-          echo "ZAP exit code: $ZAP_EXIT"
-          echo "exit_code=$ZAP_EXIT" >> "$GITHUB_OUTPUT"
-
-          case "$ZAP_EXIT" in
-            0)
-              echo "ZAP security gate passed."
-              ;;
-            1)
-              echo "::error::ZAP detected at least one finding configured as FAIL."
-              exit 1
-              ;;
-            2)
-              echo "::warning::ZAP produced warnings only."
-              ;;
-            124)
-              echo "::error::ZAP exceeded the 60-minute safety timeout."
-              exit 1
-              ;;
-            *)
-              echo "::error::ZAP scanner failed unexpectedly with exit code $ZAP_EXIT."
-              exit "$ZAP_EXIT"
-              ;;
           esac
 
       - name: Run Nuclei high / critical vulnerability scan
