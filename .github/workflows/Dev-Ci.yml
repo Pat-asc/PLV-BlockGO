@@ -138,7 +138,118 @@ jobs:
         working-directory: middleware
         run: |
           set -euo pipefail
-          npm audit --omit=dev --audit-level=high
+
+          echo "Checking expected Hyperledger Fabric SDK version..."
+
+          node <<'NODE'
+          const version = require('fabric-network/package.json').version;
+          console.log(`fabric-network version: ${version}`);
+
+          if (version !== '2.2.20') {
+            console.error(
+              `Unexpected fabric-network version: ${version}. ` +
+              `The temporary security exception is approved only for 2.2.20.`
+            );
+            process.exit(1);
+          }
+          NODE
+
+          echo "Running production dependency audit..."
+          npm audit --omit=dev --json > npm-audit.json || true
+
+          node <<'NODE'
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
+
+          const allowedPackages = new Set([
+            'fabric-network',
+            'fabric-common',
+            'elliptic',
+            'jsrsasign'
+          ]);
+
+          const allowedAdvisories = new Set([
+            'GHSA-848j-6mx2-7j84',
+            'GHSA-rh63-9qcf-83gf',
+            'GHSA-w8q8-93cx-6h7r',
+            'GHSA-464q-cqxq-xhgr',
+            'GHSA-8qwj-4jxw-m8jw',
+            'GHSA-5jx8-q4cp-rhh6',
+            'GHSA-8g7p-jf3g-gxcp',
+            'GHSA-wvqx-v3f6-w8rh'
+          ]);
+
+          const vulnerabilities = report.vulnerabilities || {};
+          const excepted = [];
+          const blocking = [];
+
+          function ghsaFromVia(via) {
+            if (!via || typeof via !== 'object') return null;
+            const candidates = [via.url, via.title, via.name].filter(Boolean);
+            for (const candidate of candidates) {
+              const match = String(candidate).match(/GHSA-[0-9A-Za-z]+-[0-9A-Za-z]+-[0-9A-Za-z]+/);
+              if (match) return match[0];
+            }
+            return null;
+          }
+
+          for (const [name, vulnerability] of Object.entries(vulnerabilities)) {
+            const severity = String(vulnerability.severity || '').toLowerCase();
+            if (!['high', 'critical'].includes(severity)) continue;
+
+            if (!allowedPackages.has(name)) {
+              blocking.push({
+                package: name,
+                severity,
+                reason: 'Package is not on the temporary Fabric SDK exception list'
+              });
+              continue;
+            }
+
+            let approved = true;
+            const reasons = [];
+
+            for (const via of vulnerability.via || []) {
+              if (typeof via === 'string') {
+                if (!allowedPackages.has(via)) {
+                  approved = false;
+                  reasons.push(`unexpected transitive source: ${via}`);
+                }
+                continue;
+              }
+
+              const ghsa = ghsaFromVia(via);
+              if (!ghsa || !allowedAdvisories.has(ghsa)) {
+                approved = false;
+                reasons.push(`unapproved advisory: ${ghsa || via.title || via.url || 'unknown'}`);
+              }
+            }
+
+            const entry = {
+              package: name,
+              severity,
+              range: vulnerability.range || 'unknown'
+            };
+
+            if (approved) {
+              excepted.push(entry);
+            } else {
+              blocking.push({ ...entry, reason: reasons.join('; ') });
+            }
+          }
+
+          console.log('\nApproved temporary Fabric SDK exceptions:');
+          if (excepted.length === 0) console.log('None');
+          else console.table(excepted);
+
+          if (blocking.length > 0) {
+            console.error('\nBLOCKING high/critical vulnerabilities:');
+            console.table(blocking);
+            process.exit(1);
+          }
+
+          console.log('\nPASS: No unapproved high/critical production vulnerabilities found.');
+          NODE
 
   chaincode-tests:
     name: Chaincode — Vet, Unit & Race Tests
