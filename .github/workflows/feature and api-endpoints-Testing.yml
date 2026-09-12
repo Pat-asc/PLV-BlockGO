@@ -486,10 +486,16 @@ jobs:
             --file frontend/Dockerfile \
             frontend
 
-          docker build --pull \
-            --tag blockgo/middleware:ci \
+          MIDDLEWARE_SHA="$(git rev-parse --short=12 HEAD)"
+          MIDDLEWARE_IMAGE="blockgo/middleware:ci-${MIDDLEWARE_SHA}"
+          echo "MIDDLEWARE_IMAGE=${MIDDLEWARE_IMAGE}" >> "$GITHUB_ENV"
+
+          docker build --pull --no-cache \
+            --tag "${MIDDLEWARE_IMAGE}" \
             --file middleware/Dockerfile \
             middleware
+
+          docker tag "${MIDDLEWARE_IMAGE}" blockgo/middleware:ci
 
           docker build --pull \
             --tag blockgo/client-app:ci \
@@ -525,33 +531,103 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
-      - name: Report middleware image vulnerabilities
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          version: v0.74.0
-          image-ref: blockgo/middleware:ci
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "0"
-          format: table
-
-      - name: Prepare middleware security report directory
+      - name: Verify middleware runtime security versions
         run: |
           set -euo pipefail
+
+          : "${MIDDLEWARE_IMAGE:?MIDDLEWARE_IMAGE was not set by the image build step}"
+
+          echo "===== CHECKED OUT COMMIT ====="
+          git rev-parse HEAD
+
+          echo
+          echo "===== EXACT MIDDLEWARE IMAGE ====="
+          echo "${MIDDLEWARE_IMAGE}"
+          docker image inspect "${MIDDLEWARE_IMAGE}" \
+            --format 'ID={{.Id}} Created={{.Created}}'
+
+          echo
+          echo "===== PYTHON RUNTIME ====="
+          docker run --rm "${MIDDLEWARE_IMAGE}" \
+            /opt/blockgo-venv/bin/python - <<'PY'
+          from importlib.metadata import version
+
+          def numeric(v):
+              parts = []
+              for token in v.split("."):
+                  digits = ""
+                  for ch in token:
+                      if ch.isdigit():
+                          digits += ch
+                      else:
+                          break
+                  parts.append(int(digits or 0))
+              return tuple((parts + [0, 0, 0])[:3])
+
+          msgpack = version("msgpack")
+          setuptools = version("setuptools")
+
+          print("msgpack:", msgpack)
+          print("setuptools:", setuptools)
+
+          if numeric(msgpack) < (1, 2, 1):
+              raise SystemExit(
+                  f"Unsafe msgpack version in runtime image: {msgpack}"
+              )
+
+          if numeric(setuptools) < (78, 1, 1):
+              raise SystemExit(
+                  f"Unsafe setuptools version in runtime image: {setuptools}"
+              )
+          PY
+
+          echo
+          echo "===== PYTHON PACKAGE METADATA ====="
+          docker run --rm "${MIDDLEWARE_IMAGE}" \
+            sh -c '
+              find / -type d \
+                \( -name "msgpack-*.dist-info" \
+                -o -name "setuptools-*.dist-info" \
+                -o -name "msgpack-*.egg-info" \
+                -o -name "setuptools-*.egg-info" \) \
+                2>/dev/null | sort
+            '
+
+          echo
+          echo "===== FABRIC DEPENDENCY ====="
+          docker run --rm "${MIDDLEWARE_IMAGE}" \
+            node -e "
+              const version =
+                require('jsrsasign/package.json').version;
+              console.log('jsrsasign:', version);
+              if (version !== '11.1.1') {
+                console.error(
+                  'Expected jsrsasign 11.1.1 in middleware image.'
+                );
+                process.exit(1);
+              }
+            "
+
+      - name: Generate fresh middleware Trivy report
+        run: |
+          set -euo pipefail
+
+          : "${MIDDLEWARE_IMAGE:?MIDDLEWARE_IMAGE was not set by the image build step}"
+
           mkdir -p security-results
 
-      - name: Generate middleware image vulnerability JSON
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          version: v0.74.0
-          image-ref: blockgo/middleware:ci
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "0"
-          format: json
-          output: security-results/middleware-image-vulnerabilities.json
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$PWD/security-results:/reports" \
+            aquasec/trivy:0.74.0 \
+            image \
+            --cache-dir /tmp/trivy-cache \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format json \
+            --output /reports/middleware-image-vulnerabilities.json \
+            "${MIDDLEWARE_IMAGE}"
 
       - name: Enforce middleware image vulnerability gate
         run: |
@@ -571,23 +647,16 @@ jobs:
                   "Middleware Trivy JSON report is missing."
               )
 
-          # Temporary exceptions are limited to the known jsrsasign findings
-          # inherited through the legacy Hyperledger Fabric Node SDK.
-          approved = {
-              ("jsrsasign", "CVE-2024-21484"),
-              ("jsrsasign", "CVE-2026-4598"),
-              ("jsrsasign", "CVE-2026-4599"),
-              ("jsrsasign", "CVE-2026-4600"),
-              ("jsrsasign", "CVE-2026-4601"),
-              ("jsrsasign", "CVE-2026-4602"),
-          }
+          report = json.loads(
+              report_path.read_text(encoding="utf-8")
+          )
 
-          report = json.loads(report_path.read_text(encoding="utf-8"))
-          excepted = []
           blocking = []
 
           for result in report.get("Results", []) or []:
               target = str(result.get("Target", ""))
+              result_class = str(result.get("Class", ""))
+              result_type = str(result.get("Type", ""))
 
               for finding in result.get("Vulnerabilities", []) or []:
                   severity = str(
@@ -597,64 +666,60 @@ jobs:
                   if severity not in {"HIGH", "CRITICAL"}:
                       continue
 
-                  package = str(finding.get("PkgName", ""))
-                  vuln_id = str(
-                      finding.get("VulnerabilityID", "")
+                  blocking.append(
+                      {
+                          "target": target,
+                          "class": result_class,
+                          "type": result_type,
+                          "package": str(
+                              finding.get("PkgName", "")
+                          ),
+                          "id": str(
+                              finding.get("VulnerabilityID", "")
+                          ),
+                          "severity": severity,
+                          "installed": str(
+                              finding.get("InstalledVersion", "")
+                          ),
+                          "fixed": str(
+                              finding.get("FixedVersion", "")
+                          ),
+                      }
                   )
-
-                  item = {
-                      "target": target,
-                      "package": package,
-                      "id": vuln_id,
-                      "severity": severity,
-                      "installed": str(
-                          finding.get("InstalledVersion", "")
-                      ),
-                      "fixed": str(
-                          finding.get("FixedVersion", "")
-                      ),
-                  }
-
-                  if (package, vuln_id) in approved:
-                      excepted.append(item)
-                  else:
-                      blocking.append(item)
 
           print()
           print("==========================================")
           print("Middleware image vulnerability gate")
           print("==========================================")
-          print(f"Approved Fabric SDK exceptions: {len(excepted)}")
-          print(f"Blocking findings:              {len(blocking)}")
+          print(f"Blocking findings: {len(blocking)}")
           print()
-
-          if excepted:
-              print("APPROVED TEMPORARY FABRIC SDK EXCEPTIONS:")
-              for item in excepted:
-                  print(
-                      f"  - {item['severity']} {item['id']} "
-                      f"{item['package']}@{item['installed']} "
-                      f"({item['target']})"
-                  )
-              print()
 
           if blocking:
               print("BLOCKING HIGH/CRITICAL IMAGE FINDINGS:")
+
               for item in blocking:
                   fixed = (
                       item["fixed"]
                       or "no fixed version reported"
                   )
+
+                  location = (
+                      f"target={item['target']!r}, "
+                      f"class={item['class']!r}, "
+                      f"type={item['type']!r}"
+                  )
+
                   print(
                       f"  - {item['severity']} {item['id']} "
                       f"{item['package']}@{item['installed']} "
-                      f"-> {fixed} ({item['target']})"
+                      f"-> {fixed} ({location})"
                   )
+
               sys.exit(1)
 
           print(
-              "PASS: No unapproved HIGH/CRITICAL vulnerabilities "
-              "were found in the middleware image."
+              "PASS: No HIGH/CRITICAL vulnerabilities "
+              "were found in the freshly built middleware image."
           )
           PY
 
