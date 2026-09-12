@@ -280,7 +280,7 @@ jobs:
           exit-code: "0"
           format: table
 
-      - name: Enforce dependency vulnerability gate
+      - name: Generate dependency vulnerability JSON
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           skip-setup-trivy: true
@@ -290,10 +290,157 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
-          exit-code: "1"
+          exit-code: "0"
+          format: json
+          output: security-results/trivy-dependencies.json
+
+      - name: Generate dependency SARIF
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          skip-setup-trivy: true
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
+          exit-code: "0"
           format: sarif
           limit-severities-for-sarif: true
           output: security-results/code-scanning/trivy-dependencies.sarif
+
+      - name: Enforce dependency vulnerability gate
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          report_path = Path("security-results/trivy-dependencies.json")
+          lock_path = Path("middleware/package-lock.json")
+
+          if not report_path.is_file():
+              raise SystemExit("Trivy dependency JSON report is missing.")
+
+          if not lock_path.is_file():
+              raise SystemExit("middleware/package-lock.json is missing.")
+
+          lock = json.loads(lock_path.read_text(encoding="utf-8"))
+          installed_fabric_network = (
+              lock.get("packages", {})
+              .get("node_modules/fabric-network", {})
+              .get("version")
+          )
+
+          if installed_fabric_network != "2.2.20":
+              raise SystemExit(
+                  "Temporary Fabric SDK vulnerability exceptions are valid only "
+                  "for fabric-network@2.2.20; found "
+                  f"{installed_fabric_network!r}."
+              )
+
+          # Temporary, narrowly scoped exception for vulnerabilities inherited
+          # through the deprecated fabric-network@2.2.20 dependency chain.
+          # Any other HIGH/CRITICAL finding remains blocking.
+          approved = {
+              "elliptic": {
+                  "GHSA-848j-6mx2-7j84",
+                  "CVE-2025-14505",
+              },
+              "jsrsasign": {
+                  "GHSA-rh63-9qcf-83gf",
+                  "CVE-2024-21484",
+                  "GHSA-w8q8-93cx-6h7r",
+                  "CVE-2026-4601",
+                  "GHSA-464q-cqxq-xhgr",
+                  "CVE-2026-4603",
+                  "GHSA-8qwj-4jxw-m8jw",
+                  "CVE-2026-4602",
+                  "GHSA-5jx8-q4cp-rhh6",
+                  "CVE-2026-4599",
+                  "GHSA-8g7p-jf3g-gxcp",
+                  "CVE-2026-4598",
+                  "GHSA-wvqx-v3f6-w8rh",
+                  "CVE-2026-4600",
+              },
+          }
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          excepted = []
+          blocking = []
+
+          for result in report.get("Results", []) or []:
+              target = str(result.get("Target", "")).replace("\\", "/")
+
+              for finding in result.get("Vulnerabilities", []) or []:
+                  severity = str(finding.get("Severity", "")).upper()
+                  if severity not in {"HIGH", "CRITICAL"}:
+                      continue
+
+                  package = str(finding.get("PkgName", ""))
+                  vuln_id = str(finding.get("VulnerabilityID", ""))
+                  item = {
+                      "target": target,
+                      "package": package,
+                      "id": vuln_id,
+                      "severity": severity,
+                      "installed": str(finding.get("InstalledVersion", "")),
+                      "fixed": str(finding.get("FixedVersion", "")),
+                  }
+
+                  is_middleware_lock = target.endswith(
+                      "middleware/package-lock.json"
+                  )
+                  is_approved_id = vuln_id in approved.get(package, set())
+
+                  if is_middleware_lock and is_approved_id:
+                      excepted.append(item)
+                  else:
+                      blocking.append(item)
+
+          print()
+          print("==========================================")
+          print("Trivy dependency vulnerability gate")
+          print("==========================================")
+          print(
+              "fabric-network version: "
+              f"{installed_fabric_network}"
+          )
+          print(f"Approved temporary exceptions: {len(excepted)}")
+          print(f"Blocking findings:              {len(blocking)}")
+          print()
+
+          if excepted:
+              print("APPROVED TEMPORARY FABRIC SDK EXCEPTIONS:")
+              for item in excepted:
+                  print(
+                      "  - "
+                      f"{item['severity']} {item['id']} "
+                      f"{item['package']}@{item['installed']} "
+                      f"({item['target']})"
+                  )
+              print()
+
+          if blocking:
+              print("BLOCKING HIGH/CRITICAL FINDINGS:")
+              for item in blocking:
+                  fixed = item["fixed"] or "no fixed version reported"
+                  print(
+                      "  - "
+                      f"{item['severity']} {item['id']} "
+                      f"{item['package']}@{item['installed']} "
+                      f"-> {fixed} ({item['target']})"
+                  )
+              print()
+              sys.exit(1)
+
+          print(
+              "PASS: No unapproved HIGH/CRITICAL dependency "
+              "vulnerabilities were found."
+          )
+          PY
 
       - name: Block newly introduced secrets
         if: always() && steps.changed-files.outputs.secret_diff == '1'
@@ -307,6 +454,18 @@ jobs:
           format: sarif
           limit-severities-for-sarif: true
           output: security-results/code-scanning/trivy-secret-changes.sarif
+
+      - name: Report new IaC regressions
+        if: always() && steps.changed-files.outputs.iac_count != '0'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          skip-setup-trivy: true
+          scan-type: fs
+          scan-ref: .security-iac-changes
+          scanners: misconfig
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          format: table
 
       - name: Block new IaC regressions
         if: always() && steps.changed-files.outputs.iac_count != '0'
