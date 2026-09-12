@@ -11,3 +11,11 @@ network/channel-artifacts-final
 network/ipfs_data
 frontend
 chaincode
+.venv
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
