@@ -536,6 +536,11 @@ jobs:
           exit-code: "0"
           format: table
 
+      - name: Prepare middleware security report directory
+        run: |
+          set -euo pipefail
+          mkdir -p security-results
+
       - name: Generate middleware image vulnerability JSON
         uses: aquasecurity/trivy-action@v0.36.0
         with:
