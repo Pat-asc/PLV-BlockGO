@@ -536,16 +536,122 @@ jobs:
           exit-code: "0"
           format: table
 
-      - name: Enforce middleware image OS vulnerability gate
+      - name: Generate middleware image vulnerability JSON
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           version: v0.74.0
           image-ref: blockgo/middleware:ci
           scanners: vuln
-          pkg-types: os
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          exit-code: "1"
+          exit-code: "0"
+          format: json
+          output: security-results/middleware-image-vulnerabilities.json
+
+      - name: Enforce middleware image vulnerability gate
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          report_path = Path(
+              "security-results/middleware-image-vulnerabilities.json"
+          )
+
+          if not report_path.is_file():
+              raise SystemExit(
+                  "Middleware Trivy JSON report is missing."
+              )
+
+          # Temporary exceptions are limited to the known jsrsasign findings
+          # inherited through the legacy Hyperledger Fabric Node SDK.
+          approved = {
+              ("jsrsasign", "CVE-2024-21484"),
+              ("jsrsasign", "CVE-2026-4598"),
+              ("jsrsasign", "CVE-2026-4599"),
+              ("jsrsasign", "CVE-2026-4600"),
+              ("jsrsasign", "CVE-2026-4601"),
+              ("jsrsasign", "CVE-2026-4602"),
+          }
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          excepted = []
+          blocking = []
+
+          for result in report.get("Results", []) or []:
+              target = str(result.get("Target", ""))
+
+              for finding in result.get("Vulnerabilities", []) or []:
+                  severity = str(
+                      finding.get("Severity", "")
+                  ).upper()
+
+                  if severity not in {"HIGH", "CRITICAL"}:
+                      continue
+
+                  package = str(finding.get("PkgName", ""))
+                  vuln_id = str(
+                      finding.get("VulnerabilityID", "")
+                  )
+
+                  item = {
+                      "target": target,
+                      "package": package,
+                      "id": vuln_id,
+                      "severity": severity,
+                      "installed": str(
+                          finding.get("InstalledVersion", "")
+                      ),
+                      "fixed": str(
+                          finding.get("FixedVersion", "")
+                      ),
+                  }
+
+                  if (package, vuln_id) in approved:
+                      excepted.append(item)
+                  else:
+                      blocking.append(item)
+
+          print()
+          print("==========================================")
+          print("Middleware image vulnerability gate")
+          print("==========================================")
+          print(f"Approved Fabric SDK exceptions: {len(excepted)}")
+          print(f"Blocking findings:              {len(blocking)}")
+          print()
+
+          if excepted:
+              print("APPROVED TEMPORARY FABRIC SDK EXCEPTIONS:")
+              for item in excepted:
+                  print(
+                      f"  - {item['severity']} {item['id']} "
+                      f"{item['package']}@{item['installed']} "
+                      f"({item['target']})"
+                  )
+              print()
+
+          if blocking:
+              print("BLOCKING HIGH/CRITICAL IMAGE FINDINGS:")
+              for item in blocking:
+                  fixed = (
+                      item["fixed"]
+                      or "no fixed version reported"
+                  )
+                  print(
+                      f"  - {item['severity']} {item['id']} "
+                      f"{item['package']}@{item['installed']} "
+                      f"-> {fixed} ({item['target']})"
+                  )
+              sys.exit(1)
+
+          print(
+              "PASS: No unapproved HIGH/CRITICAL vulnerabilities "
+              "were found in the middleware image."
+          )
+          PY
 
       - name: Scan ASP.NET image
         uses: aquasecurity/trivy-action@v0.36.0
