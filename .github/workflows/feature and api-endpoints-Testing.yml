@@ -1203,12 +1203,29 @@ jobs:
           ZAP_RULES_PATH: ${{ steps.zap-rules.outputs.path }}
         run: |
           set -uo pipefail
-          mkdir -p security-results
 
-          # The repository is mounted at /zap/wrk inside the ZAP container.
-          # Use absolute container paths for local OpenAPI/config/report files.
+          mkdir -p security-results
+          chmod 0777 security-results
+
+          echo "===== ZAP REPORT DIRECTORY ====="
+          ls -ld security-results
+
           set +e
-          timeout 60m docker run             --rm             --network host             --volume "$PWD:/zap/wrk/:rw"             ghcr.io/zaproxy/zaproxy:stable             zap-api-scan.py               -t "/zap/wrk/${OPENAPI_PATH}"               -f openapi               -c "/zap/wrk/${ZAP_RULES_PATH}"               -I               -r /zap/wrk/security-results/zap-report.html               -J /zap/wrk/security-results/zap-report.json               -w /zap/wrk/security-results/zap-report.md               -T 10
+          timeout 60m docker run \
+            --rm \
+            --network host \
+            --volume "$PWD:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-api-scan.py \
+              -t "/zap/wrk/${OPENAPI_PATH}" \
+              -f openapi \
+              -c "/zap/wrk/${ZAP_RULES_PATH}" \
+              -I \
+              -r /zap/wrk/security-results/zap-report.html \
+              -J /zap/wrk/security-results/zap-report.json \
+              -w /zap/wrk/security-results/zap-report.md \
+              -T 10
+
           ZAP_EXIT=$?
           set -e
 
