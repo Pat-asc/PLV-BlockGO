@@ -19,14 +19,18 @@ RUN python3 -m venv /opt/blockgo-venv
 
 ENV PATH="/opt/blockgo-venv/bin:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
+
 COPY package*.json ./
 COPY requirements.txt ./
 
 RUN npm ci --omit=dev
 
 RUN python -m pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir --upgrade "setuptools>=78.1.1"
+    python -m pip install --no-cache-dir -r requirements.txt && \
+    python -m pip install --no-cache-dir --upgrade \
+        "msgpack>=1.2.1" \
+        "setuptools>=78.1.1" && \
+    python -m pip check
 
 COPY --chown=node:node . .
 
