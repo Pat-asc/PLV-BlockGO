@@ -9,6 +9,6 @@ namespace Client_app.Services
         Task<ManagedAccountResult> CreateRegistrarAsync(RegistrarAccountRequest request, string actorEmail, string? ipAddress, CancellationToken cancellationToken);
         Task<ManagedAccountResult> UpdateRegistrarAsync(int userId, UpdateRegistrarAccountRequest request, string actorEmail, string? ipAddress, CancellationToken cancellationToken);
         Task<ManagedAccountResult> DeleteRegistrarAsync(int userId, string actorEmail, string? ipAddress, CancellationToken cancellationToken);
-        Task<ManagedAccountResult> ResetPasswordAsync(int userId, string newPassword, string actorEmail, string actorRole, string? ipAddress, CancellationToken cancellationToken);
+        Task<PasswordResetResult> ResetPasswordAsync(int userId, string newPassword, string actorEmail, string actorRole, string? ipAddress, CancellationToken cancellationToken);
     }
 }

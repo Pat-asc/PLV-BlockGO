@@ -170,9 +170,20 @@ try
         gatewayApp.UseCors("AllowFrontend");
         gatewayApp.Use(async (context, next) =>
         {
-            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-            context.Response.Headers["X-Frame-Options"] = "DENY";
-            context.Response.Headers["Referrer-Policy"] = "no-referrer";
+            context.Response.OnStarting(() =>
+            {
+                context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+                if (context.Request.Path.StartsWithSegments("/api/SystemMonitoring/grafana", StringComparison.OrdinalIgnoreCase))
+                {
+                    context.Response.Headers["X-Frame-Options"] = "SAMEORIGIN";
+                }
+                else
+                {
+                    context.Response.Headers["X-Frame-Options"] = "DENY";
+                }
+                context.Response.Headers["Referrer-Policy"] = "no-referrer";
+                return Task.CompletedTask;
+            });
             await next();
         });
         gatewayApp.MapGet("/health", () => Results.Ok(new

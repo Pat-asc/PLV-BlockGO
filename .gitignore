@@ -104,3 +104,7 @@ chaincode/.env
 # Ignore Binaries but KEEP directory
 network/bin/*
 !network/bin/.gitkeep
+
+# Runtime logs
+*.log
+client-app/logs/

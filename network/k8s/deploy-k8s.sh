@@ -2377,7 +2377,11 @@ prepare_manifests() {
             faculty-chaincode \
             department-chaincode \
             postgres-backup; do
-            sed -i "s|${image_name}:latest|${image_name}:${LOCAL_IMAGE_TAG}|g" "$TMP_K8S_DIR"/*.yaml
+            # Replace any existing local tag, not only :latest. This keeps local
+            # manifests pinned to the immutable source revision generated for this run.
+            sed -E -i \
+                "s|^([[:space:]]*image:[[:space:]]*)${image_name}:[^[:space:]#]+([[:space:]]*(#.*)?)$|\1${image_name}:${LOCAL_IMAGE_TAG}\2|" \
+                "$TMP_K8S_DIR"/*.yaml
         done
         sed -i 's/imagePullPolicy: Always/imagePullPolicy: Never/g' "$TMP_K8S_DIR"/*.yaml
         sed -i 's/value: file/value: none/g' "$TMP_K8S_DIR"/06-orderer*.yaml

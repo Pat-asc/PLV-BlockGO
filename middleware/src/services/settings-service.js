@@ -14,6 +14,7 @@ async function ensureSettingsTable() {
 }
 
 app.get('/api/SystemSettings/:key', async (req, res) => {
+    if (req.params.key.length > 100) return res.status(400).json({ error: 'Setting key must be at most 100 characters.' });
     await ensureSettingsTable();
     const result = await dbRead.query('SELECT value FROM systemsettings WHERE key = $1', [req.params.key]);
     res.json(result.rows.length

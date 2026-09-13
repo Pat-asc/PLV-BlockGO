@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 
 WORKDIR /src
@@ -5,15 +7,16 @@ WORKDIR /src
 COPY *.csproj ./
 
 RUN --mount=type=cache,id=blockgo-nuget,target=/root/.nuget/packages \
-    dotnet restore For_Testing_Only_Capstone.csproj --disable-parallel
+    dotnet restore
 
 COPY . .
 
 RUN --mount=type=cache,id=blockgo-nuget,target=/root/.nuget/packages \
-    dotnet publish For_Testing_Only_Capstone.csproj \
-    -c Release \
-    -o /app/publish \
-    --no-restore
+    dotnet publish \
+        --configuration Release \
+        --output /app/publish \
+        --no-restore \
+        /p:UseAppHost=false
 
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
@@ -21,18 +24,24 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 USER root
 
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-        --only-upgrade libpcre2-8-0 && \
-    rm -rf /var/lib/apt/lists/*
+        ca-certificates \
+        libpcre2-8-0 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY --from=build /app/publish .
+COPY --from=build --chown=app:app /app/publish .
 
-RUN dpkg-query -W -f='${Package} ${Version}\n' libpcre2-8-0
+RUN mkdir -p /app/logs && \
+    chown -R app:app /app
 
-EXPOSE 5000 5101 5102 5103 5104 5105
+ENV ASPNETCORE_URLS=http://0.0.0.0:5000
+ENV DOTNET_RUNNING_IN_CONTAINER=true
 
-ENV ASPNETCORE_URLS=http://+:5000
+EXPOSE 5000
 
-ENTRYPOINT ["dotnet", "For_Testing_Only_Capstone.dll"]
+USER app
+
+ENTRYPOINT ["dotnet", "client-app.dll"]

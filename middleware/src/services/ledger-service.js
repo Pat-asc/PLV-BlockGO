@@ -2,6 +2,7 @@ const { authenticateJWT, authorizeRole, requireInternalKey, requireRegistrarOrIn
 const { required, serviceUrl } = require('../shared/config');
 const { requestJson } = require('../shared/internal-http');
 const createLogger = require('../shared/logger');
+const { filterLedgerTransactions } = require('../shared/ledger-transactions');
 const { normalizeAuthRole } = require('../shared/roles');
 const { createServiceApp, installErrorHandler, listen } = require('../shared/service-app');
 const { cacheStats, checkFabricEndpoints, closeGateways, contractForUser, disconnect } = require('../fabric/gateway-manager');
@@ -117,6 +118,26 @@ app.get('/api/student-transactions', authenticate, async (req, res) => {
         onLedgerError(actor?.username, error);
         logger.error({ err: error, username: actor?.username }, 'Student transaction history query failed');
         res.status(500).json({ error: process.env.NODE_ENV === 'production' ? 'Unable to retrieve transaction history' : error.message });
+    }
+});
+
+app.get('/api/admin/ledger-transactions', authenticate, authorizeRole(['system_admin']), async (req, res) => {
+    let actor;
+    try {
+        actor = await actorForRequest(req);
+        const contract = await contractWithReadFallback(actor);
+        const result = await contract.evaluateTransaction('GetAllGrades');
+        let records = JSON.parse(result.toString());
+        if (records === null) records = [];
+        if (!Array.isArray(records)) throw new Error('The grade ledger returned an invalid response.');
+        decodeFacultyIdentity(records);
+        res.json({ status: 'success', data: filterLedgerTransactions(records, req.query) });
+    } catch (error) {
+        onLedgerError(actor?.username, error);
+        logger.error({ err: error, username: actor?.username }, 'Administrator ledger transaction query failed');
+        res.status(error.status || 500).json({
+            error: process.env.NODE_ENV === 'production' ? 'Unable to retrieve ledger transactions' : error.message
+        });
     }
 });
 

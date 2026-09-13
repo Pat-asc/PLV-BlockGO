@@ -23,7 +23,7 @@ public static class EnrollmentSectioningService
             JOIN users u ON u.id = e.student_user_id
             JOIN studentprofiles sp ON sp.user_id = u.id
             JOIN academic_programs p ON p.program_id = e.program_id
-            WHERE e.status = 'ENROLLED' AND e.academic_section_id IS NULL
+            WHERE e.status = 'ENROLLED' AND (e.academic_section_id IS NULL OR NULLIF(TRIM(COALESCE(e.section, '')), '') IS NULL)
               AND LOWER(u.role) = 'student' AND LOWER(u.status) = 'approved' AND u.is_active
               AND (@department IS NULL OR LOWER(p.program_code) = LOWER(@department)
                    OR LOWER(p.program_name) = LOWER(@department))

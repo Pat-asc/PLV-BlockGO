@@ -87,6 +87,7 @@ data:
       location ^~ /api/Curriculums { proxy_pass http://client_app; }
       location ^~ /api/SupportTickets { proxy_pass http://client_app; }
       location ^~ /api/backend/health { proxy_pass http://client_app; }
+      location ^~ /api/password-reset-requests { proxy_pass http://client_app; }
       location ^~ /api/Auth { proxy_pass http://client_app; }
       location ^~ /api/registrar/ { proxy_pass http://client_app; }
 
@@ -139,8 +140,8 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
       - name: frontend-nginx
-        image: registry.example.com/plv-repo/frontend:latest
-        imagePullPolicy: Always
+        image: frontend:blockgo-local-20260911215000
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
           name: http
