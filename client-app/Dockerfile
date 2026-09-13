@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 
 WORKDIR /src
@@ -16,6 +18,7 @@ RUN --mount=type=cache,id=blockgo-nuget,target=/root/.nuget/packages \
         --no-restore \
         /p:UseAppHost=false
 
+
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 
 USER root
@@ -29,11 +32,16 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY --from=build /app/publish .
+COPY --from=build --chown=app:app /app/publish .
+
+RUN mkdir -p /app/logs && \
+    chown -R app:app /app
 
 ENV ASPNETCORE_URLS=http://0.0.0.0:5000
 ENV DOTNET_RUNNING_IN_CONTAINER=true
 
 EXPOSE 5000
+
+USER app
 
 ENTRYPOINT ["dotnet", "client-app.dll"]
