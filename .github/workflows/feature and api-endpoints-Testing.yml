@@ -1114,6 +1114,29 @@ jobs:
           echo "Security-test containers:"
           docker ps --filter network=blockgo-security
 
+                    echo
+          echo "===== ALL SECURITY CONTAINERS ====="
+          docker ps -a \
+            --filter name=blockgo-security \
+            --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+
+          echo
+          echo "===== UPLOAD SERVICE STARTUP LOG ====="
+          docker logs --tail 200 blockgo-security-upload || true
+
+          echo
+          echo "===== VERIFY UPLOAD CONTAINER IS RUNNING ====="
+          if [ "$(docker inspect \
+            --format '{{.State.Running}}' \
+            blockgo-security-upload 2>/dev/null || echo false)" != "true" ]; then
+
+            echo "::error::grade-upload security service exited during startup."
+            docker inspect blockgo-security-upload \
+              --format 'Status={{.State.Status}} ExitCode={{.State.ExitCode}} Error={{.State.Error}}' \
+              || true
+            exit 1
+          fi
+
       - name: Wait for middleware health endpoint
         run: |
           set -euo pipefail
@@ -1401,7 +1424,7 @@ jobs:
               echo "::error::$NAME -> $RESULT"
               FAILED=1
             fi
-          }
+          } 
 
           check_job "Heavy integration/container tests" "$HEAVY_RESULT"
           check_job "Static/supply-chain security" "$STATIC_SECURITY_RESULT"
