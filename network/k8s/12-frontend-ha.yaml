@@ -101,6 +101,7 @@ data:
         try_files $uri $uri/ /index.html;
       }
     }
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -110,22 +111,37 @@ metadata:
   labels:
     app: frontend
     tier: web
+
 spec:
   replicas: 1
+
   selector:
     matchLabels:
       app: frontend
+
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 0
+
   template:
     metadata:
       labels:
         app: frontend
         tier: web
+
     spec:
+      automountServiceAccountToken: false
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -138,30 +154,63 @@ spec:
                   values:
                   - frontend
               topologyKey: kubernetes.io/hostname
+
       containers:
       - name: frontend-nginx
-        image: frontend:blockgo-local-20260911215000
-        imagePullPolicy: IfNotPresent
+        image: registry.example.com/plv-repo/frontend:latest
+        imagePullPolicy: Always
+
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 101
+          runAsGroup: 101
+
+          privileged: false
+          allowPrivilegeEscalation: false
+
+          readOnlyRootFilesystem: true
+
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE
+
         ports:
         - containerPort: 80
           name: http
+          protocol: TCP
+
         volumeMounts:
         - name: nginx-config
           mountPath: /etc/nginx/conf.d/default.conf
           subPath: default.conf
           readOnly: true
+
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+
+        - name: nginx-tmp
+          mountPath: /tmp
+
         livenessProbe:
           httpGet:
             path: /nginx-health
             port: 80
           initialDelaySeconds: 15
           periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+
         readinessProbe:
           httpGet:
             path: /nginx-health
             port: 80
           initialDelaySeconds: 5
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
         resources:
           requests:
             cpu: "100m"
@@ -169,10 +218,18 @@ spec:
           limits:
             cpu: "500m"
             memory: "512Mi"
+
       volumes:
       - name: nginx-config
         configMap:
           name: frontend-nginx-config
+
+      - name: nginx-cache
+        emptyDir: {}
+
+      - name: nginx-tmp
+        emptyDir: {}
+
 ---
 apiVersion: v1
 kind: Service
@@ -183,10 +240,13 @@ metadata:
     app: frontend
   annotations:
     cloud.google.com/neg: '{"ingress": true}'
+
 spec:
   type: ClusterIP
+
   selector:
     app: frontend
+
   ports:
   - port: 80
     targetPort: 80
