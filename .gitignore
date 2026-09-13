@@ -24,6 +24,8 @@ temp/
 .cache/
 *.cache
 *.cache.json
+/tests/
+/test-results/
 
 # =========================
 # GLOBAL DEPENDENCIES & BUILD
@@ -102,3 +104,16 @@ chaincode/.env
 # Ignore Binaries but KEEP directory
 network/bin/*
 !network/bin/.gitkeep
+
+# Runtime logs
+*.log
+client-app/logs/
+
+# Runtime/build artifacts
+client-app/build.log
+client-app/logs/
+network/.local-*-port-forward*.log
+network/k8s/.repair-audit/
+
+# Hyperledger Fabric generated private keys
+**/keystore/*_sk

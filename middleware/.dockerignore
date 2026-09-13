@@ -6,3 +6,14 @@ node_modules
 *.log
 uploads
 legacy-monolith.js
+
+.venv
+venv
+env
+
+__pycache__
+*.pyc
+*.pyo
+
+.git
+.gitignore

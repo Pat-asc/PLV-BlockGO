@@ -332,7 +332,7 @@ namespace Client_app.Services
                 warnings.Count == 0 ? null : string.Join(" ", warnings));
         }
 
-        public async Task<ManagedAccountResult> ResetPasswordAsync(
+        public async Task<PasswordResetResult> ResetPasswordAsync(
             int userId,
             string newPassword,
             string actorEmail,
@@ -351,11 +351,13 @@ namespace Client_app.Services
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
             (int Id, string AccountId, string FullName, string Email, string Role, string Status, bool IsActive, string? Department) target;
+            var passwordAlreadySet = false;
             await using (var lookup = new NpgsqlCommand(@"
                 SELECT u.id, COALESCE(u.username, u.id::text),
                        COALESCE(sp.full_name, fp.full_name, ap.full_name, u.email),
                        u.email, u.role, u.status, u.is_active,
-                       COALESCE(sp.department, fp.department, ap.department)
+                       COALESCE(sp.department, fp.department, ap.department),
+                       COALESCE(u.password_hash = crypt(@password, u.password_hash), FALSE)
                 FROM users u
                 LEFT JOIN studentprofiles sp ON sp.user_id = u.id
                 LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
@@ -364,6 +366,7 @@ namespace Client_app.Services
                 FOR UPDATE OF u;", connection, transaction))
             {
                 lookup.Parameters.AddWithValue("userId", userId);
+                lookup.Parameters.AddWithValue("password", newPassword);
                 await using var reader = await lookup.ExecuteReaderAsync(cancellationToken);
                 if (!await reader.ReadAsync(cancellationToken))
                 {
@@ -374,6 +377,7 @@ namespace Client_app.Services
                     reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                     NormalizeAccountRole(reader.GetString(4)), reader.GetString(5), reader.GetBoolean(6),
                     reader.IsDBNull(7) ? null : reader.GetString(7));
+                passwordAlreadySet = reader.GetBoolean(8);
             }
 
             var isAllowed = normalizedActorRole switch
@@ -389,43 +393,92 @@ namespace Client_app.Services
                     : "System Administrators may reset passwords only for Registrar accounts.");
             }
 
-            await using (var update = new NpgsqlCommand(@"
-                UPDATE users
-                SET password_hash = crypt(@password, gen_salt('bf')),
-                    password_reset_token = NULL,
-                    password_reset_expires = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = @userId;", connection, transaction))
+            if (!passwordAlreadySet)
             {
+                await using var update = new NpgsqlCommand(@"
+                    UPDATE users
+                    SET password_hash = crypt(@password, gen_salt('bf')),
+                        password_reset_token = NULL,
+                        password_reset_expires = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = @userId;", connection, transaction);
                 update.Parameters.AddWithValue("password", newPassword);
                 update.Parameters.AddWithValue("userId", userId);
                 await update.ExecuteNonQueryAsync(cancellationToken);
             }
 
-            await using (var resetRequestTable = new NpgsqlCommand("SELECT to_regclass('public.password_reset_requests') IS NOT NULL;", connection, transaction))
+            await using (var resetRequestTable = new NpgsqlCommand(@"
+                SELECT to_regclass('public.password_reset_requests') IS NOT NULL,
+                       EXISTS (
+                           SELECT 1
+                           FROM information_schema.columns
+                           WHERE table_schema = 'public'
+                             AND table_name = 'password_reset_requests'
+                             AND column_name = 'used_at'
+                       ),
+                       EXISTS (
+                           SELECT 1
+                           FROM information_schema.columns
+                           WHERE table_schema = 'public'
+                             AND table_name = 'password_reset_requests'
+                             AND column_name = 'request_status'
+                       );", connection, transaction))
             {
-                var hasResetRequestTable = Convert.ToBoolean(await resetRequestTable.ExecuteScalarAsync(cancellationToken));
+                var hasResetRequestTable = false;
+                var hasLegacyUsedAt = false;
+                var hasApprovalStatus = false;
+                await using (var reader = await resetRequestTable.ExecuteReaderAsync(cancellationToken))
+                {
+                    if (await reader.ReadAsync(cancellationToken))
+                    {
+                        hasResetRequestTable = reader.GetBoolean(0);
+                        hasLegacyUsedAt = reader.GetBoolean(1);
+                        hasApprovalStatus = reader.GetBoolean(2);
+                    }
+                }
+
                 if (hasResetRequestTable)
                 {
-                    await using var expireRequests = new NpgsqlCommand(@"
-                        UPDATE password_reset_requests
-                        SET used_at = (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT
-                        WHERE user_id = @userId AND used_at IS NULL;", connection, transaction);
+                    var completeRequestSql = hasApprovalStatus
+                        ? @"
+                            UPDATE password_reset_requests
+                            SET request_status = 'COMPLETED',
+                                completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+                            WHERE user_id = @userId
+                              AND request_status IN ('PENDING', 'APPROVED');"
+                        : hasLegacyUsedAt
+                            ? @"
+                                UPDATE password_reset_requests
+                                SET used_at = (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT
+                                WHERE user_id = @userId AND used_at IS NULL;"
+                            : null;
+
+                    if (completeRequestSql is null)
+                    {
+                        throw new InvalidOperationException(
+                            "The password reset request table does not match a supported schema.");
+                    }
+
+                    await using var expireRequests = new NpgsqlCommand(completeRequestSql, connection, transaction);
                     expireRequests.Parameters.AddWithValue("userId", userId);
                     await expireRequests.ExecuteNonQueryAsync(cancellationToken);
                 }
             }
 
-            await _auditLog.LogAsync(
-                actorEmail, normalizedActorRole, "ACCOUNT_PASSWORD_RESET", "user", userId.ToString(),
-                new { target.Role, target.Email },
-                new { target.Role, target.Email, passwordReset = true },
-                $"{normalizedActorRole} manually reset the password of a {target.Role} account.",
-                ipAddress, connection, transaction, cancellationToken);
+            if (!passwordAlreadySet)
+            {
+                await _auditLog.LogAsync(
+                    actorEmail, normalizedActorRole, "ACCOUNT_PASSWORD_RESET", "user", userId.ToString(),
+                    new { target.Role, target.Email },
+                    new { target.Role, target.Email, passwordReset = true },
+                    $"{normalizedActorRole} manually reset the password of a {target.Role} account.",
+                    ipAddress, connection, transaction, cancellationToken);
+            }
             await transaction.CommitAsync(cancellationToken);
 
-            return new ManagedAccountResult(target.Id, target.AccountId, target.FullName, target.Email, target.Role,
+            var account = new ManagedAccountResult(target.Id, target.AccountId, target.FullName, target.Email, target.Role,
                 target.Status, target.IsActive, target.Department, true);
+            return new PasswordResetResult(account, passwordAlreadySet);
         }
 
         private async Task RegisterFabricIdentityAsync(string email, string password, string role, CancellationToken cancellationToken)

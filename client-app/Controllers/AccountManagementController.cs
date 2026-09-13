@@ -2,6 +2,7 @@ using Client_app.Models;
 using Client_app.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 
 namespace Client_app.Controllers
@@ -12,10 +13,69 @@ namespace Client_app.Controllers
     public sealed class AccountManagementController : ControllerBase
     {
         private readonly IAccountProvisioningService _accounts;
+        private readonly ILogger<AccountManagementController> _logger;
 
-        public AccountManagementController(IAccountProvisioningService accounts)
+        public AccountManagementController(IAccountProvisioningService accounts, ILogger<AccountManagementController> logger)
         {
             _accounts = accounts;
+            _logger = logger;
+        }
+
+        [HttpPost("staff/bulk-upload")]
+        [Authorize(Roles = "registrar")]
+        [Consumes("multipart/form-data")]
+        [RequestSizeLimit(2 * 1024 * 1024)]
+        public async Task<IActionResult> BulkCreateFaculty([FromForm] IFormFile file, CancellationToken cancellationToken)
+        {
+            if (file is null || file.Length == 0)
+                return BadRequest(new { status = "Error", message = "A non-empty CSV faculty account file is required." });
+            if (!string.Equals(Path.GetExtension(file.FileName), ".csv", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { status = "Error", message = "Faculty bulk upload currently accepts CSV files only." });
+
+            try
+            {
+                List<FacultyAccountFile.FacultyAccountRow> rows;
+                await using (var stream = file.OpenReadStream())
+                using (var reader = new StreamReader(stream))
+                    rows = FacultyAccountFile.ReadCsv(reader);
+
+                var results = new List<BulkStaffAccountItemResult>(rows.Count);
+                var actor = RequiredActor();
+                var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+                foreach (var row in rows)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var validationResults = new List<ValidationResult>();
+                    if (!Validator.TryValidateObject(row.Account, new ValidationContext(row.Account), validationResults, true))
+                    {
+                        results.Add(new(row.RowNumber, row.Account.StaffId, false, null,
+                            string.Join(" ", validationResults.Select(result => result.ErrorMessage).Where(message => !string.IsNullOrWhiteSpace(message)))));
+                        continue;
+                    }
+                    try
+                    {
+                        var account = await _accounts.CreateStaffAsync(row.Account, actor, ipAddress, cancellationToken);
+                        results.Add(new(row.RowNumber, row.Account.StaffId, true, account, null));
+                    }
+                    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                    {
+                        results.Add(new(row.RowNumber, row.Account.StaffId, false, null, ex.Message));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Unexpected failure creating faculty account from CSV row {RowNumber}.", row.RowNumber);
+                        results.Add(new(row.RowNumber, row.Account.StaffId, false, null, "The account could not be created because an internal service failed."));
+                    }
+                }
+
+                var created = results.Count(result => result.Success);
+                var response = new BulkStaffAccountResult(results.Count, created, results.Count - created, results);
+                return Ok(new { status = created == results.Count ? "Success" : created == 0 ? "Error" : "PartialSuccess", data = response });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { status = "Error", message = ex.Message });
+            }
         }
 
         [HttpPost("staff")]
@@ -97,11 +157,24 @@ namespace Client_app.Controllers
                     RequiredActorRole(),
                     HttpContext.Connection.RemoteIpAddress?.ToString(),
                     cancellationToken);
-                return Ok(new { status = "Success", message = $"Password reset for {result.Email}.", data = result });
+                return Ok(new
+                {
+                    status = "Success",
+                    message = result.Idempotent
+                        ? $"Password was already set for {result.Account.Email}."
+                        : $"Password reset for {result.Account.Email}.",
+                    idempotent = result.Idempotent,
+                    data = result.Account
+                });
             }
             catch (KeyNotFoundException ex) { return NotFound(new { status = "Error", message = ex.Message }); }
             catch (ArgumentException ex) { return BadRequest(new { status = "Error", message = ex.Message }); }
             catch (UnauthorizedAccessException ex) { return StatusCode(StatusCodes.Status403Forbidden, new { status = "Error", message = ex.Message }); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Password reset failed for user {UserId}.", userId);
+                return StatusCode(500, new { status = "Error", message = "The password could not be reset." });
+            }
         }
 
         private string RequiredActor() => User.Identity?.Name

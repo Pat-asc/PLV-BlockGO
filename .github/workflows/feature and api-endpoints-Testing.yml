@@ -486,12 +486,18 @@ jobs:
             --file frontend/Dockerfile \
             frontend
 
-          docker build --pull \
-            --tag blockgo/middleware:ci \
+          MIDDLEWARE_SHA="$(git rev-parse --short=12 HEAD)"
+          MIDDLEWARE_IMAGE="blockgo/middleware:ci-${MIDDLEWARE_SHA}"
+          echo "MIDDLEWARE_IMAGE=${MIDDLEWARE_IMAGE}" >> "$GITHUB_ENV"
+
+          docker build --pull --no-cache \
+            --tag "${MIDDLEWARE_IMAGE}" \
             --file middleware/Dockerfile \
             middleware
 
-          docker build --pull \
+          docker tag "${MIDDLEWARE_IMAGE}" blockgo/middleware:ci
+
+          docker build --pull --no-cache \
             --tag blockgo/client-app:ci \
             --file client-app/Dockerfile \
             client-app
@@ -525,33 +531,104 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
-      - name: Report middleware image vulnerabilities
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          version: v0.74.0
-          image-ref: blockgo/middleware:ci
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "0"
-          format: table
-
-      - name: Prepare middleware security report directory
+      - name: Verify middleware runtime security versions
         run: |
           set -euo pipefail
+
+          : "${MIDDLEWARE_IMAGE:?MIDDLEWARE_IMAGE was not set by the image build step}"
+
+          echo "===== CHECKED OUT COMMIT ====="
+          git rev-parse HEAD
+
+          echo
+          echo "===== EXACT MIDDLEWARE IMAGE ====="
+          echo "${MIDDLEWARE_IMAGE}"
+          docker image inspect "${MIDDLEWARE_IMAGE}" \
+            --format 'ID={{.Id}} Created={{.Created}}'
+
+          echo
+          echo "===== PYTHON RUNTIME ====="
+          docker run --rm "${MIDDLEWARE_IMAGE}" \
+            /opt/blockgo-venv/bin/python - <<'PY'
+          from importlib.metadata import version
+
+          def numeric(v):
+              parts = []
+              for token in v.split("."):
+                  digits = ""
+                  for ch in token:
+                      if ch.isdigit():
+                          digits += ch
+                      else:
+                          break
+                  parts.append(int(digits or 0))
+              return tuple((parts + [0, 0, 0])[:3])
+
+          msgpack = version("msgpack")
+          setuptools = version("setuptools")
+
+          print("msgpack:", msgpack)
+          print("setuptools:", setuptools)
+
+          if numeric(msgpack) < (1, 2, 1):
+              raise SystemExit(
+                  f"Unsafe msgpack version in runtime image: {msgpack}"
+              )
+
+          if numeric(setuptools) < (78, 1, 1):
+              raise SystemExit(
+                  f"Unsafe setuptools version in runtime image: {setuptools}"
+              )
+          PY
+
+          echo
+          echo "===== PYTHON PACKAGE METADATA ====="
+          docker run --rm "${MIDDLEWARE_IMAGE}" \
+            sh -c '
+              find / -type d \
+                \( -name "msgpack-*.dist-info" \
+                -o -name "setuptools-*.dist-info" \
+                -o -name "msgpack-*.egg-info" \
+                -o -name "setuptools-*.egg-info" \) \
+                2>/dev/null | sort
+            '
+
+          echo
+          echo "===== FABRIC DEPENDENCY ====="
+          docker run --rm "${MIDDLEWARE_IMAGE}" \
+            node -e "
+              const version =
+                require('jsrsasign/package.json').version;
+              console.log('jsrsasign:', version);
+              if (version !== '11.1.1') {
+                console.error(
+                  'Expected jsrsasign 11.1.1 in middleware image.'
+                );
+                process.exit(1);
+              }
+            "
+
+      - name: Generate fresh middleware Trivy report
+        run: |
+          set -euo pipefail
+
+          : "${MIDDLEWARE_IMAGE:?MIDDLEWARE_IMAGE was not set by the image build step}"
+
           mkdir -p security-results
 
-      - name: Generate middleware image vulnerability JSON
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          version: v0.74.0
-          image-ref: blockgo/middleware:ci
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "0"
-          format: json
-          output: security-results/middleware-image-vulnerabilities.json
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$PWD/security-results:/reports" \
+            aquasec/trivy:0.74.0 \
+            image \
+            --cache-dir /tmp/trivy-cache \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --skip-files /opt/blockgo-venv/lib/python3.11/site-packages/pip/_vendor/bom.cdx.json \
+            --format json \
+            --output /reports/middleware-image-vulnerabilities.json \
+            "${MIDDLEWARE_IMAGE}"
 
       - name: Enforce middleware image vulnerability gate
         run: |
@@ -571,23 +648,16 @@ jobs:
                   "Middleware Trivy JSON report is missing."
               )
 
-          # Temporary exceptions are limited to the known jsrsasign findings
-          # inherited through the legacy Hyperledger Fabric Node SDK.
-          approved = {
-              ("jsrsasign", "CVE-2024-21484"),
-              ("jsrsasign", "CVE-2026-4598"),
-              ("jsrsasign", "CVE-2026-4599"),
-              ("jsrsasign", "CVE-2026-4600"),
-              ("jsrsasign", "CVE-2026-4601"),
-              ("jsrsasign", "CVE-2026-4602"),
-          }
+          report = json.loads(
+              report_path.read_text(encoding="utf-8")
+          )
 
-          report = json.loads(report_path.read_text(encoding="utf-8"))
-          excepted = []
           blocking = []
 
           for result in report.get("Results", []) or []:
               target = str(result.get("Target", ""))
+              result_class = str(result.get("Class", ""))
+              result_type = str(result.get("Type", ""))
 
               for finding in result.get("Vulnerabilities", []) or []:
                   severity = str(
@@ -597,64 +667,60 @@ jobs:
                   if severity not in {"HIGH", "CRITICAL"}:
                       continue
 
-                  package = str(finding.get("PkgName", ""))
-                  vuln_id = str(
-                      finding.get("VulnerabilityID", "")
+                  blocking.append(
+                      {
+                          "target": target,
+                          "class": result_class,
+                          "type": result_type,
+                          "package": str(
+                              finding.get("PkgName", "")
+                          ),
+                          "id": str(
+                              finding.get("VulnerabilityID", "")
+                          ),
+                          "severity": severity,
+                          "installed": str(
+                              finding.get("InstalledVersion", "")
+                          ),
+                          "fixed": str(
+                              finding.get("FixedVersion", "")
+                          ),
+                      }
                   )
-
-                  item = {
-                      "target": target,
-                      "package": package,
-                      "id": vuln_id,
-                      "severity": severity,
-                      "installed": str(
-                          finding.get("InstalledVersion", "")
-                      ),
-                      "fixed": str(
-                          finding.get("FixedVersion", "")
-                      ),
-                  }
-
-                  if (package, vuln_id) in approved:
-                      excepted.append(item)
-                  else:
-                      blocking.append(item)
 
           print()
           print("==========================================")
           print("Middleware image vulnerability gate")
           print("==========================================")
-          print(f"Approved Fabric SDK exceptions: {len(excepted)}")
-          print(f"Blocking findings:              {len(blocking)}")
+          print(f"Blocking findings: {len(blocking)}")
           print()
-
-          if excepted:
-              print("APPROVED TEMPORARY FABRIC SDK EXCEPTIONS:")
-              for item in excepted:
-                  print(
-                      f"  - {item['severity']} {item['id']} "
-                      f"{item['package']}@{item['installed']} "
-                      f"({item['target']})"
-                  )
-              print()
 
           if blocking:
               print("BLOCKING HIGH/CRITICAL IMAGE FINDINGS:")
+
               for item in blocking:
                   fixed = (
                       item["fixed"]
                       or "no fixed version reported"
                   )
+
+                  location = (
+                      f"target={item['target']!r}, "
+                      f"class={item['class']!r}, "
+                      f"type={item['type']!r}"
+                  )
+
                   print(
                       f"  - {item['severity']} {item['id']} "
                       f"{item['package']}@{item['installed']} "
-                      f"-> {fixed} ({item['target']})"
+                      f"-> {fixed} ({location})"
                   )
+
               sys.exit(1)
 
           print(
-              "PASS: No unapproved HIGH/CRITICAL vulnerabilities "
-              "were found in the middleware image."
+              "PASS: No HIGH/CRITICAL vulnerabilities "
+              "were found in the freshly built middleware image."
           )
           PY
 
@@ -927,15 +993,90 @@ jobs:
             --file middleware/Dockerfile \
             middleware
 
-      - name: Start isolated middleware security-test container
+      - name: Start isolated middleware security-test containers
         run: |
           set -euo pipefail
 
-          docker rm --force blockgo-security-api 2>/dev/null || true
-          docker rm --force blockgo-security-auth 2>/dev/null || true
+          echo "Cleaning previous security-test containers..."
+
+          for CONTAINER in \
+            blockgo-security-api \
+            blockgo-security-auth \
+            blockgo-security-identity \
+            blockgo-security-ledger \
+            blockgo-security-upload \
+            blockgo-security-settings \
+            blockgo-security-postgres
+          do
+            docker rm --force "$CONTAINER" 2>/dev/null || true
+          done
+
           docker network rm blockgo-security 2>/dev/null || true
           docker network create blockgo-security
 
+          echo "Starting PostgreSQL..."
+          docker run \
+            --detach \
+            --name blockgo-security-postgres \
+            --network blockgo-security \
+            --env POSTGRES_DB=ActivityLogs \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASSWORD=ci-only-postgres-password \
+            --health-cmd='pg_isready -U postgres -d ActivityLogs' \
+            --health-interval=2s \
+            --health-timeout=5s \
+            --health-retries=30 \
+            --volume "$PWD/network/init-db-schema.sql:/docker-entrypoint-initdb.d/001-init-db-schema.sql:ro" \
+            postgres:16-alpine
+
+          POSTGRES_READY=0
+          for ATTEMPT in $(seq 1 60); do
+            POSTGRES_STATUS="$(docker inspect \
+              --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+              blockgo-security-postgres 2>/dev/null || echo missing)"
+            echo "PostgreSQL attempt $ATTEMPT/60 -> $POSTGRES_STATUS"
+
+            if [ "$POSTGRES_STATUS" = "healthy" ]; then
+              POSTGRES_READY=1
+              break
+            fi
+
+            if [ "$POSTGRES_STATUS" = "exited" ] || [ "$POSTGRES_STATUS" = "dead" ] || [ "$POSTGRES_STATUS" = "missing" ]; then
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [ "$POSTGRES_READY" -ne 1 ]; then
+            echo "::error::Isolated PostgreSQL did not become healthy."
+            docker logs --tail 200 blockgo-security-postgres || true
+            exit 1
+          fi
+
+          SCHEMA_READY=0
+          for ATTEMPT in $(seq 1 60); do
+            REQUIRED_TABLES="$(docker exec blockgo-security-postgres \
+              psql --username postgres --dbname ActivityLogs --tuples-only --no-align \
+              --command "SELECT COUNT(*) FROM pg_class WHERE relkind = 'r' AND relname IN ('users', 'security_events');" \
+              2>/dev/null || echo 0)"
+            echo "Schema attempt $ATTEMPT/60 -> $REQUIRED_TABLES required tables"
+
+            if [ "$REQUIRED_TABLES" = "2" ]; then
+              SCHEMA_READY=1
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [ "$SCHEMA_READY" -ne 1 ]; then
+            echo "::error::Repository-managed PostgreSQL schema did not create users and security_events."
+            docker logs --tail 200 blockgo-security-postgres || true
+            exit 1
+          fi
+
+          echo "Starting auth service..."
           docker run \
             --detach \
             --name blockgo-security-auth \
@@ -945,9 +1086,85 @@ jobs:
             --env CI=true \
             --env JWT_SECRET="ci-only-jwt-secret-not-production" \
             --env INTERNAL_API_KEY="ci-only-internal-key-not-production" \
+            --env FABRIC_BOOTSTRAP=false \
+            --env POSTGRES_HOST=blockgo-security-postgres \
+            --env POSTGRES_PORT=5432 \
+            --env POSTGRES_DB=ActivityLogs \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASS=ci-only-postgres-password \
+            --env IDENTITY_SERVICE_URL=http://blockgo-security-identity:4002 \
+            --env LEDGER_SERVICE_URL=http://blockgo-security-ledger:4003 \
             blockgo/middleware:security-ci \
             npm run start:auth
 
+          echo "Starting identity service..."
+          docker run \
+            --detach \
+            --name blockgo-security-identity \
+            --network blockgo-security \
+            --env PORT=4002 \
+            --env NODE_ENV=test \
+            --env CI=true \
+            --env JWT_SECRET="ci-only-jwt-secret-not-production" \
+            --env INTERNAL_API_KEY="ci-only-internal-key-not-production" \
+            --env FABRIC_BOOTSTRAP=false \
+            --env AUTH_SERVICE_URL=http://blockgo-security-auth:4001 \
+            --env LEDGER_SERVICE_URL=http://blockgo-security-ledger:4003 \
+            blockgo/middleware:security-ci \
+            npm run start:identity
+
+          echo "Starting ledger service..."
+          docker run \
+            --detach \
+            --name blockgo-security-ledger \
+            --network blockgo-security \
+            --env PORT=4003 \
+            --env NODE_ENV=test \
+            --env CI=true \
+            --env JWT_SECRET="ci-only-jwt-secret-not-production" \
+            --env INTERNAL_API_KEY="ci-only-internal-key-not-production" \
+            --env FABRIC_BOOTSTRAP=false \
+            --env AUTH_SERVICE_URL=http://blockgo-security-auth:4001 \
+            --env IDENTITY_SERVICE_URL=http://blockgo-security-identity:4002 \
+            blockgo/middleware:security-ci \
+            npm run start:ledger
+
+          echo "Starting grade upload service..."
+          docker run \
+            --detach \
+            --name blockgo-security-upload \
+            --network blockgo-security \
+            --env PORT=4004 \
+            --env NODE_ENV=test \
+            --env CI=true \
+            --env JWT_SECRET="ci-only-jwt-secret-not-production" \
+            --env INTERNAL_API_KEY="ci-only-internal-key-not-production" \
+            --env FABRIC_BOOTSTRAP=false \
+            --env AUTH_SERVICE_URL=http://blockgo-security-auth:4001 \
+            blockgo/middleware:security-ci \
+            npm run start:upload
+
+          echo "Starting settings service..."
+          docker run \
+            --detach \
+            --name blockgo-security-settings \
+            --network blockgo-security \
+            --env PORT=4005 \
+            --env NODE_ENV=test \
+            --env CI=true \
+            --env JWT_SECRET="ci-only-jwt-secret-not-production" \
+            --env INTERNAL_API_KEY="ci-only-internal-key-not-production" \
+            --env FABRIC_BOOTSTRAP=false \
+            --env POSTGRES_HOST=blockgo-security-postgres \
+            --env POSTGRES_PORT=5432 \
+            --env POSTGRES_DB=ActivityLogs \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASS=ci-only-postgres-password \
+            --env AUTH_SERVICE_URL=http://blockgo-security-auth:4001 \
+            blockgo/middleware:security-ci \
+            npm run start:settings
+
+          echo "Starting middleware gateway..."
           docker run \
             --detach \
             --name blockgo-security-api \
@@ -960,7 +1177,112 @@ jobs:
             --env INTERNAL_API_KEY="ci-only-internal-key-not-production" \
             --env FABRIC_BOOTSTRAP=false \
             --env AUTH_SERVICE_URL=http://blockgo-security-auth:4001 \
+            --env IDENTITY_SERVICE_URL=http://blockgo-security-identity:4002 \
+            --env LEDGER_SERVICE_URL=http://blockgo-security-ledger:4003 \
+            --env UPLOAD_SERVICE_URL=http://blockgo-security-upload:4004 \
+            --env SETTINGS_SERVICE_URL=http://blockgo-security-settings:4005 \
             blockgo/middleware:security-ci
+
+          echo
+          echo "Security-test containers:"
+          docker ps --filter network=blockgo-security
+
+          echo
+          echo "===== ALL SECURITY CONTAINERS ====="
+          docker ps -a \
+            --filter name=blockgo-security \
+            --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+
+          echo
+          echo "===== UPLOAD SERVICE STARTUP LOG ====="
+          docker logs --tail 200 blockgo-security-upload || true
+
+          echo
+          echo "===== VERIFY UPLOAD CONTAINER IS RUNNING ====="
+          if [ "$(docker inspect \
+            --format '{{.State.Running}}' \
+            blockgo-security-upload 2>/dev/null || echo false)" != "true" ]; then
+
+            echo "::error::grade-upload security service exited during startup."
+            docker inspect blockgo-security-upload \
+              --format 'Status={{.State.Status}} ExitCode={{.State.ExitCode}} Error={{.State.Error}}' \
+              || true
+            exit 1
+          fi
+
+          echo
+          echo "===== VERIFY AUTH/SETTINGS POSTGRES CONFIGURATION ====="
+          for CONTAINER in blockgo-security-auth blockgo-security-settings; do
+            CONFIGURED_ENV="$(docker inspect \
+              --format '{{range .Config.Env}}{{println .}}{{end}}' \
+              "$CONTAINER")"
+
+            for EXPECTED in \
+              POSTGRES_HOST=blockgo-security-postgres \
+              POSTGRES_PORT=5432 \
+              POSTGRES_DB=ActivityLogs \
+              POSTGRES_USER=postgres
+            do
+              if ! grep --fixed-strings --line-regexp --quiet "$EXPECTED" <<< "$CONFIGURED_ENV"; then
+                echo "::error::$CONTAINER is missing expected setting: $EXPECTED"
+                exit 1
+              fi
+              echo "$CONTAINER: $EXPECTED"
+            done
+          done
+
+          echo
+          echo "===== VERIFY AUTH-TO-POSTGRES DNS/TCP CONNECTIVITY ====="
+          docker exec --interactive blockgo-security-auth node - <<'NODE'
+          const dns = require('node:dns').promises;
+          const net = require('node:net');
+
+          (async () => {
+            const host = process.env.POSTGRES_HOST;
+            const port = Number(process.env.POSTGRES_PORT);
+            if (host !== 'blockgo-security-postgres') {
+              throw new Error(`Unexpected POSTGRES_HOST: ${host}`);
+            }
+            const address = await dns.lookup(host);
+            console.log(`Resolved ${host} to ${address.address}`);
+            await new Promise((resolve, reject) => {
+              const socket = net.createConnection({ host, port });
+              socket.setTimeout(5000);
+              socket.once('connect', () => {
+                console.log(`Connected to ${host}:${port}`);
+                socket.end();
+                resolve();
+              });
+              socket.once('timeout', () => socket.destroy(new Error('TCP connection timed out')));
+              socket.once('error', reject);
+            });
+          })().catch((error) => {
+            console.error(error.message);
+            process.exit(1);
+          });
+          NODE
+
+          docker exec blockgo-security-postgres \
+            pg_isready --username postgres --dbname ActivityLogs
+
+          echo
+          echo "===== VERIFY DATABASE-BACKED SERVICE READINESS ====="
+          docker exec --interactive blockgo-security-auth node - <<'NODE'
+          (async () => {
+            for (const [name, url] of [
+              ['auth', 'http://127.0.0.1:4001/api/ready'],
+              ['settings', 'http://blockgo-security-settings:4005/api/ready']
+            ]) {
+              const response = await fetch(url);
+              const body = await response.text();
+              console.log(`${name}: HTTP ${response.status} ${body}`);
+              if (response.status !== 200) process.exitCode = 1;
+            }
+          })().catch((error) => {
+            console.error(error.message);
+            process.exit(1);
+          });
+          NODE
 
       - name: Wait for middleware health endpoint
         run: |
@@ -1051,12 +1373,29 @@ jobs:
           ZAP_RULES_PATH: ${{ steps.zap-rules.outputs.path }}
         run: |
           set -uo pipefail
-          mkdir -p security-results
 
-          # The repository is mounted at /zap/wrk inside the ZAP container.
-          # Use absolute container paths for local OpenAPI/config/report files.
+          mkdir -p security-results
+          chmod 0777 security-results
+
+          echo "===== ZAP REPORT DIRECTORY ====="
+          ls -ld security-results
+
           set +e
-          timeout 60m docker run             --rm             --network host             --volume "$PWD:/zap/wrk/:rw"             ghcr.io/zaproxy/zaproxy:stable             zap-api-scan.py               -t "/zap/wrk/${OPENAPI_PATH}"               -f openapi               -c "/zap/wrk/${ZAP_RULES_PATH}"               -I               -r /zap/wrk/security-results/zap-report.html               -J /zap/wrk/security-results/zap-report.json               -w /zap/wrk/security-results/zap-report.md               -T 10
+          timeout 60m docker run \
+            --rm \
+            --network host \
+            --volume "$PWD:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-api-scan.py \
+              -t "/zap/wrk/${OPENAPI_PATH}" \
+              -f openapi \
+              -c "/zap/wrk/${ZAP_RULES_PATH}" \
+              -I \
+              -r /zap/wrk/security-results/zap-report.html \
+              -J /zap/wrk/security-results/zap-report.json \
+              -w /zap/wrk/security-results/zap-report.md \
+              -T 10
+
           ZAP_EXIT=$?
           set -e
 
@@ -1167,14 +1506,46 @@ jobs:
       - name: Show middleware logs on failure
         if: failure()
         run: |
-          docker logs blockgo-security-api || true
-          docker logs blockgo-security-auth || true
+          docker ps -a \
+            --filter name=blockgo-security \
+            --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' || true
 
-      - name: Stop middleware security-test container
+          echo "===== GATEWAY ====="
+          docker logs --tail 300 blockgo-security-api || true
+
+          echo "===== AUTH ====="
+          docker logs --tail 300 blockgo-security-auth || true
+
+          echo "===== IDENTITY ====="
+          docker logs --tail 300 blockgo-security-identity || true
+
+          echo "===== LEDGER ====="
+          docker logs --tail 300 blockgo-security-ledger || true
+
+          echo "===== UPLOAD ====="
+          docker logs --tail 300 blockgo-security-upload || true
+
+          echo "===== SETTINGS ====="
+          docker logs --tail 300 blockgo-security-settings || true
+
+          echo "===== POSTGRES ====="
+          docker logs --tail 200 blockgo-security-postgres || true
+
+      - name: Stop middleware security-test containers
         if: always()
         run: |
-          docker rm --force blockgo-security-api 2>/dev/null || true
-          docker rm --force blockgo-security-auth 2>/dev/null || true
+          for CONTAINER in \
+            blockgo-security-api \
+            blockgo-security-auth \
+            blockgo-security-identity \
+            blockgo-security-ledger \
+            blockgo-security-upload \
+            blockgo-security-settings \
+            blockgo-security-postgres
+          do
+            docker rm --force "$CONTAINER" 2>/dev/null || true
+          done
+
           docker network rm blockgo-security 2>/dev/null || true
 
   feature-api-gate:

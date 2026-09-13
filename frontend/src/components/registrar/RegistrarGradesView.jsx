@@ -13,7 +13,7 @@ import RegistrarSectionsCreated from './RegistrarSectionsCreated';
 import { isDepartmentApprovedGradeStatus } from '../../utils/gradeStatus';
 import StaffAccountCreation from './StaffAccountCreation';
 import CurriculumManagement from './CurriculumManagement';
-import { programs } from '../../data/registrarData';
+import { programOptions, programs } from '../../data/registrarData';
 import RegistrarSupportTickets from './RegistrarSupportTickets';
 import StudentEnrollmentManagement from './StudentEnrollmentManagement';
 import PasswordManagement from './PasswordManagement';
@@ -283,6 +283,32 @@ const RegistrarGradesView = ({
             if (response.status === 'Success') setApprovedStudents(response.students || []);
         } catch (error) { console.error('Error loading students:', error); }
     }, []);
+
+    useEffect(() => {
+        setStudentAssignments((current) => {
+            const next = { ...current };
+
+            approvedStudents.forEach((student) => {
+                const importedDepartment = programs.includes(student.department)
+                    ? student.department
+                    : programOptions.find((program) =>
+                        String(program.code).toLowerCase() === String(student.programCode || student.department || '').toLowerCase()
+                    )?.name || '';
+                const importedYear = String(student.yearLevel || '').match(/[1-4]/)?.[0] || '';
+                const importedSection = String(student.section || '').match(/(?:^|[-\s])(\d+)$/)?.[1] || '';
+                const existing = current[student.id] || {};
+
+                next[student.id] = {
+                    ...existing,
+                    department: existing.department || importedDepartment,
+                    yearLevel: existing.yearLevel || importedYear,
+                    sectionNum: existing.sectionNum || importedSection,
+                };
+            });
+
+            return next;
+        });
+    }, [approvedStudents]);
 
     const loadApprovedAdmins = useCallback(async () => {
         try {
@@ -1257,7 +1283,7 @@ const RegistrarGradesView = ({
                                                     <div className="grid flex-1 gap-3 lg:max-w-3xl lg:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)_auto]">
                                                         <label className="block">
                                                             <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Department</span>
-                                                            <select defaultValue="" onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], department: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
+                                                            <select value={studentAssignments[student.id]?.department || ''} onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], department: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
                                                                 <option value="" disabled>Select department</option>
                                                                 {departments.map(d => <option key={d} value={d}>{d}</option>)}
                                                             </select>
@@ -1265,14 +1291,14 @@ const RegistrarGradesView = ({
                                                         <div className="grid gap-3 sm:grid-cols-2">
                                                             <label className="block">
                                                                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Year</span>
-                                                                <select defaultValue="" onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], yearLevel: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
+                                                                <select value={studentAssignments[student.id]?.yearLevel || ''} onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], yearLevel: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
                                                                     <option value="" disabled>Select year</option>
                                                                     <option value="1">1st</option><option value="2">2nd</option><option value="3">3rd</option><option value="4">4th</option>
                                                                 </select>
                                                             </label>
                                                             <label className="block">
                                                                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Section</span>
-                                                                <select defaultValue="" onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], sectionNum: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
+                                                                <select value={studentAssignments[student.id]?.sectionNum || ''} onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], sectionNum: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
                                                                     <option value="" disabled>Select section</option>
                                                                     {[...Array(15)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
                                                                 </select>
