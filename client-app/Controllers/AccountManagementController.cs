@@ -157,11 +157,24 @@ namespace Client_app.Controllers
                     RequiredActorRole(),
                     HttpContext.Connection.RemoteIpAddress?.ToString(),
                     cancellationToken);
-                return Ok(new { status = "Success", message = $"Password reset for {result.Email}.", data = result });
+                return Ok(new
+                {
+                    status = "Success",
+                    message = result.Idempotent
+                        ? $"Password was already set for {result.Account.Email}."
+                        : $"Password reset for {result.Account.Email}.",
+                    idempotent = result.Idempotent,
+                    data = result.Account
+                });
             }
             catch (KeyNotFoundException ex) { return NotFound(new { status = "Error", message = ex.Message }); }
             catch (ArgumentException ex) { return BadRequest(new { status = "Error", message = ex.Message }); }
             catch (UnauthorizedAccessException ex) { return StatusCode(StatusCodes.Status403Forbidden, new { status = "Error", message = ex.Message }); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Password reset failed for user {UserId}.", userId);
+                return StatusCode(500, new { status = "Error", message = "The password could not be reset." });
+            }
         }
 
         private string RequiredActor() => User.Identity?.Name

@@ -125,6 +125,11 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/Message" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "404":
+          description: The OTP is invalid or expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /api/fabric/register-user:
@@ -429,6 +434,7 @@ paths:
           schema: { type: string, minLength: 1, maxLength: 100 }
       responses:
         "200": { $ref: "#/components/responses/Success" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /api/SystemSettings:
@@ -498,8 +504,8 @@ components:
       required: [username, password]
       additionalProperties: false
       properties:
-        username: { type: string, minLength: 1, maxLength: 255 }
-        password: { type: string, minLength: 1, maxLength: 128 }
+        username: { type: string, minLength: 1, maxLength: 255, pattern: '^[^\u0000-\u001F\u007F]+$' }
+        password: { type: string, minLength: 1, maxLength: 128, pattern: '^[^\u0000-\u001F\u007F]+$' }
     FabricRegisterUserRequest:
       type: object
       required: [email, role]

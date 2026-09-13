@@ -57,9 +57,9 @@ namespace Client_app.Controllers
             {
                 HttpOnly = true,
                 Secure = Request.IsHttps,
-                SameSite = SameSiteMode.Strict,
+                SameSite = SameSiteMode.Lax,
                 Path = "/api/SystemMonitoring/grafana",
-                MaxAge = TimeSpan.FromMinutes(30),
+                MaxAge = TimeSpan.FromHours(8),
                 IsEssential = true
             });
             return Ok(new { status = "Success", url = "/api/SystemMonitoring/grafana/" });
@@ -122,6 +122,8 @@ namespace Client_app.Controllers
                 Response.Headers.Append(header.Key, header.Value.ToArray());
             Response.Headers.Remove("transfer-encoding");
             Response.Headers.Remove("connection");
+            Response.Headers.Remove("X-Frame-Options");
+            Response.Headers["X-Frame-Options"] = "SAMEORIGIN";
             await proxyResponse.Content.CopyToAsync(Response.Body, cancellationToken);
         }
 
@@ -430,10 +432,36 @@ namespace Client_app.Controllers
         private bool TryGetGrafanaActor(out string actor)
         {
             actor = string.Empty;
-            return Request.Cookies.TryGetValue(GrafanaSessionCookie, out var sessionToken)
-                && !string.IsNullOrWhiteSpace(sessionToken)
+
+            if (User.Identity?.IsAuthenticated == true &&
+                (User.IsInRole("system_admin") || User.Claims.Any(c => c.Type == "dbRole" && c.Value == "system_admin")))
+            {
+                actor = User.Identity?.Name ?? User.Claims.FirstOrDefault(c => c.Type == "email")?.Value ?? "system-admin@plv.edu.ph";
+                return true;
+            }
+
+            string? sessionToken = null;
+            if (Request.Cookies.TryGetValue(GrafanaSessionCookie, out var cookieToken) && !string.IsNullOrWhiteSpace(cookieToken))
+            {
+                sessionToken = cookieToken;
+            }
+            else if (Request.Query.TryGetValue(GrafanaSessionCookie, out var queryCookieToken) && !string.IsNullOrWhiteSpace(queryCookieToken))
+            {
+                sessionToken = queryCookieToken;
+            }
+            else if (Request.Query.TryGetValue("sessionToken", out var querySessionToken) && !string.IsNullOrWhiteSpace(querySessionToken))
+            {
+                sessionToken = querySessionToken;
+            }
+
+            if (!string.IsNullOrWhiteSpace(sessionToken)
                 && _cache.TryGetValue(GrafanaCacheKey(sessionToken), out actor!)
-                && !string.IsNullOrWhiteSpace(actor);
+                && !string.IsNullOrWhiteSpace(actor))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private static string GrafanaCacheKey(string sessionToken)

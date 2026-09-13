@@ -116,25 +116,25 @@ public static class DotnetServiceTopology
         }).ToArray();
 
         var routes = new List<RouteConfig>();
-        AddRoutes(routes, Realtime, "/chatHub/{**catch-all}", "/api/chatHub/{**catch-all}");
+        AddRoutes(routes, Realtime, "/chatHub", "/chatHub/{**catch-all}", "/api/chatHub", "/api/chatHub/{**catch-all}");
         AddRoutes(routes, Auth,
-            "/api/Auth/{**catch-all}",
-            "/api/AccountManagement/{**catch-all}",
-            "/api/password-reset-requests/{**catch-all}");
+            "/api/Auth", "/api/Auth/{**catch-all}",
+            "/api/AccountManagement", "/api/AccountManagement/{**catch-all}",
+            "/api/password-reset-requests", "/api/password-reset-requests/{**catch-all}");
         AddRoutes(routes, Academic,
-            "/api/Curriculums/{**catch-all}",
-            "/api/GradeTemplate/{**catch-all}",
-            "/api/Sectioning/{**catch-all}",
-            "/api/RegistrarDashboard/{**catch-all}",
-            "/api/registrar/Search/{**catch-all}");
+            "/api/Curriculums", "/api/Curriculums/{**catch-all}",
+            "/api/GradeTemplate", "/api/GradeTemplate/{**catch-all}",
+            "/api/Sectioning", "/api/Sectioning/{**catch-all}",
+            "/api/RegistrarDashboard", "/api/RegistrarDashboard/{**catch-all}",
+            "/api/registrar/Search", "/api/registrar/Search/{**catch-all}");
         AddRoutes(routes, Grade,
-            "/api/Grades/{**catch-all}",
-            "/api/BulkUpload/{**catch-all}",
-            "/api/Student/{**catch-all}");
+            "/api/Grades", "/api/Grades/{**catch-all}",
+            "/api/BulkUpload", "/api/BulkUpload/{**catch-all}",
+            "/api/Student", "/api/Student/{**catch-all}");
         AddRoutes(routes, Operations,
-            "/api/SystemSettings/{**catch-all}",
-            "/api/SystemMonitoring/{**catch-all}",
-            "/api/SupportTickets/{**catch-all}");
+            "/api/SystemSettings", "/api/SystemSettings/{**catch-all}",
+            "/api/SystemMonitoring", "/api/SystemMonitoring/{**catch-all}",
+            "/api/SupportTickets", "/api/SupportTickets/{**catch-all}");
 
         return (routes, clusters);
     }

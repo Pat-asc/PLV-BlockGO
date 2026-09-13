@@ -4,7 +4,7 @@ const { corsOrigins } = require('../shared/config');
 const createLogger = require('../shared/logger');
 const { createMetrics } = require('../shared/metrics');
 const { requestJson } = require('../shared/internal-http');
-const { resolveRoute, serviceTargets } = require('../shared/route-map');
+const { allowedMethods, resolveRoute, serviceTargets } = require('../shared/route-map');
 const { listen } = require('../shared/service-app');
 
 const serviceName = 'middleware-api';
@@ -36,6 +36,14 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-api-key, x-user-identity');
     if (req.method === 'OPTIONS') return res.sendStatus(200);
     next();
+});
+
+app.use('/api', (req, res, next) => {
+    const pathname = new URL(req.originalUrl, 'http://middleware.local').pathname;
+    const allowed = allowedMethods(pathname);
+    if (!allowed.length || allowed.includes(req.method)) return next();
+    res.setHeader('Allow', allowed.join(', '));
+    return res.status(405).json({ error: 'Method not allowed.' });
 });
 
 app.get('/api/health', (req, res) => res.json({ status: 'operational', service: serviceName, architecture: 'microservices' }));

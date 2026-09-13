@@ -1556,6 +1556,236 @@ namespace BlockGo.Controllers
             }
         }
 
+        [HttpGet("grade-summary/pdf")]
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> ExportGradeSummaryPdf(
+            [FromQuery] string section,
+            [FromQuery] string? schoolYear,
+            [FromQuery] string? semester,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(section))
+                return BadRequest(new { status = "Error", message = "Section is required." });
+
+            var registrar = AuthenticatedEmail();
+            var records = new List<AcademicRecord>();
+            try
+            {
+                try
+                {
+                    var ledgerJson = await _blockchainService.GetAllGradesAsync(registrar);
+                    using var ledgerDocument = JsonDocument.Parse(ledgerJson);
+                    var ledgerData = ledgerDocument.RootElement.TryGetProperty("data", out var data)
+                        ? data
+                        : ledgerDocument.RootElement;
+                    if (ledgerData.ValueKind == JsonValueKind.Array)
+                    {
+                        records.AddRange(JsonSerializer.Deserialize<List<AcademicRecord>>(
+                            ledgerData.GetRawText(),
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<AcademicRecord>());
+                    }
+                }
+                catch (Exception ledgerException)
+                {
+                    _logger.LogWarning(ledgerException, "Ledger grades were unavailable while exporting section {Section}; using staged records.", section);
+                }
+
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(cancellationToken);
+                await EnsurePendingGradeSchemaAsync(connection);
+                await using (var command = new NpgsqlCommand(@"
+                    SELECT id, student_hash, student_no, student_name, section, course, subject_code, grade,
+                           semester, school_year, faculty_id, date, status, subject_title, professor_name,
+                           program, term, units, submitted_by, recorded_at, transaction_id, transaction_hash
+                    FROM pending_grade_records
+                    WHERE LOWER(section) = LOWER(@section)
+                      AND LOWER(status) IN ('departmentapproved', 'finalized', 'issued');", connection))
+                {
+                    command.Parameters.AddWithValue("section", section.Trim());
+                    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                    while (await reader.ReadAsync(cancellationToken))
+                    {
+                        records.Add(new AcademicRecord
+                        {
+                            Id = reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
+                            StudentHash = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                            StudentNo = reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                            StudentName = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                            Section = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
+                            Course = reader.IsDBNull(5) ? string.Empty : reader.GetString(5),
+                            SubjectCode = reader.IsDBNull(6) ? string.Empty : reader.GetString(6),
+                            Grade = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
+                            Semester = reader.IsDBNull(8) ? string.Empty : reader.GetString(8),
+                            SchoolYear = reader.IsDBNull(9) ? string.Empty : reader.GetString(9),
+                            FacultyId = reader.IsDBNull(10) ? string.Empty : reader.GetString(10),
+                            Date = reader.IsDBNull(11) ? string.Empty : reader.GetString(11),
+                            Status = reader.IsDBNull(12) ? string.Empty : reader.GetString(12),
+                            SubjectTitle = reader.IsDBNull(13) ? string.Empty : reader.GetString(13),
+                            ProfessorName = reader.IsDBNull(14) ? string.Empty : reader.GetString(14),
+                            Program = reader.IsDBNull(15) ? string.Empty : reader.GetString(15),
+                            Term = reader.IsDBNull(16) ? string.Empty : reader.GetString(16),
+                            Units = reader.IsDBNull(17) ? 0 : reader.GetDecimal(17),
+                            SubmittedBy = reader.IsDBNull(18) ? string.Empty : reader.GetString(18),
+                            Timestamp = reader.IsDBNull(19) ? string.Empty : reader.GetFieldValue<DateTimeOffset>(19).ToString("O"),
+                            TransactionId = reader.IsDBNull(20) ? string.Empty : reader.GetString(20),
+                            TransactionHash = reader.IsDBNull(21) ? string.Empty : reader.GetString(21)
+                        });
+                    }
+                }
+
+                var studentNames = new Dictionary<string, (string Number, string Name)>(StringComparer.OrdinalIgnoreCase);
+                await using (var profiles = new NpgsqlCommand(@"
+                    SELECT u.email, COALESCE(sp.student_no, ''), COALESCE(sp.full_name, '')
+                    FROM users u
+                    JOIN studentprofiles sp ON sp.user_id = u.id
+                    WHERE LOWER(u.role) = 'student';", connection))
+                await using (var profileReader = await profiles.ExecuteReaderAsync(cancellationToken))
+                {
+                    while (await profileReader.ReadAsync(cancellationToken))
+                    {
+                        var email = profileReader.GetString(0);
+                        var number = profileReader.GetString(1);
+                        var name = profileReader.GetString(2);
+                        studentNames[email] = (number, name);
+                        if (!string.IsNullOrWhiteSpace(number)) studentNames[number] = (number, name);
+                    }
+                }
+
+                records = records
+                    .Where(record => string.Equals(record.Section?.Trim(), section.Trim(), StringComparison.OrdinalIgnoreCase))
+                    .Where(record => string.IsNullOrWhiteSpace(schoolYear) || string.Equals(record.SchoolYear?.Trim(), schoolYear.Trim(), StringComparison.OrdinalIgnoreCase))
+                    .Where(record => string.IsNullOrWhiteSpace(semester) || string.Equals(record.Semester?.Trim(), semester.Trim(), StringComparison.OrdinalIgnoreCase))
+                    .Where(record => string.Equals(record.Status, "Finalized", StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(record.Status, "DepartmentApproved", StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(record.Status, "Issued", StringComparison.OrdinalIgnoreCase))
+                    .GroupBy(record => string.IsNullOrWhiteSpace(record.Id)
+                        ? $"{record.StudentHash}|{record.SubjectCode}|{record.SchoolYear}|{record.Semester}"
+                        : record.Id,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.OrderByDescending(GetAcademicRecordCompletenessScore).First())
+                    .OrderBy(record => record.StudentName)
+                    .ThenBy(record => record.StudentNo)
+                    .ThenBy(record => record.SubjectCode)
+                    .ToList();
+
+                if (records.Count == 0)
+                    return NotFound(new { status = "Error", message = "No approved or finalized grades were found for the selected section and period." });
+
+                var lines = new List<string>
+                {
+                    "PAMANTASAN NG LUNGSOD NG VALENZUELA - BLOCKGO",
+                    "GRADE SUMMARY REPORT",
+                    $"Section: {section.Trim()}    School Year: {(string.IsNullOrWhiteSpace(schoolYear) ? "All" : schoolYear.Trim())}    Semester: {(string.IsNullOrWhiteSpace(semester) ? "All" : semester.Trim())}",
+                    $"Generated: {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss 'UTC'}    Records: {records.Count}",
+                    string.Empty,
+                    $"{"Student ID",-14} {"Student Name",-28} {"Subject",-14} {"Grade",-9} {"Status",-20}",
+                    new string('-', 91)
+                };
+                foreach (var record in records)
+                {
+                    var profileKey = !string.IsNullOrWhiteSpace(record.StudentNo) ? record.StudentNo : record.StudentHash;
+                    studentNames.TryGetValue(profileKey ?? string.Empty, out var profile);
+                    var studentNumber = FirstNonBlank(record.StudentNo, record.StudentId, profile.Number, record.StudentHash);
+                    var studentName = FirstNonBlank(record.StudentName, profile.Name, "Unknown Student");
+                    lines.Add($"{FitPdfColumn(studentNumber, 14),-14} {FitPdfColumn(studentName, 28),-28} {FitPdfColumn(record.SubjectCode, 14),-14} {FitPdfColumn(DisplayGradeForReport(record.Grade), 9),-9} {FitPdfColumn(record.Status, 20),-20}");
+                }
+
+                var pdf = BuildTextPdf(lines);
+                var safeSection = Regex.Replace(section.Trim(), @"[^A-Za-z0-9_-]+", "_");
+                return File(pdf, "application/pdf", $"grade-summary_{safeSection}.pdf");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Grade summary PDF export failed for section {Section}", section);
+                return StatusCode(500, new { status = "Error", message = "The grade summary PDF could not be generated." });
+            }
+        }
+
+        private static string FirstNonBlank(params string?[] values) =>
+            values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+
+        private static string DisplayGradeForReport(string? rawGrade)
+        {
+            if (string.IsNullOrWhiteSpace(rawGrade)) return string.Empty;
+            try
+            {
+                using var document = JsonDocument.Parse(rawGrade);
+                if (document.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var property in new[] { "finalAverage", "finals", "midterm" })
+                        if (document.RootElement.TryGetProperty(property, out var value) && value.ValueKind != JsonValueKind.Null)
+                            return value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : value.ToString();
+                }
+            }
+            catch (JsonException)
+            {
+                // Older ledger entries store the grade as plain text.
+            }
+            return rawGrade.Trim();
+        }
+
+        private static string FitPdfColumn(string? value, int width)
+        {
+            var normalized = Regex.Replace(value ?? string.Empty, @"\s+", " ").Trim();
+            return normalized.Length <= width ? normalized : normalized[..Math.Max(1, width - 1)] + "~";
+        }
+
+        private static byte[] BuildTextPdf(IReadOnlyList<string> reportLines)
+        {
+            const int linesPerPage = 38;
+            var pages = reportLines.Chunk(linesPerPage).Select(chunk => chunk.ToArray()).ToArray();
+            var objectCount = 3 + pages.Length * 2;
+            var offsets = new long[objectCount + 1];
+            using var output = new MemoryStream();
+
+            void Write(string value)
+            {
+                var bytes = Encoding.ASCII.GetBytes(value);
+                output.Write(bytes, 0, bytes.Length);
+            }
+            void WriteObject(int number, string body)
+            {
+                offsets[number] = output.Position;
+                Write($"{number} 0 obj\n{body}\nendobj\n");
+            }
+            static string Escape(string value)
+            {
+                var ascii = new string(value.Select(character => character is >= ' ' and <= '~' ? character : '?').ToArray());
+                return ascii.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)");
+            }
+
+            Write("%PDF-1.4\n");
+            WriteObject(1, "<< /Type /Catalog /Pages 2 0 R >>");
+            var pageReferences = string.Join(" ", Enumerable.Range(0, pages.Length).Select(index => $"{4 + index * 2} 0 R"));
+            WriteObject(2, $"<< /Type /Pages /Kids [{pageReferences}] /Count {pages.Length} >>");
+            WriteObject(3, "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>");
+
+            for (var pageIndex = 0; pageIndex < pages.Length; pageIndex++)
+            {
+                var pageObject = 4 + pageIndex * 2;
+                var contentObject = pageObject + 1;
+                var content = new StringBuilder("BT\n/F1 8 Tf\n36 558 Td\n12 TL\n");
+                foreach (var line in pages[pageIndex])
+                    content.Append('(').Append(Escape(line)).Append(") Tj\nT*\n");
+                content.Append("ET\n");
+                var contentText = content.ToString();
+                WriteObject(pageObject, $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Resources << /Font << /F1 3 0 R >> >> /Contents {contentObject} 0 R >>");
+                WriteObject(contentObject, $"<< /Length {Encoding.ASCII.GetByteCount(contentText)} >>\nstream\n{contentText}endstream");
+            }
+
+            var xrefOffset = output.Position;
+            Write($"xref\n0 {objectCount + 1}\n");
+            Write("0000000000 65535 f \n");
+            for (var number = 1; number <= objectCount; number++)
+                Write($"{offsets[number]:D10} 00000 n \n");
+            Write($"trailer\n<< /Size {objectCount + 1} /Root 1 0 R >>\nstartxref\n{xrefOffset}\n%%EOF\n");
+            return output.ToArray();
+        }
+
         [HttpGet("all")]
         public async Task<IActionResult> GetAllGrades([FromQuery] string invokerId)
         {

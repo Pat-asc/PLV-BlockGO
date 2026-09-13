@@ -1014,7 +1014,7 @@ jobs:
           docker network rm blockgo-security 2>/dev/null || true
           docker network create blockgo-security
 
-          echo "Starting PostgreSQL for API security tests..."
+          echo "Starting PostgreSQL..."
           docker run \
             --detach \
             --name blockgo-security-postgres \
@@ -1022,24 +1022,26 @@ jobs:
             --env POSTGRES_DB=ActivityLogs \
             --env POSTGRES_USER=postgres \
             --env POSTGRES_PASSWORD=ci-only-postgres-password \
-            --health-cmd="pg_isready -U postgres -d ActivityLogs" \
-            --health-interval=5s \
+            --health-cmd='pg_isready -U postgres -d ActivityLogs' \
+            --health-interval=2s \
             --health-timeout=5s \
-            --health-retries=20 \
+            --health-retries=30 \
+            --volume "$PWD/network/init-db-schema.sql:/docker-entrypoint-initdb.d/001-init-db-schema.sql:ro" \
             postgres:16-alpine
 
-          echo "Waiting for PostgreSQL..."
           POSTGRES_READY=0
+          for ATTEMPT in $(seq 1 60); do
+            POSTGRES_STATUS="$(docker inspect \
+              --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+              blockgo-security-postgres 2>/dev/null || echo missing)"
+            echo "PostgreSQL attempt $ATTEMPT/60 -> $POSTGRES_STATUS"
 
-          for ATTEMPT in $(seq 1 30); do
-            STATUS="$(docker inspect \
-              --format='{{.State.Health.Status}}' \
-              blockgo-security-postgres 2>/dev/null || true)"
-
-            echo "PostgreSQL attempt ${ATTEMPT}/30 -> ${STATUS:-unknown}"
-
-            if [ "$STATUS" = "healthy" ]; then
+            if [ "$POSTGRES_STATUS" = "healthy" ]; then
               POSTGRES_READY=1
+              break
+            fi
+
+            if [ "$POSTGRES_STATUS" = "exited" ] || [ "$POSTGRES_STATUS" = "dead" ] || [ "$POSTGRES_STATUS" = "missing" ]; then
               break
             fi
 
@@ -1047,7 +1049,29 @@ jobs:
           done
 
           if [ "$POSTGRES_READY" -ne 1 ]; then
-            echo "::error::Security-test PostgreSQL did not become healthy."
+            echo "::error::Isolated PostgreSQL did not become healthy."
+            docker logs --tail 200 blockgo-security-postgres || true
+            exit 1
+          fi
+
+          SCHEMA_READY=0
+          for ATTEMPT in $(seq 1 60); do
+            REQUIRED_TABLES="$(docker exec blockgo-security-postgres \
+              psql --username postgres --dbname ActivityLogs --tuples-only --no-align \
+              --command "SELECT COUNT(*) FROM pg_class WHERE relkind = 'r' AND relname IN ('users', 'security_events');" \
+              2>/dev/null || echo 0)"
+            echo "Schema attempt $ATTEMPT/60 -> $REQUIRED_TABLES required tables"
+
+            if [ "$REQUIRED_TABLES" = "2" ]; then
+              SCHEMA_READY=1
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [ "$SCHEMA_READY" -ne 1 ]; then
+            echo "::error::Repository-managed PostgreSQL schema did not create users and security_events."
             docker logs --tail 200 blockgo-security-postgres || true
             exit 1
           fi
@@ -1185,6 +1209,80 @@ jobs:
               || true
             exit 1
           fi
+
+          echo
+          echo "===== VERIFY AUTH/SETTINGS POSTGRES CONFIGURATION ====="
+          for CONTAINER in blockgo-security-auth blockgo-security-settings; do
+            CONFIGURED_ENV="$(docker inspect \
+              --format '{{range .Config.Env}}{{println .}}{{end}}' \
+              "$CONTAINER")"
+
+            for EXPECTED in \
+              POSTGRES_HOST=blockgo-security-postgres \
+              POSTGRES_PORT=5432 \
+              POSTGRES_DB=ActivityLogs \
+              POSTGRES_USER=postgres
+            do
+              if ! grep --fixed-strings --line-regexp --quiet "$EXPECTED" <<< "$CONFIGURED_ENV"; then
+                echo "::error::$CONTAINER is missing expected setting: $EXPECTED"
+                exit 1
+              fi
+              echo "$CONTAINER: $EXPECTED"
+            done
+          done
+
+          echo
+          echo "===== VERIFY AUTH-TO-POSTGRES DNS/TCP CONNECTIVITY ====="
+          docker exec --interactive blockgo-security-auth node - <<'NODE'
+          const dns = require('node:dns').promises;
+          const net = require('node:net');
+
+          (async () => {
+            const host = process.env.POSTGRES_HOST;
+            const port = Number(process.env.POSTGRES_PORT);
+            if (host !== 'blockgo-security-postgres') {
+              throw new Error(`Unexpected POSTGRES_HOST: ${host}`);
+            }
+            const address = await dns.lookup(host);
+            console.log(`Resolved ${host} to ${address.address}`);
+            await new Promise((resolve, reject) => {
+              const socket = net.createConnection({ host, port });
+              socket.setTimeout(5000);
+              socket.once('connect', () => {
+                console.log(`Connected to ${host}:${port}`);
+                socket.end();
+                resolve();
+              });
+              socket.once('timeout', () => socket.destroy(new Error('TCP connection timed out')));
+              socket.once('error', reject);
+            });
+          })().catch((error) => {
+            console.error(error.message);
+            process.exit(1);
+          });
+          NODE
+
+          docker exec blockgo-security-postgres \
+            pg_isready --username postgres --dbname ActivityLogs
+
+          echo
+          echo "===== VERIFY DATABASE-BACKED SERVICE READINESS ====="
+          docker exec --interactive blockgo-security-auth node - <<'NODE'
+          (async () => {
+            for (const [name, url] of [
+              ['auth', 'http://127.0.0.1:4001/api/ready'],
+              ['settings', 'http://blockgo-security-settings:4005/api/ready']
+            ]) {
+              const response = await fetch(url);
+              const body = await response.text();
+              console.log(`${name}: HTTP ${response.status} ${body}`);
+              if (response.status !== 200) process.exitCode = 1;
+            }
+          })().catch((error) => {
+            console.error(error.message);
+            process.exit(1);
+          });
+          NODE
 
       - name: Wait for middleware health endpoint
         run: |
@@ -1408,6 +1506,10 @@ jobs:
       - name: Show middleware logs on failure
         if: failure()
         run: |
+          docker ps -a \
+            --filter name=blockgo-security \
+            --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' || true
+
           echo "===== GATEWAY ====="
           docker logs --tail 300 blockgo-security-api || true
 
@@ -1477,7 +1579,7 @@ jobs:
               echo "::error::$NAME -> $RESULT"
               FAILED=1
             fi
-          } 
+          }
 
           check_job "Heavy integration/container tests" "$HEAVY_RESULT"
           check_job "Static/supply-chain security" "$STATIC_SECURITY_RESULT"

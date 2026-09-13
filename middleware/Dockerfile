@@ -84,15 +84,15 @@ RUN set -eux; \
         exit 1; \
     fi
 
+RUN mkdir -p /app/uploads && \
+    chown node:node /app/uploads && \
+    chmod 0750 /app/uploads
+
 EXPOSE 4000 4001 4002 4003 4004 4005
 
 ENV PORT=4000
 ENV NODE_ENV=production
 ENV NODE_OPTIONS="--max-old-space-size=256 --expose-gc"
-
-RUN mkdir -p /app/uploads && \
-    chown node:node /app/uploads && \
-    chmod 0750 /app/uploads
 
 USER node
 

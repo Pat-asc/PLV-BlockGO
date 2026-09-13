@@ -75,6 +75,9 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     try {
         const { username, password } = req.body || {};
         if (!username || !password) return res.status(400).json({ error: 'Username and password are required.' });
+        if (typeof username !== 'string' || typeof password !== 'string' || /[\u0000-\u001f\u007f]/.test(username) || /[\u0000-\u001f\u007f]/.test(password)) {
+            return res.status(400).json({ error: 'Username and password contain invalid characters.' });
+        }
         const normalizedUsername = String(username).trim().toLowerCase();
         const baseUsername = normalizedUsername.split('@')[0];
         const result = await dbRead.query(`
@@ -159,9 +162,14 @@ const passwordHashLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 10,
     standardHeaders: true,
-    legacyHeaders: false
+    legacyHeaders: false,
+    handler: (req, res) => res.status(429).json({
+        error: 'Too many requests, please try again later.'
+    })
 });
 app.post('/api/crypto/hash-password', passwordHashLimiter, async (req, res) => {
+    const unexpectedFields = Object.keys(req.body || {}).filter((key) => key !== 'password');
+    if (unexpectedFields.length) return res.status(400).json({ error: 'Unexpected request fields are not allowed.' });
     const password = req.body?.password;
     if (!password) return res.status(400).json({ error: 'Password is required.' });
     if (typeof password !== 'string' || password.length > 128) {
@@ -170,10 +178,22 @@ app.post('/api/crypto/hash-password', passwordHashLimiter, async (req, res) => {
     res.json({ hash: await bcrypt.hash(password, 10) });
 });
 
-const passwordResetLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false });
+const passwordResetLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req, res) => res.status(429).json({
+        error: 'Too many requests, please try again later.'
+    })
+});
 app.post('/api/forgot-password', passwordResetLimiter, async (req, res) => {
-    const email = String(req.body?.email || '').trim().toLowerCase();
+    const unexpectedFields = Object.keys(req.body || {}).filter((key) => key !== 'email');
+    if (unexpectedFields.length) return res.status(400).json({ error: 'Unexpected request fields are not allowed.' });
+    if (typeof req.body?.email !== 'string') return res.status(400).json({ error: 'Email must be a string.' });
+    const email = req.body.email.trim().toLowerCase();
     if (!email) return res.status(400).json({ error: 'Email is required.' });
+    if (email.length > 255) return res.status(400).json({ error: 'Email must be at most 255 characters.' });
     const result = await dbRead.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND is_active = TRUE AND LOWER(status) = \'approved\'', [email]);
     if (!result.rows.length) return res.json({ message: 'If that email exists, a password reset OTP has been sent.' });
     const otp = crypto.randomInt(100000, 1000000).toString();
@@ -201,7 +221,7 @@ app.post('/api/reset-password', async (req, res) => {
         return res.status(400).json({ error: 'Email, a valid six-digit OTP, and a password between 8 and 128 characters are required.' });
     }
     const result = await dbRead.query('SELECT request_id, user_id FROM password_reset_requests WHERE LOWER(email) = LOWER($1) AND otp_code = $2 AND expires_at > $3 AND used_at IS NULL ORDER BY created_at DESC LIMIT 1', [normalizedEmail, String(otp), Date.now()]);
-    if (!result.rows.length) return res.status(400).json({ error: 'Invalid or expired OTP.' });
+    if (!result.rows.length) return res.status(404).json({ error: 'Invalid or expired OTP.' });
     await dbWrite.query('UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires = NULL WHERE id = $2', [await bcrypt.hash(newPassword, 10), result.rows[0].user_id]);
     await dbWrite.query('UPDATE password_reset_requests SET used_at = $1 WHERE request_id = $2', [Date.now(), result.rows[0].request_id]);
     res.json({ message: 'Password updated successfully. You can now log in.' });

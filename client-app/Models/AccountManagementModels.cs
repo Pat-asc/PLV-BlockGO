@@ -88,4 +88,8 @@ namespace Client_app.Models
         string? Department,
         bool BlockchainAuditRecorded,
         string? Warning = null);
+
+    public sealed record PasswordResetResult(
+        ManagedAccountResult Account,
+        bool Idempotent);
 }

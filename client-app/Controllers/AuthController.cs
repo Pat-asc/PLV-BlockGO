@@ -336,12 +336,20 @@ namespace Client_app.Controllers
 
         private static short NormalizeYearLevel(string? value, string? section = null)
         {
-            var candidate = (value ?? "").Trim();
+            var candidate = (value ?? "").Replace("\u00A0", " ").Trim();
             if (!string.IsNullOrWhiteSpace(candidate))
             {
-                var explicitMatch = System.Text.RegularExpressions.Regex.Match(candidate, @"^([1-4])(?:st|nd|rd|th)?(?:\s+year)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                if (!explicitMatch.Success) throw new ArgumentException("Year level must be from 1 to 4.");
-                return short.Parse(explicitMatch.Groups[1].Value);
+                var lower = candidate.ToLowerInvariant();
+                if (lower is "first" or "first year" or "1st" or "1st year" or "1st yr" or "1" or "year 1" or "yr 1") return 1;
+                if (lower is "second" or "second year" or "2nd" or "2nd year" or "2nd yr" or "2" or "year 2" or "yr 2") return 2;
+                if (lower is "third" or "third year" or "3rd" or "3rd year" or "3rd yr" or "3" or "year 3" or "yr 3") return 3;
+                if (lower is "fourth" or "fourth year" or "4th" or "4th year" or "4th yr" or "4" or "year 4" or "yr 4") return 4;
+
+                var explicitMatch = System.Text.RegularExpressions.Regex.Match(candidate, @"(?:year|yr)?\s*([1-4])(?:st|nd|rd|th)?(?:\s+(?:year|yr))?", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (explicitMatch.Success) return short.Parse(explicitMatch.Groups[1].Value);
+
+                // Any other unrecognized text: default to 1st year instead of failing
+                return 1;
             }
 
             var sectionMatch = System.Text.RegularExpressions.Regex.Match((section ?? "").Trim(), @"^([1-4])\s*-");
@@ -379,16 +387,34 @@ namespace Client_app.Controllers
             if (string.IsNullOrWhiteSpace(program) || string.Equals(program.Trim(), "Unassigned", StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("A valid academic program is required for enrollment.");
 
+            var trimmed = program.Trim();
+            var stripped = System.Text.RegularExpressions.Regex.Replace(trimmed, @"[\s\-_.]+", "").ToLowerInvariant();
+
             await using var command = new NpgsqlCommand(@"
                 SELECT program_id, program_code, program_name
                 FROM academic_programs
                 WHERE is_active = TRUE
-                  AND (LOWER(program_code) = LOWER(@program) OR LOWER(program_name) = LOWER(@program))
+                  AND (
+                      LOWER(program_code) = LOWER(@program)
+                   OR LOWER(program_name) = LOWER(@program)
+                   OR LOWER(REGEXP_REPLACE(program_code, '[\s\-_.]+', '', 'g')) = @stripped
+                   OR LOWER(REGEXP_REPLACE(program_name, '[\s\-_.]+', '', 'g')) = @stripped
+                   OR LOWER(program_name) LIKE '%' || LOWER(@program) || '%'
+                   OR LOWER(@program) LIKE '%' || LOWER(program_code) || '%'
+                  )
+                ORDER BY
+                  CASE
+                    WHEN LOWER(program_code) = LOWER(@program) THEN 1
+                    WHEN LOWER(program_name) = LOWER(@program) THEN 2
+                    WHEN LOWER(REGEXP_REPLACE(program_code, '[\s\-_.]+', '', 'g')) = @stripped THEN 3
+                    ELSE 4
+                  END
                 LIMIT 1;", connection, transaction);
-            command.Parameters.AddWithValue("program", program.Trim());
+            command.Parameters.AddWithValue("program", trimmed);
+            command.Parameters.AddWithValue("stripped", stripped);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
-                throw new ArgumentException("The selected academic program does not exist or is inactive.");
+                throw new ArgumentException($"The academic program '{program}' does not exist or is inactive.");
             return (reader.GetInt32(0), reader.GetString(1), reader.GetString(2));
         }
 
@@ -436,7 +462,11 @@ namespace Client_app.Controllers
             return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
         }
 
-        private static async Task<string> AllocateStudentNumberAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int year)
+        private static async Task<string> AllocateStudentNumberAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            int year,
+            CancellationToken cancellationToken = default)
         {
             var prefix = (year % 100).ToString("00");
             await using var command = new NpgsqlCommand(@"
@@ -449,7 +479,7 @@ namespace Client_app.Controllers
                 RETURNING last_sequence;", connection, transaction);
             command.Parameters.AddWithValue("year", year);
             command.Parameters.AddWithValue("pattern", $"^{prefix}-[0-9]{{4}}$");
-            var sequence = Convert.ToInt32(await command.ExecuteScalarAsync());
+            var sequence = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
             return $"{prefix}-{sequence:0000}";
         }
 
@@ -498,7 +528,11 @@ namespace Client_app.Controllers
                 UPDATE studentprofiles sp
                 SET section = latest.section, department = p.program_name,
                     year_level = latest.year_level::text, curriculum_id = latest.curriculum_id,
-                    assignment_status = CASE latest.status WHEN 'ENROLLED' THEN 'Enrolled' ELSE latest.status END
+                    assignment_status = CASE
+                        WHEN NULLIF(TRIM(COALESCE(latest.section, '')), '') IS NULL THEN 'Unassigned'
+                        WHEN latest.status = 'ENROLLED' THEN 'Enrolled'
+                        ELSE latest.status
+                    END
                 FROM student_enrollments latest JOIN academic_programs p ON p.program_id = latest.program_id
                 WHERE sp.user_id = @userId AND latest.enrollment_id = (
                     SELECT e.enrollment_id FROM student_enrollments e WHERE e.student_user_id = @userId
@@ -680,8 +714,8 @@ namespace Client_app.Controllers
                 string profileQuery = "";
                 if (request.Role?.ToLower() == "student")
                 {
-                    profileQuery = @"INSERT INTO StudentProfiles (user_id, full_name, student_no, department, date_of_birth, assignment_status) 
-                                   VALUES (@uid, @name, @studentno, @dept, @dob, @assignStatus)";
+                    profileQuery = @"INSERT INTO StudentProfiles (user_id, full_name, student_no, department, date_of_birth, assignment_status, year_level)
+                                   VALUES (@uid, @name, @studentno, @dept, @dob, @assignStatus, '1')";
                 }
                 else if (request.Role?.ToLower() == "faculty")
                 {
@@ -956,13 +990,20 @@ namespace Client_app.Controllers
                 var students = new List<object>();
 
                 using (var cmd = new NpgsqlCommand(@"
-                    SELECT u.id, sp.full_name, u.email, sp.department, sp.student_no, sp.section,
-                           sp.assignment_status, COALESCE(sp.year_level, enrollment.year_level::text),
+                    SELECT u.id, sp.full_name, u.email,
+                           COALESCE(prog.program_name, sp.department) AS department,
+                           sp.student_no, sp.section,
+                           CASE WHEN NULLIF(TRIM(sp.section), '') IS NULL THEN 'Unassigned' ELSE COALESCE(sp.assignment_status, 'Enrolled') END AS assignment_status,
+                           COALESCE(NULLIF(TRIM(sp.year_level), ''), enrollment.year_level::text, '1') AS year_level,
                            COALESCE(sp.curriculum_id, enrollment.curriculum_id),
                            curriculum.curriculum_name, curriculum.curriculum_version,
-                           enrollment.school_year, enrollment.semester, enrollment.status
+                           enrollment.school_year, enrollment.semester, enrollment.status,
+                           prog.program_code
                     FROM Users u
                     JOIN StudentProfiles sp ON u.id = sp.user_id
+                    LEFT JOIN academic_programs prog
+                      ON LOWER(prog.program_code) = LOWER(TRIM(sp.department))
+                      OR LOWER(prog.program_name) = LOWER(TRIM(sp.department))
                     LEFT JOIN LATERAL (
                         SELECT se.curriculum_id, se.year_level, se.school_year, se.semester, se.status
                         FROM student_enrollments se
@@ -986,13 +1027,14 @@ namespace Client_app.Controllers
                             studentno = reader.IsDBNull(4) ? null : reader.GetString(4),
                             section = reader.IsDBNull(5) ? null : reader.GetString(5),
                             assignmentStatus = reader.IsDBNull(6) ? "Unassigned" : reader.GetString(6),
-                            yearLevel = reader.IsDBNull(7) ? null : reader.GetString(7),
+                            yearLevel = reader.IsDBNull(7) ? "1" : (reader.GetString(7) ?? "1"),
                             curriculumId = reader.IsDBNull(8) ? (long?)null : reader.GetInt64(8),
                             curriculumName = reader.IsDBNull(9) ? null : reader.GetString(9),
                             curriculumVersion = reader.IsDBNull(10) ? null : reader.GetString(10),
                             schoolYear = reader.IsDBNull(11) ? null : reader.GetString(11),
                             semester = reader.IsDBNull(12) ? null : reader.GetString(12),
-                            enrollmentStatus = reader.IsDBNull(13) ? null : reader.GetString(13)
+                            enrollmentStatus = reader.IsDBNull(13) ? null : reader.GetString(13),
+                            programCode = reader.IsDBNull(14) ? null : reader.GetString(14)
                         });
                     }
                 }
@@ -1225,9 +1267,10 @@ namespace Client_app.Controllers
                 await conn.OpenAsync();
                 await using var transaction = await conn.BeginTransactionAsync();
 
-                string userEmail = "", userName = "Student", studentNo = "";
+                string userEmail = "", userName = "Student", studentNo = "", currentDept = "", currentYear = "";
                 using (var cmdEmail = new NpgsqlCommand(@"
-                    SELECT u.email, sp.full_name, COALESCE(sp.student_no, u.username, u.email)
+                    SELECT u.email, sp.full_name, COALESCE(sp.student_no, u.username, u.email),
+                           COALESCE(sp.department, ''), COALESCE(sp.year_level, '')
                     FROM Users u JOIN StudentProfiles sp ON u.id = sp.user_id
                     WHERE u.id = @id AND LOWER(u.role) = 'student'", conn, transaction))
                 {
@@ -1238,13 +1281,22 @@ namespace Client_app.Controllers
                         userEmail = reader.GetString(0);
                         userName = reader.GetString(1);
                         studentNo = reader.GetString(2);
+                        currentDept = reader.GetString(3);
+                        currentYear = reader.GetString(4);
                     }
                 }
 
                 if (string.IsNullOrWhiteSpace(userEmail)) return NotFound(new { status = "Error", message = "Student profile not found." });
-                var program = await ResolveEnrollmentProgramAsync(conn, transaction, request.Department);
-                var yearLevel = NormalizeYearLevel(request.YearLevel, request.Section);
-                var section = NormalizeEnrollmentSection(request.Section, yearLevel);
+                var targetDept = !string.IsNullOrWhiteSpace(request.Department) ? request.Department : currentDept;
+                var program = await ResolveEnrollmentProgramAsync(conn, transaction, targetDept);
+                var yearInput = !string.IsNullOrWhiteSpace(request.YearLevel) ? request.YearLevel : (string.IsNullOrWhiteSpace(currentYear) ? "1" : currentYear);
+                var yearLevel = NormalizeYearLevel(yearInput, request.Section);
+                var rawSection = (request.Section ?? "").Trim();
+                if (System.Text.RegularExpressions.Regex.IsMatch(rawSection, @"^\d+$"))
+                {
+                    rawSection = $"{yearLevel}-{rawSection}";
+                }
+                var section = NormalizeEnrollmentSection(rawSection, yearLevel);
                 var schoolYear = NormalizeSchoolYear(request.SchoolYear);
                 var semester = NormalizeEnrollmentSemester(request.Semester);
                 var curriculumId = await ResolveEnrollmentCurriculumAsync(conn, transaction, program.Id, request.CurriculumId, null);
@@ -1371,12 +1423,6 @@ namespace Client_app.Controllers
         [Authorize(Roles = "registrar")]
         public async Task<IActionResult> GetApprovedDepartmentAdmins()
         {
-            const string cacheKey = "approved_department_admins";
-            if (_cache.TryGetValue(cacheKey, out object? cachedData) && cachedData != null)
-            {
-                return Ok(cachedData);
-            }
-
             try
             {
                 using var conn = new NpgsqlConnection(_connectionString);
@@ -1403,11 +1449,7 @@ namespace Client_app.Controllers
                     }
                 }
 
-                var response = new { status = "Success", admins };
-                var cacheEntryOptions = new MemoryCacheEntryOptions().SetSlidingExpiration(TimeSpan.FromMinutes(5));
-                _cache.Set(cacheKey, response, cacheEntryOptions);
-
-                return Ok(response);
+                return Ok(new { status = "Success", admins });
             }
             catch (Exception ex)
             {
@@ -1517,9 +1559,22 @@ namespace Client_app.Controllers
                 delProfileCmd.Parameters.AddWithValue("id", id);
                 await delProfileCmd.ExecuteNonQueryAsync();
 
-                using var deleteCmd = new NpgsqlCommand("DELETE FROM Users WHERE id = @id", conn, tx);
-                deleteCmd.Parameters.AddWithValue("id", id);
-                await deleteCmd.ExecuteNonQueryAsync();
+                // The numeric row is retained only as an audit/curriculum foreign-key tombstone.
+                // Delete every usable local credential and role so this is not merely a disabled login.
+                using var revokeCmd = new NpgsqlCommand(@"
+                    UPDATE Users
+                    SET username = NULL,
+                        email = CONCAT('revoked-', id, '@invalid.local'),
+                        password_hash = crypt(gen_random_uuid()::text, gen_salt('bf', 12)),
+                        role = 'revoked',
+                        status = 'REVOKED',
+                        is_active = FALSE,
+                        password_reset_token = NULL,
+                        password_reset_expires = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = @id", conn, tx);
+                revokeCmd.Parameters.AddWithValue("id", id);
+                await revokeCmd.ExecuteNonQueryAsync();
 
                 await tx.CommitAsync();
 
@@ -1544,16 +1599,8 @@ namespace Client_app.Controllers
         public async Task<IActionResult> GetApprovedFaculties()
         {
             var actorEmail = User.Identity?.Name?.Trim().ToLowerInvariant() ?? "unknown";
-            var cacheKey = User.IsInRole("registrar")
-                ? "approved_faculties:registrar"
-                : $"approved_faculties:department_admin:{actorEmail}";
             try
             {
-                if (_cache.TryGetValue(cacheKey, out object? cachedData) && cachedData != null)
-                {
-                    return Ok(cachedData);
-                }
-
                 using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
 
@@ -1598,11 +1645,7 @@ namespace Client_app.Controllers
                     }
                 }
 
-                var response = new { status = "Success", faculties };
-                var cacheEntryOptions = new MemoryCacheEntryOptions().SetSlidingExpiration(TimeSpan.FromMinutes(5));
-                _cache.Set(cacheKey, response, cacheEntryOptions);
-
-                return Ok(response);
+                return Ok(new { status = "Success", faculties });
             }
             catch (Exception ex)
             {
@@ -1846,6 +1889,220 @@ namespace Client_app.Controllers
             }
         }
 
+        [HttpPost("faculty/assignments/bulk-upload")]
+        [Authorize(Roles = "department_admin,chairperson")]
+        [Consumes("multipart/form-data")]
+        [RequestSizeLimit(2 * 1024 * 1024)]
+        public async Task<IActionResult> BulkAssignFacultyLoads(
+            [FromForm] IFormFile file,
+            CancellationToken cancellationToken)
+        {
+            if (file is null || file.Length == 0)
+                return BadRequest(new { status = "Error", message = "A non-empty faculty-loading CSV file is required." });
+            if (!string.Equals(Path.GetExtension(file.FileName), ".csv", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { status = "Error", message = "Faculty-load bulk assignment accepts CSV files only." });
+
+            try
+            {
+                HashSet<string> headers;
+                List<Dictionary<string, string>> records;
+                await using (var stream = file.OpenReadStream())
+                using (var reader = new StreamReader(stream, Encoding.UTF8, true, 1024, false))
+                    (headers, records) = StudentEnrollmentFile.ReadCsv(reader);
+
+                static bool HasAny(HashSet<string> available, params string[] names) =>
+                    names.Any(available.Contains);
+                if (!HasAny(headers, "faculty_id", "staff_id", "faculty_email", "email") ||
+                    !HasAny(headers, "academic_program", "program", "department") ||
+                    !HasAny(headers, "subject_code", "subject") ||
+                    !headers.Contains("section"))
+                {
+                    return BadRequest(new
+                    {
+                        status = "Error",
+                        message = "CSV headings must include Faculty ID or Email, Academic Program, Subject Code, and Section. Year Level may be supplied or inferred from Section."
+                    });
+                }
+
+                var results = new List<object>();
+                var created = 0;
+                var alreadyAssigned = 0;
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(cancellationToken);
+
+                for (var index = 0; index < records.Count; index++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var record = records[index];
+                    var rowNumber = index + 2;
+                    string Value(params string[] names)
+                    {
+                        foreach (var name in names)
+                            if (record.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value))
+                                return value.Trim();
+                        return string.Empty;
+                    }
+
+                    var facultyIdentifier = Value("faculty_id", "staff_id", "faculty_email", "email");
+                    var programInput = Value("academic_program", "program", "department");
+                    var subject = Value("subject_code", "subject");
+                    var section = Value("section");
+                    var yearInput = Value("year_level", "year", "level");
+
+                    try
+                    {
+                        if (string.IsNullOrWhiteSpace(facultyIdentifier) || string.IsNullOrWhiteSpace(programInput) ||
+                            string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(section))
+                            throw new ArgumentException("Faculty ID or Email, Academic Program, Subject Code, and Section are required.");
+
+                        var yearLevel = NormalizeYearLevel(yearInput, section);
+                        var sectionMatch = System.Text.RegularExpressions.Regex.Match(
+                            section,
+                            @"^(?:(?:.*\s)?([1-4])\s*-\s*)?(\d+)$");
+                        if (!sectionMatch.Success || !int.TryParse(sectionMatch.Groups[2].Value, out var sectionNumber) || sectionNumber < 1)
+                            throw new ArgumentException("Section must end in a year-section number such as 1-1 or BSIT 1-1.");
+                        if (sectionMatch.Groups[1].Success && short.Parse(sectionMatch.Groups[1].Value) != yearLevel)
+                            throw new ArgumentException("Section year must match Year Level.");
+
+                        var program = await ResolveEnrollmentProgramAsync(connection, null, programInput, cancellationToken);
+                        if (!await CanManageAcademicProgramAsync(connection, program.Code, cancellationToken))
+                        {
+                            results.Add(new { row = rowNumber, faculty = facultyIdentifier, success = false, error = "The authenticated Chairperson cannot manage this academic program." });
+                            continue;
+                        }
+
+                        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                        int facultyUserId;
+                        string facultyEmail;
+                        await using (var faculty = new NpgsqlCommand(@"
+                            SELECT u.id, u.email
+                            FROM users u
+                            LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
+                            WHERE LOWER(u.role) = 'faculty'
+                              AND LOWER(u.status) = 'approved'
+                              AND u.is_active = TRUE
+                              AND (
+                                  LOWER(COALESCE(u.username, '')) = LOWER(@identifier)
+                               OR LOWER(u.email) = LOWER(@identifier)
+                               OR LOWER(COALESCE(fp.faculty_id, '')) = LOWER(@identifier)
+                              )
+                            LIMIT 1;", connection, transaction))
+                        {
+                            faculty.Parameters.AddWithValue("identifier", facultyIdentifier);
+                            await using var facultyReader = await faculty.ExecuteReaderAsync(cancellationToken);
+                            if (!await facultyReader.ReadAsync(cancellationToken))
+                                throw new ArgumentException("Active Faculty account was not found.");
+                            facultyUserId = facultyReader.GetInt32(0);
+                            facultyEmail = facultyReader.GetString(1);
+                        }
+
+                        string canonicalProgram;
+                        await using (var assignment = new NpgsqlCommand(@"
+                            SELECT p.program_name
+                            FROM academicsections section
+                            JOIN academic_programs p
+                              ON LOWER(section.department) IN (LOWER(p.program_code), LOWER(p.program_name))
+                            WHERE p.program_id = @programId
+                              AND section.year_level = @yearLevel
+                              AND section.section_num = @sectionNumber
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM curriculums curriculum
+                                  JOIN curriculum_subjects subject ON subject.curriculum_id = curriculum.curriculum_id
+                                  WHERE curriculum.program_id = p.program_id
+                                    AND curriculum.status = 'PUBLISHED'
+                                    AND subject.year_level = @yearLevel
+                                    AND LOWER(subject.subject_code) = LOWER(@subject)
+                              )
+                            LIMIT 1;", connection, transaction))
+                        {
+                            assignment.Parameters.AddWithValue("programId", program.Id);
+                            assignment.Parameters.AddWithValue("yearLevel", (int)yearLevel);
+                            assignment.Parameters.AddWithValue("sectionNumber", sectionNumber);
+                            assignment.Parameters.AddWithValue("subject", subject);
+                            canonicalProgram = (string?)await assignment.ExecuteScalarAsync(cancellationToken)
+                                ?? throw new ArgumentException("The section does not exist, or the subject is not in the published curriculum for that program and year level.");
+                        }
+
+                        await using (var profile = new NpgsqlCommand(@"
+                            UPDATE facultyprofiles
+                            SET department = @program
+                            WHERE user_id = @facultyId
+                              AND (department IS NULL OR BTRIM(department) = '' OR LOWER(department) = 'unassigned');", connection, transaction))
+                        {
+                            profile.Parameters.AddWithValue("program", canonicalProgram);
+                            profile.Parameters.AddWithValue("facultyId", facultyUserId);
+                            await profile.ExecuteNonQueryAsync(cancellationToken);
+                        }
+
+                        int inserted;
+                        await using (var insert = new NpgsqlCommand(@"
+                            INSERT INTO facultysections (user_id, department, section, year_level, subject)
+                            VALUES (@facultyId, @program, @section, @yearLevel, @subject)
+                            ON CONFLICT (user_id, department, section, subject) DO NOTHING;", connection, transaction))
+                        {
+                            insert.Parameters.AddWithValue("facultyId", facultyUserId);
+                            insert.Parameters.AddWithValue("program", canonicalProgram);
+                            insert.Parameters.AddWithValue("section", section);
+                            insert.Parameters.AddWithValue("yearLevel", yearLevel.ToString());
+                            insert.Parameters.AddWithValue("subject", subject);
+                            inserted = await insert.ExecuteNonQueryAsync(cancellationToken);
+                        }
+
+                        await _auditLog.LogAsync(
+                            User.Identity?.Name ?? "department_admin", "department_admin",
+                            inserted == 0 ? "FACULTY_LOAD_ALREADY_ASSIGNED" : "FACULTY_LOAD_ASSIGNED",
+                            "faculty_assignment", facultyUserId.ToString(), null,
+                            new { facultyEmail, program = canonicalProgram, section, yearLevel, subject },
+                            "Chairperson processed a faculty-load CSV row.",
+                            HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
+                        await transaction.CommitAsync(cancellationToken);
+
+                        if (inserted == 0) alreadyAssigned++;
+                        else created++;
+                        results.Add(new
+                        {
+                            row = rowNumber,
+                            faculty = facultyIdentifier,
+                            success = true,
+                            idempotent = inserted == 0,
+                            data = new { facultyUserId, facultyEmail, program = canonicalProgram, section, yearLevel, subject }
+                        });
+                    }
+                    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or PostgresException)
+                    {
+                        results.Add(new { row = rowNumber, faculty = facultyIdentifier, success = false, error = ex.Message });
+                    }
+                }
+
+                _cache.Remove("approved_faculties");
+                await SafeNotifyAcademicDataChangedAsync("faculty_loads_bulk_assigned", null, User.Identity?.Name);
+                var failed = results.Count - created - alreadyAssigned;
+                return Ok(new
+                {
+                    status = failed == 0 ? "Success" : created + alreadyAssigned == 0 ? "Error" : "PartialSuccess",
+                    totalProcessed = results.Count,
+                    created,
+                    alreadyAssigned,
+                    failed,
+                    results
+                });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { status = "Error", message = ex.Message });
+            }
+            catch (CsvHelper.CsvHelperException)
+            {
+                return BadRequest(new { status = "Error", message = "Invalid faculty-loading CSV. Check headings and quote values containing commas." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Faculty-load bulk assignment failed");
+                return StatusCode(500, new { status = "Error", message = "Faculty-load bulk assignment could not be completed." });
+            }
+        }
+
         [HttpDelete("faculty/{id}/revoke")]
         [Authorize(Roles = "registrar")]
         public async Task<IActionResult> RevokeFaculty(int id)
@@ -1893,9 +2150,22 @@ namespace Client_app.Controllers
                 delProfileCmd.Parameters.AddWithValue("id", id);
                 await delProfileCmd.ExecuteNonQueryAsync();
 
-                using var deleteCmd = new NpgsqlCommand("DELETE FROM Users WHERE id = @id", conn, tx);
-                deleteCmd.Parameters.AddWithValue("id", id);
-                await deleteCmd.ExecuteNonQueryAsync();
+                // The numeric row is retained only as an audit/grade foreign-key tombstone.
+                // Delete every usable local credential and role so this is not merely a disabled login.
+                using var revokeCmd = new NpgsqlCommand(@"
+                    UPDATE Users
+                    SET username = NULL,
+                        email = CONCAT('revoked-', id, '@invalid.local'),
+                        password_hash = crypt(gen_random_uuid()::text, gen_salt('bf', 12)),
+                        role = 'revoked',
+                        status = 'REVOKED',
+                        is_active = FALSE,
+                        password_reset_token = NULL,
+                        password_reset_expires = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = @id", conn, tx);
+                revokeCmd.Parameters.AddWithValue("id", id);
+                await revokeCmd.ExecuteNonQueryAsync();
 
                 await tx.CommitAsync();
 
@@ -2205,7 +2475,7 @@ namespace Client_app.Controllers
             worksheet.SheetView.FreezeRows(1);
             worksheet.Range(1, 1, 1001, headers.Length).SetAutoFilter();
             worksheet.Column(5).Style.DateFormat.Format = "mm/dd/yyyy";
-            worksheet.Column(10).Style.NumberFormat.Format = "0";
+            worksheet.Column(10).Style.NumberFormat.Format = "@";
 
             var options = workbook.Worksheets.Add("Academic Program Options");
             options.Cell(1, 1).Value = "Program Code";
@@ -2217,8 +2487,15 @@ namespace Client_app.Controllers
             }
             var courseOptions = options.Range(2, 1, programs.Count + 1, 1);
             workbook.DefinedNames.Add("AcademicPrograms", courseOptions);
-            worksheet.Range("I2:I1001").CreateDataValidation().List("AcademicPrograms", true);
-            worksheet.Range("J2:J1001").CreateDataValidation().List("\"1st,2nd,3rd,4th\"", true);
+            var programValidation = worksheet.Range("I2:I1001").CreateDataValidation();
+            programValidation.List("AcademicPrograms", true);
+            programValidation.IgnoreBlanks = true;
+            programValidation.ShowErrorMessage = false;
+
+            var yearValidation = worksheet.Range("J2:J1001").CreateDataValidation();
+            yearValidation.List("\"1st,2nd,3rd,4th\"", true);
+            yearValidation.IgnoreBlanks = true;
+            yearValidation.ShowErrorMessage = false;
             options.Visibility = XLWorksheetVisibility.VeryHidden;
 
             worksheet.Column(1).Width = 14;
@@ -2488,6 +2765,7 @@ namespace Client_app.Controllers
                         var password = dobDate?.ToString("MM/dd/yyyy") ?? string.Empty;
 
                         var shouldSaveEnrollment = normalizedMode != "update" ||
+                            !string.IsNullOrWhiteSpace(dept) ||
                             !string.IsNullOrWhiteSpace(defaultDepartment) || !string.IsNullOrWhiteSpace(rowYearLevel) ||
                             !string.IsNullOrWhiteSpace(rowSchoolYear) || !string.IsNullOrWhiteSpace(rowSemester) ||
                             curriculumId.HasValue;
@@ -2506,6 +2784,7 @@ namespace Client_app.Controllers
                             dept = program.Value.Name;
                         }
 
+                        var studentAssignmentStatus = string.IsNullOrWhiteSpace(rowSection) ? "Unassigned" : "Enrolled";
                         var userId = existingUserId;
 
                         if (exists)
@@ -2526,21 +2805,21 @@ namespace Client_app.Controllers
                                                 ELSE student_no
                                             END,
                                             department = COALESCE(@dept, department),
-                                            section = COALESCE(@sec, section),
+                                            section = @sec,
                                             date_of_birth = COALESCE(@dob, date_of_birth),
                                             student_email = COALESCE(@studentEmail, student_email),
                                             middle_name = COALESCE(@middleName, middle_name),
                                             sex = COALESCE(@sex, sex),
                                             phone = COALESCE(@phone, phone),
                                             address = COALESCE(@address, address),
-                                             year_level = COALESCE(@yearLevel, year_level),
-                                             curriculum_id = COALESCE(@curriculumId, curriculum_id),
-                                             assignment_status = CASE WHEN @saveEnrollment THEN 'Enrolled' ELSE assignment_status END
+                                            year_level = COALESCE(@yearLevel, year_level),
+                                            curriculum_id = COALESCE(@curriculumId, curriculum_id),
+                                            assignment_status = COALESCE(@assignStatus, assignment_status)
                                         WHERE user_id = @uid", conn, tx);
                                     updateProfile.Parameters.AddWithValue("name", !string.IsNullOrEmpty(name) ? (object)name : DBNull.Value);
                                     updateProfile.Parameters.AddWithValue("studentno", !string.IsNullOrEmpty(studentNo) ? (object)studentNo : DBNull.Value);
                                     updateProfile.Parameters.AddWithValue("dept", shouldSaveEnrollment ? dept : DBNull.Value);
-                                    updateProfile.Parameters.AddWithValue("sec", string.IsNullOrEmpty(rowSection) ? DBNull.Value : (object)rowSection);
+                                    updateProfile.Parameters.Add("sec", NpgsqlTypes.NpgsqlDbType.Varchar).Value = string.IsNullOrEmpty(rowSection) ? DBNull.Value : (object)rowSection;
                                     updateProfile.Parameters.AddWithValue("dob", dobDate.HasValue ? (object)dobDate.Value.Date : DBNull.Value);
                                     updateProfile.Parameters.AddWithValue("studentEmail", hasProvidedEmail ? (object)email : DBNull.Value);
                                     updateProfile.Parameters.AddWithValue("middleName", string.IsNullOrEmpty(middleName) ? DBNull.Value : (object)middleName);
@@ -2549,7 +2828,7 @@ namespace Client_app.Controllers
                                     updateProfile.Parameters.AddWithValue("address", string.IsNullOrEmpty(address) ? DBNull.Value : (object)address);
                                     updateProfile.Parameters.AddWithValue("yearLevel", shouldSaveEnrollment ? (object)resolvedYearLevel.ToString() : DBNull.Value);
                                     updateProfile.Parameters.AddWithValue("curriculumId", (object?)resolvedCurriculumId ?? DBNull.Value);
-                                    updateProfile.Parameters.AddWithValue("saveEnrollment", shouldSaveEnrollment);
+                                    updateProfile.Parameters.AddWithValue("assignStatus", studentAssignmentStatus);
                                     updateProfile.Parameters.AddWithValue("uid", userId);
                                     await updateProfile.ExecuteNonQueryAsync();
                                 }
@@ -2557,13 +2836,12 @@ namespace Client_app.Controllers
                                 {
                                     using var insertProfile = new NpgsqlCommand(@"
                                         INSERT INTO StudentProfiles (user_id, full_name, student_no, department, section, year_level, curriculum_id, date_of_birth, student_email, middle_name, sex, phone, address, assignment_status)
-                                        VALUES (@uid, @name, @studentno, @dept, @sec, @yearLevel, @curriculumId, @dob, @studentEmail, @middleName, @sex, @phone, @address,
-                                                CASE WHEN @saveEnrollment THEN 'Enrolled' ELSE 'Unassigned' END)", conn, tx);
+                                        VALUES (@uid, @name, @studentno, @dept, @sec, @yearLevel, @curriculumId, @dob, @studentEmail, @middleName, @sex, @phone, @address, @assignStatus)", conn, tx);
                                     insertProfile.Parameters.AddWithValue("uid", userId);
                                     insertProfile.Parameters.AddWithValue("name", !string.IsNullOrEmpty(name) ? (object)name : DBNull.Value);
                                     insertProfile.Parameters.AddWithValue("studentno", !string.IsNullOrEmpty(studentNo) ? (object)studentNo : DBNull.Value);
                                     insertProfile.Parameters.AddWithValue("dept", !string.IsNullOrEmpty(dept) ? (object)dept : DBNull.Value);
-                                    insertProfile.Parameters.AddWithValue("sec", string.IsNullOrEmpty(rowSection) ? DBNull.Value : (object)rowSection);
+                                    insertProfile.Parameters.Add("sec", NpgsqlTypes.NpgsqlDbType.Varchar).Value = string.IsNullOrEmpty(rowSection) ? DBNull.Value : (object)rowSection;
                                     insertProfile.Parameters.AddWithValue("dob", dobDate.HasValue ? (object)dobDate.Value.Date : DBNull.Value);
                                     insertProfile.Parameters.AddWithValue("studentEmail", string.IsNullOrEmpty(email) ? DBNull.Value : (object)email);
                                     insertProfile.Parameters.AddWithValue("middleName", string.IsNullOrEmpty(middleName) ? DBNull.Value : (object)middleName);
@@ -2572,7 +2850,7 @@ namespace Client_app.Controllers
                                     insertProfile.Parameters.AddWithValue("address", string.IsNullOrEmpty(address) ? DBNull.Value : (object)address);
                                     insertProfile.Parameters.AddWithValue("yearLevel", shouldSaveEnrollment ? (object)resolvedYearLevel.ToString() : DBNull.Value);
                                     insertProfile.Parameters.AddWithValue("curriculumId", (object?)resolvedCurriculumId ?? DBNull.Value);
-                                    insertProfile.Parameters.AddWithValue("saveEnrollment", shouldSaveEnrollment);
+                                    insertProfile.Parameters.AddWithValue("assignStatus", studentAssignmentStatus);
                                     await insertProfile.ExecuteNonQueryAsync();
                                 }
                             }
@@ -2587,12 +2865,12 @@ namespace Client_app.Controllers
 
                             using var cmdProfile = new NpgsqlCommand(@"
                                 INSERT INTO StudentProfiles (user_id, full_name, student_no, department, section, year_level, curriculum_id, date_of_birth, student_email, middle_name, sex, phone, address, assignment_status)
-                                VALUES (@uid, @name, @studentno, @dept, @sec, @yearLevel, @curriculumId, @dob, @studentEmail, @middleName, @sex, @phone, @address, 'Enrolled')", conn, tx);
+                                VALUES (@uid, @name, @studentno, @dept, @sec, @yearLevel, @curriculumId, @dob, @studentEmail, @middleName, @sex, @phone, @address, @assignStatus)", conn, tx);
                             cmdProfile.Parameters.AddWithValue("uid", userId);
                             cmdProfile.Parameters.AddWithValue("name", !string.IsNullOrEmpty(name) ? (object)name : DBNull.Value);
                             cmdProfile.Parameters.AddWithValue("studentno", !string.IsNullOrEmpty(studentNo) ? (object)studentNo : DBNull.Value);
                             cmdProfile.Parameters.AddWithValue("dept", !string.IsNullOrEmpty(dept) ? (object)dept : DBNull.Value);
-                            cmdProfile.Parameters.AddWithValue("sec", string.IsNullOrEmpty(rowSection) ? DBNull.Value : (object)rowSection);
+                            cmdProfile.Parameters.Add("sec", NpgsqlTypes.NpgsqlDbType.Varchar).Value = string.IsNullOrEmpty(rowSection) ? DBNull.Value : (object)rowSection;
                             cmdProfile.Parameters.AddWithValue("dob", dobDate.HasValue ? (object)dobDate.Value.Date : DBNull.Value);
                             cmdProfile.Parameters.AddWithValue("studentEmail", string.IsNullOrEmpty(email) ? DBNull.Value : (object)email);
                             cmdProfile.Parameters.AddWithValue("middleName", string.IsNullOrEmpty(middleName) ? DBNull.Value : (object)middleName);
@@ -2601,6 +2879,7 @@ namespace Client_app.Controllers
                             cmdProfile.Parameters.AddWithValue("address", string.IsNullOrEmpty(address) ? DBNull.Value : (object)address);
                             cmdProfile.Parameters.AddWithValue("yearLevel", resolvedYearLevel.ToString());
                             cmdProfile.Parameters.AddWithValue("curriculumId", (object?)resolvedCurriculumId ?? DBNull.Value);
+                            cmdProfile.Parameters.AddWithValue("assignStatus", studentAssignmentStatus);
                             await cmdProfile.ExecuteNonQueryAsync();
                         }
 
@@ -3489,144 +3768,188 @@ namespace Client_app.Controllers
         [HttpPost("manual-student-create")]
         [HttpPost("create-student")]
         [HttpPost("students/create")]
-        [HttpPost("student")]
-        [HttpPost("/api/Student/create")]
-        [HttpPost("/api/Student")]
-        [HttpPost("/api/Auth/create-student")]
-        public async Task<IActionResult> ManualStudentCreate([FromBody] ManualStudentRequest request)
+        [HttpPost("students")]
+        public async Task<IActionResult> ManualStudentCreate(
+            [FromBody] ManualStudentRequest request,
+            CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.FirstName) || 
-                string.IsNullOrWhiteSpace(request.LastName) || string.IsNullOrWhiteSpace(request.DateOfBirth) ||
-                string.IsNullOrWhiteSpace(request.StudentNumber) || string.IsNullOrWhiteSpace(request.Department))
-                return BadRequest(new { status = "Error", message = "Email, FirstName, LastName, DateOfBirth, StudentNumber, and Department are required." });
+            var fullName = NormalizeStudentName(!string.IsNullOrWhiteSpace(request.FullName)
+                ? request.FullName
+                : string.Join(" ", new[] { request.FirstName, request.MiddleName, request.LastName }
+                    .Where(value => !string.IsNullOrWhiteSpace(value))));
+            var requestedProgram = string.IsNullOrWhiteSpace(request.Program) ? request.Department : request.Program;
+            if (string.IsNullOrWhiteSpace(fullName) || string.IsNullOrWhiteSpace(requestedProgram) ||
+                string.IsNullOrWhiteSpace(request.DateOfBirth))
+            {
+                return BadRequest(new
+                {
+                    status = "Error",
+                    message = "Student name, academic program, and date of birth are required."
+                });
+            }
+
+            if (!DateTime.TryParseExact(
+                    request.DateOfBirth.Trim(),
+                    new[] { "MM/dd/yyyy", "M/d/yyyy", "yyyy-MM-dd" },
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None,
+                    out var dobDate))
+            {
+                return BadRequest(new { status = "Error", message = "DateOfBirth must use MM/dd/yyyy or yyyy-MM-dd." });
+            }
+
+            var contactEmail = request.Email?.Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(contactEmail) && !MailAddress.TryCreate(contactEmail, out _))
+                return BadRequest(new { status = "Error", message = "Email must be a valid email address." });
 
             try
             {
-                using var conn = new NpgsqlConnection(_connectionString);
-                await conn.OpenAsync();
-                
-                var email = request.Email.Trim().ToLower();
-                var studentNo = request.StudentNumber.Trim();
-                var firstName = request.FirstName.Trim();
-                var lastName = request.LastName.Trim();
-                var middleName = request.MiddleName?.Trim() ?? "";
-                var fullName = string.IsNullOrEmpty(middleName) ? $"{firstName} {lastName}" : $"{firstName} {middleName} {lastName}";
-                var department = request.Department.Trim();
-                var section = request.Section?.Trim() ?? "";
-                var phone = request.Phone?.Trim() ?? "";
-                var address = request.Address?.Trim() ?? "";
-                var sex = request.Sex?.Trim() ?? "";
+                await using var conn = new NpgsqlConnection(_connectionString);
+                await conn.OpenAsync(cancellationToken);
+                await using var tx = await conn.BeginTransactionAsync(cancellationToken);
+                await using (var idLock = new NpgsqlCommand("SELECT pg_advisory_xact_lock(73120411)", conn, tx))
+                    await idLock.ExecuteNonQueryAsync(cancellationToken);
 
-                if (!DateTime.TryParseExact(request.DateOfBirth, "MM/dd/yyyy", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dobDate))
-                    return BadRequest(new { status = "Error", message = "DateOfBirth must be in MM/dd/yyyy format." });
+                var program = await ResolveEnrollmentProgramAsync(conn, tx, requestedProgram, cancellationToken);
+                var enrollmentYear = request.EnrollmentYear ?? DateTime.UtcNow.Year;
+                if (enrollmentYear is < 2000 or > 9999)
+                    throw new ArgumentException("EnrollmentYear must be a four-digit Gregorian year.");
 
-                if (!System.Text.RegularExpressions.Regex.IsMatch(studentNo, @"^\d{2,4}-\d{4,}$"))
-                    return BadRequest(new { status = "Error", message = "StudentNumber must be in xx-xxxx or xxxx-xxxx format." });
+                var studentNo = request.StudentNumber?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(studentNo))
+                    studentNo = await AllocateStudentNumberAsync(conn, tx, enrollmentYear, cancellationToken);
+                else if (!System.Text.RegularExpressions.Regex.IsMatch(studentNo, @"^\d{2,4}-\d{4,}$"))
+                    throw new ArgumentException("StudentNumber must use xx-xxxx or xxxx-xxxx when supplied.");
+                studentNo = studentNo.ToLowerInvariant();
 
-                using var tx = await conn.BeginTransactionAsync();
-
-                // Check if user already exists
-                using var checkCmd = new NpgsqlCommand(@"
-                    SELECT u.id, u.role FROM Users u
-                    WHERE LOWER(u.email) = LOWER(@email) OR LOWER(u.email) = LOWER(@studentNo)
-                    LIMIT 1", conn, tx);
-                checkCmd.Parameters.AddWithValue("email", email);
-                checkCmd.Parameters.AddWithValue("studentNo", studentNo);
-                
-                using (var reader = await checkCmd.ExecuteReaderAsync())
+                await using (var duplicate = new NpgsqlCommand(@"
+                    SELECT 1
+                    FROM users u
+                    LEFT JOIN studentprofiles sp ON sp.user_id = u.id
+                    WHERE LOWER(u.email) = LOWER(@studentNo)
+                       OR LOWER(COALESCE(u.username, '')) = LOWER(@studentNo)
+                       OR LOWER(COALESCE(sp.student_no, '')) = LOWER(@studentNo)
+                       OR (@contactEmail <> '' AND LOWER(COALESCE(sp.student_email, '')) = LOWER(@contactEmail))
+                       OR LOWER(REGEXP_REPLACE(BTRIM(COALESCE(sp.full_name, '')), '\s+', ' ', 'g')) = LOWER(@fullName)
+                    LIMIT 1;", conn, tx))
                 {
-                    if (await reader.ReadAsync())
-                    {
-                        var existingRole = reader.GetString(1);
-                        if (!string.Equals(existingRole, "student", StringComparison.OrdinalIgnoreCase))
-                            return BadRequest(new { status = "Error", message = "This email is already associated with a non-student account." });
-                        return BadRequest(new { status = "Error", message = "This student already exists in the system." });
-                    }
+                    duplicate.Parameters.AddWithValue("studentNo", studentNo);
+                    duplicate.Parameters.AddWithValue("contactEmail", contactEmail ?? string.Empty);
+                    duplicate.Parameters.AddWithValue("fullName", fullName);
+                    if (await duplicate.ExecuteScalarAsync(cancellationToken) is not null)
+                        return Conflict(new { status = "Error", message = "A student with the same ID, email, or normalized name already exists." });
                 }
 
-                // Create User account
                 var password = dobDate.ToString("MM/dd/yyyy");
-                using var cmdUser = new NpgsqlCommand(@"
+                int userId;
+                await using (var cmdUser = new NpgsqlCommand(@"
                     INSERT INTO Users (username, email, password_hash, role, status, is_active) 
-                    VALUES (@username, @email, crypt(@password, gen_salt('bf', 12)), 'student', 'APPROVED', TRUE) 
-                    RETURNING id", conn, tx);
-                cmdUser.Parameters.AddWithValue("username", studentNo.ToLower());
-                cmdUser.Parameters.AddWithValue("email", email);
-                cmdUser.Parameters.AddWithValue("password", password);
-                var userId = (int)(await cmdUser.ExecuteScalarAsync() ?? throw new Exception("Failed to create user account"));
-
-                // Create Student Profile
-                using var cmdProfile = new NpgsqlCommand(@"
-                    INSERT INTO StudentProfiles (user_id, full_name, student_no, department, section, date_of_birth, student_email, middle_name, sex, phone, address, assignment_status, year_level)
-                    VALUES (@uid, @fullName, @studentNo, @dept, @section, @dob, @studentEmail, @middleName, @sex, @phone, @address, 'Unassigned', '1')", conn, tx);
-                cmdProfile.Parameters.AddWithValue("uid", userId);
-                cmdProfile.Parameters.AddWithValue("fullName", fullName);
-                cmdProfile.Parameters.AddWithValue("studentNo", studentNo);
-                cmdProfile.Parameters.AddWithValue("dept", department);
-                cmdProfile.Parameters.AddWithValue("section", string.IsNullOrEmpty(section) ? (object)DBNull.Value : section);
-                cmdProfile.Parameters.AddWithValue("dob", dobDate.Date);
-                cmdProfile.Parameters.AddWithValue("studentEmail", email);
-                cmdProfile.Parameters.AddWithValue("middleName", string.IsNullOrEmpty(middleName) ? (object)DBNull.Value : middleName);
-                cmdProfile.Parameters.AddWithValue("sex", string.IsNullOrEmpty(sex) ? (object)DBNull.Value : sex);
-                cmdProfile.Parameters.AddWithValue("phone", string.IsNullOrEmpty(phone) ? (object)DBNull.Value : phone);
-                cmdProfile.Parameters.AddWithValue("address", string.IsNullOrEmpty(address) ? (object)DBNull.Value : address);
-                await cmdProfile.ExecuteNonQueryAsync();
-
-                // Register on blockchain
-                try
+                    VALUES (@studentNo, @studentNo, crypt(@password, gen_salt('bf', 12)), 'student', 'APPROVED', TRUE)
+                    RETURNING id;", conn, tx))
                 {
-                    using var httpClient = _httpClientFactory.CreateClient("FabricCAClient");
-                    var apiKey = Environment.GetEnvironmentVariable("INTERNAL_API_KEY") ?? _configuration["InternalApiKey"];
-                    if (!string.IsNullOrEmpty(apiKey))
-                        httpClient.DefaultRequestHeaders.Add("x-api-key", apiKey);
-                    
-                    var middlewareUrl = _configuration["Middleware:Url"] ?? _configuration["MIDDLEWARE_URL"] ?? "http://127.0.0.1:4000";
-                    var payload = new { email = studentNo, role = "student", password = password };
-                    var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-                    var fabResponse = await httpClient.PostAsync($"{middlewareUrl}/api/fabric/register-user", content);
-                    
-                    if (!fabResponse.IsSuccessStatusCode)
-                        _logger.LogWarning("Blockchain registration warning for student {StudentNo}: {Status}", studentNo, fabResponse.StatusCode);
+                    cmdUser.Parameters.AddWithValue("studentNo", studentNo);
+                    cmdUser.Parameters.AddWithValue("password", password);
+                    userId = Convert.ToInt32(await cmdUser.ExecuteScalarAsync(cancellationToken));
                 }
-                catch (Exception ex)
+
+                long? curriculumId = null;
+                await using (var curriculum = new NpgsqlCommand(@"
+                    SELECT assignment.curriculum_id
+                    FROM program_curriculum_assignments assignment
+                    JOIN curriculums c ON c.curriculum_id = assignment.curriculum_id
+                    WHERE assignment.program_id = @programId AND c.status = 'PUBLISHED'
+                    LIMIT 1;", conn, tx))
                 {
-                    _logger.LogWarning(ex, "Optional blockchain registration failed for student {StudentNo}", studentNo);
+                    curriculum.Parameters.AddWithValue("programId", program.Id);
+                    var value = await curriculum.ExecuteScalarAsync(cancellationToken);
+                    if (value is not null) curriculumId = Convert.ToInt64(value);
                 }
+
+                await using (var cmdProfile = new NpgsqlCommand(@"
+                    INSERT INTO StudentProfiles
+                        (user_id, full_name, student_no, department, section, date_of_birth, student_email,
+                         middle_name, sex, phone, address, assignment_status, year_level, curriculum_id)
+                    VALUES
+                        (@userId, @fullName, @studentNo, @department, NULL, @dob, @contactEmail,
+                         @middleName, @sex, @phone, @address, 'Unassigned', '1', @curriculumId);", conn, tx))
+                {
+                    cmdProfile.Parameters.AddWithValue("userId", userId);
+                    cmdProfile.Parameters.AddWithValue("fullName", fullName);
+                    cmdProfile.Parameters.AddWithValue("studentNo", studentNo);
+                    cmdProfile.Parameters.AddWithValue("department", program.Name);
+                    cmdProfile.Parameters.AddWithValue("dob", dobDate.Date);
+                    cmdProfile.Parameters.AddWithValue("contactEmail", (object?)contactEmail ?? DBNull.Value);
+                    cmdProfile.Parameters.AddWithValue("middleName", (object?)request.MiddleName?.Trim() ?? DBNull.Value);
+                    cmdProfile.Parameters.AddWithValue("sex", (object?)request.Sex?.Trim() ?? DBNull.Value);
+                    cmdProfile.Parameters.AddWithValue("phone", (object?)request.Phone?.Trim() ?? DBNull.Value);
+                    cmdProfile.Parameters.AddWithValue("address", (object?)request.Address?.Trim() ?? DBNull.Value);
+                    cmdProfile.Parameters.AddWithValue("curriculumId", (object?)curriculumId ?? DBNull.Value);
+                    await cmdProfile.ExecuteNonQueryAsync(cancellationToken);
+                }
+
+                using var httpClient = _httpClientFactory.CreateClient("FabricCAClient");
+                var apiKey = Environment.GetEnvironmentVariable("INTERNAL_API_KEY") ?? _configuration["InternalApiKey"];
+                if (string.IsNullOrWhiteSpace(apiKey))
+                    throw new InvalidOperationException("Internal API key is not configured.");
+                httpClient.DefaultRequestHeaders.Add("x-api-key", apiKey);
+                var middlewareUrl = _configuration["Middleware:Url"] ?? _configuration["MIDDLEWARE_URL"] ?? "http://127.0.0.1:4000";
+                using var fabricContent = JsonContent.Create(new { email = studentNo, role = "student", password });
+                using var fabricResponse = await httpClient.PostAsync(
+                    $"{middlewareUrl.TrimEnd('/')}/api/fabric/register-user",
+                    fabricContent,
+                    cancellationToken);
+                if (!fabricResponse.IsSuccessStatusCode)
+                    throw new HttpRequestException($"Blockchain identity registration returned HTTP {(int)fabricResponse.StatusCode}.");
 
                 await _auditLog.LogAsync(User.Identity?.Name ?? "registrar", "registrar", "STUDENT_CREATED_MANUAL", 
                     "student", userId.ToString(), null, 
-                    new { studentNo, email, fullName, department, section },
+                    new { studentNo, contactEmail, fullName, program = program.Code },
                     "Registrar manually created a single student account.",
-                    HttpContext.Connection.RemoteIpAddress?.ToString(), conn, tx);
+                    HttpContext.Connection.RemoteIpAddress?.ToString(), conn, tx, cancellationToken);
 
-                await tx.CommitAsync();
-                await NotifyAcademicDataChangedAsync("student_created", department, User.Identity?.Name);
+                await tx.CommitAsync(cancellationToken);
+                _cache.Remove("approved_students");
+                await SafeNotifyAcademicDataChangedAsync("student_created", program.Name, User.Identity?.Name);
 
-                return Ok(new { 
+                return StatusCode(StatusCodes.Status201Created, new {
                     status = "Success", 
                     message = $"Student {studentNo} created successfully.",
-                    studentNo,
-                    email,
-                    fullName
+                    data = new { userId, studentNo, loginId = studentNo, contactEmail, fullName, program = program.Code }
                 });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { status = "Error", message = ex.Message });
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+            {
+                return Conflict(new { status = "Error", message = "A student with the same ID, email, or name already exists." });
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex, "Blockchain identity registration failed during manual student creation");
+                return StatusCode(StatusCodes.Status502BadGateway,
+                    new { status = "Error", message = "The student was not created because blockchain identity registration failed." });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating student manually");
-                return StatusCode(500, new { status = "Error", message = ex.Message });
+                return StatusCode(500, new { status = "Error", message = "The student account could not be created." });
             }
         }
 
         public class ManualStudentRequest
         {
-            public string Email { get; set; } = string.Empty;
+            public string? FullName { get; set; }
+            public string? Email { get; set; }
             public string FirstName { get; set; } = string.Empty;
             public string LastName { get; set; } = string.Empty;
             public string? MiddleName { get; set; }
             public string DateOfBirth { get; set; } = string.Empty;
-            public string StudentNumber { get; set; } = string.Empty;
+            public string? StudentNumber { get; set; }
+            public string? Program { get; set; }
             public string Department { get; set; } = string.Empty;
-            public string? Section { get; set; }
+            public int? EnrollmentYear { get; set; }
             public string? Phone { get; set; }
             public string? Address { get; set; }
             public string? Sex { get; set; }
@@ -3720,9 +4043,10 @@ namespace Client_app.Controllers
                 reader.Close();
 
                 // Verify password using crypt in postgres
+                var normalizedHash = hash.StartsWith("$2b$") ? "$2a$" + hash.Substring(4) : hash;
                 using var verifyCmd = new NpgsqlCommand("SELECT crypt(@password, @hash) = @hash", conn);
                 verifyCmd.Parameters.AddWithValue("password", password);
-                verifyCmd.Parameters.AddWithValue("hash", hash);
+                verifyCmd.Parameters.AddWithValue("hash", normalizedHash);
                 var isPasswordValid = Convert.ToBoolean(await verifyCmd.ExecuteScalarAsync());
 
                 if (!isPasswordValid)
