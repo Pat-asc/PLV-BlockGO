@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { fetchAllGrades, finalizeGrade, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, registrarBulkEnrollStudents, registrarBulkUpdateStudents, resetEncodingSeason } from '../../services/api';
+import { fetchAllGrades, finalizeGrade, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason } from '../../services/api';
 import RegistrarHeader from './RegistrarHeader';
 import RegistrarSidebar from './RegistrarSidebar';
 import RegistrarDashboard from './RegistrarDashboard';
@@ -10,9 +10,13 @@ import PdfReportViewer from '../shared/PdfReportViewer';
 import Modal from '../../services/Modal';
 import RegistrarStudentSectioning from './RegistrarStudentSectioning';
 import RegistrarSectionsCreated from './RegistrarSectionsCreated';
-import { downloadTemplateButtonClass } from '../shared/downloadButtonStyles';
-import { buildCsvContent, downloadCsvFile } from '../../utils/studentSectioningHelpers';
 import { isDepartmentApprovedGradeStatus } from '../../utils/gradeStatus';
+import StaffAccountCreation from './StaffAccountCreation';
+import CurriculumManagement from './CurriculumManagement';
+import { programOptions, programs } from '../../data/registrarData';
+import RegistrarSupportTickets from './RegistrarSupportTickets';
+import StudentEnrollmentManagement from './StudentEnrollmentManagement';
+import PasswordManagement from './PasswordManagement';
 
 const RegistrarGradesView = ({
     loggedInEmail = '',
@@ -20,13 +24,16 @@ const RegistrarGradesView = ({
     chatUnreadCount = 0,
     latestChatNotice = null,
     onOpenChat,
+    onLogout,
 }) => {
-    const managementTabs = ['grades', 'Requests', 'assigning', 'bulkEnroll', 'revokeAccounts'];
     const managementMenuItems = [
         { id: 'grades', label: 'Grades Ledger' },
-        { id: 'Requests', label: 'Pending Requests' },
         { id: 'assigning', label: 'Assigning' },
-        { id: 'bulkEnroll', label: 'Register Students' },
+        { id: 'bulkEnroll', label: 'Student Enrollment' },
+        { id: 'createAccounts', label: 'Create Staff Accounts' },
+        { id: 'curriculum', label: 'Curriculum Management' },
+        { id: 'tickets', label: 'Report System Error' },
+        { id: 'passwordResets', label: 'Password Management' },
         { id: 'revokeAccounts', label: 'Account Revocation' },
     ];
     const [grades, setGrades] = useState([]);
@@ -46,32 +53,12 @@ const RegistrarGradesView = ({
     const [stagedGrades, setStagedGrades] = useState([]);
     const [stagedLoading, setStagedLoading] = useState(false);
     const [activeSemester, setActiveSemester] = useState('2nd Semester');
-    const [bulkEnrollLoading, setBulkEnrollLoading] = useState(false);
-    const [bulkEnrollResult, setBulkEnrollResult] = useState(null);
 
     const [filterDept, setFilterDept] = useState('All');
     const [filterYear, setFilterYear] = useState('All');
     const [filterSection, setFilterSection] = useState('All');
 
-    const departments = [
-    "Bachelor of Early Childhood Education",
-    "Bachelor of Secondary Education Major in English",
-    "Bachelor of Secondary Education Major in Filipino",
-    "Bachelor of Secondary Education Major in Mathematics",
-    "Bachelor of Secondary Education Major in Science",
-    "Bachelor of Secondary Education Major in Social Studies",
-    "Bachelor of Science in Civil Engineering",
-    "Bachelor of Science in Electrical Engineering",
-    "Bachelor of Science in Information Technology",
-    "Bachelor of Arts in Communication",
-    "Bachelor of Science in Psychology",
-    "Bachelor of Science in Social Work",
-    "Bachelor of Public Administration",
-    "Bachelor of Science in Accountancy",
-    "Bachelor of Science in Business Administration Major in Financial Management",
-    "Bachelor of Science in Business Administration Major in Human Resource Management",
-    "Bachelor of Science in Business Administration Major in Marketing Management",
-    ];
+    const departments = programs;
     const [sectioningDepartment, setSectioningDepartment] = useState(departments[0]);
 
     const [ipfsModalOpen, setIpfsModalOpen] = useState(false);
@@ -297,6 +284,32 @@ const RegistrarGradesView = ({
         } catch (error) { console.error('Error loading students:', error); }
     }, []);
 
+    useEffect(() => {
+        setStudentAssignments((current) => {
+            const next = { ...current };
+
+            approvedStudents.forEach((student) => {
+                const importedDepartment = programs.includes(student.department)
+                    ? student.department
+                    : programOptions.find((program) =>
+                        String(program.code).toLowerCase() === String(student.programCode || student.department || '').toLowerCase()
+                    )?.name || '';
+                const importedYear = String(student.yearLevel || '').match(/[1-4]/)?.[0] || '';
+                const importedSection = String(student.section || '').match(/(?:^|[-\s])(\d+)$/)?.[1] || '';
+                const existing = current[student.id] || {};
+
+                next[student.id] = {
+                    ...existing,
+                    department: existing.department || importedDepartment,
+                    yearLevel: existing.yearLevel || importedYear,
+                    sectionNum: existing.sectionNum || importedSection,
+                };
+            });
+
+            return next;
+        });
+    }, [approvedStudents]);
+
     const loadApprovedAdmins = useCallback(async () => {
         try {
             const response = await fetchApprovedAdmins();
@@ -378,6 +391,11 @@ const RegistrarGradesView = ({
         }
         if (mainTab === 'grades') loadApprovedFaculties();
         if (mainTab === 'revokeAccounts') {
+            loadApprovedAdmins();
+            loadApprovedFaculties();
+        }
+        if (mainTab === 'passwordResets') {
+            loadApprovedStudents();
             loadApprovedAdmins();
             loadApprovedFaculties();
         }
@@ -592,6 +610,16 @@ const RegistrarGradesView = ({
         }
         return { finalAverage: rawGrade };
     }, []);
+
+    const formatGradePayload = useCallback((rawGrade) => {
+        const payload = parseGradePayload(rawGrade);
+        const values = [
+            payload.midterm ? `Midterm: ${payload.midterm}` : null,
+            payload.finals ? `Finals: ${payload.finals}` : null,
+            payload.finalAverage ? `Equivalent: ${payload.finalAverage}` : null,
+        ].filter(Boolean);
+        return values.length > 0 ? values.join(' · ') : 'Not recorded';
+    }, [parseGradePayload]);
 
     const formatStudentStanding = useCallback((standing) => {
         switch (standing) {
@@ -857,59 +885,9 @@ const RegistrarGradesView = ({
         }
     };
 
-    const handleDownloadBulkEnrollmentTemplate = () => {
-        const rows = [
-            ['student_id', 'first_name', 'last_name', 'middle_name', 'sex', 'email', 'number', 'address', 'birthday'],
-            ['26-0001', 'Juan', 'Dela Cruz', 'Andres', 'Male', '26-0001@plv.edu.ph', '09123456789', 'Valenzuela City', '05/15/2005'],
-            ['26-0002', 'Maria', 'Santos', 'Lopez', 'Female', '26-0002@plv.edu.ph', '09987654321', 'Valenzuela City', '08/20/2005'],
-        ];
-
-        downloadCsvFile(
-            buildCsvContent(rows),
-            'bulk-enroll-template.csv'
-        );
-    };
-
-    const handleStudentCsvAction = (mode) => {
-        if (bulkEnrollLoading) return;
-
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel';
-
-        input.onchange = async (event) => {
-            const file = event.target.files?.[0];
-            if (!file) return;
-
-            setBulkEnrollLoading(true);
-            setBulkEnrollResult(null);
-
-            try {
-                const result = mode === 'update'
-                    ? await registrarBulkUpdateStudents(file, sectioningDepartment)
-                    : await registrarBulkEnrollStudents(file, sectioningDepartment);
-                setBulkEnrollResult(result);
-                alert(result.message || 'Bulk enrollment completed.');
-            } catch (error) {
-                const message = error.message || 'Bulk enrollment failed.';
-                setBulkEnrollResult({ status: 'Error', message, failed: 1, successful: 0 });
-                alert(message);
-            } finally {
-                setBulkEnrollLoading(false);
-            }
-        };
-
-        input.click();
-    };
-
-    const handleBulkEnroll = () => handleStudentCsvAction('enroll');
-    const handleBulkUpdateInfo = () => handleStudentCsvAction('update');
-
-    const isManagementView = managementTabs.includes(mainTab);
-
     return (
         <div className="flex h-screen w-full flex-col bg-slate-50 font-sans fixed inset-0 z-[100] overflow-auto">
-            <RegistrarHeader registrarData={{ name: loggedInName, semester: activeSemester }} onLogout={() => { localStorage.removeItem('token'); window.location.reload(); }} />
+            <RegistrarHeader registrarData={{ name: loggedInName, semester: activeSemester }} onLogout={onLogout} />
             <div className="flex flex-col md:flex-row flex-1 overflow-hidden p-4 md:p-6 gap-6">
                 <RegistrarSidebar
                     activeTab={mainTab}
@@ -918,48 +896,25 @@ const RegistrarGradesView = ({
                     latestChatNotice={latestChatNotice}
                     onOpenChat={onOpenChat}
                     managementDefaultTab="grades"
+                    managementMenuItems={managementMenuItems}
                 />
-                {isManagementView && (
-                    <aside className="w-full max-w-[220px] self-start rounded-2xl border border-slate-200 bg-slate-100 p-4 shadow-sm lg:sticky lg:top-6">
-                        <div className="mb-4 border-b border-slate-200 pb-3">
-                            <h2 className="text-lg font-bold text-[#003366]">Academic Management</h2>
-                        </div>
-
-                        <nav className="flex flex-col gap-2">
-                            {managementMenuItems.map((item) => {
-                                const isActive = mainTab === item.id;
-
-                                return (
-                                    <button
-                                        key={item.id}
-                                        type="button"
-                                        onClick={() => setMainTab(item.id)}
-                                        className={`w-full rounded-xl border-b-2 px-4 py-3 text-left text-sm font-medium transition ${
-                                            isActive
-                                                ? 'border-yellow-400 bg-[#003366] text-yellow-400 shadow-sm'
-                                                : 'border-transparent text-slate-700 hover:bg-slate-100'
-                                        }`}
-                                    >
-                                        {item.label}
-                                    </button>
-                                );
-                            })}
-                        </nav>
-                    </aside>
-                )}
-                <main className="flex-1 overflow-y-auto pr-2">
+                <main className="flex-1 overflow-y-auto pb-24 pr-2">
                     {mainTab === 'dashboard' && <RegistrarDashboard grades={grades} />}
                     {mainTab === 'encoding' && <EncodingPeriod onResetEncodingSeason={handleResetEncodingSeason} />}
                     {mainTab === 'studentlist' && <StudentListImport />}
                     {mainTab === 'sectioning' && (
-                        <div className="space-y-4">
-                            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                                <label className="block max-w-xl">
-                                    <span className="mb-2 block text-sm font-medium text-slate-700">Department</span>
+                        <div className="space-y-3">
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-900">Department Sections</h2>
+                                
+                            </div>
+                            <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm lg:grid-cols-[1fr_250px] lg:items-end">
+                                <label className="block">
+                                    <span className="mb-1 block text-[11px] font-semibold text-slate-600">Department</span>
                                     <select
                                         value={sectioningDepartment}
                                         onChange={(event) => setSectioningDepartment(event.target.value)}
-                                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-[#003366]"
+                                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-xs outline-none focus:border-[#003366]"
                                     >
                                         {departments.map((department) => (
                                             <option key={department} value={department}>
@@ -968,74 +923,27 @@ const RegistrarGradesView = ({
                                         ))}
                                     </select>
                                 </label>
+                                
                             </div>
                             <RegistrarStudentSectioning chairpersonDepartment={sectioningDepartment} />
                         </div>
                     )}
                     {mainTab === 'bulkEnroll' && (
-                        <div className="space-y-4">
-                            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                                <div className="flex flex-col gap-4">
-                                    <div className="max-w-2xl">
-                                        <h3 className="text-xl font-bold text-[#003366]">Register Students</h3>
-                                        <p className="mt-1 text-sm text-slate-500">
-                                            Required columns: student ID, first name, last name, middle name, sex, email, number, address, and birthday. Student ID must use `xx-xxxx`, and birthday must use `MM/DD/YYYY`.
-                                        </p>
-                                    </div>
-                                </div>
-                                {bulkEnrollResult ? (
-                                    <div className={`mt-4 rounded-xl border p-4 text-sm ${bulkEnrollResult.status === 'Error' || bulkEnrollResult.failed > 0 ? 'border-yellow-300 bg-yellow-50 text-yellow-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
-                                        <p className="font-semibold">{bulkEnrollResult.status}</p>
-                                        <p>{bulkEnrollResult.message}</p>
-                                        {typeof bulkEnrollResult.successful !== 'undefined' ? (
-                                            <p className="mt-1">Successful: {bulkEnrollResult.successful} | Failed: {bulkEnrollResult.failed || 0}</p>
-                                        ) : null}
-                                        {Array.isArray(bulkEnrollResult.errors) && bulkEnrollResult.errors.length > 0 ? (
-                                            <div className="mt-3 rounded-lg border border-yellow-200 bg-white/70 p-3">
-                                                <p className="font-semibold text-slate-800">Row Issues</p>
-                                                <ul className="mt-2 space-y-1 text-slate-700">
-                                                    {bulkEnrollResult.errors.slice(0, 10).map((errorItem, index) => (
-                                                        <li key={`${errorItem.row || 'row'}-${index}`}>
-                                                            Row {errorItem.row || '?'} ({errorItem.identifier || 'Unknown'}): {errorItem.reason}
-                                                        </li>
-                                                    ))}
-                                                </ul>
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                ) : null}
-                                <div className="mt-5 flex flex-wrap gap-3 border-t border-slate-200 pt-4">
-                                    <button
-                                        type="button"
-                                        onClick={handleDownloadBulkEnrollmentTemplate}
-                                        className={downloadTemplateButtonClass}
-                                    >
-                                        Download Template
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={handleBulkEnroll}
-                                        disabled={bulkEnrollLoading}
-                                        className="inline-flex items-center justify-center rounded-xl bg-[#003366] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#00264d]"
-                                    >
-                                        {bulkEnrollLoading ? 'Uploading...' : 'Upload Students'}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={handleBulkUpdateInfo}
-                                        disabled={bulkEnrollLoading}
-                                        className="inline-flex items-center justify-center rounded-xl border border-[#003366] bg-white px-5 py-3 text-sm font-semibold text-[#003366] transition hover:bg-slate-50"
-                                    >
-                                        {bulkEnrollLoading ? 'Uploading...' : 'Update Student Info'}
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
+                        <StudentEnrollmentManagement programs={departments} />
                     )}
+                    {mainTab === 'createAccounts' && <StaffAccountCreation />}
+                    {mainTab === 'curriculum' && <CurriculumManagement />}
+                    {mainTab === 'tickets' && <RegistrarSupportTickets />}
+                    {mainTab === 'passwordResets' && <PasswordManagement
+                        students={approvedStudents}
+                        faculties={approvedFaculties}
+                        departmentAdmins={approvedAdmins}
+                        onRefresh={() => Promise.all([loadApprovedStudents(), loadApprovedAdmins(), loadApprovedFaculties()])}
+                    />}
                     {mainTab === 'sectionsCreated' && <RegistrarSectionsCreated />}
                     {mainTab === 'reports' && (
                         <div className="flex flex-col gap-8">
-                            <SystemLogs />
+                            <SystemLogs grades={grades} />
                             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                                 <h3 className="mb-6 text-xl font-bold text-[#003366]">System Compliance Report Preview</h3>
                                 <PdfReportViewer title="PLV System Activity & Compliance" />
@@ -1070,7 +978,7 @@ const RegistrarGradesView = ({
                                 <aside className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                                     <div className="border-b border-slate-200 px-5 py-4">
                                         <h3 className="text-lg font-bold text-[#003366]">Faculty Encoding Monitoring</h3>
-                                        <p className="mt-1 text-sm text-slate-500">Faculty with `D`, `UD`, `W`, or `INC` records are prioritized at the top.</p>
+                                        
                                     </div>
                                     <div className="max-h-[720px] overflow-y-auto p-4">
                                         {facultyMonitoringList.length === 0 ? (
@@ -1216,13 +1124,9 @@ const RegistrarGradesView = ({
                                                                                             )}
                                                                                         </td>
                                                                                         <td className="p-4">
-                                                                                            {(record.ipfs_cid || record.IpfsCID) ? (
-                                                                                                <button onClick={() => handleViewIpfs(record.ipfs_cid || record.IpfsCID)} className="font-bold text-blue-600 hover:underline">
-                                                                                                    View File
-                                                                                                </button>
-                                                                                            ) : (
-                                                                                                <span className="text-xs text-slate-400">No File</span>
-                                                                                            )}
+                                                                                            <div className="flex flex-col items-start gap-2">
+                                                                                                {(record.ipfs_cid || record.IpfsCID) ? <button onClick={() => handleViewIpfs(record.ipfs_cid || record.IpfsCID)} className="font-bold text-blue-600 hover:underline">View File</button> : <span className="text-xs text-slate-400">No File</span>}
+                                                                                            </div>
                                                                                         </td>
                                                                                     </tr>
                                                                                 ))}
@@ -1286,7 +1190,7 @@ const RegistrarGradesView = ({
                                                             {group.records.map((sg) => (
                                                                 <tr key={sg.stagingId} className="border-b border-slate-50 hover:bg-slate-50">
                                                                     <td className="p-4 font-mono text-[11px] text-slate-600">{sg.studentHash}</td>
-                                                                    <td className="p-4 font-black text-blue-700 text-center text-base">{sg.grade}</td>
+                                                                    <td className="p-4 font-bold text-blue-700 text-center text-sm">{formatGradePayload(sg.grade)}</td>
                                                                     <td className="p-4 text-center">
                                                                         <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-bold uppercase text-emerald-700">
                                                                             {sg.status}
@@ -1349,9 +1253,7 @@ const RegistrarGradesView = ({
                                             }`}
                                         >
                                             <p className="mt-2 text-base font-bold">{tab.label}</p>
-                                            <p className={`mt-1 text-sm leading-5 ${assignmentTab === tab.id ? 'text-slate-100' : 'text-slate-500'}`}>
-                                                {tab.description}
-                                            </p>
+                                            
                                         </button>
                                     ))}
                                 </div>
@@ -1381,7 +1283,7 @@ const RegistrarGradesView = ({
                                                     <div className="grid flex-1 gap-3 lg:max-w-3xl lg:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)_auto]">
                                                         <label className="block">
                                                             <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Department</span>
-                                                            <select defaultValue="" onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], department: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
+                                                            <select value={studentAssignments[student.id]?.department || ''} onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], department: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
                                                                 <option value="" disabled>Select department</option>
                                                                 {departments.map(d => <option key={d} value={d}>{d}</option>)}
                                                             </select>
@@ -1389,14 +1291,14 @@ const RegistrarGradesView = ({
                                                         <div className="grid gap-3 sm:grid-cols-2">
                                                             <label className="block">
                                                                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Year</span>
-                                                                <select defaultValue="" onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], yearLevel: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
+                                                                <select value={studentAssignments[student.id]?.yearLevel || ''} onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], yearLevel: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
                                                                     <option value="" disabled>Select year</option>
                                                                     <option value="1">1st</option><option value="2">2nd</option><option value="3">3rd</option><option value="4">4th</option>
                                                                 </select>
                                                             </label>
                                                             <label className="block">
                                                                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Section</span>
-                                                                <select defaultValue="" onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], sectionNum: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
+                                                                <select value={studentAssignments[student.id]?.sectionNum || ''} onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], sectionNum: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
                                                                     <option value="" disabled>Select section</option>
                                                                     {[...Array(15)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
                                                                 </select>
@@ -1538,7 +1440,7 @@ const RegistrarGradesView = ({
                                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                                         <div>
                                             <h4 className="text-base font-bold text-[#003366]">Chairperson</h4>
-                                            <p className="mt-1 text-sm text-slate-500">View chairperson accounts in alphabetical order by course or program.</p>
+                                            
                                         </div>
                                         <button
                                             type="button"
@@ -1591,7 +1493,7 @@ const RegistrarGradesView = ({
                                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                                         <div>
                                             <h4 className="text-base font-bold text-[#003366]">Faculty</h4>
-                                            <p className="mt-1 text-sm text-slate-500">Open the department list first, then pick a department to view faculty accounts in alphabetical order.</p>
+                                            
                                         </div>
                                         <button
                                             type="button"

@@ -1,237 +1,142 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { fetchAllGrades, getSystemSetting } from '../../services/api';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { fetchStudentCurriculum, fetchStudentHistoricalGrades, getSystemSetting, updateStudentProfile } from '../../services/api';
 import StudentNavbar from './StudentNavbar';
 import StudentInfoCard from './StudentInfoCard';
 import StudentSummary from './StudentSummary';
-import StudentGradesTable from './StudentGradesTable';
+import StudentHistoricalGrades from './StudentHistoricalGrades';
+import StudentBlockchainTransactions from './StudentBlockchainTransactions';
+import StudentCurrentSubjects from './StudentCurrentSubjects';
+import CurriculumViewer from '../shared/CurriculumViewer';
+import { getGradeEquivalent } from '../../utils/gradingHelpers';
 
 const StudentPortal = ({ studentData, onLogout }) => {
   const [grades, setGrades] = useState([]);
+  const [gradeError, setGradeError] = useState('');
+  const [gradeMessage, setGradeMessage] = useState('');
+  const [curricula, setCurricula] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [curriculumLoading, setCurriculumLoading] = useState(false);
+  const [curriculumError, setCurriculumError] = useState('');
   const [activeSemester, setActiveSemester] = useState('Semester Grades');
+  const [activeView, setActiveView] = useState('grades');
+  const [showTransactions, setShowTransactions] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [profile, setProfile] = useState(() => ({ ...studentData }));
+  const [profileForm, setProfileForm] = useState(() => ({ phone: studentData.phone || '', sex: studentData.sex || '', middleName: studentData.middleName || '' }));
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileNotice, setProfileNotice] = useState('');
 
-  const rawFullName = studentData.name || '';
+  const rawFullName = profile.name || '';
   const firstName = rawFullName.split(' ')[0] || '';
-  const storedMiddleName = studentData.middleName || '';
+  const storedMiddleName = profile.middleName || '';
   const remainingName = rawFullName.split(' ').slice(1).join(' ').trim();
   const escapedMiddleName = storedMiddleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const lastName = storedMiddleName && escapedMiddleName
-    ? remainingName.replace(new RegExp(`^${escapedMiddleName}\\s*`, 'i'), '').trim()
-    : remainingName;
+  const lastName = storedMiddleName && escapedMiddleName ? remainingName.replace(new RegExp(`^${escapedMiddleName}\\s*`, 'i'), '').trim() : remainingName;
 
-  const getStudentKey = useCallback((grade) => (
-    grade.student_hash ||
-    grade.studentHash ||
-    grade.StudentHash ||
-    grade.studentId ||
-    grade.StudentId ||
-    ''
-  ), []);
-
-  const parseGradePayload = useCallback((grade) => {
-    const rawGrade = grade.grade || grade.Grade;
-
-    if (!rawGrade) {
-        return { midterm: '---', finals: '---', finalAverage: '---' };
-    }
-
-    if (typeof rawGrade === 'object') {
-        return {
-            midterm: rawGrade.midterm || '---',
-            finals: rawGrade.finals || '---',
-            finalAverage: rawGrade.finalAverage || rawGrade.final || rawGrade.grade || '---'
-        };
-    }
-
-    if (typeof rawGrade === 'string' && rawGrade.trim().startsWith('{')) {
-        try {
-            const parsed = JSON.parse(rawGrade);
-            return {
-                midterm: parsed.midterm || '---',
-                finals: parsed.finals || '---',
-                finalAverage: parsed.finalAverage || parsed.final || parsed.grade || '---'
-            };
-        } catch (error) {
-            console.error("Failed to parse grade JSON:", error);
-        }
-    }
-
-    return { midterm: '---', finals: '---', finalAverage: rawGrade };
+  const loadGrades = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
+    setGradeError('');
+    try {
+      const response = await fetchStudentHistoricalGrades();
+      const records = Array.isArray(response?.data) ? response.data : [];
+      setGrades(records);
+      setGradeMessage(records.length === 0
+        ? (response?.message || 'There are currently no grade records available.')
+        : '');
+    } catch (error) {
+      console.error('Unable to load finalized student grade history:', error);
+      setGradeError(error.message || 'Unable to retrieve grade records from the blockchain. Please try again later.');
+      setGradeMessage('');
+      if (!background) setGrades([]);
+    } finally { if (!background) setLoading(false); }
   }, []);
 
-  const loadGrades = useCallback(async (isBackground = false) => {
-      if (!isBackground) setLoading(true);
-      try {
-        const response = await fetchAllGrades(studentData.email);
-        let allGrades = [];
-        
-        // Handle different backend response structures safely
-        if (Array.isArray(response)) {
-            allGrades = response;
-        } else if (response.status === 'Success' && response.data) {
-            allGrades = response.data;
-        }
-
-        // Filter strictly to only show the logged-in student's records
-        const myGrades = allGrades.filter(g => {
-            const studentKey = getStudentKey(g);
-            return studentKey === studentData.email || studentKey === studentData.email.split('@')[0];
-        });
-        
-        setGrades(myGrades);
-      } catch (error) {
-        console.error('Error fetching grades from blockchain:', error);
-      }
-      if (!isBackground) setLoading(false);
-  }, [getStudentKey, studentData.email]);
+  const loadCurriculum = useCallback(async () => {
+    setCurriculumLoading(true); setCurriculumError('');
+    try {
+      const response = await fetchStudentCurriculum();
+      setCurricula(response?.data ? [response.data] : []);
+    } catch (error) {
+      setCurricula([]); setCurriculumError(error.message || 'No published curriculum is assigned to your account.');
+    } finally { setCurriculumLoading(false); }
+  }, []);
 
   useEffect(() => {
     loadGrades();
     const handleAcademicDataChanged = () => loadGrades(true);
     window.addEventListener('blockgo:academic-data-changed', handleAcademicDataChanged);
-
     return () => window.removeEventListener('blockgo:academic-data-changed', handleAcademicDataChanged);
   }, [loadGrades]);
+
+  useEffect(() => { if (activeView === 'curriculum' && curricula.length === 0) loadCurriculum(); }, [activeView, curricula.length, loadCurriculum]);
 
   useEffect(() => {
     const applyEncodingPeriod = (value) => {
       if (!value) return;
-      try {
-        const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-        setActiveSemester(parsed?.semester ? `${parsed.semester} Grades` : 'Semester Grades');
-      } catch (error) {
-        console.error('Failed to parse encoding period for student portal:', error);
-      }
+      try { const parsed = typeof value === 'string' ? JSON.parse(value) : value; setActiveSemester(parsed?.semester ? `${parsed.semester} Grades` : 'Semester Grades'); }
+      catch (error) { console.error('Failed to parse encoding period:', error); }
     };
-
-    const loadEncodingPeriod = async () => {
-      try {
-        const res = await getSystemSetting('encoding_period');
-        if (res.status === 'Success' && res.value) {
-          applyEncodingPeriod(res.value);
-        }
-      } catch (error) {
-        console.error('Failed to load encoding period for student portal:', error);
-      }
-    };
-
-    const handleSystemSettingChanged = (event) => {
-      const key = event.detail?.key || event.detail?.Key;
-      const value = event.detail?.value || event.detail?.Value;
-      if (key === 'encoding_period') applyEncodingPeriod(value);
-    };
-
-    loadEncodingPeriod();
-    window.addEventListener('blockgo:system-setting-changed', handleSystemSettingChanged);
-    return () => window.removeEventListener('blockgo:system-setting-changed', handleSystemSettingChanged);
+    getSystemSetting('encoding_period').then((response) => { if (response.status === 'Success') applyEncodingPeriod(response.value); }).catch(() => {});
+    const handleSetting = (event) => { if ((event.detail?.key || event.detail?.Key) === 'encoding_period') applyEncodingPeriod(event.detail?.value || event.detail?.Value); };
+    window.addEventListener('blockgo:system-setting-changed', handleSetting);
+    return () => window.removeEventListener('blockgo:system-setting-changed', handleSetting);
   }, []);
 
-  const totalUnits = grades.length * 3; // Assuming 3 units per subject block for now
-  
-  const totalWeight = grades.reduce((sum, sub) => sum + ((parseFloat(parseGradePayload(sub).finalAverage) || 0) * 3), 0);
-
-  const calculatedGWA = totalUnits > 0 ? (totalWeight / totalUnits).toFixed(2) : "0.00";
-
-  const isDeansLister = grades.length > 0 && Number(calculatedGWA) <= 1.75 && grades.every(s => parseFloat(parseGradePayload(s).finalAverage) <= 2.25);
-  const failedSubjectsCount = grades.filter(s => parseFloat(parseGradePayload(s).finalAverage) > 3.0 || parseFloat(parseGradePayload(s).finalAverage) === 5.0).length;
-
-  let mappedSubjects = grades.map(g => {
-    const parsed = parseGradePayload(g);
-    
-    let rawAverage = "---";
-    const mid = parseFloat(parsed.midterm);
-    const fin = parseFloat(parsed.finals);
-    
-    if (!isNaN(mid) && !isNaN(fin)) {
-        rawAverage = ((mid + fin) / 2).toFixed(2);
-    } else if (!isNaN(mid)) {
-        rawAverage = mid.toFixed(2);
-    } else if (!isNaN(fin)) {
-        rawAverage = fin.toFixed(2);
-    }
-
-    let computedRemarks = "Pending";
-    if (!isNaN(parseFloat(parsed.finalAverage))) {
-        computedRemarks = parseFloat(parsed.finalAverage) <= 3.0 ? "Passed" : "Failed";
-    }
-
-    return {
-      code: g.subject_code || g.subjectCode || g.SubjectCode || 'N/A',
-      name: g.subject_name || g.subjectName || g.SubjectName || g.subject_code || g.subjectCode || 'Unknown Subject',
-      units: 3,
-      midterm: parsed.midterm,
-      finals: parsed.finals,
-      finalGrade: rawAverage !== "---" ? rawAverage : parsed.finalAverage,
-      equivalent: parsed.finalAverage,
-      remarks: computedRemarks
-    };
+  const finalizedByRecord = useMemo(() => {
+    const map = new Map();
+    grades.forEach((grade) => {
+      const existing = map.get(grade.recordId) || grade;
+      if (grade.term === 'finals' || !map.has(grade.recordId)) map.set(grade.recordId, { ...existing, ...grade });
+    });
+    return [...map.values()];
+  }, [grades]);
+  const equivalentFor = (grade) => {
+    const numericGrade = Number(grade.finalAverage || grade.grade);
+    if (!Number.isFinite(numericGrade)) return null;
+    return numericGrade > 5 ? Number(getGradeEquivalent(numericGrade)) : numericGrade;
+  };
+  const totalUnits = finalizedByRecord.reduce((sum, grade) => sum + Number(grade.units || 0), 0);
+  const totalWeight = finalizedByRecord.reduce((sum, grade) => sum + Number(equivalentFor(grade) || 0) * Number(grade.units || 0), 0);
+  const calculatedGWA = totalUnits > 0 ? (totalWeight / totalUnits).toFixed(2) : '0.00';
+  const failedSubjectsCount = finalizedByRecord.filter((grade) => equivalentFor(grade) === 5).length;
+  const isDeansLister = finalizedByRecord.length > 0 && Number(calculatedGWA) <= 1.75 && finalizedByRecord.every((grade) => {
+    const equivalent = equivalentFor(grade);
+    return equivalent !== null && equivalent <= 2.25;
   });
+  const currentYear = Number(String(profile.yearLevel || profile.section || '').match(/[1-4]/)?.[0] || 0);
 
-  if (mappedSubjects.length === 0 && studentData.enrolledSubjects && studentData.enrolledSubjects.length > 0) {
-      mappedSubjects = studentData.enrolledSubjects.map(subName => ({
-          code: 'PENDING',
-          name: subName,
-          units: 3,
-          midterm: '---',
-          finals: '---'
-      }));
-  }
+  const views = [
+    { id: 'grades', label: 'Current Subjects' },
+    { id: 'history', label: 'Grade History' },
+    { id: 'curriculum', label: 'Curriculum Checklist' },
+  ];
+
+  const saveProfile = async (event) => {
+    event.preventDefault(); setProfileSaving(true); setProfileNotice('');
+    try {
+      await updateStudentProfile(profileForm);
+      setProfile((current) => ({ ...current, ...profileForm }));
+      setProfileNotice('Profile settings saved.');
+    } catch (error) { setProfileNotice(error.message || 'Profile settings could not be saved.'); }
+    finally { setProfileSaving(false); }
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans pb-10">
-      <StudentNavbar onLogout={onLogout} />
-        
+    <div className="min-h-screen bg-slate-50 pb-10 font-sans">
+      <StudentNavbar onLogout={onLogout} onOpenSettings={() => setShowSettings(true)} />
       <div className="mx-auto max-w-7xl">
-        <StudentInfoCard 
-          studentData={{
-            firstName,
-            lastName,
-            middleName: storedMiddleName || 'Not provided',
-            studentId: studentData.studentNo || 'N/A',
-            dateOfBirth: studentData.dateOfBirth || 'Not provided',
-            sex: studentData.sex || 'Not provided',
-            phone: studentData.phone || 'Not provided',
-            email: studentData.studentEmail || studentData.email,
-            department: studentData.department,
-            section: studentData.section,
-            address: studentData.address || 'Not provided'
-          }} 
-        />
+        <StudentInfoCard studentData={{ firstName, lastName, middleName: storedMiddleName || 'Not provided', studentId: profile.studentNo || 'N/A', dateOfBirth: profile.dateOfBirth || 'Not provided', sex: profile.sex || 'Not provided', phone: profile.phone || 'Not provided', email: profile.studentEmail || profile.email, department: profile.department, section: profile.section, yearLevel: profile.yearLevel, schoolYear: profile.schoolYear, semester: profile.semester, enrollmentStatus: profile.enrollmentStatus, curriculumName: profile.curriculumName, curriculumVersion: profile.curriculumVersion, address: profile.address || 'Not provided' }} />
+        <StudentSummary totalUnits={totalUnits} gwa={calculatedGWA} isDeansLister={isDeansLister} failedSubjectsCount={failedSubjectsCount} semesterLabel={activeSemester} />
 
-        <StudentSummary 
-          totalUnits={totalUnits} 
-          gwa={calculatedGWA} 
-          isDeansLister={isDeansLister} 
-          failedSubjectsCount={failedSubjectsCount} 
-          semesterLabel={activeSemester}
-        />
-
-        {failedSubjectsCount >= 2 && (
-          <div className="mx-6 mt-4 flex items-center gap-4 rounded-xl border-l-4 border-red-600 bg-red-50 p-4 text-red-900 shadow-sm">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <div>
-              <strong className="block text-lg">Academic Warning</strong>
-              <p className="mt-1 text-sm">You have failed two or more subjects. Please consult with the Registrar or your Department Chairperson regarding your academic standing.</p>
-            </div>
-          </div>
-        )}
-
-        {loading ? (
-          <div className="mx-6 mt-10 rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
-            <h3 className="text-xl font-bold text-[#003366]">Syncing Records with Blockchain Ledger...</h3>
-            <p className="mt-2 text-sm text-slate-500">Please wait while we securely retrieve your academic records.</p>
-          </div>
-        ) : (mappedSubjects.length === 0 && (!studentData.enrolledSubjects || studentData.enrolledSubjects.length === 0)) ? (
-          <div className="mx-6 mt-10 rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
-            <h3 className="text-xl font-bold text-slate-400">No Grades Found</h3>
-            <p className="mt-2 text-sm text-slate-500">No ledger records or enrollment data found for your account yet.</p>
-          </div>
-        ) : (
-          <StudentGradesTable subjects={mappedSubjects} />
-        )}
+        <div className="mx-6 mt-6 flex flex-wrap gap-2">{views.map((view) => <button key={view.id} type="button" onClick={() => { setActiveView(view.id); setShowTransactions(false); }} className={`rounded-lg px-4 py-2 text-sm font-bold ${activeView === view.id && !showTransactions ? 'bg-[#003366] text-white' : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}>{view.label}</button>)}<button type="button" onClick={() => setShowTransactions((value) => !value)} className={`rounded-lg px-4 py-2 text-sm font-bold ${showTransactions ? 'bg-[#003366] text-white' : 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'}`}>{showTransactions ? 'Hide my blockchain transactions' : 'View my blockchain transactions'}</button></div>
+        <main className="mx-6 mt-4">
+          {showTransactions ? <StudentBlockchainTransactions /> : null}
+          {!showTransactions && activeView === 'grades' ? <StudentCurrentSubjects grades={grades} schoolYear={profile.schoolYear} semester={profile.semester} loading={loading} error={gradeError} /> : null}
+          {!showTransactions && activeView === 'history' ? <StudentHistoricalGrades grades={grades} loading={loading} error={gradeError} emptyMessage={gradeMessage} /> : null}
+          {!showTransactions && activeView === 'curriculum' ? <>{curriculumError ? <div className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{curriculumError}</div> : null}<CurriculumViewer curricula={curricula} currentYear={currentYear} loading={curriculumLoading} emptyMessage={curriculumError || 'No published curriculum is assigned to your account.'} /></> : null}
+        </main>
       </div>
+      {showSettings ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-label="Profile settings"><form onSubmit={saveProfile} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"><div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase text-slate-500">Student Profile</p><h2 className="text-xl font-bold text-[#003366]">Profile Settings</h2></div><button type="button" onClick={() => setShowSettings(false)} aria-label="Close profile settings" className="text-2xl text-slate-500">×</button></div>{profileNotice ? <p className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{profileNotice}</p> : null}<div className="mt-5 grid gap-4 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-700">Middle Name<input value={profileForm.middleName} onChange={(event) => setProfileForm((current) => ({ ...current, middleName: event.target.value }))} className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm" /></label><label className="text-xs font-semibold text-slate-700">Phone<input value={profileForm.phone} onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))} className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm" /></label><label className="text-xs font-semibold text-slate-700 sm:col-span-2">Sex<select value={profileForm.sex} onChange={(event) => setProfileForm((current) => ({ ...current, sex: event.target.value }))} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm"><option value="">Prefer not to specify</option><option value="Female">Female</option><option value="Male">Male</option></select></label></div><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={() => setShowSettings(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold">Cancel</button><button disabled={profileSaving} className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{profileSaving ? 'Saving…' : 'Save Settings'}</button></div></form></div> : null}
     </div>
   );
 };

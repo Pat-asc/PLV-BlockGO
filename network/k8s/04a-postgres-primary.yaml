@@ -28,6 +28,8 @@ spec:
         app: postgres-primary
     spec:
       serviceAccountName: fabric-sa
+      nodeSelector:
+        topology.kubernetes.io/zone: "__GKE_ZONE_A__"
       initContainers:
       - name: volume-permissions
         image: busybox
@@ -76,10 +78,21 @@ spec:
           mountPath: /bitnami/postgresql
         - name: postgres-init-script
           mountPath: /docker-entrypoint-initdb.d
+        startupProbe: &postgresPrimaryProbe
+          tcpSocket: {port: 5432}
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 60
+        livenessProbe: *postgresPrimaryProbe
+        readinessProbe: *postgresPrimaryProbe
       volumes:
       - name: postgres-init-script
-        configMap:
-          name: postgres-init-script
+        projected:
+          sources:
+          - configMap:
+              name: postgres-init-script
+          - configMap:
+              name: postgres-runtime-migrations
   volumeClaimTemplates:
   - metadata:
       name: postgres-storage
@@ -88,4 +101,4 @@ spec:
       accessModes: [ "ReadWriteOnce" ]
       resources:
         requests:
-          storage: 2Gi
+          storage: 100Gi

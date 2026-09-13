@@ -4,6 +4,8 @@ import Modal from '../../services/Modal';
 import FacultyHeader from './FacultyHeader';
 import YearTabs from './YearTabs';
 import ProgramCard from './ProgramCard';
+import FacultyCurriculumPanel from './FacultyCurriculumPanel';
+import { getGradeEquivalent } from '../../utils/gradingHelpers';
 
 const normalizeYearLabel = (value) => {
   const raw = String(value || '').trim();
@@ -148,24 +150,6 @@ const saveResetAwareLocalData = (storageKey, data) => {
   localStorage.setItem(storageKey, JSON.stringify(payload));
 };
 
-const getGradeEquivalent = (grade) => {
-  const g = Number(grade);
-
-  if (isNaN(g)) return "-";
-  if (g >= 97) return "1.00";
-  if (g >= 94) return "1.25";
-  if (g >= 91) return "1.50";
-  if (g >= 88) return "1.75";
-  if (g >= 85) return "2.00";
-  if (g >= 82) return "2.25";
-  if (g >= 79) return "2.50";
-  if (g >= 76) return "2.75";
-  if (g === 75) return "3.00";
-  if (g < 75) return "5.00";
-
-  return "-";
-};
-
 const parseGradeValue = (value) => {
   if (value === null || value === undefined) return "";
 
@@ -223,6 +207,7 @@ const getTemporarySheetHeader = () => [
 ];
 
 const FacultyPortal = ({ facultyData, onLogout }) => {
+  const [portalView, setPortalView] = useState('grades');
   const [activeSection, setActiveSection] = useState(null);
   const [activeTab, setActiveTab] = useState("All Sections");
   const [searchQuery, setSearchQuery] = useState("");
@@ -1105,7 +1090,9 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           type: 'success', 
           title: 'Upload Successful', 
           message: `Processed: ${res.totalProcessed}, Success: ${res.successful}`, 
-          details: res.errors ? JSON.stringify(res.errors, null, 2) : 'All records processed successfully.'
+          details: Array.isArray(res.errors) && res.errors.length > 0
+            ? res.errors
+            : 'All records processed successfully.'
         });
         setBulkUploadedSections((prev) => ({ ...prev, [sectionName]: true }));
         updateSectionTermStatus(sectionName, encodingTerm, 'draft');
@@ -1142,6 +1129,10 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
               course: sectionData.sectionCourse || sectionData.subjectCode || sectionName,
               subject_code: sectionData.subjectCode,
               subject_name: sectionData.subjectTitle || sectionData.subjectCode,
+              professor_name: facultyData.name || facultyData.email,
+              program: sectionData.sectionCourse || '',
+              term: encodingTerm,
+              units: Number(sectionData.units) || 3,
               year_level: sectionData.year || "",
               grade: JSON.stringify({
                 midterm: student.midterm,
@@ -1219,6 +1210,28 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
   const isMidtermLocked = encodingTerm !== 'midterm';
   const isFinalsLocked = encodingTerm !== 'finals';
 
+  if (portalView === 'curriculum') {
+    return (
+      <div className="min-h-screen bg-slate-50 pb-10 font-sans">
+        <FacultyHeader
+          facultyData={{ ...facultyData, semester: encodingSemester }}
+          totalSections={totalSections}
+          onLogout={onLogout}
+        />
+        <main className="w-full px-4 py-5 md:px-6">
+          <button
+            type="button"
+            onClick={() => setPortalView('grades')}
+            className="mb-5 rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white"
+          >
+            Back to Grade Encoding
+          </button>
+          <FacultyCurriculumPanel />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 pb-10 font-sans">
       <FacultyHeader
@@ -1228,6 +1241,15 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       />
 
       <div className="w-full px-4 md:px-6">
+        <div className="mt-5 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setPortalView('curriculum')}
+            className="rounded-lg border border-[#003366] bg-white px-4 py-2 text-sm font-bold text-[#003366] hover:bg-blue-50"
+          >
+            View Program Curriculum
+          </button>
+        </div>
         {bannerState === 'not_set' && (
           <div className="mt-5 flex items-center gap-4 rounded-xl border-l-4 border-slate-400 bg-white p-4 text-slate-800 shadow-sm">
             <div>
@@ -1610,11 +1632,30 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
               {uploadResult.title}
             </h2>
             <p className="mb-4 font-semibold text-slate-700">{uploadResult.message}</p>
-            {uploadResult.details && (
-              <div className="mb-5 flex-grow overflow-y-auto rounded-xl bg-slate-900 p-4 text-sm text-green-400">
-                <pre className="whitespace-pre-wrap font-mono">{uploadResult.details}</pre>
+            {Array.isArray(uploadResult.details) ? (
+              <div className="mb-5 flex-grow overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full border-collapse text-left text-sm">
+                  <thead className="bg-slate-100 text-slate-700">
+                    <tr>
+                      <th className="px-4 py-3 font-bold">Student ID</th>
+                      <th className="px-4 py-3 font-bold">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {uploadResult.details.map((error, index) => (
+                      <tr key={`${error.studentId || 'row'}-${index}`} className="border-t border-slate-200">
+                        <td className="px-4 py-3 font-semibold text-slate-700">{error.studentId || 'Unknown'}</td>
+                        <td className="px-4 py-3 text-slate-600">{error.reason || 'No reason provided'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )}
+            ) : uploadResult.details ? (
+              <div className="mb-5 rounded-xl bg-green-50 p-4 text-sm font-medium text-green-800">
+                {uploadResult.details}
+              </div>
+            ) : null}
             <div className="text-right">
               <button
                 className="rounded-xl bg-slate-200 px-5 py-2 font-bold text-slate-800 transition hover:bg-slate-300"

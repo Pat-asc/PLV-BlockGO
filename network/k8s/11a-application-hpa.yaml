@@ -43,15 +43,64 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: client-app-hpa
+  name: auth-service-hpa
+  namespace: plv-fabric
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: auth-service }
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: { type: Utilization, averageUtilization: 75 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ledger-service-hpa
+  namespace: plv-fabric
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: ledger-service }
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: { type: Utilization, averageUtilization: 70 }
+  - type: Resource
+    resource:
+      name: memory
+      target: { type: Utilization, averageUtilization: 75 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: grade-upload-service-hpa
+  namespace: plv-fabric
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: grade-upload-service }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: { type: Utilization, averageUtilization: 65 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dotnet-api-gateway-hpa
   namespace: plv-fabric
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: client-app
-  minReplicas: 1
-  maxReplicas: 3
+    name: dotnet-api-gateway
+  minReplicas: 2
+  maxReplicas: 5
   metrics:
   - type: Resource
     resource:
@@ -59,3 +108,82 @@ spec:
       target:
         type: Utilization
         averageUtilization: 70
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dotnet-auth-service-hpa
+  namespace: plv-fabric
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: dotnet-auth-service }
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: { type: Utilization, averageUtilization: 70 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dotnet-academic-service-hpa
+  namespace: plv-fabric
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: dotnet-academic-service }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: { type: Utilization, averageUtilization: 70 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dotnet-grade-service-hpa
+  namespace: plv-fabric
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: dotnet-grade-service }
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: { type: Utilization, averageUtilization: 65 }
+  - type: Resource
+    resource:
+      name: memory
+      target: { type: Utilization, averageUtilization: 75 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dotnet-operations-service-hpa
+  namespace: plv-fabric
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: dotnet-operations-service }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: { type: Utilization, averageUtilization: 70 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dotnet-realtime-service-hpa
+  namespace: plv-fabric
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: dotnet-realtime-service }
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: { type: Utilization, averageUtilization: 65 }

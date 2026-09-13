@@ -1,0 +1,25 @@
+2026-09-11T08:22:11Z | profile=local | kind=peer-transient-lock | namespace=plv-main-campus | deployment=peer-registrar | detected; preparing guarded repair
+2026-09-11T08:23:23Z | profile=local | kind=peer-transient-lock | namespace=plv-main-campus | deployment=peer-registrar | lock database isolated; deployment restored to 1 replica(s)
+2026-09-11T08:38:27Z | profile=local | kind=peer-transient-store | namespace=plv-main-campus | deployment=peer-registrar | detected; preparing guarded repair
+2026-09-11T08:39:23Z | profile=local | kind=peer-transient-store | namespace=plv-main-campus | deployment=peer-registrar | corrupted component isolated; deployment restored to 1 replica(s)
+2026-09-11T08:40:01Z | profile=local | kind=peer-ledger-lock | namespace=plv-main-campus | deployment=peer-registrar | detected; preparing guarded repair
+2026-09-11T08:41:03Z | profile=local | kind=peer-ledger-lock | namespace=plv-main-campus | deployment=peer-registrar | corrupted component isolated; deployment restored to 1 replica(s)
+2026-09-11T08:50:58Z | profile=local | kind=peer-ledger-provider | namespace=plv-main-campus | deployment=peer-registrar | detected; preparing guarded repair
+2026-09-11T08:51:40Z | profile=local | kind=peer-transient-lock | namespace=plv-annex-campus | deployment=peer-faculty | detected; preparing guarded repair
+2026-09-11T08:53:11Z | profile=local | kind=peer-transient-lock | namespace=plv-annex-campus | deployment=peer-faculty | corrupted component isolated; deployment restored to 1 replica(s)
+2026-09-11T08:53:55Z | profile=local | kind=peer-transient-store | namespace=plv-annex-campus | deployment=peer-faculty | detected; preparing guarded repair
+2026-09-11T08:55:01Z | profile=local | kind=peer-transient-store | namespace=plv-annex-campus | deployment=peer-faculty | corrupted component isolated; deployment restored to 1 replica(s)
+2026-09-11T08:55:25Z | profile=local | kind=peer-ledger-lock | namespace=plv-annex-campus | deployment=peer-faculty | detected; preparing guarded repair
+2026-09-11T08:56:33Z | profile=local | kind=peer-ledger-lock | namespace=plv-annex-campus | deployment=peer-faculty | corrupted component isolated; deployment restored to 1 replica(s)
+2026-09-11T08:56:57Z | profile=local | kind=peer-ledger-provider | namespace=plv-annex-campus | deployment=peer-faculty | detected; preparing guarded repair
+2026-09-11T08:57:25Z | profile=local | kind=peer-transient-lock | namespace=plv-pubad-campus | deployment=peer-department | detected; preparing guarded repair
+2026-09-11T08:58:44Z | profile=local | kind=peer-transient-lock | namespace=plv-pubad-campus | deployment=peer-department | corrupted component isolated; deployment restored to 1 replica(s)
+2026-09-11T08:59:23Z | profile=local | kind=peer-transient-store | namespace=plv-pubad-campus | deployment=peer-department | detected; preparing guarded repair
+2026-09-11T09:00:29Z | profile=local | kind=peer-transient-store | namespace=plv-pubad-campus | deployment=peer-department | corrupted component isolated; deployment restored to 1 replica(s)
+2026-09-11T09:00:54Z | profile=local | kind=peer-ledger-lock | namespace=plv-pubad-campus | deployment=peer-department | detected; preparing guarded repair
+2026-09-11T09:01:55Z | profile=local | kind=peer-ledger-lock | namespace=plv-pubad-campus | deployment=peer-department | corrupted component isolated; deployment restored to 1 replica(s)
+2026-09-11T09:02:24Z | profile=local | kind=peer-ledger-provider | namespace=plv-pubad-campus | deployment=peer-department | detected; preparing guarded repair
+2026-09-11T09:16:08Z | profile=local | kind=peer-rebootstrap | namespace=plv-main-campus | deployment=peer-registrar | old peer filesystem and state CouchDB preserved; clean local stores started
+2026-09-11T09:18:34Z | profile=local | kind=peer-rebootstrap | namespace=plv-annex-campus | deployment=peer-faculty | old peer filesystem and state CouchDB preserved; clean local stores started
+2026-09-11T09:21:19Z | profile=local | kind=peer-rebootstrap | namespace=plv-pubad-campus | deployment=peer-department | old peer filesystem and state CouchDB preserved; clean local stores started
+2026-09-11T10:48:24Z | profile=local | kind=ipfs-sharding | namespace=plv-fabric | deployment=ipfs-node | recreated missing blocks/SHARDING metadata; existing blocks preserved

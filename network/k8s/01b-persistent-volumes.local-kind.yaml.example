@@ -164,6 +164,24 @@ spec:
 apiVersion: v1
 kind: PersistentVolume
 metadata:
+  name: pv-couchdb-wallet-registrar
+spec:
+  capacity:
+    storage: 10Gi
+  volumeMode: Filesystem
+  accessModes: [ "ReadWriteOnce" ]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: hostpath
+  claimRef:
+    namespace: plv-main-campus
+    name: couchdb-wallet-storage-couchdb-wallet-registrar-0
+  hostPath:
+    path: ${PWD}/fabric-k8s-data/couchdb-wallet-registrar
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
   name: pv-couchdb-faculty-1
 spec:
   capacity:
@@ -177,6 +195,24 @@ spec:
     name: couchdb-storage-couchdb-faculty-0
   hostPath:
     path: ${PWD}/fabric-k8s-data/couchdb-faculty-1
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-couchdb-wallet-faculty
+spec:
+  capacity:
+    storage: 10Gi
+  volumeMode: Filesystem
+  accessModes: [ "ReadWriteOnce" ]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: hostpath
+  claimRef:
+    namespace: plv-annex-campus
+    name: couchdb-wallet-storage-couchdb-wallet-faculty-0
+  hostPath:
+    path: ${PWD}/fabric-k8s-data/couchdb-wallet-faculty
     type: DirectoryOrCreate
 ---
 apiVersion: v1
@@ -213,6 +249,24 @@ spec:
     name: couchdb-storage-couchdb-department-0
   hostPath:
     path: ${PWD}/fabric-k8s-data/couchdb-department-1
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-couchdb-wallet-department
+spec:
+  capacity:
+    storage: 10Gi
+  volumeMode: Filesystem
+  accessModes: [ "ReadWriteOnce" ]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: hostpath
+  claimRef:
+    namespace: plv-pubad-campus
+    name: couchdb-wallet-storage-couchdb-wallet-department-0
+  hostPath:
+    path: ${PWD}/fabric-k8s-data/couchdb-wallet-department
     type: DirectoryOrCreate
 ---
 apiVersion: v1
@@ -263,8 +317,8 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: fabric-storage
   claimRef:
-    namespace: plv-fabric
-    name: ipfs-data-ipfs-node-1
+    namespace: plv-annex-campus
+    name: ipfs-data-ipfs-annex-0
   hostPath:
     path: ${PWD}/fabric-k8s-data/ipfs-2
     type: DirectoryOrCreate
@@ -281,8 +335,8 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: fabric-storage
   claimRef:
-    namespace: plv-fabric
-    name: ipfs-data-ipfs-node-2
+    namespace: plv-pubad-campus
+    name: ipfs-data-ipfs-pubad-0
   hostPath:
     path: ${PWD}/fabric-k8s-data/ipfs-3
     type: DirectoryOrCreate

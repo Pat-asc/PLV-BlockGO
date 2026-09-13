@@ -1,9 +1,5 @@
-.vs/
 bin/
 obj/
 logs/
-
 *.log
-*.lscache
 .env
-.env.*

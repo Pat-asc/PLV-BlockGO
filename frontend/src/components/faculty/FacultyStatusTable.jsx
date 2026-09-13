@@ -164,9 +164,7 @@ function FacultyStatusTable({
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-6 py-5">
           <h3 className="text-xl font-bold text-[#003366]">Faculty For Review</h3>
-          <p className="mt-1 text-sm text-slate-500">
-            Review submitted sections per faculty and open each section individually.
-          </p>
+          
         </div>
 
         <div className="overflow-x-auto">

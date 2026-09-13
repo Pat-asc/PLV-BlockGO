@@ -202,7 +202,7 @@ const BulkUploadModal = ({
 
                 <p>For pasted text: Student ID,{" "}{systemTerm === "midterm" ? "Midterm Grade" : "Final Grade"} (60-100)</p>
 
-                    <p className="mb-2">Separate pasted values with comma, space, or tab</p>
+                    
 
                     <p className="mb-1">
                     Example:{" "}

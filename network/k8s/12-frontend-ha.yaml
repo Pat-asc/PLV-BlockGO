@@ -17,12 +17,12 @@ data:
     }
 
     upstream ipfs_gateway {
-      server ipfs-gateway.plv-fabric.svc.cluster.local:8080;
+      server ipfs-ha-gateway.plv-fabric.svc.cluster.local:8080;
       keepalive 8;
     }
 
     upstream ipfs_api {
-      server ipfs-api.plv-fabric.svc.cluster.local:5001;
+      server ipfs-ha-api.plv-fabric.svc.cluster.local:5001;
       keepalive 8;
     }
 
@@ -62,23 +62,32 @@ data:
       }
 
       location /ipfs-webui/ {
+        proxy_set_header Host localhost:5001;
+        proxy_set_header Origin "";
         rewrite ^/ipfs-webui/(.*) /webui/$1 break;
         proxy_pass http://ipfs_api;
       }
 
       location /api/v0/ {
+        proxy_set_header Host localhost:5001;
+        proxy_set_header Origin "";
         proxy_pass http://ipfs_api;
       }
 
       location ^~ /api/Grades { proxy_pass http://client_app; }
       location ^~ /api/Student { proxy_pass http://client_app; }
+      location ^~ /api/student { proxy_pass http://client_app; }
       location ^~ /api/GradeTemplate { proxy_pass http://client_app; }
       location ^~ /api/SystemSettings { proxy_pass http://client_app; }
       location ^~ /api/SystemMonitoring { proxy_pass http://client_app; }
       location ^~ /api/BulkUpload { proxy_pass http://client_app; }
       location ^~ /api/RegistrarDashboard { proxy_pass http://client_app; }
       location ^~ /api/Sectioning { proxy_pass http://client_app; }
+      location ^~ /api/AccountManagement { proxy_pass http://client_app; }
+      location ^~ /api/Curriculums { proxy_pass http://client_app; }
+      location ^~ /api/SupportTickets { proxy_pass http://client_app; }
       location ^~ /api/backend/health { proxy_pass http://client_app; }
+      location ^~ /api/password-reset-requests { proxy_pass http://client_app; }
       location ^~ /api/Auth { proxy_pass http://client_app; }
       location ^~ /api/registrar/ { proxy_pass http://client_app; }
 
@@ -92,6 +101,7 @@ data:
         try_files $uri $uri/ /index.html;
       }
     }
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -101,22 +111,37 @@ metadata:
   labels:
     app: frontend
     tier: web
+
 spec:
   replicas: 1
+
   selector:
     matchLabels:
       app: frontend
+
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 0
+
   template:
     metadata:
       labels:
         app: frontend
         tier: web
+
     spec:
+      automountServiceAccountToken: false
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -129,30 +154,63 @@ spec:
                   values:
                   - frontend
               topologyKey: kubernetes.io/hostname
+
       containers:
       - name: frontend-nginx
         image: registry.example.com/plv-repo/frontend:latest
         imagePullPolicy: Always
+
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 101
+          runAsGroup: 101
+
+          privileged: false
+          allowPrivilegeEscalation: false
+
+          readOnlyRootFilesystem: true
+
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE
+
         ports:
         - containerPort: 80
           name: http
+          protocol: TCP
+
         volumeMounts:
         - name: nginx-config
           mountPath: /etc/nginx/conf.d/default.conf
           subPath: default.conf
           readOnly: true
+
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+
+        - name: nginx-tmp
+          mountPath: /tmp
+
         livenessProbe:
           httpGet:
             path: /nginx-health
             port: 80
           initialDelaySeconds: 15
           periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+
         readinessProbe:
           httpGet:
             path: /nginx-health
             port: 80
           initialDelaySeconds: 5
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
         resources:
           requests:
             cpu: "100m"
@@ -160,10 +218,18 @@ spec:
           limits:
             cpu: "500m"
             memory: "512Mi"
+
       volumes:
       - name: nginx-config
         configMap:
           name: frontend-nginx-config
+
+      - name: nginx-cache
+        emptyDir: {}
+
+      - name: nginx-tmp
+        emptyDir: {}
+
 ---
 apiVersion: v1
 kind: Service
@@ -174,10 +240,13 @@ metadata:
     app: frontend
   annotations:
     cloud.google.com/neg: '{"ingress": true}'
+
 spec:
   type: ClusterIP
+
   selector:
     app: frontend
+
   ports:
   - port: 80
     targetPort: 80

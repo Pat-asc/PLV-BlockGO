@@ -1,11 +1,6 @@
 import React from "react";
 import plvlogo from "../../assets/plvlogo.png";
 
-const stripRolePrefix = (value = "") =>
-  String(value)
-    .replace(/^(dept\.?\s*admin|department\s*admin|chairperson|prof\.?|mr\.?|ms\.?|mrs\.?|registrar)\s+/i, "")
-    .trim();
-
 function ChairpersonHeader({
   chairpersonData,
   departmentCount,
@@ -14,11 +9,17 @@ function ChairpersonHeader({
   onDepartmentChange,
   onLogout,
 }) {
-  const displayName =
-    stripRolePrefix(chairpersonData?.name) || "Chairperson";
-
   return (
-    <header className="w-full border-b border-slate-200 bg-[#003366] shadow-sm">
+    <header
+      className="w-full border-b-2 border-yellow-400 bg-[#001b55] shadow-sm"
+      style={{
+        backgroundImage: [
+          "linear-gradient(118deg, transparent 0 48%, rgba(10, 48, 122, 0.72) 48.2% 62%, transparent 62.2%)",
+          "linear-gradient(142deg, transparent 0 68%, rgba(0, 43, 112, 0.85) 68.2% 83%, transparent 83.2%)",
+          "linear-gradient(105deg, #00113f 0%, #002469 54%, #001748 100%)",
+        ].join(", "),
+      }}
+    >
       <div className="flex w-full items-center justify-between px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10">
@@ -28,7 +29,7 @@ function ChairpersonHeader({
           <div className="leading-tight">
             <p className="text-sm text-white/80">Chairperson Portal</p>
             <h1 className="text-xl font-bold text-white">
-              Welcome, {displayName}
+              Welcome back
             </h1>
           </div>
         </div>

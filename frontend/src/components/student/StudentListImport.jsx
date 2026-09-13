@@ -190,7 +190,7 @@ function StudentListImport() {
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-5">
           <h3 className="text-2xl font-bold text-[#003366]">Student List Import</h3>
-          <p className="mt-1 text-sm text-slate-500">Upload one Excel CSV file per department with student details to forward to the assigned chairperson for sectioning.</p>
+          
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -242,7 +242,7 @@ function StudentListImport() {
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-4">
             <h3 className="text-xl font-bold text-[#003366]">Submission Logs</h3>
-            <p className="mt-1 text-sm text-slate-500">Track which department files were already forwarded.</p>
+            
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full">

@@ -52,6 +52,10 @@
               "target": "Package",
               "version": "[33.1.0, )"
             },
+            "MessagePack": {
+              "target": "Package",
+              "version": "[2.5.302, )"
+            },
             "Microsoft.AspNetCore.Authentication.JwtBearer": {
               "target": "Package",
               "version": "[8.0.4, )"
@@ -84,10 +88,6 @@
               "target": "Package",
               "version": "[8.0.11, )"
             },
-            "Npgsql": {
-              "target": "Package",
-              "version": "[8.0.6, )"
-            },
             "Npgsql.EntityFrameworkCore.PostgreSQL": {
               "target": "Package",
               "version": "[8.0.11, )"
@@ -111,6 +111,10 @@
             "Swashbuckle.AspNetCore": {
               "target": "Package",
               "version": "[6.5.0, )"
+            },
+            "Yarp.ReverseProxy": {
+              "target": "Package",
+              "version": "[2.3.0, )"
             }
           },
           "imports": [

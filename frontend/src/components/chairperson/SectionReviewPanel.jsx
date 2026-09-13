@@ -108,10 +108,7 @@ function SectionReviewPanel({
     return (
       <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
         <h3 className="text-xl font-semibold text-[#003366]">Section Review Panel</h3>
-        <p className="mt-2 text-sm text-slate-500">
-          Select a faculty section from the monitoring table to review submitted grades,
-          send corrections back, approve, or forward them to the registrar.
-        </p>
+        
       </div>
     );
   }
@@ -222,9 +219,7 @@ function SectionReviewPanel({
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
             <h3 className="text-lg font-bold text-[#003366]">Submitted Grades</h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Review all grades encoded by the faculty member before making a chairperson decision.
-            </p>
+            
           </div>
         </div>
 
@@ -268,9 +263,7 @@ function SectionReviewPanel({
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h3 className="text-lg font-bold text-[#003366]">Chairperson Decision</h3>
-        <p className="mt-1 text-sm text-slate-500">
-          Add a review note when sending a section back to faculty, or keep remarks for the approval trail.
-        </p>
+        
 
         <div className="mt-4">
           <label className="mb-2 block text-sm font-medium text-slate-700">Review Note</label>
@@ -316,9 +309,7 @@ function SectionReviewPanel({
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h3 className="text-lg font-bold text-[#003366]">Decision Log</h3>
-        <p className="mt-1 text-sm text-slate-500">
-          Approval and send-back history for this section.
-        </p>
+        
 
         <div className="mt-4 space-y-3">
           {(selectedSection.reviewLogs || []).length ? (

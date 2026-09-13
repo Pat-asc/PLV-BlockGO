@@ -53,6 +53,13 @@ spec:
             name: client-app-service
             port:
               number: 5000
+      - path: /api/student
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
       - path: /api/GradeTemplate
         pathType: Prefix
         backend:
@@ -95,6 +102,34 @@ spec:
             name: client-app-service
             port:
               number: 5000
+      - path: /api/AccountManagement
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
+      - path: /api/Curriculums
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
+      - path: /api/SupportTickets
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
+      - path: /api/registrar
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
       - path: /api/backend/health
         pathType: Prefix
         backend:
@@ -109,11 +144,18 @@ spec:
             name: client-app-service
             port:
               number: 5000
+      - path: /api/chatHub
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
       - path: /ipfs
         pathType: Prefix
         backend:
           service:
-            name: ipfs-gateway
+            name: ipfs-ha-gateway
             port:
               number: 8080
       - path: /api

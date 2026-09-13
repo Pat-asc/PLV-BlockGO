@@ -5,12 +5,14 @@ import {
   YEAR_LEVEL_PREFIXES,
   downloadStudentCsvFile,
   getDefaultSectionName,
+  getNextStudentId,
   getStudentMiddleName,
   parseStudentIdSpreadsheet,
   syncSectionedStudentsToStorage,
 } from "../../utils/studentSectioningHelpers";
 import { syncSectioningBatchesToBackend } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
+import { fetchNextStudentId } from "../../services/api";
 
 const GRADUATING_STUDENTS_KEY = "graduatingStudents";
 const IRREGULAR_SUBJECTS_KEY = "irregularSubjectAssignments";
@@ -44,6 +46,15 @@ const sectionMatchesYearLevel = (section = {}, yearLevel = "1st Year") => {
 
   if (section.yearLevel) return section.yearLevel === yearLevel;
   return !!yearPrefix && section.sectionCode?.startsWith(`${yearPrefix}-`);
+};
+
+const getSectionYearLevel = (section = {}) => {
+  if (section.yearLevel) return section.yearLevel;
+  return (
+    Object.entries(YEAR_LEVEL_PREFIXES).find(([, prefix]) =>
+      section.sectionCode?.startsWith(`${prefix}-`)
+    )?.[0] || "1st Year"
+  );
 };
 
 const getNextYearLevel = (yearLevel = "") =>
@@ -97,14 +108,19 @@ function RegistrarSectionsCreated() {
   const [activeYearLevel, setActiveYearLevel] = useState("1st Year");
   const [selectedBatchKey, setSelectedBatchKey] = useState("");
   const [selectedSectionCode, setSelectedSectionCode] = useState("");
+  const [showRoster, setShowRoster] = useState(false);
+  const [sectionSearch, setSectionSearch] = useState("");
+  const [overviewYear, setOverviewYear] = useState("All");
   const [pendingRemoval, setPendingRemoval] = useState(null);
   const [studentForm, setStudentForm] = useState({
-    studentId: "",
     sex: "",
     lastName: "",
     firstName: "",
     middleName: "",
   });
+  const [persistedSequences, setPersistedSequences] = useState({});
+  const [studentIdLoading, setStudentIdLoading] = useState(false);
+  const [studentIdError, setStudentIdError] = useState("");
   const [changedDepartments, setChangedDepartments] = useState(() => new Set());
 
   const persistBatches = (nextBatches) => {
@@ -199,6 +215,50 @@ function RegistrarSectionsCreated() {
     ) ||
     departmentBatches[0] ||
     null;
+  const studentIdYear = String(selectedBatch?.batchYear || "").match(/^\d{4}/)?.[0] || "";
+  const hasPersistedSequence = Object.prototype.hasOwnProperty.call(
+    persistedSequences,
+    studentIdYear
+  );
+  const automaticStudentId = useMemo(
+    () => hasPersistedSequence
+      ? getNextStudentId(
+          selectedBatch?.batchYear,
+          batches,
+          persistedSequences[studentIdYear]
+        )
+      : "",
+    [batches, hasPersistedSequence, persistedSequences, selectedBatch?.batchYear, studentIdYear]
+  );
+  const studentIdLimitReached = hasPersistedSequence && !automaticStudentId;
+
+  useEffect(() => {
+    if (!studentIdYear || Object.prototype.hasOwnProperty.call(persistedSequences, studentIdYear)) {
+      return;
+    }
+
+    let cancelled = false;
+    setStudentIdError("");
+    setStudentIdLoading(true);
+    fetchNextStudentId(studentIdYear)
+      .then((response) => {
+        if (cancelled) return;
+        setPersistedSequences((current) => ({
+          ...current,
+          [studentIdYear]: Number(response?.highestSequence) || 0,
+        }));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.warn("Could not load the persisted student ID sequence.", error);
+        setStudentIdError("Automatic Student ID is unavailable. Please retry after the server connection is restored.");
+      })
+      .finally(() => {
+        if (!cancelled) setStudentIdLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [persistedSequences, studentIdYear]);
   const yearSections = (selectedBatch?.sectionPlans || []).filter((section) =>
     sectionMatchesYearLevel(section, activeYearLevel)
   );
@@ -232,6 +292,27 @@ function RegistrarSectionsCreated() {
     0
   );
   const hasActiveDepartmentChanges = changedDepartments.has(selectedDepartment);
+  const overviewSections = departmentBatches.flatMap((batch) =>
+    (batch.sectionPlans || [])
+      .filter(
+        (section) =>
+          overviewYear === "All" || sectionMatchesYearLevel(section, overviewYear)
+      )
+      .map((section) => {
+        const yearLevel = getSectionYearLevel(section);
+        const sectionName =
+          section.sectionName || getDefaultSectionName(batch.program, section.sectionCode);
+        const studentCount = (batch.students || []).filter(
+          (student) =>
+            student.sectionCode === section.sectionCode &&
+            (student.yearLevel || yearLevel) === yearLevel
+        ).length;
+        return { batch, section, yearLevel, sectionName, studentCount };
+      })
+  ).filter(({ section, sectionName }) => {
+    const query = sectionSearch.trim().toLowerCase();
+    return !query || sectionName.toLowerCase().includes(query) || String(section.sectionCode).toLowerCase().includes(query);
+  });
 
   const updateSelectedBatch = (updater) => {
     if (!selectedBatch) return;
@@ -475,7 +556,7 @@ function RegistrarSectionsCreated() {
 
   const handleAddStudent = () => {
     if (!selectedBatch || !selectedSection) return;
-    const studentId = studentForm.studentId.trim();
+    const studentId = automaticStudentId;
 
     if (
       !studentId ||
@@ -517,7 +598,6 @@ function RegistrarSectionsCreated() {
       lastSectionedAt: new Date().toISOString(),
     }));
     setStudentForm({
-      studentId: "",
       sex: "",
       lastName: "",
       firstName: "",
@@ -668,7 +748,7 @@ function RegistrarSectionsCreated() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section className={`${showRoster ? "hidden" : ""} rounded-2xl border border-slate-200 bg-white p-6 shadow-sm`}>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h3 className="text-xl font-bold text-[#003366]">
@@ -704,8 +784,57 @@ function RegistrarSectionsCreated() {
         </div>
 
         {departments.length ? (
-          <div className="mt-6 grid grid-cols-1 gap-5 2xl:grid-cols-[240px_1fr]">
-            <aside className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <>
+          <div className={showRoster ? "hidden" : "mt-6 space-y-4"}>
+            <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 md:grid-cols-[1fr_2fr] md:items-end">
+              <label>
+                <span className="mb-2 block text-xs font-semibold text-slate-600">Department</span>
+                <select value={selectedDepartment} onChange={(event) => { setActiveDepartment(event.target.value); setSelectedBatchKey(""); setSelectedSectionCode(""); }} className="h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-[#003366]">
+                  {departments.map((department) => <option key={department} value={department}>{department}</option>)}
+                </select>
+              </label>
+              <div>
+                <span className="mb-2 block text-xs font-semibold text-slate-600">Year Level</span>
+                <div className="flex flex-wrap gap-2">
+                  {["All", ...AVAILABLE_YEAR_LEVELS].map((yearLevel) => (
+                    <button key={yearLevel} type="button" onClick={() => setOverviewYear(yearLevel)} className={`rounded-lg border px-4 py-2 text-xs font-semibold ${overviewYear === yearLevel ? "border-[#003366] bg-[#003366] text-white" : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"}`}>{yearLevel}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <input value={sectionSearch} onChange={(event) => setSectionSearch(event.target.value)} placeholder="Search section by name or code..." className="h-10 w-full rounded-lg border border-slate-300 px-3 text-xs outline-none focus:border-[#003366] sm:max-w-sm" />
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={handleExportSectionCsv} disabled={!selectedSection} className="rounded-lg border border-blue-300 px-4 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-40">Export CSV</button>
+                  <button type="button" onClick={handleImportSectionCsv} disabled={!selectedSection} className="rounded-lg border border-emerald-300 px-4 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-40">Import CSV</button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-lg border border-slate-200">
+                <table className="min-w-full">
+                  <thead className="bg-slate-50 text-[11px] text-slate-600"><tr><th className="px-4 py-3 text-left">Section</th><th className="px-4 py-3 text-left">Section Code</th><th className="px-4 py-3 text-left">Year Level</th><th className="px-4 py-3 text-left">Students</th><th className="px-4 py-3 text-left">Actions</th></tr></thead>
+                  <tbody>
+                    {overviewSections.map(({ batch, section, yearLevel, sectionName, studentCount }) => (
+                      <tr key={`${batch.key}-${section.sectionCode}`} className="border-t border-slate-100 text-xs text-slate-700">
+                        <td className="px-4 py-3"><p className="font-bold text-[#003366]">{sectionName}</p><p className="mt-1 text-[10px] text-slate-500">Section {section.sectionCode}</p></td>
+                        <td className="px-4 py-3">{section.sectionCode}</td>
+                        <td className="px-4 py-3"><span className="rounded-md bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700">{yearLevel}</span></td>
+                        <td className="px-4 py-3 font-semibold">{studentCount}</td>
+                        <td className="px-4 py-3"><button type="button" onClick={() => { setActiveDepartment(batch.program); setActiveYearLevel(yearLevel); setSelectedBatchKey(batch.key); setSelectedSectionCode(section.sectionCode); setShowRoster(true); }} className="rounded-md border border-blue-200 px-3 py-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-50">View Roster</button></td>
+                      </tr>
+                    ))}
+                    {!overviewSections.length ? <tr><td colSpan="5" className="py-8 text-center text-sm text-slate-500">No sections match your filters.</td></tr> : null}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-4 text-[11px] text-slate-500">Showing {overviewSections.length} section{overviewSections.length === 1 ? "" : "s"}</p>
+            </div>
+          </div>
+
+          <div className={showRoster ? "mt-6" : "hidden"}>
+            <aside className="hidden">
               <p className="text-sm font-bold text-[#003366]">Departments</p>
               <div className="mt-3 space-y-2">
                 {departments.map((department) => {
@@ -762,7 +891,8 @@ function RegistrarSectionsCreated() {
             </aside>
 
             <div className="space-y-5">
-              <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <button type="button" onClick={() => setShowRoster(false)} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-[#003366] hover:bg-slate-50">← Back to Sections Created</button>
+              <div className="hidden">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <p className="text-sm font-bold text-[#003366]">
@@ -809,8 +939,8 @@ function RegistrarSectionsCreated() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-5 xl:grid-cols-[220px_1fr]">
-                <aside className="rounded-xl border border-slate-200 bg-white p-4">
+              <div>
+                <aside className="hidden">
                   <p className="text-sm font-bold text-[#003366]">Sections</p>
                   <div className="mt-3 space-y-3">
                     {departmentBatches.map((batch) => {
@@ -1076,15 +1206,16 @@ function RegistrarSectionsCreated() {
                       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
                         <input
                           type="text"
-                          value={studentForm.studentId}
-                          onChange={(event) =>
-                            setStudentForm((current) => ({
-                              ...current,
-                              studentId: event.target.value,
-                            }))
-                          }
-                          placeholder="Student ID"
-                          className="rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-[#003366]"
+                          value={automaticStudentId}
+                          readOnly
+                          aria-label="Student ID (automatic)"
+                          title="Student ID is assigned automatically from the batch year"
+                          placeholder={studentIdLoading
+                            ? "Loading Student ID…"
+                            : studentIdError || (studentIdLimitReached
+                                ? `${studentIdYear}-year ID limit (9999) reached`
+                                : "Select a valid batch year")}
+                          className="cursor-not-allowed rounded-xl border border-slate-300 bg-slate-100 px-4 py-3 text-sm text-slate-700 outline-none"
                         />
                         <select
                           value={studentForm.sex}
@@ -1122,7 +1253,8 @@ function RegistrarSectionsCreated() {
                         <button
                           type="button"
                           onClick={handleAddStudent}
-                          className="rounded-xl bg-[#003366] px-5 py-3 text-sm font-semibold text-white hover:bg-[#00264d]"
+                          disabled={studentIdLoading || !automaticStudentId}
+                          className="rounded-xl bg-[#003366] px-5 py-3 text-sm font-semibold text-white hover:bg-[#00264d] disabled:cursor-not-allowed disabled:bg-slate-300"
                         >
                           Add Student
                         </button>
@@ -1200,6 +1332,7 @@ function RegistrarSectionsCreated() {
               </div>
             </div>
           </div>
+          </>
         ) : (
           <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
             No registrar-created sections yet.

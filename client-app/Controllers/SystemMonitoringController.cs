@@ -1,405 +1,473 @@
+using System.Diagnostics;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Npgsql;
-using System.Diagnostics;
-using System.Globalization;
-using System.Text.Json;
 
 namespace Client_app.Controllers
 {
-    [Authorize(Roles = "system_admin")]
     [ApiController]
+    [Authorize(Roles = "system_admin")]
     [Route("api/[controller]")]
-    public class SystemMonitoringController : ControllerBase
+    public sealed class SystemMonitoringController : ControllerBase
     {
-        private const int CheckTimeoutSeconds = 5;
-        private readonly NpgsqlDataSource _dataSource;
+        private readonly string _connectionString;
+        private readonly string _middlewareUrl;
+        private readonly string _frontendUrl;
+        private readonly string? _prometheusUrl;
+        private readonly string _grafanaUrl;
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly IConfiguration _configuration;
-        private readonly ILogger<SystemMonitoringController> _logger;
+        private readonly IMemoryCache _cache;
+        private const string GrafanaSessionCookie = "blockgo_grafana_session";
 
-        public SystemMonitoringController(
-            NpgsqlDataSource dataSource,
-            IHttpClientFactory httpClientFactory,
-            IConfiguration configuration,
-            ILogger<SystemMonitoringController> logger)
+        public SystemMonitoringController(IConfiguration configuration, IHttpClientFactory httpClientFactory, IMemoryCache cache)
         {
-            _dataSource = dataSource;
+            _connectionString = configuration.GetConnectionString("MasterConnection")
+                ?? configuration.GetConnectionString("PostgresConnection")
+                ?? throw new InvalidOperationException("A PostgreSQL connection is required.");
+            _middlewareUrl = configuration["Middleware:Url"] ?? "http://middleware:4000";
+            _frontendUrl = configuration["Monitoring:FrontendUrl"]
+                ?? configuration["Frontend:Url"]
+                ?? Environment.GetEnvironmentVariable("FRONTEND_URL")
+                ?? "http://frontend-service";
+            _prometheusUrl = configuration["Monitoring:PrometheusUrl"] ?? Environment.GetEnvironmentVariable("PROMETHEUS_URL");
+            _grafanaUrl = configuration["Monitoring:GrafanaUrl"]
+                ?? Environment.GetEnvironmentVariable("GRAFANA_URL")
+                ?? "http://grafana.plv-fabric.svc.cluster.local:3000";
             _httpClientFactory = httpClientFactory;
-            _configuration = configuration;
-            _logger = logger;
+            _cache = cache;
+        }
+
+        [HttpPost("grafana/session")]
+        public IActionResult CreateGrafanaSession()
+        {
+            var sessionToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            var cacheKey = GrafanaCacheKey(sessionToken);
+            var actor = User.Identity?.Name ?? "system-admin@blockgo.local";
+            _cache.Set(cacheKey, actor, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(8),
+                SlidingExpiration = TimeSpan.FromMinutes(30)
+            });
+            Response.Cookies.Append(GrafanaSessionCookie, sessionToken, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = Request.IsHttps,
+                SameSite = SameSiteMode.Lax,
+                Path = "/api/SystemMonitoring/grafana",
+                MaxAge = TimeSpan.FromHours(8),
+                IsEssential = true
+            });
+            return Ok(new { status = "Success", url = "/api/SystemMonitoring/grafana/" });
+        }
+
+        [AllowAnonymous]
+        [AcceptVerbs("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")]
+        [Route("grafana/{**path}")]
+        public async Task ProxyGrafana(string? path, CancellationToken cancellationToken)
+        {
+            if (!TryGetGrafanaActor(out var actor))
+            {
+                Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await Response.WriteAsJsonAsync(new { status = "Error", message = "A System Admin Grafana session is required." }, cancellationToken);
+                return;
+            }
+
+            var relativePath = (path ?? string.Empty).TrimStart('/');
+            if (relativePath.Contains("://", StringComparison.Ordinal) || relativePath.Contains("..", StringComparison.Ordinal))
+            {
+                Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+
+            // Grafana is configured with serve_from_sub_path at this public route. Forwarding
+            // only the captured remainder makes Grafana redirect to its configured root URL;
+            // HttpClient then follows that public localhost redirect from inside this pod and
+            // fails with connection refused. Preserve the configured subpath on the upstream
+            // request so Grafana serves the resource directly.
+            var targetUrl = $"{_grafanaUrl.TrimEnd('/')}/api/SystemMonitoring/grafana/{relativePath}{Request.QueryString}";
+            using var proxyRequest = new HttpRequestMessage(new HttpMethod(Request.Method), targetUrl);
+            var requestHasBody = Request.ContentLength.GetValueOrDefault() > 0 || Request.Headers.ContainsKey("Transfer-Encoding");
+            if (requestHasBody) proxyRequest.Content = new StreamContent(Request.Body);
+
+            foreach (var header in Request.Headers)
+            {
+                if (header.Key.Equals("Host", StringComparison.OrdinalIgnoreCase) ||
+                    header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase) ||
+                    header.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase) ||
+                    header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
+                    header.Key.Equals("Connection", StringComparison.OrdinalIgnoreCase) ||
+                    header.Key.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase) ||
+                    header.Key.Equals("X-WEBAUTH-USER", StringComparison.OrdinalIgnoreCase) ||
+                    header.Key.Equals("X-WEBAUTH-NAME", StringComparison.OrdinalIgnoreCase) ||
+                    header.Key.Equals("X-Forwarded-Prefix", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!proxyRequest.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray()))
+                    proxyRequest.Content?.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+            }
+            proxyRequest.Headers.TryAddWithoutValidation("X-WEBAUTH-USER", actor);
+            proxyRequest.Headers.TryAddWithoutValidation("X-WEBAUTH-NAME", "BlockGO System Administrator");
+            proxyRequest.Headers.TryAddWithoutValidation("X-Forwarded-Prefix", "/api/SystemMonitoring/grafana");
+
+            using var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromMinutes(5);
+            using var proxyResponse = await client.SendAsync(proxyRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            Response.StatusCode = (int)proxyResponse.StatusCode;
+            foreach (var header in proxyResponse.Headers)
+                Response.Headers.Append(header.Key, header.Value.ToArray());
+            foreach (var header in proxyResponse.Content.Headers)
+                Response.Headers.Append(header.Key, header.Value.ToArray());
+            Response.Headers.Remove("transfer-encoding");
+            Response.Headers.Remove("connection");
+            Response.Headers.Remove("X-Frame-Options");
+            Response.Headers["X-Frame-Options"] = "SAMEORIGIN";
+            await proxyResponse.Content.CopyToAsync(Response.Body, cancellationToken);
         }
 
         [HttpGet("summary")]
-        public async Task<IActionResult> GetSummary(CancellationToken cancellationToken)
+        public async Task<IActionResult> Summary(CancellationToken cancellationToken)
         {
-            var frontendUrl = GetConfiguredUrl("Monitoring:FrontendUrl", "FRONTEND_INTERNAL_URL")
-                ?? "http://127.0.0.1:8080";
-            var middlewareUrl = GetConfiguredUrl("Monitoring:MiddlewareUrl", "MIDDLEWARE_URL")
-                ?? _configuration["Middleware:Url"]
-                ?? "http://127.0.0.1:4000";
-            var prometheusUrl = GetConfiguredUrl("Monitoring:PrometheusUrl", "PROMETHEUS_URL");
-
-            var databaseTask = CheckDatabaseAsync(cancellationToken);
-            var frontendTask = CheckHttpServiceAsync(
-                "frontend",
-                "Frontend Web",
-                "React and Nginx",
-                frontendUrl,
-                "/nginx-health",
-                cancellationToken);
-            var middlewareTask = CheckHttpServiceAsync(
-                "middleware",
-                "Middleware API",
-                "Fabric gateway and wallet services",
-                middlewareUrl,
-                "/api/ready",
-                cancellationToken);
-            var prometheusTask = CheckPrometheusAsync(prometheusUrl, cancellationToken);
-
-            await Task.WhenAll(databaseTask, frontendTask, middlewareTask, prometheusTask);
-
-            var database = await databaseTask;
-            var prometheus = await prometheusTask;
-            var services = new List<ServiceSnapshot>
+            var services = new List<object>();
+            var database = new { status = "down", name = "", sizeBytes = (long?)null, activeConnections = (long?)null };
+            var dbStopwatch = Stopwatch.StartNew();
+            try
             {
-                new(
-                    "backend",
-                    "C# Backend API",
-                    "Monitoring and application services",
-                    "healthy",
-                    0,
-                    "Monitoring endpoint is responding.",
-                    "/api/SystemMonitoring/summary",
-                    DateTimeOffset.UtcNow),
-                await frontendTask,
-                await middlewareTask,
-                new(
-                    "postgresql",
-                    "PostgreSQL",
-                    "Application data store",
-                    database.Status,
-                    database.LatencyMs,
-                    database.Message,
-                    "internal database check",
-                    database.CheckedAt),
-                prometheus.Service
-            };
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(cancellationToken);
+                await using var command = new NpgsqlCommand(@"
+                    SELECT current_database(), pg_database_size(current_database()),
+                           (SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database());", connection);
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                await reader.ReadAsync(cancellationToken);
+                database = new { status = "healthy", name = reader.GetString(0), sizeBytes = (long?)reader.GetInt64(1), activeConnections = (long?)reader.GetInt64(2) };
+                services.Add(Service("postgres", "PostgreSQL", "Data", "healthy", dbStopwatch.ElapsedMilliseconds, "Database query completed.", "PostgreSQL"));
+            }
+            catch (Exception exception)
+            {
+                services.Add(Service("postgres", "PostgreSQL", "Data", "down", dbStopwatch.ElapsedMilliseconds, SafeMessage(exception), "PostgreSQL"));
+            }
 
-            var coreDown = services.Any(service =>
-                service.Id != "prometheus" && service.Status == "down");
-            var overallStatus = coreDown
-                ? "down"
-                : services.Any(service => service.Status != "healthy")
-                    ? "warning"
-                    : "healthy";
+            var frontendStopwatch = Stopwatch.StartNew();
+            try
+            {
+                using var client = _httpClientFactory.CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(4);
+                using var response = await client.GetAsync($"{_frontendUrl.TrimEnd('/')}/nginx-health", cancellationToken);
+                services.Add(Service("frontend", "Frontend", "Application", response.IsSuccessStatusCode ? "healthy" : "down",
+                    frontendStopwatch.ElapsedMilliseconds, $"HTTP {(int)response.StatusCode}", _frontendUrl));
+            }
+            catch (Exception exception)
+            {
+                services.Add(Service("frontend", "Frontend", "Application", "down", frontendStopwatch.ElapsedMilliseconds, SafeMessage(exception), _frontendUrl));
+            }
 
+            var middlewareStopwatch = Stopwatch.StartNew();
+            try
+            {
+                using var client = _httpClientFactory.CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(4);
+                using var response = await client.GetAsync($"{_middlewareUrl.TrimEnd('/')}/api/ready", cancellationToken);
+                services.Add(Service("middleware", "Fabric Middleware", "Application", response.IsSuccessStatusCode ? "healthy" : "down",
+                    middlewareStopwatch.ElapsedMilliseconds, $"HTTP {(int)response.StatusCode}", _middlewareUrl));
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                if (document.RootElement.TryGetProperty("services", out var middlewareServices) &&
+                    middlewareServices.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var dependency in middlewareServices.EnumerateObject())
+                    {
+                        var ready = dependency.Value.TryGetProperty("ready", out var readyValue) && readyValue.GetBoolean();
+                        var detail = dependency.Value.TryGetProperty("status", out var statusValue)
+                            ? statusValue.GetString() ?? "Ready"
+                            : dependency.Value.TryGetProperty("error", out var errorValue)
+                                ? errorValue.GetString() ?? "Dependency check failed."
+                                : "Dependency check completed.";
+                        var displayName = dependency.Name switch
+                        {
+                            "auth" => "Authentication Service",
+                            "identity" => "Fabric Identity Service",
+                            "ledger" => "Ledger Service",
+                            "upload" => "Grade Upload Service",
+                            "settings" => "Settings Service",
+                            _ => $"Middleware {dependency.Name}"
+                        };
+                        services.Add(Service($"middleware-{dependency.Name}", displayName, "Middleware",
+                            ready ? "healthy" : "down", middlewareStopwatch.ElapsedMilliseconds, detail, _middlewareUrl));
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                services.Add(Service("middleware", "Fabric Middleware", "Application", "down", middlewareStopwatch.ElapsedMilliseconds, SafeMessage(exception), _middlewareUrl));
+            }
+
+            services.Insert(0, Service("backend", "ASP.NET Core API", "Application", "healthy", 0, "Monitoring endpoint is responsive.", HttpContext.Request.Host.Value));
+            var alerts = await LoadSecurityAlertsAsync(cancellationToken);
+            var prometheusAvailable = false;
+            if (!string.IsNullOrWhiteSpace(_prometheusUrl))
+            {
+                try
+                {
+                    using var client = _httpClientFactory.CreateClient();
+                    client.Timeout = TimeSpan.FromSeconds(4);
+                    using var response = await client.GetAsync($"{_prometheusUrl.TrimEnd('/')}/api/v1/alerts", cancellationToken);
+                    prometheusAvailable = response.IsSuccessStatusCode;
+                    if (response.IsSuccessStatusCode)
+                    {
+                        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                        if (document.RootElement.TryGetProperty("data", out var data) && data.TryGetProperty("alerts", out var items))
+                        {
+                            foreach (var item in items.EnumerateArray())
+                            {
+                                var labels = item.TryGetProperty("labels", out var labelValue) ? labelValue : default;
+                                var annotations = item.TryGetProperty("annotations", out var annotationValue) ? annotationValue : default;
+                                alerts.Add(new
+                                {
+                                    name = JsonText(labels, "alertname", "Prometheus Alert"),
+                                    severity = JsonText(labels, "severity", "warning"),
+                                    component = JsonText(labels, "component", "infrastructure"),
+                                    summary = JsonText(annotations, "summary", "An infrastructure alert is active.")
+                                });
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            var process = Process.GetCurrentProcess();
+            var serviceStatuses = services.Select(item => JsonSerializer.Serialize(item)).ToArray();
+            var hasDownService = serviceStatuses.Any(item => item.Contains("\"status\":\"down\"", StringComparison.Ordinal));
+            var hasCriticalAlert = alerts.Any(item => JsonSerializer.Serialize(item).Contains("\"severity\":\"critical\"", StringComparison.OrdinalIgnoreCase));
             return Ok(new
             {
-                status = overallStatus,
                 generatedAt = DateTimeOffset.UtcNow,
-                refreshIntervalSeconds = 30,
+                status = hasDownService ? "down" : hasCriticalAlert || alerts.Count > 0 ? "warning" : "healthy",
                 services,
-                runtime = GetRuntimeSnapshot(),
                 database,
-                infrastructure = prometheus.Infrastructure,
-                alerts = prometheus.Alerts
+                runtime = new
+                {
+                    uptimeSeconds = (DateTime.UtcNow - process.StartTime.ToUniversalTime()).TotalSeconds,
+                    workingSetBytes = process.WorkingSet64,
+                    managedMemoryBytes = GC.GetTotalMemory(false),
+                    threadCount = process.Threads.Count,
+                    processorCount = Environment.ProcessorCount
+                },
+                infrastructure = new
+                {
+                    source = prometheusAvailable ? "prometheus" : "runtime",
+                    cpuCores = (double?)null,
+                    memoryBytes = (long?)null,
+                    runningPods = (long?)null,
+                    healthyFabricTargets = services.Count(item => JsonSerializer.Serialize(item).Contains("Fabric Middleware") && JsonSerializer.Serialize(item).Contains("healthy"))
+                },
+                alerts
             });
         }
 
-        private string? GetConfiguredUrl(string configurationKey, string environmentKey)
+        [HttpPost("security-events/{eventId:long}/resolve")]
+        public async Task<IActionResult> ResolveSecurityEvent(long eventId, CancellationToken cancellationToken)
         {
-            var value = _configuration[configurationKey]
-                ?? Environment.GetEnvironmentVariable(environmentKey);
-            return string.IsNullOrWhiteSpace(value) ? null : value.Trim().TrimEnd('/');
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new NpgsqlCommand(@"
+                UPDATE security_events
+                SET resolved_at = CURRENT_TIMESTAMP,
+                    resolved_by = (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor))
+                WHERE security_event_id = @eventId AND resolved_at IS NULL
+                RETURNING security_event_id;", connection);
+            command.Parameters.AddWithValue("actor", User.Identity?.Name ?? string.Empty);
+            command.Parameters.AddWithValue("eventId", eventId);
+            if (await command.ExecuteScalarAsync(cancellationToken) is null) return NotFound(new { status = "Error", message = "Open security event not found." });
+            return Ok(new { status = "Success", message = "Security event resolved." });
         }
 
-        private async Task<ServiceSnapshot> CheckHttpServiceAsync(
-            string id,
-            string name,
-            string layer,
-            string baseUrl,
-            string path,
-            CancellationToken cancellationToken)
+        [HttpGet("finalized-ledger")]
+        public async Task<IActionResult> FinalizedLedger(
+            [FromQuery] string? search,
+            [FromQuery] string? source,
+            [FromQuery] string? schoolYear,
+            [FromQuery] string? semester,
+            [FromQuery] DateTimeOffset? from,
+            [FromQuery] DateTimeOffset? to,
+            [FromQuery] int limit = 100,
+            CancellationToken cancellationToken = default)
         {
-            var startedAt = Stopwatch.GetTimestamp();
-            var checkedAt = DateTimeOffset.UtcNow;
+            limit = Math.Clamp(limit, 1, 500);
+            if (from.HasValue && to.HasValue && from > to)
+                return BadRequest(new { status = "Error", message = "The from date must not be later than the to date." });
 
-            try
-            {
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeout.CancelAfter(TimeSpan.FromSeconds(CheckTimeoutSeconds));
-                using var response = await _httpClientFactory.CreateClient()
-                    .GetAsync($"{baseUrl.TrimEnd('/')}{path}", timeout.Token);
-                var latencyMs = (long)Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
+            var query = new List<string> { $"limit={limit}" };
+            AddQuery(query, "search", search);
+            AddQuery(query, "source", source);
+            AddQuery(query, "schoolYear", schoolYear);
+            AddQuery(query, "semester", semester);
+            if (from.HasValue) AddQuery(query, "from", from.Value.ToString("O"));
+            if (to.HasValue) AddQuery(query, "to", to.Value.ToString("O"));
 
-                return response.IsSuccessStatusCode
-                    ? new ServiceSnapshot(id, name, layer, "healthy", latencyMs, "Service is responding.", path, checkedAt)
-                    : new ServiceSnapshot(id, name, layer, "down", latencyMs, $"Returned HTTP {(int)response.StatusCode}.", path, checkedAt);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"{_middlewareUrl.TrimEnd('/')}/api/admin/ledger-transactions?{string.Join('&', query)}");
+            if (Request.Headers.TryGetValue("Authorization", out var authorization))
+                request.Headers.TryAddWithoutValidation("Authorization", authorization.ToString());
+
+            using var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(20);
+            using var response = await client.SendAsync(request, cancellationToken);
+            var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+            return new ContentResult
             {
-                return new ServiceSnapshot(id, name, layer, "down", null, "Health check timed out.", path, checkedAt);
-            }
-            catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or UriFormatException)
-            {
-                _logger.LogWarning(ex, "Monitoring check failed for {ServiceId}.", id);
-                return new ServiceSnapshot(id, name, layer, "down", null, "Service could not be reached.", path, checkedAt);
-            }
+                StatusCode = (int)response.StatusCode,
+                ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json",
+                Content = payload
+            };
         }
 
-        private async Task<DatabaseSnapshot> CheckDatabaseAsync(CancellationToken cancellationToken)
+        [HttpGet("live-transactions")]
+        public async Task<IActionResult> LiveTransactions(
+            [FromQuery] long? afterAuditId,
+            [FromQuery] string? action,
+            [FromQuery] DateTimeOffset? from,
+            [FromQuery] DateTimeOffset? to,
+            [FromQuery] int limit = 100,
+            CancellationToken cancellationToken = default)
         {
-            var startedAt = Stopwatch.GetTimestamp();
-            var checkedAt = DateTimeOffset.UtcNow;
+            limit = Math.Clamp(limit, 1, 500);
+            if (afterAuditId < 0)
+                return BadRequest(new { status = "Error", message = "afterAuditId must be zero or greater." });
+            if (from.HasValue && to.HasValue && from > to)
+                return BadRequest(new { status = "Error", message = "The from date must not be later than the to date." });
 
+            var records = new List<object>();
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new NpgsqlCommand(@"
+                SELECT a.audit_id, a.action, a.entity_type, a.entity_id, a.actor_role,
+                       a.description, a.timestamp,
+                       COALESCE(fp.full_name, ap.full_name, sp.full_name, u.username, u.email, 'System') AS actor
+                FROM audit_logs a
+                LEFT JOIN users u ON u.id = a.user_id
+                LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
+                LEFT JOIN adminprofiles ap ON ap.user_id = u.id
+                LEFT JOIN studentprofiles sp ON sp.user_id = u.id
+                WHERE (@afterAuditId IS NULL OR a.audit_id > @afterAuditId)
+                  AND (@action IS NULL OR a.action ILIKE '%' || @action || '%')
+                  AND (@fromDate IS NULL OR a.timestamp >= @fromDate)
+                  AND (@toDate IS NULL OR a.timestamp < @toDate + INTERVAL '1 day')
+                ORDER BY a.audit_id DESC
+                LIMIT @limit;", connection);
+            command.Parameters.Add("afterAuditId", NpgsqlTypes.NpgsqlDbType.Bigint).Value = (object?)afterAuditId ?? DBNull.Value;
+            AddNullableText(command, "action", action);
+            command.Parameters.Add("fromDate", NpgsqlTypes.NpgsqlDbType.TimestampTz).Value = (object?)from?.ToUniversalTime() ?? DBNull.Value;
+            command.Parameters.Add("toDate", NpgsqlTypes.NpgsqlDbType.TimestampTz).Value = (object?)to?.ToUniversalTime() ?? DBNull.Value;
+            command.Parameters.AddWithValue("limit", limit);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                records.Add(new
+                {
+                    auditId = reader.GetInt64(0),
+                    action = TextOrNull(reader, 1),
+                    entityType = TextOrNull(reader, 2),
+                    entityId = TextOrNull(reader, 3),
+                    actorRole = TextOrNull(reader, 4),
+                    description = TextOrNull(reader, 5),
+                    occurredAt = ValueOrNull(reader, 6),
+                    actor = TextOrNull(reader, 7)
+                });
+            }
+            return Ok(new { status = "Success", generatedAt = DateTimeOffset.UtcNow, count = records.Count, data = records });
+        }
+
+        private async Task<List<object>> LoadSecurityAlertsAsync(CancellationToken cancellationToken)
+        {
+            var alerts = new List<object>();
             try
             {
-                await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(cancellationToken);
                 await using var command = new NpgsqlCommand(@"
-                    SELECT current_database(),
-                           pg_database_size(current_database()),
-                           (SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database())", connection);
+                    SELECT security_event_id, event_type, severity, attempted_identity, ip_address, details, created_at
+                    FROM security_events
+                    WHERE resolved_at IS NULL AND created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
+                    ORDER BY created_at DESC LIMIT 100;", connection);
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-                await reader.ReadAsync(cancellationToken);
-
-                return new DatabaseSnapshot(
-                    "healthy",
-                    "Database is responding.",
-                    reader.GetString(0),
-                    reader.GetInt64(1),
-                    reader.GetInt64(2),
-                    (long)Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds,
-                    checkedAt);
-            }
-            catch (Exception ex) when (ex is NpgsqlException or TimeoutException)
-            {
-                _logger.LogWarning(ex, "System monitoring database check failed.");
-                return new DatabaseSnapshot(
-                    "down",
-                    "Database check failed.",
-                    null,
-                    null,
-                    null,
-                    null,
-                    checkedAt);
-            }
-        }
-
-        private async Task<PrometheusSnapshot> CheckPrometheusAsync(
-            string? prometheusUrl,
-            CancellationToken cancellationToken)
-        {
-            if (prometheusUrl == null)
-            {
-                return new PrometheusSnapshot(
-                    new ServiceSnapshot(
-                        "prometheus",
-                        "Prometheus",
-                        "Cluster, workload, and Fabric metrics",
-                        "not_configured",
-                        null,
-                        "Prometheus URL is not configured.",
-                        "internal metrics service",
-                        DateTimeOffset.UtcNow),
-                    new InfrastructureSnapshot("not_configured", null, null, null, null),
-                    Array.Empty<AlertSnapshot>());
-            }
-
-            var service = await CheckHttpServiceAsync(
-                "prometheus",
-                "Prometheus",
-                "Cluster, workload, and Fabric metrics",
-                prometheusUrl,
-                "/-/ready",
-                cancellationToken);
-
-            if (service.Status != "healthy")
-            {
-                return new PrometheusSnapshot(
-                    service,
-                    new InfrastructureSnapshot("unavailable", null, null, null, null),
-                    Array.Empty<AlertSnapshot>());
-            }
-
-            var cpuTask = QueryPrometheusMetricAsync(prometheusUrl,
-                """sum(rate(container_cpu_usage_seconds_total{namespace=~"plv-(fabric|main-campus|annex-campus|pubad-campus)",container!="",container!="POD"}[5m]))""",
-                cancellationToken);
-            var memoryTask = QueryPrometheusMetricAsync(prometheusUrl,
-                """sum(container_memory_working_set_bytes{namespace=~"plv-(fabric|main-campus|annex-campus|pubad-campus)",container!="",container!="POD"})""",
-                cancellationToken);
-            var podsTask = QueryPrometheusMetricAsync(prometheusUrl,
-                """sum(kube_pod_status_phase{namespace=~"plv-(fabric|main-campus|annex-campus|pubad-campus)",phase="Running"} == 1)""",
-                cancellationToken);
-            var fabricTask = QueryPrometheusMetricAsync(prometheusUrl,
-                """sum(up{job=~"fabric-peer|fabric-orderer"})""",
-                cancellationToken);
-            var alertsTask = GetPrometheusAlertsAsync(prometheusUrl, cancellationToken);
-
-            await Task.WhenAll(cpuTask, memoryTask, podsTask, fabricTask, alertsTask);
-            var infrastructure = new InfrastructureSnapshot(
-                "prometheus",
-                await cpuTask,
-                await memoryTask,
-                await podsTask,
-                await fabricTask);
-
-            if (infrastructure.CpuCores == null
-                && infrastructure.MemoryBytes == null
-                && infrastructure.RunningPods == null
-                && infrastructure.HealthyFabricTargets == null)
-            {
-                service = service with
+                while (await reader.ReadAsync(cancellationToken))
                 {
-                    Status = "warning",
-                    Message = "Prometheus is ready, but the configured platform metrics are unavailable."
-                };
-            }
-
-            return new PrometheusSnapshot(service, infrastructure, await alertsTask);
-        }
-
-        private async Task<double?> QueryPrometheusMetricAsync(
-            string prometheusUrl,
-            string query,
-            CancellationToken cancellationToken)
-        {
-            try
-            {
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeout.CancelAfter(TimeSpan.FromSeconds(CheckTimeoutSeconds));
-                var endpoint = $"{prometheusUrl}/api/v1/query?query={Uri.EscapeDataString(query)}";
-                using var response = await _httpClientFactory.CreateClient().GetAsync(endpoint, timeout.Token);
-                if (!response.IsSuccessStatusCode) return null;
-
-                var body = await response.Content.ReadAsStringAsync(timeout.Token);
-                using var document = JsonDocument.Parse(body);
-                var result = document.RootElement.GetProperty("data").GetProperty("result");
-                if (result.GetArrayLength() == 0) return null;
-
-                var value = result[0].GetProperty("value")[1].GetString();
-                return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-                    ? parsed
-                    : null;
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                return null;
-            }
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException or UriFormatException or KeyNotFoundException)
-            {
-                _logger.LogDebug(ex, "Prometheus metric query failed.");
-                return null;
-            }
-        }
-
-        private async Task<IReadOnlyList<AlertSnapshot>> GetPrometheusAlertsAsync(
-            string prometheusUrl,
-            CancellationToken cancellationToken)
-        {
-            try
-            {
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeout.CancelAfter(TimeSpan.FromSeconds(CheckTimeoutSeconds));
-                using var response = await _httpClientFactory.CreateClient()
-                    .GetAsync($"{prometheusUrl}/api/v1/alerts", timeout.Token);
-                if (!response.IsSuccessStatusCode) return Array.Empty<AlertSnapshot>();
-
-                var body = await response.Content.ReadAsStringAsync(timeout.Token);
-                using var document = JsonDocument.Parse(body);
-                var alerts = document.RootElement.GetProperty("data").GetProperty("alerts");
-                var snapshots = new List<AlertSnapshot>();
-
-                foreach (var alert in alerts.EnumerateArray().Take(100))
-                {
-                    var labels = alert.GetProperty("labels");
-                    alert.TryGetProperty("annotations", out var annotations);
-                    snapshots.Add(new AlertSnapshot(
-                        GetJsonString(labels, "alertname") ?? "Unnamed alert",
-                        GetJsonString(labels, "severity") ?? "warning",
-                        GetJsonString(labels, "component") ?? "platform",
-                        GetJsonString(alert, "state") ?? "unknown",
-                        GetJsonString(annotations, "summary") ?? "No alert summary provided.",
-                        GetJsonString(alert, "activeAt")));
+                    var severity = reader.GetString(2).ToLowerInvariant();
+                    alerts.Add(new
+                    {
+                        eventId = reader.GetInt64(0), name = reader.GetString(1).Replace('_', ' '),
+                        severity = severity is "critical" or "high" ? "critical" : "warning",
+                        component = "access-control",
+                        summary = $"{(reader.IsDBNull(3) ? "Unknown identity" : reader.GetString(3))} from {(reader.IsDBNull(4) ? "unknown IP" : reader.GetString(4))}: {(reader.IsDBNull(5) ? "Access attempt denied." : reader.GetString(5))}",
+                        occurredAt = reader.GetFieldValue<DateTimeOffset>(6)
+                    });
                 }
-
-                return snapshots;
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                return Array.Empty<AlertSnapshot>();
-            }
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException or UriFormatException or KeyNotFoundException)
-            {
-                _logger.LogDebug(ex, "Prometheus alert query failed.");
-                return Array.Empty<AlertSnapshot>();
-            }
+            catch { }
+            return alerts;
         }
 
-        private static string? GetJsonString(JsonElement element, string propertyName)
+        private static object Service(string id, string name, string layer, string status, long latencyMs, string message, string target) =>
+            new { id, name, layer, status, latencyMs, message, target };
+        private static string SafeMessage(Exception exception) => exception is TaskCanceledException ? "Health check timed out." : exception.Message;
+        private static void AddNullableText(NpgsqlCommand command, string name, string? value) =>
+            command.Parameters.Add(name, NpgsqlTypes.NpgsqlDbType.Text).Value =
+                string.IsNullOrWhiteSpace(value) ? DBNull.Value : value.Trim();
+        private static string? TextOrNull(NpgsqlDataReader reader, int ordinal) =>
+            reader.IsDBNull(ordinal) ? null : reader.GetValue(ordinal).ToString();
+        private static object? ValueOrNull(NpgsqlDataReader reader, int ordinal) =>
+            reader.IsDBNull(ordinal) ? null : reader.GetValue(ordinal);
+        private static void AddQuery(ICollection<string> query, string name, string? value)
         {
-            return element.ValueKind == JsonValueKind.Object
-                && element.TryGetProperty(propertyName, out var value)
-                && value.ValueKind == JsonValueKind.String
-                    ? value.GetString()
-                    : null;
+            if (!string.IsNullOrWhiteSpace(value))
+                query.Add($"{Uri.EscapeDataString(name)}={Uri.EscapeDataString(value.Trim())}");
         }
+        private static string JsonText(JsonElement element, string property, string fallback) =>
+            element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value) ? value.ToString() : fallback;
 
-        private static RuntimeSnapshot GetRuntimeSnapshot()
+        private bool TryGetGrafanaActor(out string actor)
         {
-            using var process = Process.GetCurrentProcess();
-            return new RuntimeSnapshot(
-                Environment.TickCount64 / 1000,
-                process.WorkingSet64,
-                GC.GetTotalMemory(false),
-                process.Threads.Count,
-                Environment.ProcessorCount);
+            actor = string.Empty;
+
+            if (User.Identity?.IsAuthenticated == true &&
+                (User.IsInRole("system_admin") || User.Claims.Any(c => c.Type == "dbRole" && c.Value == "system_admin")))
+            {
+                actor = User.Identity?.Name ?? User.Claims.FirstOrDefault(c => c.Type == "email")?.Value ?? "system-admin@plv.edu.ph";
+                return true;
+            }
+
+            string? sessionToken = null;
+            if (Request.Cookies.TryGetValue(GrafanaSessionCookie, out var cookieToken) && !string.IsNullOrWhiteSpace(cookieToken))
+            {
+                sessionToken = cookieToken;
+            }
+            else if (Request.Query.TryGetValue(GrafanaSessionCookie, out var queryCookieToken) && !string.IsNullOrWhiteSpace(queryCookieToken))
+            {
+                sessionToken = queryCookieToken;
+            }
+            else if (Request.Query.TryGetValue("sessionToken", out var querySessionToken) && !string.IsNullOrWhiteSpace(querySessionToken))
+            {
+                sessionToken = querySessionToken;
+            }
+
+            if (!string.IsNullOrWhiteSpace(sessionToken)
+                && _cache.TryGetValue(GrafanaCacheKey(sessionToken), out actor!)
+                && !string.IsNullOrWhiteSpace(actor))
+            {
+                return true;
+            }
+
+            return false;
         }
 
-        public sealed record ServiceSnapshot(
-            string Id,
-            string Name,
-            string Layer,
-            string Status,
-            long? LatencyMs,
-            string Message,
-            string Target,
-            DateTimeOffset CheckedAt);
-
-        public sealed record DatabaseSnapshot(
-            string Status,
-            string Message,
-            string? Name,
-            long? SizeBytes,
-            long? ActiveConnections,
-            long? LatencyMs,
-            DateTimeOffset CheckedAt);
-
-        public sealed record RuntimeSnapshot(
-            long UptimeSeconds,
-            long WorkingSetBytes,
-            long ManagedMemoryBytes,
-            int ThreadCount,
-            int ProcessorCount);
-
-        public sealed record InfrastructureSnapshot(
-            string Source,
-            double? CpuCores,
-            double? MemoryBytes,
-            double? RunningPods,
-            double? HealthyFabricTargets);
-
-        public sealed record AlertSnapshot(
-            string Name,
-            string Severity,
-            string Component,
-            string State,
-            string Summary,
-            string? ActiveAt);
-
-        private sealed record PrometheusSnapshot(
-            ServiceSnapshot Service,
-            InfrastructureSnapshot Infrastructure,
-            IReadOnlyList<AlertSnapshot> Alerts);
+        private static string GrafanaCacheKey(string sessionToken)
+        {
+            var digest = SHA256.HashData(Encoding.UTF8.GetBytes(sessionToken));
+            return $"system-admin:grafana:{Convert.ToHexString(digest)}";
+        }
     }
 }

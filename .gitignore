@@ -24,17 +24,15 @@ temp/
 .cache/
 *.cache
 *.cache.json
+/tests/
+/test-results/
 
 # =========================
 # GLOBAL DEPENDENCIES & BUILD
 # =========================
 node_modules/
 **/node_modules/
-**/bin/
-**/obj/
-frontend/build/
-frontend/dist/
-frontend/dist-*/
+frontend/package-lock.json
 *.dll
 *.exe
 *.pdb
@@ -50,18 +48,18 @@ __pycache__/
 # =========================
 .env
 .env.*
-*.log
-*.pid
-network/.configtx-k8s.*/
-logs/
-client-app/logs/
-client-app/backend.log
-client-app/middleware.log
-frontend/frontend_build.log
-middleware/middleware.log
 *.bak
 appsettings.*.json
 .fake
+gha-creds-*.json
+gha-kubeconfig-*
+security-results/
+*.sarif
+*.cdx.json
+network/.local-frontend-port-forward*.log
+network/.local-frontend-port-forward*.pid
+network/.local-couchdb-*-port-forward*.log
+network/.local-couchdb-*-port-forward*.pid
 
 # =========================
 # GLOBAL DATABASES
@@ -83,22 +81,30 @@ network/k8s/.tmp-k8s/
 fabric_deploy_*/
 network/postgres-data/
 network/ipfs/
-network/ipfs_data/
-network/fabric-ca/
-network/crypto-config-final-v2/**
-network/channel-artifacts-final/*
+network/fabric-k8s-data/
+network/crypto-config*/
+network/channel-artifacts*/
+network/organizations/
+network/swarm.key
+network/swarm-clean.key
+**/msp/keystore/
+**/msp/signcerts/
+**/tls/*.key
+**/tls/*.crt
 
 # Dynamic Chaincode Env
 chaincode/.env
 
 # Ignore Cryptogen materials but KEEP directories
-!network/crypto-config-final-v2/
 !network/crypto-config-final-v2/.gitkeep
 
 # Ignore Artifacts but KEEP directory
-!network/channel-artifacts-final/
 !network/channel-artifacts-final/.gitkeep
 
 # Ignore Binaries but KEEP directory
 network/bin/*
 !network/bin/.gitkeep
+
+# Runtime logs
+*.log
+client-app/logs/

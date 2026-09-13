@@ -14,31 +14,43 @@ namespace Client_app.Controllers
     [Route("api/[controller]")]
     public class SystemSettingsController : ControllerBase
     {
-        private readonly NpgsqlDataSource _dataSource;
+        private readonly string _connectionString;
         private readonly ILogger<SystemSettingsController> _logger;
         private readonly IHubContext<ChatHub> _chatHubContext;
+        private static readonly object SchemaInitializationLock = new();
+        private static bool _schemaInitialized;
 
-        public SystemSettingsController(NpgsqlDataSource dataSource, ILogger<SystemSettingsController> logger, IHubContext<ChatHub> chatHubContext)
+        public SystemSettingsController(IConfiguration configuration, ILogger<SystemSettingsController> logger, IHubContext<ChatHub> chatHubContext)
         {
-            _dataSource = dataSource;
+            _connectionString = configuration.GetConnectionString("PostgresConnection") ?? configuration.GetConnectionString("MasterConnection") ?? throw new InvalidOperationException("PostgreSQL connection string not found.");
             _logger = logger;
             _chatHubContext = chatHubContext;
             EnsureTableExists();
         }
 
-        private async void EnsureTableExists()
+        private void EnsureTableExists()
         {
-            try
+            if (System.Threading.Volatile.Read(ref _schemaInitialized)) return;
+            lock (SchemaInitializationLock)
             {
-                await using var conn = await _dataSource.OpenConnectionAsync();
-                using var cmd = new NpgsqlCommand(@"
-                    CREATE TABLE IF NOT EXISTS SystemSettings (
-                        key VARCHAR(255) PRIMARY KEY,
-                        value TEXT NOT NULL
-                    );", conn);
-                await cmd.ExecuteNonQueryAsync();
+                if (System.Threading.Volatile.Read(ref _schemaInitialized)) return;
+                try
+                {
+                    using var conn = new NpgsqlConnection(_connectionString);
+                    conn.Open();
+                    using var cmd = new NpgsqlCommand(@"
+                        CREATE TABLE IF NOT EXISTS SystemSettings (
+                            key VARCHAR(255) PRIMARY KEY,
+                            value TEXT NOT NULL
+                        );", conn);
+                    cmd.ExecuteNonQuery();
+                    System.Threading.Volatile.Write(ref _schemaInitialized, true);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "System settings schema initialization was deferred.");
+                }
             }
-            catch { /* Ignore */ }
         }
 
         public class SettingRequest
@@ -52,7 +64,8 @@ namespace Client_app.Controllers
         {
             try
             {
-                await using var conn = await _dataSource.OpenConnectionAsync();
+                using var conn = new NpgsqlConnection(_connectionString);
+                await conn.OpenAsync();
                 using var cmd = new NpgsqlCommand("SELECT value FROM SystemSettings WHERE key = @k", conn);
                 cmd.Parameters.AddWithValue("k", key);
                 var value = await cmd.ExecuteScalarAsync();
@@ -69,12 +82,13 @@ namespace Client_app.Controllers
         }
 
         [HttpPost]
-        [Authorize(Roles = "registrar,admin")]
+        [Authorize(Roles = "registrar,system_admin")]
         public async Task<IActionResult> SaveSetting([FromBody] SettingRequest req)
         {
             try
             {
-                await using var conn = await _dataSource.OpenConnectionAsync();
+                using var conn = new NpgsqlConnection(_connectionString);
+                await conn.OpenAsync();
                 using var cmd = new NpgsqlCommand(@"
                     INSERT INTO SystemSettings (key, value) VALUES (@k, @v) 
                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", conn);
@@ -96,16 +110,18 @@ namespace Client_app.Controllers
         }
 
         [HttpPost("reset-season")]
-        [Authorize(Roles = "registrar,admin")]
+        [Authorize(Roles = "registrar,system_admin")]
         public async Task<IActionResult> ResetEncodingSeason()
         {
             try
             {
-                await using var conn = await _dataSource.OpenConnectionAsync();
+                using var conn = new NpgsqlConnection(_connectionString);
+                await conn.OpenAsync();
                 using var tx = await conn.BeginTransactionAsync();
 
-                using var cmdClearGrades = new NpgsqlCommand("DELETE FROM pending_grade_records", conn, tx);
-                await cmdClearGrades.ExecuteNonQueryAsync();
+                using var cmdClearGrades = new NpgsqlCommand(
+                    "DELETE FROM pending_grade_records WHERE LOWER(COALESCE(status, '')) <> 'finalized'", conn, tx);
+                var clearedDraftGradeCount = await cmdClearGrades.ExecuteNonQueryAsync();
 
                 using var cmdClearFacSections = new NpgsqlCommand("DELETE FROM FacultySections", conn, tx);
                 await cmdClearFacSections.ExecuteNonQueryAsync();
@@ -130,7 +146,8 @@ namespace Client_app.Controllers
                 return Ok(new
                 {
                     status = "Success",
-                    message = "Encoding season reset. Faculty assigned sections were cleared while saved sections were kept."
+                    message = "Encoding season reset. Non-finalized grade work and faculty assignments were cleared; finalized ledger records and saved sections were preserved.",
+                    clearedDraftGradeCount
                 });
             }
             catch (Exception ex)

@@ -3,28 +3,8 @@ import React, { useState, useEffect } from 'react';
 import '../../assets/App.css';
 import plvbg from '../../assets/plvbg.png';
 import plvlogo from '../../assets/plvlogo.png';
-import { login, submitRegistrationRequest, sendVerificationCode, forgotPassword, resetPassword } from '../../services/api';
-
-
-const programs = [
-  "Bachelor of Early Childhood Education",
-  "Bachelor of Secondary Education Major in English",
-  "Bachelor of Secondary Education Major in Filipino",
-  "Bachelor of Secondary Education Major in Mathematics",
-  "Bachelor of Secondary Education Major in Science",
-  "Bachelor of Secondary Education Major in Social Studies",
-  "Bachelor of Science in Civil Engineering",
-  "Bachelor of Science in Electrical Engineering",
-  "Bachelor of Science in Information Technology",
-  "Bachelor of Arts in Communication",
-  "Bachelor of Science in Psychology",
-  "Bachelor of Science in Social Work",
-  "Bachelor of Public Administration",
-  "Bachelor of Science in Accountancy",
-  "Bachelor of Science in Business Administration Major in Financial Management",
-  "Bachelor of Science in Business Administration Major in Human Resource Management",
-  "Bachelor of Science in Business Administration Major in Marketing Management"
-];
+import { login, forgotPassword, resetPassword } from '../../services/api';
+import { createLocalDevToken, createLocalDevTokenForRole } from '../../utils/localDevAuth';
 
 const Login = ({ onLogin }) => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -32,28 +12,15 @@ const Login = ({ onLogin }) => {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [currentView, setCurrentView] = useState('signIn');
-  const [fullName, setFullName] = useState("");
-  const [role, setRole] = useState("student");
-  const [facultyType, setFacultyType] = useState("full-time");
-  const [department, setDepartment] = useState("Bachelor of Science in Information Technology");
-  const [studentNo, setStudentNo] = useState("");
-  const [dateOfBirth, setDateOfBirth] = useState("");
-  const [signupStep, setSignupStep] = useState(1);
-  const [verificationCode, setVerificationCode] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const [resetToken, setResetToken] = useState('');
+  const [resetOtp, setResetOtp] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const token = urlParams.get('token');
-    if (token || window.location.pathname.includes('/reset-password')) {
-      if (token) setResetToken(token);
-      setCurrentView('resetPassword');
-    }
+    if (window.location.pathname.includes('/reset-password')) setCurrentView('resetPassword');
   }, []);
 
   const validatePassword = (pwd) => {
@@ -65,79 +32,21 @@ const Login = ({ onLogin }) => {
     return "";
   };
 
-  const handleSendCode = async (e) => {
-    e.preventDefault();
-
-    // Email validation
-    if (!emailRegex.test(email)) {
-      setError('Please enter a valid email address.');
-      return;
-    }
-
-    // Validate password before proceeding to the next step
-    if (role !== 'student') {
-      const passwordError = validatePassword(password);
-      if (passwordError) {
-        setError(passwordError);
-        return;
-      }
-    }
-
-    if (!email) {
-      setError('Email is required to send a verification code.');
-      return;
-    }
-
-    setIsLoading(true);
-    setError('');
-    try {
-        await sendVerificationCode(email);
-        setMessage(`Verification code sent to ${email}. Please check your inbox.`);
-        setSignupStep(2);
-    } catch (error) {
-        setError(error.message || 'Failed to send verification code.');
-    } finally {
-        setIsLoading(false);
-    }
-  };
-
-  const handleSignupSubmit = async (e) => {
-    e.preventDefault();
-
-    setIsLoading(true);
-    setError('');
-    try {
-        await submitRegistrationRequest({
-          fullName,
-          email,
-          password,
-          role,
-          department,
-          facultyType: role === 'faculty' ? facultyType : undefined,
-          studentNo: role === 'student' ? studentNo : undefined,
-          // Backend expects SignupRequest.VerificationCode
-          verificationCode,
-          dateOfBirth: role === 'student' ? dateOfBirth : undefined
-        });
-        setMessage("Registration request submitted successfully! Please wait for registrar approval.");
-        setCurrentView('signIn'); // Go back to login screen
-        setSignupStep(1);   // Reset signup flow
-    } catch (error) {
-        setError(error.message || 'Signup failed. Please check your details.');
-    } finally {
-        setIsLoading(false);
-    }
-  };
-
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
     setMessage('');
     try {
+      const localDevToken = createLocalDevToken(email);
+      if (localDevToken) {
+        onLogin(localDevToken);
+        return;
+      }
+
       const data = await login({ username: email, password: password });
       if (data.token) {
-        onLogin(data.token);
+        await onLogin(data.token);
       } else {
         setError(data.error || "Login failed. Invalid email or password.");
       }
@@ -145,6 +54,13 @@ const Login = ({ onLogin }) => {
       setError(error.message || "Error connecting to the server.");
     }
     setIsLoading(false);
+  };
+
+  const enterLocalPortal = (role) => {
+    setError('');
+    setMessage('');
+    const token = createLocalDevTokenForRole(role);
+    if (token) onLogin(token);
   };
 
   const handleForgotPassword = async (e) => {
@@ -158,7 +74,8 @@ const Login = ({ onLogin }) => {
     setMessage('');
     try {
       const data = await forgotPassword(email);
-      setMessage(data.message || 'Reset link sent.');
+      setMessage(data.message || 'Reset OTP sent.');
+      setCurrentView('resetPassword');
     } catch (error) {
       setError(error.message);
     }
@@ -182,13 +99,13 @@ const Login = ({ onLogin }) => {
     setError('');
     setMessage('');
     try {
-      const data = await resetPassword(resetToken, password);
+      const data = await resetPassword({ email, otp: resetOtp, newPassword: password });
       setMessage(data.message || 'Password updated successfully.');
       setTimeout(() => {
         setCurrentView('signIn');
         setPassword('');
         setConfirmPassword('');
-        window.history.replaceState({}, document.title, "/");
+        window.history.replaceState({}, document.title, "/login");
       }, 3000);
     } catch (error) {
       setError(error.message);
@@ -294,121 +211,12 @@ const Login = ({ onLogin }) => {
 
           <h2 className="welcome-text">
             {currentView === 'signIn' && "Welcome"}
-            {currentView === 'signUp' && "Request System Access"}
             {currentView === 'forgotPassword' && "Reset Password"}
             {currentView === 'resetPassword' && "Create New Password"}
           </h2>
           {error && <p style={{ color: 'red', textAlign: 'center' }}>{error}</p>}
           {message && <p style={{ color: 'green', textAlign: 'center' }}>{message}</p>}
           
-          {/* SIGN UP FORM */}
-          {currentView === 'signUp' && (
-            <form className="login-form" 
-              onSubmit={signupStep === 1 ? handleSendCode : handleSignupSubmit} 
-              style={{ maxHeight: 'min(55vh, 32rem)', overflowY: 'auto', paddingRight: '10px' }}
-            >
-              <>
-                {/* Signup Fields */}
-                <div className="input-group">
-                  <label>Full Name</label>
-                  <input type="text" placeholder="e.g. Juan Dela Cruz" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
-                </div>
-                <div className="input-group">
-                  <label>I am a...</label>
-                  <select value={role} onChange={(e) => setRole(e.target.value)} style={{ width: '100%', padding: '12px', border: '1px solid #ddd', borderRadius: '8px', boxSizing: 'border-box' }}>
-                    <option value="student">Student</option>
-                    <option value="faculty">Faculty / Professor</option>
-                    <option value="department_admin">Department Chairperson</option>
-                  </select>
-                </div>
-                {role === "student" && (
-                  <div className="input-group">
-                    <label>Student No.</label>
-                    <input 
-                      type="text" 
-                    pattern="[0-9]{2,4}-[0-9]+" 
-                      title="Format: YY-NNNN (e.g., 25-5055)" 
-                      placeholder="e.g. 25-5055" 
-                      value={studentNo} 
-                      onChange={(e) => setStudentNo(e.target.value)} 
-                      required 
-                    />
-                  </div>
-                )}
-                {role === "student" && (
-                  <div className="input-group">
-                    <label>Date of Birth (mm/dd/yyyy) *</label>
-                    <input 
-                      type="text" 
-            pattern="[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}" 
-                      title="Format: mm/dd/yyyy (e.g., 05/15/2005)" 
-                      placeholder="e.g. 05/15/2005" 
-                      id="dobField"
-                      value={dateOfBirth} 
-                      onChange={(e) => setDateOfBirth(e.target.value)} 
-                      required 
-                    />
-                    <small style={{color: '#666', fontSize: '12px'}}>This will be your default password</small>
-                  </div>
-                )}
-                {role === "faculty" && (
-                  <div className="input-group">
-                    <label>Faculty Type</label>
-                    <select
-                      value={facultyType}
-                      onChange={(e) => setFacultyType(e.target.value)}
-                      style={{ width: '100%', padding: '12px', border: '1px solid #ddd', borderRadius: '8px', boxSizing: 'border-box' }}
-                    >
-                      <option value="full-time">Full-time</option>
-                      <option value="part-time">Part-time</option>
-                    </select>
-                  </div>
-                )}
-                <div className="input-group">
-                  <label>Department / College</label>
-                  <select value={department} onChange={(e) => setDepartment(e.target.value)} style={{ width: '100%', padding: '12px', border: '1px solid #ddd', borderRadius: '8px', boxSizing: 'border-box' }}>
-                    {programs.map((prog) => (
-                      <option key={prog} value={prog}>{prog}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="input-group">
-                  <label>Email</label>
-                  <input 
-                    type="email" 
-                    placeholder="e.g. example@gmail.com or example@plv.edu.ph"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required 
-                    disabled={signupStep === 2}
-                  />
-                </div>
-                {signupStep === 1 && role !== 'student' &&
-                  renderPasswordInput({
-                    label: "Password",
-                    value: password,
-                    onChange: (e) => setPassword(e.target.value),
-                    placeholder: "Password",
-                    autoComplete: "new-password",
-                    isVisible: showPassword,
-                    onToggle: () => setShowPassword((current) => !current),
-                    helperText: "Must be at least 8 characters with uppercase, lowercase, number, and special character.",
-                  })}
-                {signupStep === 2 && (
-                  <div className="input-group">
-                    <label>Verification Code</label>
-                    <input type="text" placeholder="6-digit code from your email" value={verificationCode} onChange={(e) => setVerificationCode(e.target.value)} required />
-                  </div>
-                )}
-                <button type="submit" className="sign-in-btn" disabled={isLoading}>
-                  {isLoading ? (<><span className="spinner"></span> Processing...</>) :
-                    (signupStep === 1 ? 'Send Verification Code' : 'Complete Signup')
-                  }
-                </button>
-              </>
-            </form>
-          )}
-
           {/* SIGN IN FORM */}
           {currentView === 'signIn' && (
             <form className="login-form" onSubmit={handleLoginSubmit}>
@@ -434,6 +242,30 @@ const Login = ({ onLogin }) => {
               <button type="submit" className="sign-in-btn" disabled={isLoading}>
                 {isLoading ? (<><span className="spinner"></span> Signing In...</>) : 'Sign In'}
               </button>
+              {process.env.NODE_ENV === 'development' && (
+                <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid #ddd' }}>
+                  <p style={{ marginBottom: '8px', textAlign: 'center', color: '#666', fontSize: '13px' }}>
+                    Local access — middleware authentication disabled
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <button type="button" className="sign-in-btn" onClick={() => enterLocalPortal('system_admin')}>
+                      Enter as System Admin
+                    </button>
+                    <button type="button" className="sign-in-btn" onClick={() => enterLocalPortal('registrar')}>
+                      Enter as Registrar
+                    </button>
+                    <button type="button" className="sign-in-btn" onClick={() => enterLocalPortal('faculty')}>
+                      Enter as Faculty
+                    </button>
+                    <button type="button" className="sign-in-btn" onClick={() => enterLocalPortal('department_admin')}>
+                      Enter as Chairperson
+                    </button>
+                    <button type="button" className="sign-in-btn" onClick={() => enterLocalPortal('student')}>
+                      Enter as Student
+                    </button>
+                  </div>
+                </div>
+              )}
               <p className="forgot-password auth-link" onClick={() => { setCurrentView('forgotPassword'); setError(''); setMessage(''); }} style={{ cursor: 'pointer', fontWeight: 'normal', marginTop: '10px', textAlign: 'center' }}>
                 Forgot Password?
               </p>
@@ -443,13 +275,13 @@ const Login = ({ onLogin }) => {
           {/* FORGOT PASSWORD FORM */}
           {currentView === 'forgotPassword' && (
             <form className="login-form" onSubmit={handleForgotPassword}>
-              <p style={{ textAlign: 'center', marginBottom: '15px', color: '#666' }}>Enter your email to receive a password reset link.</p>
+              
               <div className="input-group">
                 <label>Email</label>
                 <input type="email" placeholder="Your registered email" value={email} onChange={(e) => setEmail(e.target.value)} required />
               </div>
               <button type="submit" className="sign-in-btn" disabled={isLoading}>
-                {isLoading ? (<><span className="spinner"></span> Sending...</>) : 'Send Reset Link'}
+                {isLoading ? (<><span className="spinner"></span> Sending...</>) : 'Send Reset OTP'}
               </button>
             </form>
           )}
@@ -457,7 +289,11 @@ const Login = ({ onLogin }) => {
           {/* RESET PASSWORD FORM */}
           {currentView === 'resetPassword' && (
             <form className="login-form" onSubmit={handleResetSubmit}>
-              <p style={{ textAlign: 'center', marginBottom: '15px', color: '#666' }}>Enter your new password below.</p>
+              
+              <div className="input-group">
+                <label>Reset OTP</label>
+                <input type="text" inputMode="numeric" pattern="[0-9]{6}" maxLength="6" placeholder="6-digit OTP" value={resetOtp} onChange={(e) => setResetOtp(e.target.value.replace(/\D/g, ''))} required />
+              </div>
               {renderPasswordInput({
                 label: "New Password",
                 value: password,
@@ -482,9 +318,9 @@ const Login = ({ onLogin }) => {
             </form>
           )}
 
-          {currentView !== 'resetPassword' && (
-            <p className="toggle-view auth-link" onClick={() => { setCurrentView(currentView === 'signIn' || currentView === 'forgotPassword' ? 'signUp' : 'signIn'); setError(''); setMessage(''); }} style={{ cursor: 'pointer', fontWeight: 'bold', marginTop: '15px' }}>
-              {currentView === 'signIn' || currentView === 'forgotPassword' ? "Don't have an account? Request Access" : "Already have an account? Sign In"}
+          {currentView === 'forgotPassword' && (
+            <p className="toggle-view auth-link" onClick={() => { setCurrentView('signIn'); setError(''); setMessage(''); }} style={{ cursor: 'pointer', fontWeight: 'bold', marginTop: '15px' }}>
+              Back to Sign In
             </p>
           )}
         </div>

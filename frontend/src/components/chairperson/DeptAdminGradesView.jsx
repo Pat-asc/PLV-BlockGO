@@ -3,26 +3,14 @@ import { fetchAllGrades, approveGrade, finalizeGrade, returnGrade, batchUploadGr
 import { useNotification } from '../../services/NotificationContext';
 import ChairpersonHeader from './ChairpersonHeader';
 import ChairpersonSidebar from './ChairpersonSidebar';
+import CurriculumBuilder from './CurriculumBuilder';
 import ChairpersonOverview from './ChairpersonOverview';
 import FacultyStatusTable from '../faculty/FacultyStatusTable';
 import SectionReviewPanel from './SectionReviewPanel';
 import Modal from '../../services/Modal';
 import StudentSectioning from './StudentSectioning';
 import AcademicAssignment from './AcademicAssignment';
-
-const getGradeEquivalent = (grade) => {
-    const n = parseFloat(grade);
-    if (isNaN(n) || n === 0) return '5.00';
-    if (n >= 98.5) return '1.00';
-    if (n >= 94) return '1.25';
-    if (n >= 91) return '1.50';
-    if (n >= 88) return '1.75';
-    if (n >= 85) return '2.00';
-    if (n >= 82) return '2.25';
-    if (n >= 79) return '2.50';
-    if (n >= 75) return '3.00';
-    return '5.00';
-};
+import { getGradeEquivalent } from '../../utils/gradingHelpers';
 
 const getRecordGrade = (record) => record?.grade || record?.Grade || '';
 
@@ -478,7 +466,7 @@ const getDepartmentSectionSnapshot = (department = '') => {
     }
 };
 
-const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole = '', department = '' }) => {
+const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole = '', department = '', onLogout }) => {
     const [grades, setGrades] = useState([]);
     
     const { addNotification } = useNotification();
@@ -774,8 +762,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             });
             
             let normalizedReviewStatus = 'pending';
-            if (status.includes('finalized') || status.includes('forwarded')) normalizedReviewStatus = 'forwarded';
-            else if (status.includes('approved')) normalizedReviewStatus = 'approved';
+            if (status.includes('finalized') || status.includes('forwarded') || status.includes('departmentapproved')) normalizedReviewStatus = 'forwarded';
+            else if (status.includes('chairpersonapproved') || status === 'approved') normalizedReviewStatus = 'approved';
             else if (status.includes('issued') || status.includes('submitted') || status === '') normalizedReviewStatus = 'submitted';
             else if (status.includes('returned') || status.includes('rejected')) normalizedReviewStatus = 'returned';
 
@@ -1351,6 +1339,10 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     faculty_id: loggedInEmail,
                     subject_code: selectedMySection.subject || 'Unknown',
                     subject_name: selectedMySection.subject || 'Unknown',
+                    professor_name: loggedInName || loggedInEmail,
+                    program: selectedMySection.department || '',
+                    term: activeEncodingTerm || 'midterm',
+                    units: Number(selectedMySection.units) || 3,
                     course: selectedMySection.department,
                     semester: selectedMySection.semester || activeSemester || "2nd Semester",
                     school_year: selectedMySection.schoolYear || "2024",
@@ -1483,7 +1475,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
 
     return (
         <div className="flex h-screen w-full flex-col bg-slate-50 font-sans fixed inset-0 z-[100] overflow-auto">
-            <ChairpersonHeader chairpersonData={{ name: loggedInName, department, semester: activeSemester }} departmentCount={deptMetrics.totalFaculty} onLogout={() => { localStorage.removeItem('token'); window.location.reload(); }} />
+            <ChairpersonHeader chairpersonData={{ name: loggedInName, department, semester: activeSemester }} departmentCount={deptMetrics.totalFaculty} onLogout={onLogout} />
             <div className="flex flex-col md:flex-row flex-1 overflow-hidden p-4 md:p-6 gap-6">
                 <ChairpersonSidebar activeTab={activeChairTab === 'grades' ? 'dashboard' : activeChairTab} setActiveTab={setMainTab} />
                 <main className="flex-1 overflow-y-auto pr-2">
@@ -1522,6 +1514,9 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                             <StudentSectioning chairpersonDepartment={department} />
                         </div>
                     )}
+                    {activeChairTab === 'curriculum' && (
+                        <CurriculumBuilder department={department} />
+                    )}
                     {activeChairTab === 'myClasses' && (
                         <div className="flex flex-col gap-6">
                             {!selectedMySection ? (
@@ -1556,7 +1551,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                     <div className="mb-6 rounded-xl bg-slate-50 p-5 border border-slate-200 flex flex-col md:flex-row md:items-end gap-4">
                                         <div className="flex-1">
                                             <h3 className="font-bold text-emerald-700 mb-2">Enroll Missing Students</h3>
-                                            <p className="text-sm text-slate-500 mb-4">Upload a CSV/Excel file to add students to this section.</p>
+                                            
                                             <input 
                                                 id="myclass-student-enroll-upload"
                                                 type="file" 
@@ -1716,7 +1711,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                         </div>
                     )}
                     {activeChairTab === 'assignment' && (
-                        <AcademicAssignment chairpersonDepartment={department} />
+                        <AcademicAssignment key={department} chairpersonDepartment={department} />
                     )}
                 </main>
             </div>

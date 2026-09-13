@@ -28,10 +28,33 @@ spec:
         matchExpressions:
           - key: app
             operator: In
-            values: [middleware-api, client-app, plv-client-app]
+            values: [auth-service, settings-service, fabric-identity-service, ledger-service, client-app, plv-client-app]
     ports:
     - protocol: TCP
       port: 5984
+    - protocol: TCP
+      port: 5432
+  - from:
+    - podSelector:
+        matchLabels:
+          app: postgres-exporter
+    ports:
+    - protocol: TCP
+      port: 5432
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: plv-annex-campus
+      podSelector:
+        matchLabels:
+          app: postgres-replica-annex
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: plv-pubad-campus
+      podSelector:
+        matchLabels:
+          app: postgres-replica-pubad
+    ports:
     - protocol: TCP
       port: 5432
 ---
@@ -64,7 +87,7 @@ spec:
         matchExpressions:
           - key: app
             operator: In
-            values: [middleware-api, client-app, plv-client-app]
+            values: [fabric-identity-service, ledger-service, client-app, plv-client-app]
     ports:
     - protocol: TCP
       port: 5984
@@ -100,7 +123,7 @@ spec:
         matchExpressions:
           - key: app
             operator: In
-            values: [middleware-api, client-app, plv-client-app]
+            values: [fabric-identity-service, ledger-service, client-app, plv-client-app]
     ports:
     - protocol: TCP
       port: 5984

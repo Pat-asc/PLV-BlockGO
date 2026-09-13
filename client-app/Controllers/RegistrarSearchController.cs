@@ -12,11 +12,12 @@ namespace Client_app.Controllers
     [Route("api/registrar/[controller]")]
     public class SearchController : ControllerBase
     {
-        private readonly NpgsqlDataSource _dataSource;
+        private readonly string _connectionString;
 
-        public SearchController(NpgsqlDataSource dataSource)
+        public SearchController(IConfiguration configuration)
         {
-            _dataSource = dataSource;
+            _connectionString = configuration.GetConnectionString("PostgresConnection") ?? 
+                throw new InvalidOperationException("PostgreSQL connection string not found.");
         }
 
         [HttpGet]
@@ -29,7 +30,8 @@ namespace Client_app.Controllers
 
             try
             {
-                await using var conn = await _dataSource.OpenConnectionAsync();
+                using var conn = new NpgsqlConnection(_connectionString);
+                await conn.OpenAsync();
 
                 var results = new List<object>();
                 string sql = "";

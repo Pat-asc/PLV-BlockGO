@@ -11,6 +11,7 @@ const Notification = ({ message, type, onDismiss }) => {
     const typeClasses = {
         success: "bg-green-100 border border-green-400 text-green-800",
         error: "bg-red-100 border border-red-400 text-red-800",
+        notice: "bg-blue-50 border-2 border-[#003366] text-[#003366] font-semibold",
     };
 
     return (
@@ -28,7 +29,7 @@ export const NotificationProvider = ({ children }) => {
         setNotifications((prev) => [...prev, { id, message, type }].slice(-4));
         setTimeout(() => {
             setNotifications((prev) => prev.filter((notification) => notification.id !== id));
-        }, 5000); // Auto-dismiss after 5 seconds
+        }, type === 'notice' ? 10000 : 5000);
     }, []);
 
     const dismissNotification = (id) => {

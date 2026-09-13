@@ -408,11 +408,7 @@ function ChairpersonPortal({ onLogout, allGrades = {} }) {
                   <h2 className="text-2xl font-bold text-[#003366]">
                     Chairperson Review Dashboard
                   </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Monitor faculty encoding progress, validate section grades,
-                    return discrepancies to faculty, and approve submissions
-                    before they move to the registrar.
-                  </p>
+                  
                 </div>
 
                 <ChairpersonOverview metrics={metrics} />

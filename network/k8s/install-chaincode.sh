@@ -1,11 +1,8 @@
-#!/bin/bash
-
-# Package, install, approve, commit, and initialize the CCaaS chaincode.
-
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+PROFILE="${K8S_PROFILE:-local}"
 CHANNEL_NAME="${CHANNEL_NAME:-registrar-channel}"
 CC_NAME="${CHAINCODE_NAME:-registrar}"
 CC_LABEL="${CHAINCODE_LABEL:-registrar_1.0}"
@@ -15,6 +12,11 @@ CLI_NAMESPACE="plv-main-campus"
 REMOTE_DIR="/tmp/blockgo-chaincode-bootstrap"
 ORDERER_ENDPOINT="orderer-1.plv-main-campus.svc.cluster.local:7050"
 ORDERER_TLS_OVERRIDE="orderer.capstone.com"
+CHAINCODE_PACKAGE_ANNOTATION="blockgo.plv/chaincode-package-id"
+
+if [[ "$PROFILE" == "local" ]]; then
+    export KUBECTL_REMOTE_COMMAND_WEBSOCKETS="${KUBECTL_REMOTE_COMMAND_WEBSOCKETS:-false}"
+fi
 
 ORGS=(registrar faculty department)
 NAMESPACES=(plv-fabric plv-main-campus plv-annex-campus plv-pubad-campus)
@@ -38,6 +40,16 @@ declare -A ORG_PEER_SERVICE=(
     [registrar]="peer-registrar"
     [faculty]="peer-faculty"
     [department]="peer-department"
+)
+declare -A ORG_SECONDARY_PEER_HOST=(
+    [registrar]="peer1.registrar.capstone.com"
+    [faculty]="peer1.faculty.capstone.com"
+    [department]="peer1.department.capstone.com"
+)
+declare -A ORG_SECONDARY_PEER_SERVICE=(
+    [registrar]="peer-registrar-2"
+    [faculty]="peer-faculty-2"
+    [department]="peer-department-2"
 )
 declare -A ORG_CHAINCODE_SERVICE=(
     [registrar]="registrar-chaincode"
@@ -65,7 +77,10 @@ require_file() {
 require_file "./crypto-config-final-v2/chaincode-tls/ca-bundle/ca-bundle.pem"
 require_file "./crypto-config-final-v2/ordererOrganizations/capstone.com/orderers/orderer.capstone.com/tls/ca.crt"
 
-ROOT_CERT="$(base64 < ./crypto-config-final-v2/chaincode-tls/ca-bundle/ca-bundle.pem | tr -d '\r\n')"
+# Fabric expects root_cert to contain PEM text. Escape its line endings for JSON;
+# base64-encoding the entire PEM makes the peer fail with "error adding root certificate".
+ROOT_CERT="$(awk '{ sub(/\r$/, ""); printf "%s\\n", $0 }' \
+    ./crypto-config-final-v2/chaincode-tls/ca-bundle/ca-bundle.pem)"
 
 create_package() {
     local org="$1"
@@ -124,18 +139,26 @@ wait_for_cli() {
     return 1
 }
 
-peer_exec() {
+peer_exec_at() {
     local org="$1"
-    shift
+    local peer_host="$2"
+    local tls_host_override="${PEER_TLS_HOST_OVERRIDE-$peer_host}"
+    shift 2
 
     MSYS_NO_PATHCONV=1 kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- env \
         CORE_PEER_TLS_ENABLED=true \
         CORE_PEER_TLS_ROOTCERT_FILE="$REMOTE_DIR/$org/peer-tls-ca.crt" \
-        CORE_PEER_TLS_SERVERHOSTOVERRIDE="${ORG_PEER_HOST[$org]}" \
+        CORE_PEER_TLS_SERVERHOSTOVERRIDE="$tls_host_override" \
         CORE_PEER_LOCALMSPID="${ORG_MSP[$org]}" \
         CORE_PEER_MSPCONFIGPATH="$REMOTE_DIR/$org/admin-msp" \
-        CORE_PEER_ADDRESS="${ORG_PEER_HOST[$org]}:7051" \
+        CORE_PEER_ADDRESS="${peer_host}:7051" \
         "$@"
+}
+
+peer_exec() {
+    local org="$1"
+    shift
+    peer_exec_at "$org" "${ORG_PEER_HOST[$org]}" "$@"
 }
 
 stage_cli_files() {
@@ -175,20 +198,37 @@ stage_cli_files() {
         }
         kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- sh -c \
             "grep -Fq '${ORG_PEER_HOST[$org]}' /etc/hosts || printf '\n%s %s\n' '$service_ip' '${ORG_PEER_HOST[$org]}' >> /etc/hosts"
+
+        if [[ "$PROFILE" == "production" ]]; then
+            service_ip="$(kubectl get service "${ORG_SECONDARY_PEER_SERVICE[$org]}" -n "$namespace" -o jsonpath='{.spec.clusterIP}')"
+            [[ -n "$service_ip" ]] || {
+                echo "ERROR: Could not resolve secondary peer service for $org." >&2
+                return 1
+            }
+            kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- sh -c \
+                "grep -Fq '${ORG_SECONDARY_PEER_HOST[$org]}' /etc/hosts || printf '\n%s %s\n' '$service_ip' '${ORG_SECONDARY_PEER_HOST[$org]}' >> /etc/hosts"
+        fi
     done
 }
 
 install_packages() {
     for org in "${ORGS[@]}"; do
-        local installed
-        installed="$(peer_exec "$org" peer lifecycle chaincode queryinstalled)"
-        if grep -Fq "${PACKAGE_IDS[$org]}" <<<"$installed"; then
-            echo "[SKIP] ${ORG_MSP[$org]} already has ${PACKAGE_IDS[$org]}."
-            continue
+        local peer_hosts=("${ORG_PEER_HOST[$org]}")
+        if [[ "$PROFILE" == "production" ]]; then
+            peer_hosts+=("${ORG_SECONDARY_PEER_HOST[$org]}")
         fi
+        local peer_host
+        for peer_host in "${peer_hosts[@]}"; do
+            local installed
+            installed="$(peer_exec_at "$org" "$peer_host" peer lifecycle chaincode queryinstalled)"
+            if grep -Fq "${PACKAGE_IDS[$org]}" <<<"$installed"; then
+                echo "[SKIP] $peer_host already has ${PACKAGE_IDS[$org]}."
+                continue
+            fi
 
-        echo "[INSTALL] Installing the $org CCaaS package..."
-        peer_exec "$org" peer lifecycle chaincode install "$REMOTE_DIR/$org.tar.gz"
+            echo "[INSTALL] Installing the $org CCaaS package on $peer_host..."
+            peer_exec_at "$org" "$peer_host" peer lifecycle chaincode install "$REMOTE_DIR/$org.tar.gz"
+        done
     done
 }
 
@@ -203,9 +243,33 @@ sync_chaincode_ids() {
         kubectl patch secret blockgo-secrets -n "$namespace" --type=merge -p "$payload" >/dev/null
     done
 
+    if [[ "$PROFILE" == "local" ]]; then
+        for org in "${ORGS[@]}"; do
+            kubectl patch "deployment/${ORG_CHAINCODE_DEPLOYMENT[$org]}" \
+                -n "${ORG_NAMESPACE[$org]}" --type=merge \
+                -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}' >/dev/null
+        done
+    fi
+
     for org in "${ORGS[@]}"; do
+        local deployed_package_id
+        deployed_package_id="$(
+            kubectl get "deployment/${ORG_CHAINCODE_DEPLOYMENT[$org]}" \
+                -n "${ORG_NAMESPACE[$org]}" \
+                -o "jsonpath={.metadata.annotations['blockgo\\.plv/chaincode-package-id']}" \
+                2>/dev/null || true
+        )"
+
+        if [[ "$deployed_package_id" == "${PACKAGE_IDS[$org]}" ]]; then
+            echo "[SKIP] ${ORG_CHAINCODE_DEPLOYMENT[$org]} already runs ${PACKAGE_IDS[$org]}."
+            continue
+        fi
+
         kubectl rollout restart "deployment/${ORG_CHAINCODE_DEPLOYMENT[$org]}" -n "${ORG_NAMESPACE[$org]}" >/dev/null
         kubectl rollout status "deployment/${ORG_CHAINCODE_DEPLOYMENT[$org]}" -n "${ORG_NAMESPACE[$org]}" --timeout=5m
+        kubectl annotate "deployment/${ORG_CHAINCODE_DEPLOYMENT[$org]}" \
+            -n "${ORG_NAMESPACE[$org]}" \
+            "${CHAINCODE_PACKAGE_ANNOTATION}=${PACKAGE_IDS[$org]}" --overwrite >/dev/null
     done
 }
 
@@ -264,7 +328,7 @@ commit_chaincode() {
     done
 
     echo "[COMMIT] Committing $CC_NAME sequence $CC_SEQUENCE..."
-    peer_exec registrar peer lifecycle chaincode commit \
+    PEER_TLS_HOST_OVERRIDE="" peer_exec registrar peer lifecycle chaincode commit \
         --orderer "$ORDERER_ENDPOINT" \
         --ordererTLSHostnameOverride "$ORDERER_TLS_OVERRIDE" \
         --tls --cafile "$REMOTE_DIR/orderer-tls-ca.crt" \
@@ -290,7 +354,7 @@ initialize_ledger() {
     fi
 
     echo "[INIT] Creating the ledger genesis record..."
-    peer_exec registrar peer chaincode invoke \
+    PEER_TLS_HOST_OVERRIDE="" peer_exec registrar peer chaincode invoke \
         --orderer "$ORDERER_ENDPOINT" \
         --ordererTLSHostnameOverride "$ORDERER_TLS_OVERRIDE" \
         --tls --cafile "$REMOTE_DIR/orderer-tls-ca.crt" \

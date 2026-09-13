@@ -4,16 +4,6 @@ networks:
   registrar-net:
     name: registrar-net
 
-x-couchdb-single-node: &couchdb-single-node
-  entrypoint: ["/bin/sh", "-ec"]
-  command:
-    - |
-      cp /config-source/10-single-node.ini /opt/couchdb/etc/local.d/10-single-node.ini
-      chmod 0644 /opt/couchdb/etc/local.d/10-single-node.ini
-      exec tini -- /docker-entrypoint.sh /opt/couchdb/bin/couchdb
-  volumes:
-    - ./couchdb-single-node.ini:/config-source/10-single-node.ini:ro
-
 services:
   ca.department.capstone.com:
     image: hyperledger/fabric-ca:1.5.7
@@ -34,24 +24,33 @@ services:
     networks: [department-net, registrar-net]
 
   couchdb_department:
-    <<: *couchdb-single-node
     image: couchdb:3.2.2
     container_name: couchdb_department
+    restart: unless-stopped
     environment:
       - COUCHDB_USER=${COUCHDB_USER}
       - COUCHDB_PASSWORD=${COUCHDB_PASS}
+      - COUCHDB_SINGLE_NODE=true
     ports: ["7984:5984"]
     networks: [department-net]
+    healthcheck: &couchdb-health
+      test: ["CMD-SHELL", "curl -fsS -u \"$${COUCHDB_USER}:$${COUCHDB_PASSWORD}\" http://127.0.0.1:5984/_up >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
 
   couchdb_department_peer1:
-    <<: *couchdb-single-node
     image: couchdb:3.2.2
     container_name: couchdb_department_peer1
+    restart: unless-stopped
     environment:
       - COUCHDB_USER=${COUCHDB_USER}
       - COUCHDB_PASSWORD=${COUCHDB_PASS}
+      - COUCHDB_SINGLE_NODE=true
     ports: ["7985:5984"]
     networks: [department-net]
+    healthcheck: *couchdb-health
 
   peer0.department.capstone.com:
     container_name: peer0.department.capstone.com
@@ -88,7 +87,8 @@ services:
       - ./config/core.yaml:/etc/hyperledger/fabric/core.yaml
       - ./crypto-config-final-v2:/etc/hyperledger/fabric/crypto-config-final-v2
       - ./builders:/opt/builders
-    depends_on: [couchdb_department]
+    depends_on:
+      couchdb_department: { condition: service_healthy }
 
   peer1.department.capstone.com:
     container_name: peer1.department.capstone.com
@@ -127,17 +127,20 @@ services:
       - ./config/core.yaml:/etc/hyperledger/fabric/core.yaml
       - ./crypto-config-final-v2:/etc/hyperledger/fabric/crypto-config-final-v2
       - ./builders:/opt/builders
-    depends_on: [couchdb_department_peer1]
+    depends_on:
+      couchdb_department_peer1: { condition: service_healthy }
 
   couchdb_wallet_department:
-    <<: *couchdb-single-node
     image: couchdb:3.2.2
     container_name: couchdb_wallet_department
+    restart: unless-stopped
     environment:
       - COUCHDB_USER=${COUCHDB_USER}
       - COUCHDB_PASSWORD=${COUCHDB_PASS}
+      - COUCHDB_SINGLE_NODE=true
     ports: ["7990:5984"]
     networks: [department-net, registrar-net]
+    healthcheck: *couchdb-health
 
   ipfs4:
     image: ipfs/kubo:latest

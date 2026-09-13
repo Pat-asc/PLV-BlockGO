@@ -48,6 +48,31 @@ const StudentInfoCard = ({ studentData }) => {
           <p className="font-semibold break-words">{studentData.email}</p>
         </div>
 
+        <div>
+          <p className="text-gray-500">Program</p>
+          <p className="font-semibold">{studentData.department || "Not assigned"}</p>
+        </div>
+
+        <div>
+          <p className="text-gray-500">Year / Section</p>
+          <p className="font-semibold">{studentData.yearLevel ? `Year ${studentData.yearLevel}` : "Year not assigned"} · {studentData.section || "No section"}</p>
+        </div>
+
+        <div>
+          <p className="text-gray-500">Academic Period</p>
+          <p className="font-semibold">{studentData.schoolYear || "Not assigned"} · {studentData.semester || "No semester"}</p>
+        </div>
+
+        <div>
+          <p className="text-gray-500">Curriculum</p>
+          <p className="font-semibold">{studentData.curriculumVersion || studentData.curriculumName || "Not assigned"}</p>
+        </div>
+
+        <div>
+          <p className="text-gray-500">Enrollment Status</p>
+          <p className="font-semibold">{studentData.enrollmentStatus || "Unassigned"}</p>
+        </div>
+
         <div className="col-span-2 md:col-span-3">
           <p className="text-gray-500">Address</p>
           <p className="font-semibold">{studentData.address}</p>

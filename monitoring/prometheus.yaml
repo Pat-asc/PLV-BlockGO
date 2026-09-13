@@ -6,9 +6,14 @@ global:
     environment: production
 
 rule_files:
-  - alert-rules.yaml
+  - alert-rules.yml
 
 scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
+
   - job_name: middleware-api
     metrics_path: /metrics
     kubernetes_sd_configs:
@@ -23,6 +28,27 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_container_port_name]
         action: keep
         regex: api
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+
+  - job_name: middleware-services
+    metrics_path: /metrics
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - plv-fabric
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: api
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        target_label: service
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
       - source_labels: [__meta_kubernetes_namespace]
@@ -50,23 +76,33 @@ scrape_configs:
   - job_name: kube-state-metrics
     static_configs:
       - targets:
-          - kube-state-metrics.kube-system.svc.cluster.local:8080
+          - kube-state-metrics.plv-fabric.svc.cluster.local:8080
 
   - job_name: fabric-orderer
+    metrics_path: /metrics
     kubernetes_sd_configs:
       - role: pod
         namespaces:
           names:
             - plv-main-campus
+            - plv-annex-campus
+            - plv-pubad-campus
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_label_app]
         action: keep
-        regex: orderer
-      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: orderer-.*
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
         action: keep
-        regex: "8443"
+        regex: operations
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_label_org]
+        target_label: org
 
   - job_name: fabric-peer
+    metrics_path: /metrics
     kubernetes_sd_configs:
       - role: pod
         namespaces:
@@ -78,3 +114,28 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_label_app]
         action: keep
         regex: peer-.*
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: operations
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_label_org]
+        target_label: org
+
+  - job_name: postgres-exporter
+    static_configs:
+      - targets:
+          - postgres-exporter.plv-main-campus.svc.cluster.local:9187
+
+  - job_name: observability
+    static_configs:
+      - targets:
+          - loki.plv-fabric.svc.cluster.local:3100
+        labels:
+          component: loki
+      - targets:
+          - alloy.plv-fabric.svc.cluster.local:12345
+        labels:
+          component: alloy

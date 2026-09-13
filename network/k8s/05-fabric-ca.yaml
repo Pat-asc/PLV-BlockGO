@@ -29,6 +29,8 @@ spec:
         org: registrar
     spec:
       serviceAccountName: fabric-sa
+      nodeSelector:
+        topology.kubernetes.io/zone: "__GKE_ZONE_A__"
       initContainers:
       - name: init-ca
         image: alpine:latest
@@ -111,6 +113,8 @@ spec:
         org: faculty
     spec:
       serviceAccountName: fabric-sa
+      nodeSelector:
+        topology.kubernetes.io/zone: "__GKE_ZONE_B__"
       initContainers:
       - name: init-ca
         image: alpine:latest
@@ -192,6 +196,8 @@ spec:
         org: department
     spec:
       serviceAccountName: fabric-sa
+      nodeSelector:
+        topology.kubernetes.io/zone: "__GKE_ZONE_C__"
       initContainers:
       - name: init-ca
         image: alpine:latest

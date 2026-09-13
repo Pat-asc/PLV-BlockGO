@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import "./assets/style.css"; 
 import "./assets/App.css";   
 import Login from "./components/shared/Login";
@@ -10,66 +10,56 @@ import RegistrarGradesView from './components/registrar/RegistrarGradesView';
 import SystemAdminPortal from './components/system-admin/SystemAdminPortal';
 import Chat from './components/shared/Chat';
 import { startNginxFailoverMonitor } from './services/nginxFailover';
+import { getLocalDevUser } from './utils/localDevAuth';
+import {
+  clearAuthSession,
+  decodeAuthToken,
+  migrateLegacyAuthSession,
+  normalizeSessionRole,
+  roleForRoute,
+  routeForRole,
+  setAuthSession,
+} from './services/authSession';
 
-import { BrowserRouter as Router } from 'react-router-dom';
+import { BrowserRouter as Router, useLocation, useNavigate } from 'react-router-dom';
 import { NotificationProvider, useNotification } from './services/NotificationContext';
 
-const normalizeAppRole = (role) => {
-  const normalized = String(role || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-  if (normalized === 'system_admin' || normalized === 'systemadmin' || normalized === 'system_administrator' || normalized === 'systemadministrator') {
-    return 'system_admin';
-  }
-  if (normalized === 'dept_admin' || normalized === 'deptadmin' || normalized === 'departmentadmin' || normalized === 'department' || normalized === 'admin' || normalized === 'departmentmsp') {
-    return 'department_admin';
-  }
-  if (normalized === 'facultymsp') return 'faculty';
-  if (normalized === 'registrarmsp') return 'registrar';
-  return normalized;
-};
+const normalizeAppRole = normalizeSessionRole;
 
 function AppContent() {
   const [user, setUser] = useState(null);
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatUnreadTotal, setChatUnreadTotal] = useState(0);
   const [latestChatNotice, setLatestChatNotice] = useState(null);
   const [chatAutoOpenTarget, setChatAutoOpenTarget] = useState(null);
   const { addNotification } = useNotification();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const restorationStarted = useRef(false);
 
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      try {
-        const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-        JSON.parse(atob(base64));
-        handleLoginSuccess(token);
-      } catch (e) {
-        localStorage.removeItem('token');
-      }
-    }
-  }, []);
-
-  const handleLoginSuccess = async (token) => { // Made async
-    localStorage.setItem('token', token);
+  const handleLoginSuccess = useCallback(async (token) => {
     try {
-      // Decode the JWT to securely get the username and role signed by the backend
-      const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-      const payload = JSON.parse(atob(base64));
-      
-      // Log the payload to the console so you can see exactly what keys your backend uses
-      console.log("Decoded Token Payload:", payload);
-      
-      // Add safe fallbacks for standard JWT structures
+      const payload = decodeAuthToken(token);
+      const localDevUser = getLocalDevUser(payload);
+      if (localDevUser) {
+        setAuthSession(token, localDevUser.role);
+        setUser(localDevUser);
+        navigate(routeForRole(localDevUser.role), { replace: true });
+        return;
+      }
+
       const email = payload.username || payload.email || payload['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress'];
       const dbRole = normalizeAppRole(payload.dbRole || payload.role || payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']);
+      setAuthSession(token, dbRole);
 
-      // Fetch full user profile from the backend
       const profileResponse = await fetchUserProfile(email, dbRole);
 
       if (profileResponse.status === 'Success' && profileResponse.data) {
         const fetchedUser = profileResponse.data;
         const appRole = normalizeAppRole(fetchedUser.role || dbRole);
-        
-        // Determine display name based on role
+        setAuthSession(token, appRole);
+
         let displayName = fetchedUser.fullName;
         if (appRole === 'faculty') {
           displayName = `Prof. ${fetchedUser.fullName}`;
@@ -81,10 +71,9 @@ function AppContent() {
           displayName = fetchedUser.fullName || 'System Administrator';
         }
 
-        // Set the user state with the fetched data
         setUser({
           id: fetchedUser.id,
-          name: displayName, // Use the formatted display name
+          name: displayName,
           email: fetchedUser.email,
           role: appRole,
           rawRole: fetchedUser.role,
@@ -98,44 +87,75 @@ function AppContent() {
           department: fetchedUser.department,
           section: fetchedUser.section,
           yearLevel: fetchedUser.yearLevel,
+          curriculumId: fetchedUser.curriculumId,
+          curriculumName: fetchedUser.curriculumName,
+          curriculumVersion: fetchedUser.curriculumVersion,
+          schoolYear: fetchedUser.schoolYear,
+          semester: fetchedUser.semester,
+          enrollmentStatus: fetchedUser.enrollmentStatus,
           enrolledSubjects: fetchedUser.enrolledSubjects,
           facultyType: fetchedUser.facultyType,
           Classification: fetchedUser.facultyType || fetchedUser.classification,
-          status: fetchedUser.status // Add status if needed
+          status: fetchedUser.status
         });
+        navigate(routeForRole(appRole), { replace: true });
       } else {
-        console.error("Failed to fetch user profile:", profileResponse.message);
         throw new Error("Failed to load user profile.");
       }
     } catch (error) {
       console.error("Error during login process:", error);
-      if (error instanceof SyntaxError) {
-        console.error("Invalid token format. It could not be parsed.");
-        localStorage.removeItem('token');
-      }
+      clearAuthSession();
       setUser(null);
+      navigate('/login', { replace: true });
+      throw error;
+    } finally {
+      setIsRestoringSession(false);
     }
-  };
+  }, [navigate]);
+
+  useEffect(() => {
+    if (restorationStarted.current) return undefined;
+    restorationStarted.current = true;
+    let active = true;
+    const token = migrateLegacyAuthSession();
+    if (!token) {
+      setIsRestoringSession(false);
+      const isPublicAuthRoute = location.pathname === '/login' || location.pathname.startsWith('/reset-password');
+      if (!isPublicAuthRoute) navigate('/login', { replace: true });
+      return () => { active = false; };
+    }
+
+    handleLoginSuccess(token).catch(() => {
+      if (active) setIsRestoringSession(false);
+    });
+    return () => { active = false; };
+  }, [handleLoginSuccess, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (isRestoringSession || !user) return;
+    const currentRouteRole = roleForRoute(location.pathname);
+    const userRole = normalizeAppRole(user.role);
+    if (currentRouteRole !== userRole) navigate(routeForRole(userRole), { replace: true });
+  }, [isRestoringSession, location.pathname, navigate, user]);
 
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('userRole');
+    clearAuthSession();
     setUser(null);
     setChatUnreadTotal(0);
     setLatestChatNotice(null);
     setChatAutoOpenTarget(null);
+    navigate('/login', { replace: true });
   };
 
   const handleNginxFailover = useCallback((nextOrigin) => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('userRole');
+    clearAuthSession();
     setUser(null);
     setChatUnreadTotal(0);
     setLatestChatNotice(null);
     setChatAutoOpenTarget(null);
 
     const from = encodeURIComponent(window.location.origin);
-    window.location.replace(`${nextOrigin}/?failover=nginx&from=${from}`);
+    window.location.replace(`${nextOrigin}/login?failover=nginx&from=${from}`);
   }, []);
 
   useEffect(() => {
@@ -174,45 +194,48 @@ function AppContent() {
     addNotification(`New registration request from ${name} (${role})`, 'success');
   }, [addNotification, user?.role]);
 
+  const handleSupportNotice = useCallback((notice) => {
+    const message = notice?.displayMessage || notice?.DisplayMessage;
+    if (message) addNotification(message, 'notice');
+  }, [addNotification]);
+
   const currentUserRole = normalizeAppRole(user?.role);
-  const canUseChat = currentUserRole !== 'system_admin';
+  const canUseChat = ['student', 'faculty', 'department_admin', 'registrar', 'system_admin'].includes(currentUserRole);
 
   return (
     <div className="main-app-wrapper">
-      {!user ? (
+      {isRestoringSession ? (
+        <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-600">Restoring this tab's session...</div>
+      ) : !user ? (
         <Login onLogin={handleLoginSuccess} />
       ) : (
         <>
           {/* Floating Chat Button */}
           {canUseChat && !isChatOpen && (
-            <button 
-              onClick={() => setIsChatOpen(true)} 
-              style={{ position: 'fixed', bottom: '20px', right: '20px', zIndex: 1000, padding: '15px 25px', backgroundColor: '#003366', color: 'white', border: 'none', borderRadius: '30px', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', fontWeight: 'bold', fontSize: '16px' }}>
-              💬 Open Chat
-            </button>
-          )}
-          {canUseChat && !isChatOpen && chatUnreadTotal > 0 && (
-            <span
-              style={{
-                position: 'fixed',
-                bottom: '52px',
-                right: '18px',
-                zIndex: 1001,
-                display: 'inline-flex',
-                minWidth: 22,
-                height: 22,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 999,
-                background: '#ef4444',
-                color: 'white',
-                fontSize: 12,
-                fontWeight: 700,
-                boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
-              }}
-            >
-              {chatUnreadTotal > 9 ? '9+' : chatUnreadTotal}
-            </span>
+            <div className="group fixed bottom-5 right-5 z-[1000]">
+              <button
+                type="button"
+                aria-label="Open Chat"
+                title="Open Chat"
+                onClick={() => setIsChatOpen(true)}
+                className="flex h-11 w-11 items-center justify-start overflow-hidden rounded-full bg-[#003366] text-white shadow-lg transition-[width,background-color,box-shadow] duration-200 ease-out hover:w-32 hover:bg-[#004b8f] hover:shadow-xl focus-visible:w-32 focus-visible:bg-[#004b8f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              >
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3 1.7-5.1A7 7 0 0 1 3 12V8a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" />
+                    <path d="M8 10h.01M12 10h.01M16 10h.01" />
+                  </svg>
+                </span>
+                <span className="whitespace-nowrap pr-4 text-sm font-bold opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                  Open Chat
+                </span>
+              </button>
+              {chatUnreadTotal > 0 && (
+                <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white shadow">
+                  {chatUnreadTotal > 9 ? '9+' : chatUnreadTotal}
+                </span>
+              )}
+            </div>
           )}
           {canUseChat && <Chat
             userEmail={user.email}
@@ -222,6 +245,7 @@ function AppContent() {
             onUnreadChange={handleUnreadChange}
             onIncomingMessage={handleIncomingMessage}
             onRegistrationRequest={handleRegistrationRequest}
+            onSupportNotice={handleSupportNotice}
             autoOpenTarget={chatAutoOpenTarget}
           />}
 
@@ -231,7 +255,7 @@ function AppContent() {
             <FacultyPortal facultyData={user} onLogout={handleLogout} />
           ) : currentUserRole === "department_admin" ? (
             <div style={{ position: 'relative', width: '100%', minHeight: '100vh', backgroundColor: '#f0f2f5' }}>
-              <DeptAdminGradesView loggedInEmail={user.email ?? ''} loggedInName={user.name ?? ''} userRole={currentUserRole} department={user.department ?? ''} />
+              <DeptAdminGradesView loggedInEmail={user.email ?? ''} loggedInName={user.name ?? ''} userRole={currentUserRole} department={user.department ?? ''} onLogout={handleLogout} />
             </div>
           ) : currentUserRole === "registrar" ? (
             <div style={{ position: 'relative', width: '100%', minHeight: '100vh', backgroundColor: '#f0f2f5' }}>
@@ -241,10 +265,16 @@ function AppContent() {
                 chatUnreadCount={chatUnreadTotal}
                 latestChatNotice={latestChatNotice}
                 onOpenChat={() => setIsChatOpen(true)}
+                onLogout={handleLogout}
               />
             </div>
           ) : currentUserRole === "system_admin" ? (
-            <SystemAdminPortal adminData={user} onLogout={handleLogout} />
+            <SystemAdminPortal
+              adminData={user}
+              onLogout={handleLogout}
+              chatUnreadCount={chatUnreadTotal}
+              onOpenChat={() => setIsChatOpen(true)}
+            />
           ) : (
             <div style={{ position: 'relative', width: '100%', minHeight: '100vh', backgroundColor: '#f0f2f5' }}>
               <div style={{ position: 'absolute', top: '15px', right: '20px', zIndex: 10 }}>
