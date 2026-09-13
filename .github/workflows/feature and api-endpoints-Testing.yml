@@ -1005,13 +1005,52 @@ jobs:
             blockgo-security-identity \
             blockgo-security-ledger \
             blockgo-security-upload \
-            blockgo-security-settings
+            blockgo-security-settings \
+            blockgo-security-postgres
           do
             docker rm --force "$CONTAINER" 2>/dev/null || true
           done
 
           docker network rm blockgo-security 2>/dev/null || true
           docker network create blockgo-security
+
+          echo "Starting PostgreSQL for API security tests..."
+          docker run \
+            --detach \
+            --name blockgo-security-postgres \
+            --network blockgo-security \
+            --env POSTGRES_DB=ActivityLogs \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASSWORD=ci-only-postgres-password \
+            --health-cmd="pg_isready -U postgres -d ActivityLogs" \
+            --health-interval=5s \
+            --health-timeout=5s \
+            --health-retries=20 \
+            postgres:16-alpine
+
+          echo "Waiting for PostgreSQL..."
+          POSTGRES_READY=0
+
+          for ATTEMPT in $(seq 1 30); do
+            STATUS="$(docker inspect \
+              --format='{{.State.Health.Status}}' \
+              blockgo-security-postgres 2>/dev/null || true)"
+
+            echo "PostgreSQL attempt ${ATTEMPT}/30 -> ${STATUS:-unknown}"
+
+            if [ "$STATUS" = "healthy" ]; then
+              POSTGRES_READY=1
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [ "$POSTGRES_READY" -ne 1 ]; then
+            echo "::error::Security-test PostgreSQL did not become healthy."
+            docker logs --tail 200 blockgo-security-postgres || true
+            exit 1
+          fi
 
           echo "Starting auth service..."
           docker run \
@@ -1024,6 +1063,11 @@ jobs:
             --env JWT_SECRET="ci-only-jwt-secret-not-production" \
             --env INTERNAL_API_KEY="ci-only-internal-key-not-production" \
             --env FABRIC_BOOTSTRAP=false \
+            --env POSTGRES_HOST=blockgo-security-postgres \
+            --env POSTGRES_PORT=5432 \
+            --env POSTGRES_DB=ActivityLogs \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASS=ci-only-postgres-password \
             --env IDENTITY_SERVICE_URL=http://blockgo-security-identity:4002 \
             --env LEDGER_SERVICE_URL=http://blockgo-security-ledger:4003 \
             blockgo/middleware:security-ci \
@@ -1087,6 +1131,11 @@ jobs:
             --env JWT_SECRET="ci-only-jwt-secret-not-production" \
             --env INTERNAL_API_KEY="ci-only-internal-key-not-production" \
             --env FABRIC_BOOTSTRAP=false \
+            --env POSTGRES_HOST=blockgo-security-postgres \
+            --env POSTGRES_PORT=5432 \
+            --env POSTGRES_DB=ActivityLogs \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASS=ci-only-postgres-password \
             --env AUTH_SERVICE_URL=http://blockgo-security-auth:4001 \
             blockgo/middleware:security-ci \
             npm run start:settings
@@ -1114,7 +1163,7 @@ jobs:
           echo "Security-test containers:"
           docker ps --filter network=blockgo-security
 
-                    echo
+          echo
           echo "===== ALL SECURITY CONTAINERS ====="
           docker ps -a \
             --filter name=blockgo-security \
@@ -1360,22 +1409,25 @@ jobs:
         if: failure()
         run: |
           echo "===== GATEWAY ====="
-          docker logs blockgo-security-api || true
+          docker logs --tail 300 blockgo-security-api || true
 
           echo "===== AUTH ====="
-          docker logs blockgo-security-auth || true
+          docker logs --tail 300 blockgo-security-auth || true
 
           echo "===== IDENTITY ====="
-          docker logs blockgo-security-identity || true
+          docker logs --tail 300 blockgo-security-identity || true
 
           echo "===== LEDGER ====="
-          docker logs blockgo-security-ledger || true
+          docker logs --tail 300 blockgo-security-ledger || true
 
           echo "===== UPLOAD ====="
-          docker logs blockgo-security-upload || true
+          docker logs --tail 300 blockgo-security-upload || true
 
           echo "===== SETTINGS ====="
-          docker logs blockgo-security-settings || true
+          docker logs --tail 300 blockgo-security-settings || true
+
+          echo "===== POSTGRES ====="
+          docker logs --tail 200 blockgo-security-postgres || true
 
       - name: Stop middleware security-test containers
         if: always()
@@ -1386,7 +1438,8 @@ jobs:
             blockgo-security-identity \
             blockgo-security-ledger \
             blockgo-security-upload \
-            blockgo-security-settings
+            blockgo-security-settings \
+            blockgo-security-postgres
           do
             docker rm --force "$CONTAINER" 2>/dev/null || true
           done
