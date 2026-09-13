@@ -90,6 +90,10 @@ ENV PORT=4000
 ENV NODE_ENV=production
 ENV NODE_OPTIONS="--max-old-space-size=256 --expose-gc"
 
+RUN mkdir -p /app/uploads && \
+    chown node:node /app/uploads && \
+    chmod 0750 /app/uploads
+
 USER node
 
 HEALTHCHECK \
