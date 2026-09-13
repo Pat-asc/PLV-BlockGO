@@ -108,3 +108,12 @@ network/bin/*
 # Runtime logs
 *.log
 client-app/logs/
+
+# Runtime/build artifacts
+client-app/build.log
+client-app/logs/
+network/.local-*-port-forward*.log
+network/k8s/.repair-audit/
+
+# Hyperledger Fabric generated private keys
+**/keystore/*_sk
