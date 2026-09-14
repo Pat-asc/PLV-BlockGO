@@ -2363,7 +2363,6 @@ prepare_manifests() {
     if [[ "$PROFILE" == "local" ]]; then
         echo "Preparing local lightweight manifests with immutable source image tag ${LOCAL_IMAGE_TAG}, one-replica apps, and smaller storage."
         cp ./k8s/01b-persistent-volumes.local-kind.yaml.example "$TMP_K8S_DIR/01b-persistent-volumes.local-kind.yaml"
-        cp ./k8s/09a-ipfs-webui-bootstrap.local.yaml.example "$TMP_K8S_DIR/09a-ipfs-webui-bootstrap.yaml"
         local pv_root
         pv_root="$(local_pv_root)"
         echo "Local PV hostPath root: $pv_root"
@@ -2397,15 +2396,12 @@ prepare_manifests() {
         preserve_existing_local_pvc_request "$TMP_K8S_DIR/07-peer-registrar.yaml" peer-registrar-pvc plv-main-campus
         preserve_existing_local_pvc_request "$TMP_K8S_DIR/07-peer-faculty.yaml" peer-faculty-pvc plv-annex-campus
         preserve_existing_local_pvc_request "$TMP_K8S_DIR/07-peer-department.yaml" peer-department-pvc plv-pubad-campus
-        # Local testing needs only one pod per Deployment/StatefulSet. Apply this to
-        # generated manifests before kubectl sees them so the cluster never surges to the
-        # production replica count during startup.
         sed -E -i 's/^([[:space:]]*)replicas:[[:space:]]+[2-9][0-9]*[[:space:]]*$/\1replicas: 1/' "$TMP_K8S_DIR"/*.yaml
         sed -i 's/FABRIC_CA_INSECURE_TLS: "false"/FABRIC_CA_INSECURE_TLS: "true"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
         sed -i 's/FABRIC_DISCOVERY_ENABLED: "true"/FABRIC_DISCOVERY_ENABLED: "false"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
         sed -i 's/FABRIC_HA_ENABLED: "true"/FABRIC_HA_ENABLED: "false"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
         sed -i '/- name: IPFS_RUN_AS_ROOT/{n;s/value: "false"/value: "true"/;}' "$TMP_K8S_DIR/09-ipfs.yaml"
-        sed -i '/^[[:space:]]*nodeSelector:[[:space:]]*$/,+1d' "$TMP_K8S_DIR"/*.yaml
+        sed -i '/^[[:space:]]*nodeSelector:/,+1d' "$TMP_K8S_DIR"/*.yaml
         remove_local_memory_limits_from_generated_manifests
     else
         resolve_gke_zones
@@ -2538,48 +2534,135 @@ setup_gke_cluster() {
         node_service_account_args+=(--service-account "$GKE_NODE_SERVICE_ACCOUNT")
     fi
 
+    # ============================================================
+    # BLOCKGO GKE COST GUARDRAILS
+    # ============================================================
+    # Production remains spread across three zones, but the regional
+    # node pool is constrained to 4-6 total worker nodes to reduce the
+    # risk of an unexpected monthly compute-cost spike.
+    # ============================================================
+    local min_total_nodes="${GKE_MIN_TOTAL_NODES:-4}"
+    local max_total_nodes="${GKE_MAX_TOTAL_NODES:-6}"
+    local initial_nodes_per_zone="${GKE_INITIAL_NODES_PER_ZONE:-2}"
+
+    if ! [[ "$min_total_nodes" =~ ^[0-9]+$ && "$max_total_nodes" =~ ^[0-9]+$ && "$initial_nodes_per_zone" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: GKE_MIN_TOTAL_NODES, GKE_MAX_TOTAL_NODES, and GKE_INITIAL_NODES_PER_ZONE must be whole numbers."
+        return 1
+    fi
+    if (( min_total_nodes < 4 )); then
+        echo "ERROR: Production GKE requires at least 4 total worker nodes."
+        return 1
+    fi
+    if (( max_total_nodes > 6 )); then
+        echo "ERROR: Cost guardrail prevents more than 6 GKE worker nodes."
+        echo "Requested maximum: ${max_total_nodes}"
+        echo "Allowed maximum: 6"
+        return 1
+    fi
+    if (( min_total_nodes > max_total_nodes )); then
+        echo "ERROR: GKE minimum nodes cannot exceed maximum nodes."
+        return 1
+    fi
+    if (( initial_nodes_per_zone < 1 || initial_nodes_per_zone > 2 )); then
+        echo "ERROR: GKE_INITIAL_NODES_PER_ZONE must be 1 or 2 for this 3-zone, 4-6 node design."
+        return 1
+    fi
+
+    echo "======================================"
+    echo "BLOCKGO GKE Cost Guardrails"
+    echo "======================================"
+    echo "Region:              ${GKE_REGION}"
+    echo "Zones:               ${node_locations}"
+    echo "Machine type:        ${GKE_MACHINE_TYPE:-e2-standard-4}"
+    echo "Minimum total nodes: ${min_total_nodes}"
+    echo "Maximum total nodes: ${max_total_nodes}"
+    echo "Initial nodes/zone:  ${initial_nodes_per_zone}"
+    echo "Upgrade surge nodes: 0"
+    echo "Cloud workload logs: disabled"
+    echo "======================================"
+
     if ! gcloud container clusters describe "$GKE_CLUSTER_NAME" --project "$GCP_PROJECT_ID" --region "$GKE_REGION" >/dev/null 2>&1; then
-        echo "Creating regional GKE cluster $GKE_CLUSTER_NAME across $node_locations..."
+        echo "Creating cost-controlled regional GKE cluster $GKE_CLUSTER_NAME across $node_locations..."
         gcloud container clusters create "$GKE_CLUSTER_NAME" \
             --project "$GCP_PROJECT_ID" \
             --region "$GKE_REGION" \
             --node-locations "$node_locations" \
-            --num-nodes "${GKE_NODES_PER_ZONE:-1}" \
+            --num-nodes "$initial_nodes_per_zone" \
             --machine-type "${GKE_MACHINE_TYPE:-e2-standard-4}" \
-            --disk-type pd-balanced \
+            --disk-type "${GKE_NODE_DISK_TYPE:-pd-balanced}" \
             --disk-size "${GKE_NODE_DISK_GB:-100}" \
             --release-channel regular \
             --enable-ip-alias \
             --enable-shielded-nodes \
             --enable-dataplane-v2 \
+            --enable-private-nodes \
+            --enable-autorepair \
+            --enable-autoupgrade \
+            --enable-autoscaling \
+            --total-min-nodes "$min_total_nodes" \
+            --total-max-nodes "$max_total_nodes" \
+            --location-policy BALANCED \
+            --max-surge-upgrade=0 \
+            --max-unavailable-upgrade=1 \
+            --logging=SYSTEM \
+            --monitoring=SYSTEM \
+            --enable-cost-allocation \
             --workload-pool "${GCP_PROJECT_ID}.svc.id.goog" \
             --addons GcePersistentDiskCsiDriver,HttpLoadBalancing \
             "${node_service_account_args[@]}"
     else
         echo "Using existing regional GKE cluster $GKE_CLUSTER_NAME."
+
         gcloud container clusters update "$GKE_CLUSTER_NAME" \
-            --project "$GCP_PROJECT_ID" --region "$GKE_REGION" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GKE_REGION" \
             --workload-pool "${GCP_PROJECT_ID}.svc.id.goog" \
-            --update-addons GcePersistentDiskCsiDriver=ENABLED
+            --update-addons GcePersistentDiskCsiDriver=ENABLED \
+            --logging=SYSTEM \
+            --monitoring=SYSTEM \
+            --enable-cost-allocation
+
+        gcloud container clusters update "$GKE_CLUSTER_NAME" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GKE_REGION" \
+            --node-pool default-pool \
+            --enable-autoscaling \
+            --total-min-nodes "$min_total_nodes" \
+            --total-max-nodes "$max_total_nodes" \
+            --location-policy BALANCED
+
+        gcloud container node-pools update default-pool \
+            --cluster "$GKE_CLUSTER_NAME" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GKE_REGION" \
+            --max-surge-upgrade=0 \
+            --max-unavailable-upgrade=1
     fi
 
     gcloud container clusters get-credentials "$GKE_CLUSTER_NAME" --project "$GCP_PROJECT_ID" --region "$GKE_REGION"
-    check_cluster
-    resolve_gke_zones
-    local cluster_location_type
-    cluster_location_type="$(gcloud container clusters describe "$GKE_CLUSTER_NAME" --project "$GCP_PROJECT_ID" --region "$GKE_REGION" --format='value(locationType)')"
-    if [[ "$cluster_location_type" != "REGIONAL" ]]; then
-        echo "ERROR: $GKE_CLUSTER_NAME is not a regional GKE cluster."
+
+    echo "Verifying GKE node-pool autoscaling guardrails..."
+    local actual_min actual_max
+    actual_min="$(gcloud container node-pools describe default-pool \
+        --cluster "$GKE_CLUSTER_NAME" \
+        --project "$GCP_PROJECT_ID" \
+        --region "$GKE_REGION" \
+        --format='value(autoscaling.totalMinNodeCount)' 2>/dev/null || true)"
+    actual_max="$(gcloud container node-pools describe default-pool \
+        --cluster "$GKE_CLUSTER_NAME" \
+        --project "$GCP_PROJECT_ID" \
+        --region "$GKE_REGION" \
+        --format='value(autoscaling.totalMaxNodeCount)' 2>/dev/null || true)"
+
+    if [[ -n "$actual_max" && "$actual_max" =~ ^[0-9]+$ ]] && (( actual_max > 6 )); then
+        echo "ERROR: Node-pool maximum is ${actual_max}, above the BlockGo cost ceiling of 6."
         return 1
     fi
-    local zone
-    for zone in "$GKE_ZONE_A" "$GKE_ZONE_B" "$GKE_ZONE_C"; do
-        if ! kubectl get nodes -l "topology.kubernetes.io/zone=${zone}" -o name | grep -q .; then
-            echo "ERROR: The cluster has no schedulable node in required zone $zone."
-            return 1
-        fi
-    done
-    echo "GKE cluster is ready. Run: $0 production apply"
+    if [[ -n "$actual_min" && -n "$actual_max" ]]; then
+        echo "GKE autoscaling verified: total min=${actual_min}, total max=${actual_max}."
+    else
+        echo "WARNING: Could not read total node autoscaling values back from GKE."
+    fi
 }
 
 preserve_existing_local_pvc_request() {
@@ -3280,15 +3363,9 @@ configure_peer_channel_endpoint_aliases() {
 
     if ! ensure_job_from_manifest ipfs-webui-bootstrap plv-fabric \
         "$TMP_K8S_DIR/09a-ipfs-webui-bootstrap.yaml" 420; then
-        if [[ "$PROFILE" == "local" ]]; then
-            echo "WARNING: Optional local IPFS Web UI bootstrap did not complete."
-            show_job_diagnostics ipfs-webui-bootstrap plv-fabric
-            echo "Continuing with the local core deployment. A later apply will retry the Web UI asset."
-        else
-            echo "ERROR: IPFS Web UI bootstrap failed."
-            show_job_diagnostics ipfs-webui-bootstrap plv-fabric
-            return 1
-        fi
+        echo "ERROR: IPFS Web UI bootstrap failed."
+        show_job_diagnostics ipfs-webui-bootstrap plv-fabric
+        return 1
     fi
 
     apply_manifest "$TMP_K8S_DIR/09c-ipfs-pin-reconciler.yaml"
@@ -3480,25 +3557,19 @@ verify_deployed_application_revision() {
     }
 
     local migration_logs
-    migration_logs="$(kubectl logs job/postgres-schema-migrations -n plv-main-campus --all-containers=true 2>/dev/null || true)"
-    if ! grep -q 'Applying 006_chat_conversation_states.sql' <<< "$migration_logs" ||
-       ! grep -q 'Applying 007_group_chats.sql' <<< "$migration_logs" ||
-       ! grep -q 'Applying 008_support_ticket_specialist_assignments.sql' <<< "$migration_logs"; then
-        local migration_schema_state
-        migration_schema_state="$(
-            kubectl exec -n plv-main-campus postgres-primary-0 -- \
-                sh -c 'PGPASSWORD="$POSTGRESQL_PASSWORD" psql -U "$POSTGRESQL_USERNAME" -d "$POSTGRESQL_DATABASE" -Atc "SELECT to_regclass('"'"'public.chat_conversation_states'"'"') IS NOT NULL, to_regclass('"'"'public.chat_groups'"'"') IS NOT NULL, EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='"'"'public'"'"' AND table_name='"'"'support_tickets'"'"' AND column_name='"'"'assigned_specialist'"'"');"' \
-                2>/dev/null
-        )" || {
-            echo "ERROR: Migration Job logs are unavailable and the live PostgreSQL schema could not be inspected."
-            return 1
-        }
-        if [[ "$migration_schema_state" != "t|t|t" ]]; then
-            echo "ERROR: Required chat/support migrations are absent from the live PostgreSQL schema."
-            return 1
-        fi
-        echo "Migration Job logs are unavailable; required migrations were verified from the live PostgreSQL schema."
-    fi
+    migration_logs="$(kubectl logs job/postgres-schema-migrations -n plv-main-campus --all-containers=true)"
+    grep -q 'Applying 006_chat_conversation_states.sql' <<< "$migration_logs" || {
+        echo "ERROR: Migration 006 was not observed in the completed migration Job."
+        return 1
+    }
+    grep -q 'Applying 007_group_chats.sql' <<< "$migration_logs" || {
+        echo "ERROR: Migration 007 was not observed in the completed migration Job."
+        return 1
+    }
+    grep -q 'Applying 008_support_ticket_specialist_assignments.sql' <<< "$migration_logs" || {
+        echo "ERROR: Migration 008 was not observed in the completed migration Job."
+        return 1
+    }
 
     local image_repository=""
     local image_tag=""
@@ -3599,7 +3670,6 @@ verify_deployed_application_revision() {
 
 bootstrap_application_accounts() {
     local job_name="blockgo-app-bootstrap"
-    local bootstrap_url="http://middleware-api.plv-fabric.svc.cluster.local:4000/api/bootstrap"
     local bootstrap_resources="          resources:
             requests:
               memory: 128Mi
@@ -3610,15 +3680,11 @@ bootstrap_application_accounts() {
 
     if [[ "$PROFILE" == "local" ]]; then
         # Do not impose a RAM request/limit on the local bootstrap helper.
-        # The current service route exposes bootstrap as GET while the gateway's
-        # method allow-list expects POST. Use the cluster-internal auth endpoint in
-        # local deployments without changing the production bootstrap path.
-        bootstrap_url="http://auth-service.plv-fabric.svc.cluster.local:4001/api/bootstrap"
-        bootstrap_resources="        resources:
-          requests:
-            cpu: 10m
-          limits:
-            cpu: 50m"
+        bootstrap_resources="          resources:
+            requests:
+              cpu: 10m
+            limits:
+              cpu: 50m"
     fi
 
     echo "Bootstrapping application administrator accounts..."
@@ -3655,7 +3721,7 @@ spec:
         args:
         - >-
           wget -T 15 -qO- --header="x-api-key: \${INTERNAL_API_KEY}"
-          ${bootstrap_url}
+          http://middleware-api.plv-fabric.svc.cluster.local:4000/api/bootstrap
 ${bootstrap_resources}
 EOF
 
@@ -3670,39 +3736,9 @@ EOF
     echo "Application administrator bootstrap completed."
 }
 
-local_fabric_channel_is_live() {
-    [[ "$PROFILE" == "local" ]] || return 1
-
-    local target namespace deployment
-    local targets=(
-        "plv-main-campus:peer-registrar"
-        "plv-annex-campus:peer-faculty"
-        "plv-pubad-campus:peer-department"
-    )
-
-    for target in "${targets[@]}"; do
-        namespace="${target%%:*}"
-        deployment="${target##*:}"
-
-        kubectl exec -n "$namespace" "deployment/$deployment" -c peer -- \
-            env CORE_PEER_ADDRESS=localhost:7051 peer channel list 2>/dev/null | \
-            grep -Fxq "$FABRIC_CHANNEL_NAME" || return 1
-
-        kubectl exec -n "$namespace" "deployment/$deployment" -c peer -- \
-            env CORE_PEER_ADDRESS=localhost:7051 peer channel getinfo \
-                -c "$FABRIC_CHANNEL_NAME" >/dev/null 2>&1 || return 1
-    done
-}
-
 bootstrap_fabric() {
     if [[ "${FABRIC_BOOTSTRAP:-true}" != "true" ]]; then
         echo "Skipping Fabric channel and chaincode bootstrap because FABRIC_BOOTSTRAP is not true."
-        return
-    fi
-
-    if local_fabric_channel_is_live; then
-        echo "Existing local Fabric channel is healthy on all peers; skipping destructive/unnecessary re-bootstrap."
-        echo "Peer ledger volumes and the installed chaincode state are being preserved."
         return
     fi
 
@@ -3747,26 +3783,6 @@ local_http_ready() {
     fi
 }
 
-local_http_contains() {
-    local url="$1"
-    local pattern="$2"
-
-    if uses_windows_host_networking; then
-        powershell.exe -NoProfile -Command \
-            "try { \$response = Invoke-WebRequest -UseBasicParsing -Uri '${url}' -TimeoutSec 3; if (\$response.StatusCode -eq 200 -and \$response.Content -match '${pattern}') { exit 0 } } catch {}; exit 1" \
-            >/dev/null 2>&1
-        return
-    fi
-
-    curl -fsS --max-time 3 "$url" 2>/dev/null | grep -Eq "$pattern"
-}
-
-local_frontend_routes_ready() {
-    local_http_ready http://127.0.0.1:8080/nginx-health &&
-        local_http_contains http://127.0.0.1:8080/login '<div[^>]*id="root"[^>]*>' &&
-        local_http_ready http://127.0.0.1:8080/api/backend/health
-}
-
 start_local_port_forward_process() {
     local namespace="$1"
     local service="$2"
@@ -3774,20 +3790,12 @@ start_local_port_forward_process() {
     local log_file="$4"
 
     if uses_windows_host_networking; then
-        local windows_pid windows_log_file windows_error_file windows_pid_file
-        windows_log_file="$(wslpath -w "$(realpath -m "$log_file")")"
-        windows_error_file="$(wslpath -w "$(realpath -m "${log_file%.log}.error.log")")"
-        windows_pid_file="$(wslpath -w "$(realpath -m "${log_file%.log}.pid")")"
-        rm -f "${log_file%.log}.pid"
-
-        # Returning the PID through a command-substitution pipe can keep WSL waiting
-        # for the long-running Windows child. Write it to the existing helper PID file
-        # instead and detach the long-running child's output streams from the caller.
-        timeout 10s powershell.exe -NoProfile -Command \
-            "\$process = Start-Process -FilePath 'kubectl.exe' -ArgumentList @('port-forward','--address=127.0.0.1','-n','${namespace}','service/${service}','${port_mapping}') -RedirectStandardOutput '${windows_log_file}' -RedirectStandardError '${windows_error_file}' -WindowStyle Hidden -PassThru; Set-Content -LiteralPath '${windows_pid_file}' -Value \$process.Id -NoNewline; exit 0" \
-            >/dev/null 2>&1 || true
-
-        windows_pid="$(tr -d '[:space:]' < "${log_file%.log}.pid" 2>/dev/null || true)"
+        local windows_pid
+        windows_pid="$(
+            powershell.exe -NoProfile -Command \
+                "\$process = Start-Process -FilePath 'kubectl.exe' -ArgumentList @('port-forward','--address=127.0.0.1','-n','${namespace}','service/${service}','${port_mapping}') -WindowStyle Hidden -PassThru; [Console]::Write(\$process.Id); exit 0" |
+                tr -d '\r\n'
+        )"
         if [[ ! "$windows_pid" =~ ^[0-9]+$ ]]; then
             echo "ERROR: Windows kubectl port-forward process did not return a valid PID."
             return 1
@@ -3834,46 +3842,26 @@ stop_local_port_forward_pid_file() {
     rm -f "$pid_file"
 }
 
-stop_local_port_forward_for_service() {
-    local namespace="$1"
-    local service="$2"
-    local local_port="$3"
-
-    if uses_windows_host_networking; then
-        powershell.exe -NoProfile -Command \
-            "Get-CimInstance Win32_Process -Filter \"Name = 'kubectl.exe'\" | Where-Object { \$_.CommandLine -match 'port-forward' -and \$_.CommandLine -match '${namespace}' -and \$_.CommandLine -match 'service/${service}' -and \$_.CommandLine -match '${local_port}:' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }" \
-            >/dev/null 2>&1 || true
-        return
-    fi
-
-    if command -v pkill >/dev/null 2>&1; then
-        pkill -9 -f "[k]ubectl(.exe)?[[:space:]].*port-forward.*${namespace}.*service/${service}.*${local_port}:" \
-            >/dev/null 2>&1 || true
-    fi
-}
-
 start_local_frontend() {
     local pid_file=".local-frontend-port-forward.pid"
     local log_file=".local-frontend-port-forward.log"
     local pid_reference=""
 
-    stop_local_port_forward_pid_file "$pid_file"
-    stop_local_port_forward_for_service plv-fabric frontend-service 8080
-    sleep 1
+    if local_http_ready http://127.0.0.1:8080/nginx-health; then
+        echo "Local frontend is already available at http://localhost:8080"
+        return
+    fi
 
-    rm -f "$log_file" "${log_file%.log}.error.log"
+    stop_local_port_forward_pid_file "$pid_file"
+
+    rm -f "$log_file"
     start_local_port_forward_process \
         plv-fabric frontend-service 8080:80 "$log_file"
     pid_reference="$LOCAL_PORT_FORWARD_PID"
     echo "$pid_reference" > "$pid_file"
 
     for _ in $(seq 1 30); do
-        if local_frontend_routes_ready; then
-            sleep 2
-            if ! local_port_forward_process_alive "$pid_reference" ||
-               ! local_frontend_routes_ready; then
-                continue
-            fi
+        if local_http_ready http://127.0.0.1:8080/nginx-health; then
             echo "Local frontend is available at http://localhost:8080"
             return
         fi
@@ -3886,9 +3874,6 @@ start_local_frontend() {
     echo "ERROR: Frontend port-forward did not become ready."
     if [[ -f "$log_file" ]]; then
         tail -n 20 "$log_file"
-    fi
-    if [[ -f "${log_file%.log}.error.log" ]]; then
-        tail -n 20 "${log_file%.log}.error.log"
     fi
     return 1
 }
@@ -4632,45 +4617,6 @@ show_status() {
     kubectl get svc -A
 }
 
-local_fabric_crypto_secrets_exist() {
-    local required_secrets=(
-        "plv-main-campus/ca-registrar-identity"
-        "plv-annex-campus/ca-faculty-identity"
-        "plv-pubad-campus/ca-department-identity"
-        "plv-fabric/fabric-ca-roots"
-        "plv-fabric/fabric-gateway-tls-roots"
-        "plv-main-campus/orderer-1-crypto"
-        "plv-main-campus/orderer-2-crypto"
-        "plv-annex-campus/orderer-3-crypto"
-        "plv-main-campus/peer-registrar-crypto"
-        "plv-main-campus/peer-registrar-2-crypto"
-        "plv-annex-campus/peer-faculty-crypto"
-        "plv-annex-campus/peer-faculty-2-crypto"
-        "plv-pubad-campus/peer-department-crypto"
-        "plv-pubad-campus/peer-department-2-crypto"
-        "plv-main-campus/admin-registrar-crypto"
-        "plv-annex-campus/admin-faculty-crypto"
-        "plv-pubad-campus/admin-department-crypto"
-        "plv-fabric/admin-registrar-crypto"
-        "plv-fabric/admin-faculty-crypto"
-        "plv-fabric/admin-department-crypto"
-        "plv-main-campus/chaincode-registrar-tls"
-        "plv-annex-campus/chaincode-faculty-tls"
-        "plv-pubad-campus/chaincode-department-tls"
-        "plv-main-campus/fabric-artifacts"
-        "plv-annex-campus/fabric-artifacts"
-        "plv-pubad-campus/fabric-artifacts"
-    )
-    local secret_ref namespace secret_name
-    for secret_ref in "${required_secrets[@]}"; do
-        namespace="${secret_ref%%/*}"
-        secret_name="${secret_ref#*/}"
-        if ! kubectl get secret "$secret_name" -n "$namespace" >/dev/null 2>&1; then
-            return 1
-        fi
-    done
-}
-
 main() {
     validate_script_integrity
     case "$ACTION" in
@@ -4705,18 +4651,13 @@ main() {
             sed -i 's/\r$//' "$local_crypto_script"
             chmod +x "$local_crypto_script"
 
-            if [[ "$PROFILE" == "local" ]] && local_fabric_crypto_secrets_exist; then
-                echo "Reusing the complete existing local Fabric crypto secret set."
-                echo "Tracked private keys are not required for an in-place local redeployment."
-            else
-                if ! bash "$local_crypto_script"; then
-                    echo "ERROR: Fabric crypto secret generation failed."
-                    echo "Kubernetes deployment has been stopped."
-                    exit 1
-                fi
-
-                echo "Crypto Secrets generated successfully."
+            if ! bash "$local_crypto_script"; then
+                echo "ERROR: Fabric crypto secret generation failed."
+                echo "Kubernetes deployment has been stopped."
+                exit 1
             fi
+
+            echo "Crypto Secrets generated successfully."
 
             deploy_manifests
             wait_for_all_pvcs_bound
