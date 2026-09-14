@@ -2,6 +2,7 @@ import {
   assignStudentsToSection,
   createSection,
   fetchDepartmentSections,
+  promoteStudentEnrollments,
 } from "../services/api";
 import {
   YEAR_LEVEL_PREFIXES,
@@ -135,4 +136,32 @@ export const syncSectioningBatchesToBackend = async (batches = []) => {
   }
 
   return { sectionsSynced, studentsSynced };
+};
+
+export const getNextAcademicSchoolYear = (schoolYear = "") => {
+  const match = String(schoolYear).trim().match(/^(\d{4})-(\d{4})$/);
+  if (!match || Number(match[2]) !== Number(match[1]) + 1) {
+    throw new Error("Promotion requires a valid consecutive school year.");
+  }
+  return `${Number(match[1]) + 1}-${Number(match[2]) + 1}`;
+};
+
+export const persistPromotedBatchesToBackend = async (batches = []) => {
+  const students = batches.flatMap((batch) =>
+    (batch.students || []).map((student) => ({
+      studentId: student.studentId,
+      program: batch.program,
+      sourceSchoolYear: student.sourceSchoolYear,
+      sourceSemester: student.sourceSemester,
+      sourceYearLevel: yearLevelNumberFrom(student.sourceYearLevel, student.originSectionCode),
+      sourceSection: student.originSectionCode,
+      targetSchoolYear: batch.schoolYear,
+      targetSemester: batch.semester,
+      targetYearLevel: yearLevelNumberFrom(student.yearLevel, student.sectionCode),
+      targetSection: student.sectionCode,
+    }))
+  );
+
+  if (!students.length) return { status: "Success", promotedCount: 0 };
+  return promoteStudentEnrollments(students);
 };

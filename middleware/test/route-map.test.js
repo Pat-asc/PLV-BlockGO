@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { allowedMethods, resolveRoute, routeDefinitions } = require('../src/shared/route-map');
 const { normalizeAuthRole } = require('../src/shared/roles');
 const { isRetryableCouchDbError } = require('../src/fabric/wallet-manager');
@@ -43,4 +45,21 @@ test('CouchDB transport failures are retried without retrying authentication fai
     assert.equal(isRetryableCouchDbError({ code: 'ECONNRESET' }), true);
     assert.equal(isRetryableCouchDbError({ statusCode: 503 }), true);
     assert.equal(isRetryableCouchDbError({ statusCode: 401, message: 'unauthorized' }), false);
+});
+
+test('password reset routes use the approval workflow schema', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../src/services/auth-service.js'), 'utf8');
+    assert.match(source, /request_status[\s\S]*request_reason/);
+    assert.doesNotMatch(source, /\botp_code\b|\bexpires_at\b|\bused_at\b/);
+});
+
+test('deployed authentication uses the tested account-aware login limiter', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../src/services/auth-service.js'), 'utf8');
+    assert.match(source, /createLoginLimiter\(\{ recordSecurityEvent \}\)/);
+});
+
+test('the runtime image installs the Fabric CA client used by identity routes', () => {
+    const dockerfile = fs.readFileSync(path.join(__dirname, '../Dockerfile'), 'utf8');
+    assert.match(dockerfile, /fabric-ca-client@2\.2\.20/);
+    assert.match(dockerfile, /require\('\/app\/node_modules\/fabric-ca-client\/package\.json'\)/);
 });

@@ -25,7 +25,12 @@ ENV PYTHONDONTWRITEBYTECODE=1
 COPY package*.json ./
 COPY requirements.txt ./
 
-RUN npm ci --omit=dev
+# fabric-ca-client is used by the identity service at runtime but is intentionally
+# installed at image-build time so the repository dependency manifests remain
+# unchanged. Keep it aligned with the Fabric 2.2 client libraries.
+RUN npm ci --omit=dev && \
+    npm pkg set "overrides.fabric-ca-client.jsrsasign=11.1.1" && \
+    npm install --omit=dev --no-save --package-lock=false fabric-ca-client@2.2.20
 
 RUN python -m pip install --no-cache-dir --upgrade pip && \
     python -m pip install --no-cache-dir -r requirements.txt && \
@@ -71,7 +76,8 @@ print('runtime msgpack:', msgpack.__version__); \
 print('runtime setuptools:', setuptools.__version__)" && \
     node -e "\
 console.log('npm:', require('/usr/local/lib/node_modules/npm/package.json').version); \
-console.log('jsrsasign:', require('/app/node_modules/jsrsasign/package.json').version);"
+console.log('jsrsasign:', require('/app/node_modules/jsrsasign/package.json').version); \
+console.log('fabric-ca-client:', require('/app/node_modules/fabric-ca-client/package.json').version);"
 
 RUN set -eux; \
     OLD="$(find /usr /opt /app \

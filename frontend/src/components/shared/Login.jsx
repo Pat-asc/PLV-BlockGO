@@ -1,9 +1,9 @@
 // src/Login.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import '../../assets/App.css';
 import plvbg from '../../assets/plvbg.png';
 import plvlogo from '../../assets/plvlogo.png';
-import { login, forgotPassword, resetPassword } from '../../services/api';
+import { login, forgotPassword } from '../../services/api';
 import { createLocalDevToken, createLocalDevTokenForRole } from '../../utils/localDevAuth';
 
 const Login = ({ onLogin }) => {
@@ -15,23 +15,6 @@ const Login = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const [resetOtp, setResetOtp] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
-  useEffect(() => {
-    if (window.location.pathname.includes('/reset-password')) setCurrentView('resetPassword');
-  }, []);
-
-  const validatePassword = (pwd) => {
-    if (pwd.length < 8) return "Password must be at least 8 characters long.";
-    if (!/[A-Z]/.test(pwd)) return "Password must contain at least one uppercase letter.";
-    if (!/[a-z]/.test(pwd)) return "Password must contain at least one lowercase letter.";
-    if (!/\d/.test(pwd)) return "Password must contain at least one number.";
-    if (!/[!@#$%^&*(),.?":{}|<>]/.test(pwd)) return "Password must contain at least one special character.";
-    return "";
-  };
-
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
@@ -74,39 +57,7 @@ const Login = ({ onLogin }) => {
     setMessage('');
     try {
       const data = await forgotPassword(email);
-      setMessage(data.message || 'Reset OTP sent.');
-      setCurrentView('resetPassword');
-    } catch (error) {
-      setError(error.message);
-    }
-    setIsLoading(false);
-  };
-
-  const handleResetSubmit = async (e) => {
-    e.preventDefault();
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.');
-      return;
-    }
-
-    const passwordError = validatePassword(password);
-    if (passwordError) {
-      setError(passwordError);
-      return;
-    }
-
-    setIsLoading(true);
-    setError('');
-    setMessage('');
-    try {
-      const data = await resetPassword({ email, otp: resetOtp, newPassword: password });
-      setMessage(data.message || 'Password updated successfully.');
-      setTimeout(() => {
-        setCurrentView('signIn');
-        setPassword('');
-        setConfirmPassword('');
-        window.history.replaceState({}, document.title, "/login");
-      }, 3000);
+      setMessage(data.message || 'Your request is pending with the Registrar.');
     } catch (error) {
       setError(error.message);
     }
@@ -211,8 +162,7 @@ const Login = ({ onLogin }) => {
 
           <h2 className="welcome-text">
             {currentView === 'signIn' && "Welcome"}
-            {currentView === 'forgotPassword' && "Reset Password"}
-            {currentView === 'resetPassword' && "Create New Password"}
+            {currentView === 'forgotPassword' && "Request Password Reset"}
           </h2>
           {error && <p style={{ color: 'red', textAlign: 'center' }}>{error}</p>}
           {message && <p style={{ color: 'green', textAlign: 'center' }}>{message}</p>}
@@ -281,40 +231,11 @@ const Login = ({ onLogin }) => {
                 <input type="email" placeholder="Your registered email" value={email} onChange={(e) => setEmail(e.target.value)} required />
               </div>
               <button type="submit" className="sign-in-btn" disabled={isLoading}>
-                {isLoading ? (<><span className="spinner"></span> Sending...</>) : 'Send Reset OTP'}
+                {isLoading ? (<><span className="spinner"></span> Submitting...</>) : 'Submit Request'}
               </button>
-            </form>
-          )}
-
-          {/* RESET PASSWORD FORM */}
-          {currentView === 'resetPassword' && (
-            <form className="login-form" onSubmit={handleResetSubmit}>
-              
-              <div className="input-group">
-                <label>Reset OTP</label>
-                <input type="text" inputMode="numeric" pattern="[0-9]{6}" maxLength="6" placeholder="6-digit OTP" value={resetOtp} onChange={(e) => setResetOtp(e.target.value.replace(/\D/g, ''))} required />
-              </div>
-              {renderPasswordInput({
-                label: "New Password",
-                value: password,
-                onChange: (e) => setPassword(e.target.value),
-                placeholder: "New Password",
-                autoComplete: "new-password",
-                isVisible: showPassword,
-                onToggle: () => setShowPassword((current) => !current),
-              })}
-              {renderPasswordInput({
-                label: "Confirm Password",
-                value: confirmPassword,
-                onChange: (e) => setConfirmPassword(e.target.value),
-                placeholder: "Confirm New Password",
-                autoComplete: "new-password",
-                isVisible: showConfirmPassword,
-                onToggle: () => setShowConfirmPassword((current) => !current),
-              })}
-              <button type="submit" className="sign-in-btn" disabled={isLoading}>
-                {isLoading ? (<><span className="spinner"></span> Updating...</>) : 'Update Password'}
-              </button>
+              <p style={{ color: '#64748b', fontSize: '12px', lineHeight: 1.5, textAlign: 'center' }}>
+                Faculty and Chairperson requests are reviewed by the Registrar. No password or verification code is sent by this form.
+              </p>
             </form>
           )}
 

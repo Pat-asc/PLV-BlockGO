@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from './App';
-import { fetchUserProfile, login } from './services/api';
+import { fetchUserProfile, forgotPassword, login } from './services/api';
 
 jest.mock('./services/api', () => ({
   ...jest.requireActual('./services/api'),
   fetchUserProfile: jest.fn(),
+  forgotPassword: jest.fn(),
   login: jest.fn(),
 }));
 
@@ -60,4 +61,21 @@ test('renders managed-account login at the stable login route without public reg
   expect(screen.getByText(/forgot password/i)).toBeInTheDocument();
   expect(screen.queryByText(/each browser tab keeps an independent account session/i)).not.toBeInTheDocument();
   expect(screen.queryByText(/sign up|register|create account/i)).not.toBeInTheDocument();
+});
+
+test('submits a Registrar password reset request without exposing the retired OTP flow', async () => {
+  forgotPassword.mockResolvedValue({
+    message: 'If the account is eligible, a password reset request is now pending with the Registrar.',
+  });
+
+  render(<App />);
+  fireEvent.click(await screen.findByText(/forgot password/i));
+  fireEvent.change(screen.getByPlaceholderText(/registered email/i), {
+    target: { value: 'maria.santos@plv.edu.ph' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /submit request/i }));
+
+  await waitFor(() => expect(forgotPassword).toHaveBeenCalledWith('maria.santos@plv.edu.ph'));
+  expect(await screen.findByText(/pending with the Registrar/i)).toBeInTheDocument();
+  expect(screen.queryByText(/reset otp|create new password/i)).not.toBeInTheDocument();
 });

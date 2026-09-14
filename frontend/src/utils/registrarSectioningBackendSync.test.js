@@ -1,11 +1,22 @@
-import { syncSectioningBatchToBackend } from './registrarSectioningBackendSync';
-import { assignStudentsToSection, batchEnrollStudentsToSection, createSection, fetchDepartmentSections } from '../services/api';
+import {
+  getNextAcademicSchoolYear,
+  persistPromotedBatchesToBackend,
+  syncSectioningBatchToBackend,
+} from './registrarSectioningBackendSync';
+import {
+  assignStudentsToSection,
+  batchEnrollStudentsToSection,
+  createSection,
+  fetchDepartmentSections,
+  promoteStudentEnrollments,
+} from '../services/api';
 
 jest.mock('../services/api', () => ({
   assignStudentsToSection: jest.fn(),
   batchEnrollStudentsToSection: jest.fn(),
   createSection: jest.fn(),
   fetchDepartmentSections: jest.fn(),
+  promoteStudentEnrollments: jest.fn(),
 }));
 
 const batch = {
@@ -20,6 +31,37 @@ beforeEach(() => {
   fetchDepartmentSections.mockResolvedValue({ data: [{ id: '7', department: 'Information Technology', yearLevel: '1', sectionNum: '1' }] });
   createSection.mockResolvedValue({ id: 8 });
   assignStudentsToSection.mockResolvedValue({ status: 'Success', assignedCount: 1, errors: [] });
+});
+
+test('advances only valid consecutive academic school years', () => {
+  expect(getNextAcademicSchoolYear('2027-2028')).toBe('2028-2029');
+  expect(() => getNextAcademicSchoolYear('2027-2029')).toThrow('valid consecutive school year');
+});
+
+test('persists promoted section rosters with source and target concurrency fields', async () => {
+  promoteStudentEnrollments.mockResolvedValue({ status: 'Success', promotedCount: 1 });
+  const promotedBatch = {
+    program: 'Bachelor of Science in Information Technology',
+    schoolYear: '2028-2029',
+    semester: 'FIRST',
+    students: [{
+      studentId: '27-0001', sourceSchoolYear: '2027-2028', sourceSemester: 'FIRST',
+      sourceYearLevel: '1st Year', originSectionCode: '1-1',
+      yearLevel: '2nd Year', sectionCode: '2-1',
+    }],
+  };
+
+  await expect(persistPromotedBatchesToBackend([promotedBatch])).resolves.toEqual({
+    status: 'Success', promotedCount: 1,
+  });
+  expect(promoteStudentEnrollments).toHaveBeenCalledWith([{
+    studentId: '27-0001',
+    program: 'Bachelor of Science in Information Technology',
+    sourceSchoolYear: '2027-2028', sourceSemester: 'FIRST',
+    sourceYearLevel: '1', sourceSection: '1-1',
+    targetSchoolYear: '2028-2029', targetSemester: 'FIRST',
+    targetYearLevel: '2', targetSection: '2-1',
+  }]);
 });
 
 test('uses an existing section returned for a program alias and assigns saved student IDs with their period', async () => {
