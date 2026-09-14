@@ -1,4 +1,4 @@
-FROM node:20.20.2-bookworm-slim AS builder
+FROM node:26.8-bookworm-slim AS builder
 
 USER root
 
@@ -47,7 +47,7 @@ assert tuple(map(int, msgpack.__version__.split('.')[:3])) >= (1,2,1)"
 
 COPY . .
 
-FROM node:20.20.2-bookworm-slim AS runtime
+FROM node:26.8-bookworm-slim AS runtime
 
 USER root
 
