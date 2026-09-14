@@ -125,13 +125,6 @@ export const forgotPassword = (email) => {
     });
 };
 
-export const resetPassword = ({ email, otp, newPassword }) => {
-    return fetchPublic('/reset-password', { 
-        method: 'POST', 
-        body: JSON.stringify({ email, otp, newPassword })
-    });
-};
-
 export const fetchPasswordResetRequests = async () => fetchWithAuth('/password-reset-requests');
 
 export const hashPassword = async (password) => {
@@ -589,6 +582,13 @@ export const assignStudentsToSection = async (sectionId, studentIds, period) => 
     return await fetchWithAuth(`/Auth/sections/${encodeURIComponent(sectionId)}/assign-students`, {
         method: 'POST',
         body: JSON.stringify({ studentIds, ...period }),
+    });
+};
+
+export const promoteStudentEnrollments = async (students) => {
+    return await fetchWithAuth('/Auth/students/promote', {
+        method: 'POST',
+        body: JSON.stringify({ students }),
     });
 };
 
