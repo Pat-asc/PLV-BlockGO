@@ -51,6 +51,14 @@ spec:
             port:
               number: 5000
 
+      - path: /api/password-reset-requests
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
+
       - path: /api/Grades
         pathType: Prefix
         backend:
@@ -100,6 +108,39 @@ spec:
               number: 5000
 
       - path: /api/BulkUpload
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
+
+      # Compatibility aliases implemented as absolute ASP.NET routes.
+      - path: /api/bulk-faculty-load
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
+
+      - path: /api/bulk-faculty-sections
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
+
+      - path: /api/assign-faculty-bulk
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
+
+      - path: /api/chairperson
         pathType: Prefix
         backend:
           service:

@@ -208,7 +208,7 @@ try
             {
                 try
                 {
-                    using var response = await client.GetAsync($"{destination.Value.TrimEnd('/')}/health", cancellationToken);
+                    using var response = await client.GetAsync($"{destination.Value.TrimEnd('/')}/api/ready", cancellationToken);
                     var healthy = response.IsSuccessStatusCode;
                     checks[destination.Key] = new { ready = healthy, statusCode = (int)response.StatusCode };
                     isReady &= healthy;
@@ -464,11 +464,50 @@ try
         service = $"dotnet-{dotnetServiceName}-service",
         architecture = dotnetServiceName == DotnetServiceTopology.Monolith ? "monolith" : "microservices"
     }));
-    app.MapGet("/api/ready", () => Results.Ok(new
+    app.MapGet("/api/ready", async (CancellationToken cancellationToken) =>
     {
-        status = "ready",
-        service = $"dotnet-{dotnetServiceName}-service"
-    }));
+        var readinessConnection = builder.Configuration.GetConnectionString("MasterConnection")
+            ?? builder.Configuration.GetConnectionString("PostgresConnection");
+        if (string.IsNullOrWhiteSpace(readinessConnection))
+        {
+            return Results.Json(new
+            {
+                status = "not_ready",
+                service = $"dotnet-{dotnetServiceName}-service",
+                database = "not_configured"
+            }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        try
+        {
+            var readinessBuilder = new NpgsqlConnectionStringBuilder(readinessConnection)
+            {
+                Timeout = 3,
+                CommandTimeout = 3,
+                Pooling = false
+            };
+            await using var connection = new NpgsqlConnection(readinessBuilder.ConnectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new NpgsqlCommand("SELECT 1", connection);
+            await command.ExecuteScalarAsync(cancellationToken);
+            return Results.Ok(new
+            {
+                status = "ready",
+                service = $"dotnet-{dotnetServiceName}-service",
+                database = "connected"
+            });
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(exception, "Readiness check failed for {ServiceName}.", dotnetServiceName);
+            return Results.Json(new
+            {
+                status = "not_ready",
+                service = $"dotnet-{dotnetServiceName}-service",
+                database = "unavailable"
+            }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+    });
     app.MapGet("/api/backend/health", () => Results.Ok(new
     {
         status = "healthy",

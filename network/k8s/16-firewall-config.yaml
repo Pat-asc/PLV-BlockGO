@@ -34,6 +34,27 @@ spec:
       port: 5984
     - protocol: TCP
       port: 5432
+  # Every ASP.NET workload validates authenticated users against the primary
+  # database. Keep this separate from the CouchDB rule above so these services
+  # receive PostgreSQL access only.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: plv-fabric
+      podSelector:
+        matchExpressions:
+          - key: app
+            operator: In
+            values:
+              - dotnet-api-gateway
+              - dotnet-auth-service
+              - dotnet-academic-service
+              - dotnet-grade-service
+              - dotnet-operations-service
+              - dotnet-realtime-service
+    ports:
+    - protocol: TCP
+      port: 5432
   - from:
     - podSelector:
         matchLabels:

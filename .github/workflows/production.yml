@@ -285,6 +285,14 @@ jobs:
             --timeout=10m
 
           echo
+          echo "=== .NET Auth Service ==="
+
+          kubectl rollout status \
+            deployment/dotnet-auth-service \
+            --namespace plv-fabric \
+            --timeout=10m
+
+          echo
           echo "=== Frontend ==="
 
           kubectl rollout status \
@@ -310,6 +318,33 @@ jobs:
               > /dev/null
 
             echo "API health check passed."
+
+            echo
+            echo "=== Authenticated profile path ==="
+
+            jwt_secret="$(sed -n 's/^JWT_SECRET=//p' network/.env | tail -n 1)"
+            admin_email="$(sed -n 's/^BOOTSTRAP_SYSTEM_ADMIN_EMAIL=//p' network/.env | tail -n 1)"
+            admin_email="${admin_email:-system-admin@plv.edu.ph}"
+
+            profile_token="$(JWT_SECRET="$jwt_secret" ADMIN_EMAIL="$admin_email" \
+              node middleware/scripts/create-profile-smoke-token.js)"
+
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --retry 6 \
+              --retry-all-errors \
+              --retry-delay 5 \
+              --get \
+              --data-urlencode "email=${admin_email}" \
+              --data-urlencode "role=system_admin" \
+              --header "Authorization: Bearer ${profile_token}" \
+              "${base_url}/api/Auth/user-profile" \
+              > /dev/null
+
+            unset jwt_secret profile_token
+            echo "Authenticated profile check passed."
 
             echo
             echo "=== Frontend health ==="

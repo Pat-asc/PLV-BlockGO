@@ -130,7 +130,10 @@ public static class DotnetServiceTopology
         AddRoutes(routes, Grade,
             "/api/Grades", "/api/Grades/{**catch-all}",
             "/api/BulkUpload", "/api/BulkUpload/{**catch-all}",
-            "/api/Student", "/api/Student/{**catch-all}");
+            "/api/Student", "/api/Student/{**catch-all}",
+            "/api/bulk-faculty-load", "/api/bulk-faculty-sections",
+            "/api/bulk-faculty-sections-upload", "/api/assign-faculty-bulk",
+            "/api/chairperson/assign-faculty-bulk", "/api/bulk-faculty-load-chairperson");
         AddRoutes(routes, Operations,
             "/api/SystemSettings", "/api/SystemSettings/{**catch-all}",
             "/api/SystemMonitoring", "/api/SystemMonitoring/{**catch-all}",

@@ -81,6 +81,10 @@ data:
       location ^~ /api/SystemSettings { proxy_pass http://client_app; }
       location ^~ /api/SystemMonitoring { proxy_pass http://client_app; }
       location ^~ /api/BulkUpload { proxy_pass http://client_app; }
+      location ^~ /api/bulk-faculty-load { proxy_pass http://client_app; }
+      location ^~ /api/bulk-faculty-sections { proxy_pass http://client_app; }
+      location ^~ /api/assign-faculty-bulk { proxy_pass http://client_app; }
+      location ^~ /api/chairperson { proxy_pass http://client_app; }
       location ^~ /api/RegistrarDashboard { proxy_pass http://client_app; }
       location ^~ /api/Sectioning { proxy_pass http://client_app; }
       location ^~ /api/AccountManagement { proxy_pass http://client_app; }

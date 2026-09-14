@@ -3378,6 +3378,9 @@ configure_peer_channel_endpoint_aliases() {
     echo "Phase 4/7 - IPFS and bootstrap jobs"
     echo "======================================"
     apply_manifest "$TMP_K8S_DIR/09-ipfs.yaml"
+    # Older manifests created a second, hostless public GCE ingress for /ipfs.
+    # The production-domain main ingress is now the sole public entry point.
+    kubectl delete ingress ipfs-ingress -n plv-fabric --ignore-not-found >/dev/null
     configure_local_application_rollouts
     ensure_ipfs_ready ipfs-node plv-fabric
     ensure_ipfs_ready ipfs-annex plv-annex-campus

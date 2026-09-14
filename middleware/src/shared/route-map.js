@@ -9,9 +9,9 @@ const routeDefinitions = [
 ];
 
 const methodDefinitions = [
-    { methods: ['GET'], paths: [/^\/api\/(health|ready)$/, /^\/metrics$/, /^\/api\/(all-grades|student-transactions|admin\/ledger-transactions)$/, /^\/api\/(grade-history|get-grade)\/[^/]+$/, /^\/api\/SystemSettings\/(?!reset-season$)[^/]+$/] },
+    { methods: ['GET'], paths: [/^\/api\/(health|ready|bootstrap)$/, /^\/metrics$/, /^\/api\/(all-grades|student-transactions|admin\/ledger-transactions)$/, /^\/api\/(grade-history|get-grade)\/[^/]+$/, /^\/api\/SystemSettings\/(?!reset-season$)[^/]+$/] },
     { methods: ['DELETE'], paths: [/^\/api\/wallet\/[^/]+$/] },
-    { methods: ['POST'], paths: [/^\/api\/(login|forgot-password|reset-password|bootstrap)$/, /^\/api\/crypto\/hash-password$/, /^\/api\/fabric\/(register-user|audit-event)$/, /^\/api\/(enroll|register|revoke)$/, /^\/api\/(issue-grade|update-grade|batch-issue-grade|batch-upload|upload-grades)$/, /^\/api\/(approve-grade|finalize-grade|return-grade)\/[^/]+$/, /^\/api\/SystemSettings(?:\/reset-season)?$/] }
+    { methods: ['POST'], paths: [/^\/api\/(login|forgot-password|reset-password)$/, /^\/api\/crypto\/hash-password$/, /^\/api\/fabric\/(register-user|audit-event)$/, /^\/api\/(enroll|register|revoke)$/, /^\/api\/(issue-grade|update-grade|batch-issue-grade|batch-upload|upload-grades)$/, /^\/api\/(approve-grade|finalize-grade|return-grade)\/[^/]+$/, /^\/api\/SystemSettings(?:\/reset-season)?$/] }
 ];
 
 function resolveRoute(pathname) {

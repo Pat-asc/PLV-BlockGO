@@ -296,7 +296,7 @@ spec:
         - configMapRef: { name: middleware-service-config }
         env:
         - { name: PORT, value: "4003" }
-        - { name: NODE_OPTIONS, value: "--max-old-space-size=384" }
+        - { name: NODE_OPTIONS, value: "--max-old-space-size=512" }
         - name: INTERNAL_API_KEY
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: INTERNAL_API_KEY } }
         - name: COUCHDB_USER
@@ -319,7 +319,7 @@ spec:
           timeoutSeconds: 3
         resources:
           requests: { memory: 256Mi, cpu: 150m }
-          limits: { memory: 512Mi, cpu: 750m }
+          limits: { memory: 768Mi, cpu: 750m }
       volumes:
       - name: fabric-gateway-tls-roots
         secret: { secretName: fabric-gateway-tls-roots }

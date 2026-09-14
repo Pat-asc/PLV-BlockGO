@@ -28,6 +28,7 @@ test('unknown routes are not forwarded', () => assert.equal(resolveRoute('/api/n
 
 test('documented compatibility routes expose their intended HTTP methods', () => {
     assert.deepEqual(allowedMethods('/api/health'), ['GET']);
+    assert.deepEqual(allowedMethods('/api/bootstrap'), ['GET']);
     assert.deepEqual(allowedMethods('/api/admin/ledger-transactions'), ['GET']);
     assert.deepEqual(allowedMethods('/api/crypto/hash-password'), ['POST']);
     assert.deepEqual(allowedMethods('/api/SystemSettings/EncodingPeriod'), ['GET']);
