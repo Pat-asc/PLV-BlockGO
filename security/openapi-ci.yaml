@@ -109,7 +109,7 @@ paths:
     post:
       tags: [Authentication]
       operationId: resetPassword
-      summary: Complete password reset with an OTP
+      summary: Reject the retired public OTP password-reset flow
       requestBody:
         required: true
         content:
@@ -123,14 +123,12 @@ paths:
                 otp: { type: string, pattern: "^[0-9]{6}$" }
                 newPassword: { type: string, minLength: 8, maxLength: 128 }
       responses:
-        "200": { $ref: "#/components/responses/Message" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "404":
-          description: The OTP is invalid or expired
+        "410":
+          description: Public OTP password reset is no longer available
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "500": { $ref: "#/components/responses/InternalError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /api/fabric/register-user:
     post:
