@@ -19,7 +19,7 @@ RUN --mount=type=cache,id=blockgo-nuget,target=/root/.nuget/packages \
         /p:UseAppHost=false
 
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 
 USER root
 
