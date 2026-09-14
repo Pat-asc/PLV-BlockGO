@@ -2544,11 +2544,29 @@ setup_gke_cluster() {
     local min_total_nodes="${GKE_MIN_TOTAL_NODES:-4}"
     local max_total_nodes="${GKE_MAX_TOTAL_NODES:-6}"
     local initial_nodes_per_zone="${GKE_INITIAL_NODES_PER_ZONE:-2}"
+    local machine_type="${GKE_MACHINE_TYPE:-e2-highmem-2}"
+    local vcpu_cost_cap="${GKE_VCPU_COST_CAP:-12}"
+    local vcpu_per_node=""
 
-    if ! [[ "$min_total_nodes" =~ ^[0-9]+$ && "$max_total_nodes" =~ ^[0-9]+$ && "$initial_nodes_per_zone" =~ ^[0-9]+$ ]]; then
-        echo "ERROR: GKE_MIN_TOTAL_NODES, GKE_MAX_TOTAL_NODES, and GKE_INITIAL_NODES_PER_ZONE must be whole numbers."
+    if ! [[ "$min_total_nodes" =~ ^[0-9]+$ && "$max_total_nodes" =~ ^[0-9]+$ && "$initial_nodes_per_zone" =~ ^[0-9]+$ && "$vcpu_cost_cap" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: GKE_MIN_TOTAL_NODES, GKE_MAX_TOTAL_NODES, GKE_INITIAL_NODES_PER_ZONE, and GKE_VCPU_COST_CAP must be whole numbers."
         return 1
     fi
+
+    # Keep each worker at two vCPUs so the six-node maximum stays within the
+    # project's current CPUs (All Regions) quota of 12 and the same value acts
+    # as an intentional compute-cost ceiling even if Google later raises quota.
+    case "$machine_type" in
+        e2-highmem-2|e2-standard-2)
+            vcpu_per_node=2
+            ;;
+        *)
+            echo "ERROR: Cost/quota guardrail allows only 2-vCPU node types: e2-highmem-2 or e2-standard-2."
+            echo "Requested machine type: ${machine_type}"
+            echo "BlockGo defaults to e2-highmem-2 (2 vCPU, 16 GiB RAM) to preserve memory while fitting the 12-vCPU project quota."
+            return 1
+            ;;
+    esac
     if (( min_total_nodes < 4 )); then
         echo "ERROR: Production GKE requires at least 4 total worker nodes."
         return 1
@@ -2568,14 +2586,26 @@ setup_gke_cluster() {
         return 1
     fi
 
+    local initial_total_nodes=$((initial_nodes_per_zone * 3))
+    local initial_total_vcpus=$((initial_total_nodes * vcpu_per_node))
+    local maximum_total_vcpus=$((max_total_nodes * vcpu_per_node))
+    if (( initial_total_vcpus > vcpu_cost_cap || maximum_total_vcpus > vcpu_cost_cap )); then
+        echo "ERROR: GKE configuration would exceed the ${vcpu_cost_cap}-vCPU compute cost/quota ceiling."
+        echo "Initial: ${initial_total_nodes} nodes / ${initial_total_vcpus} vCPU"
+        echo "Maximum: ${max_total_nodes} nodes / ${maximum_total_vcpus} vCPU"
+        return 1
+    fi
+
     echo "======================================"
     echo "BLOCKGO GKE Cost Guardrails"
     echo "======================================"
     echo "Region:              ${GKE_REGION}"
     echo "Zones:               ${node_locations}"
-    echo "Machine type:        ${GKE_MACHINE_TYPE:-e2-standard-4}"
+    echo "Machine type:        ${machine_type}"
     echo "Minimum total nodes: ${min_total_nodes}"
     echo "Maximum total nodes: ${max_total_nodes}"
+    echo "vCPU cost ceiling:   ${vcpu_cost_cap}"
+    echo "Maximum node vCPUs:  ${maximum_total_vcpus}"
     echo "Initial nodes/zone:  ${initial_nodes_per_zone}"
     echo "Upgrade surge nodes: 0"
     echo "Cloud workload logs: disabled"
@@ -2588,7 +2618,7 @@ setup_gke_cluster() {
             --region "$GKE_REGION" \
             --node-locations "$node_locations" \
             --num-nodes "$initial_nodes_per_zone" \
-            --machine-type "${GKE_MACHINE_TYPE:-e2-standard-4}" \
+            --machine-type "$machine_type" \
             --disk-type "${GKE_NODE_DISK_TYPE:-pd-balanced}" \
             --disk-size "${GKE_NODE_DISK_GB:-100}" \
             --release-channel regular \
