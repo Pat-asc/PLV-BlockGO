@@ -44,4 +44,4 @@ EXPOSE 5000
 
 USER app
 
-ENTRYPOINT ["dotnet", "client-app.dll"]
+ENTRYPOINT ["dotnet", "For_Testing_Only_Capstone.dll"]

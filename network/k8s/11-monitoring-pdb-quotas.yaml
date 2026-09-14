@@ -83,6 +83,11 @@ data:
         target_label: pod
       - source_labels: [__meta_kubernetes_namespace]
         target_label: namespace
+    - job_name: 'postgres-exporter'
+      metrics_path: /metrics
+      static_configs:
+      - targets:
+        - postgres-exporter.plv-main-campus.svc.cluster.local:9187
     - job_name: 'kube-state-metrics'
       static_configs:
       - targets:

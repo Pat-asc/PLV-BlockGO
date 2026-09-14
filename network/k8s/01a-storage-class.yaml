@@ -4,7 +4,8 @@ metadata:
   name: fabric-storage
 provisioner: pd.csi.storage.gke.io
 parameters:
-  type: pd-balanced
-  replication-type: regional-pd
+  type: pd-standard
+  csi.storage.k8s.io/fstype: ext4
+reclaimPolicy: Retain
 allowVolumeExpansion: true
 volumeBindingMode: WaitForFirstConsumer

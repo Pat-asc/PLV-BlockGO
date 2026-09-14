@@ -2396,15 +2396,12 @@ prepare_manifests() {
         preserve_existing_local_pvc_request "$TMP_K8S_DIR/07-peer-registrar.yaml" peer-registrar-pvc plv-main-campus
         preserve_existing_local_pvc_request "$TMP_K8S_DIR/07-peer-faculty.yaml" peer-faculty-pvc plv-annex-campus
         preserve_existing_local_pvc_request "$TMP_K8S_DIR/07-peer-department.yaml" peer-department-pvc plv-pubad-campus
-        # Local testing needs only one pod per Deployment/StatefulSet. Apply this to
-        # generated manifests before kubectl sees them so the cluster never surges to the
-        # production replica count during startup.
         sed -E -i 's/^([[:space:]]*)replicas:[[:space:]]+[2-9][0-9]*[[:space:]]*$/\1replicas: 1/' "$TMP_K8S_DIR"/*.yaml
         sed -i 's/FABRIC_CA_INSECURE_TLS: "false"/FABRIC_CA_INSECURE_TLS: "true"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
         sed -i 's/FABRIC_DISCOVERY_ENABLED: "true"/FABRIC_DISCOVERY_ENABLED: "false"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
         sed -i 's/FABRIC_HA_ENABLED: "true"/FABRIC_HA_ENABLED: "false"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
         sed -i '/- name: IPFS_RUN_AS_ROOT/{n;s/value: "false"/value: "true"/;}' "$TMP_K8S_DIR/09-ipfs.yaml"
-        sed -i '/^[[:space:]]*nodeSelector:[[:space:]]*$/,+1d' "$TMP_K8S_DIR"/*.yaml
+        sed -i '/^[[:space:]]*nodeSelector:/,+1d' "$TMP_K8S_DIR"/*.yaml
         remove_local_memory_limits_from_generated_manifests
     else
         resolve_gke_zones
@@ -2480,36 +2477,96 @@ validate_production_zone_nodes() {
     done
 }
 
-generate_production_fabric_artifacts() {
+    generate_production_fabric_artifacts() {
     if [[ "$PROFILE" != "production" ]]; then
         return
     fi
+
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
         echo "ERROR: Docker is required to generate the six-consenter Fabric blocks."
         return 1
     fi
 
+    if [[ ! -f "./config/configtx-k8s.yaml" ]]; then
+        echo "ERROR: Missing ./config/configtx-k8s.yaml"
+        return 1
+    fi
+
+    if [[ ! -d "./crypto-config-final-v2" ]]; then
+        echo "ERROR: Missing ./crypto-config-final-v2"
+        return 1
+    fi
+
     mkdir -p ./channel-artifacts-k8s
+
     local workspace_path
-    workspace_path="$(pwd)"
+    local -a docker_prefix=()
+
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+            workspace_path="$(pwd -W)"
+            docker_prefix=(env MSYS_NO_PATHCONV=1)
+            ;;
+        *)
+            workspace_path="$(pwd)"
+            ;;
+    esac
+
     echo "Generating fresh six-orderer production channel artifacts..."
-    docker run --rm \
+    echo "Docker workspace: ${workspace_path}"
+
+    rm -f \
+        ./channel-artifacts-k8s/orderer.genesis.block \
+        ./channel-artifacts-k8s/registrar-channel.block
+
+    if ! "${docker_prefix[@]}" docker run --rm \
         -v "${workspace_path}/config/configtx-k8s.yaml:/fabric-config/configtx.yaml:ro" \
         -v "${workspace_path}/crypto-config-final-v2:/crypto-config-final-v2:ro" \
         -v "${workspace_path}/crypto-config-final-v2:/etc/hyperledger/fabric/crypto-config-final-v2:ro" \
         -v "${workspace_path}/channel-artifacts-k8s:/artifacts" \
-        -e FABRIC_CFG_PATH=/fabric-config \
         hyperledger/fabric-tools:2.5.4 \
-        configtxgen -profile UniversityGenesis -channelID system-channel -outputBlock /artifacts/orderer.genesis.block
-    docker run --rm \
+        configtxgen \
+            -configPath /fabric-config \
+            -profile UniversityGenesis \
+            -channelID system-channel \
+            -outputBlock /artifacts/orderer.genesis.block
+    then
+        echo "ERROR: Failed to generate production orderer genesis block."
+        return 1
+    fi
+
+    if ! "${docker_prefix[@]}" docker run --rm \
         -v "${workspace_path}/config/configtx-k8s.yaml:/fabric-config/configtx.yaml:ro" \
         -v "${workspace_path}/crypto-config-final-v2:/crypto-config-final-v2:ro" \
         -v "${workspace_path}/crypto-config-final-v2:/etc/hyperledger/fabric/crypto-config-final-v2:ro" \
         -v "${workspace_path}/channel-artifacts-k8s:/artifacts" \
-        -e FABRIC_CFG_PATH=/fabric-config \
         hyperledger/fabric-tools:2.5.4 \
-        configtxgen -profile RegistrarChannel -channelID registrar-channel -outputBlock /artifacts/registrar-channel.block
+        configtxgen \
+            -configPath /fabric-config \
+            -profile RegistrarChannel \
+            -channelID registrar-channel \
+            -outputBlock /artifacts/registrar-channel.block
+    then
+        echo "ERROR: Failed to generate registrar channel block."
+        return 1
+    fi
+
+    if [[ ! -s "./channel-artifacts-k8s/orderer.genesis.block" ]]; then
+        echo "ERROR: orderer.genesis.block was not generated."
+        return 1
+    fi
+
+    if [[ ! -s "./channel-artifacts-k8s/registrar-channel.block" ]]; then
+        echo "ERROR: registrar-channel.block was not generated."
+        return 1
+    fi
+
+    echo "Production Fabric artifacts generated successfully:"
+    ls -lh \
+        ./channel-artifacts-k8s/orderer.genesis.block \
+        ./channel-artifacts-k8s/registrar-channel.block
 }
+
 
 setup_gke_cluster() {
     if [[ "$PROFILE" != "production" ]]; then
@@ -2537,48 +2594,165 @@ setup_gke_cluster() {
         node_service_account_args+=(--service-account "$GKE_NODE_SERVICE_ACCOUNT")
     fi
 
+    # ============================================================
+    # BLOCKGO GKE COST GUARDRAILS
+    # ============================================================
+    # Production remains spread across three zones, but the regional
+    # node pool is constrained to 4-6 total worker nodes to reduce the
+    # risk of an unexpected monthly compute-cost spike.
+    # ============================================================
+    local min_total_nodes="${GKE_MIN_TOTAL_NODES:-4}"
+    local max_total_nodes="${GKE_MAX_TOTAL_NODES:-6}"
+    local initial_nodes_per_zone="${GKE_INITIAL_NODES_PER_ZONE:-2}"
+    local machine_type="${GKE_MACHINE_TYPE:-e2-highmem-2}"
+    local vcpu_cost_cap="${GKE_VCPU_COST_CAP:-12}"
+    local vcpu_per_node=""
+
+    if ! [[ "$min_total_nodes" =~ ^[0-9]+$ && "$max_total_nodes" =~ ^[0-9]+$ && "$initial_nodes_per_zone" =~ ^[0-9]+$ && "$vcpu_cost_cap" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: GKE_MIN_TOTAL_NODES, GKE_MAX_TOTAL_NODES, GKE_INITIAL_NODES_PER_ZONE, and GKE_VCPU_COST_CAP must be whole numbers."
+        return 1
+    fi
+
+    # Keep each worker at two vCPUs so the six-node maximum stays within the
+    # project's current CPUs (All Regions) quota of 12 and the same value acts
+    # as an intentional compute-cost ceiling even if Google later raises quota.
+    case "$machine_type" in
+        e2-highmem-2|e2-standard-2)
+            vcpu_per_node=2
+            ;;
+        *)
+            echo "ERROR: Cost/quota guardrail allows only 2-vCPU node types: e2-highmem-2 or e2-standard-2."
+            echo "Requested machine type: ${machine_type}"
+            echo "BlockGo defaults to e2-highmem-2 (2 vCPU, 16 GiB RAM) to preserve memory while fitting the 12-vCPU project quota."
+            return 1
+            ;;
+    esac
+    if (( min_total_nodes < 4 )); then
+        echo "ERROR: Production GKE requires at least 4 total worker nodes."
+        return 1
+    fi
+    if (( max_total_nodes > 6 )); then
+        echo "ERROR: Cost guardrail prevents more than 6 GKE worker nodes."
+        echo "Requested maximum: ${max_total_nodes}"
+        echo "Allowed maximum: 6"
+        return 1
+    fi
+    if (( min_total_nodes > max_total_nodes )); then
+        echo "ERROR: GKE minimum nodes cannot exceed maximum nodes."
+        return 1
+    fi
+    if (( initial_nodes_per_zone < 1 || initial_nodes_per_zone > 2 )); then
+        echo "ERROR: GKE_INITIAL_NODES_PER_ZONE must be 1 or 2 for this 3-zone, 4-6 node design."
+        return 1
+    fi
+
+    local initial_total_nodes=$((initial_nodes_per_zone * 3))
+    local initial_total_vcpus=$((initial_total_nodes * vcpu_per_node))
+    local maximum_total_vcpus=$((max_total_nodes * vcpu_per_node))
+    if (( initial_total_vcpus > vcpu_cost_cap || maximum_total_vcpus > vcpu_cost_cap )); then
+        echo "ERROR: GKE configuration would exceed the ${vcpu_cost_cap}-vCPU compute cost/quota ceiling."
+        echo "Initial: ${initial_total_nodes} nodes / ${initial_total_vcpus} vCPU"
+        echo "Maximum: ${max_total_nodes} nodes / ${maximum_total_vcpus} vCPU"
+        return 1
+    fi
+
+    echo "======================================"
+    echo "BLOCKGO GKE Cost Guardrails"
+    echo "======================================"
+    echo "Region:              ${GKE_REGION}"
+    echo "Zones:               ${node_locations}"
+    echo "Machine type:        ${machine_type}"
+    echo "Minimum total nodes: ${min_total_nodes}"
+    echo "Maximum total nodes: ${max_total_nodes}"
+    echo "vCPU cost ceiling:   ${vcpu_cost_cap}"
+    echo "Maximum node vCPUs:  ${maximum_total_vcpus}"
+    echo "Initial nodes/zone:  ${initial_nodes_per_zone}"
+    echo "Upgrade surge nodes: 0"
+    echo "Cloud workload logs: disabled"
+    echo "======================================"
+
     if ! gcloud container clusters describe "$GKE_CLUSTER_NAME" --project "$GCP_PROJECT_ID" --region "$GKE_REGION" >/dev/null 2>&1; then
-        echo "Creating regional GKE cluster $GKE_CLUSTER_NAME across $node_locations..."
+        echo "Creating cost-controlled regional GKE cluster $GKE_CLUSTER_NAME across $node_locations..."
         gcloud container clusters create "$GKE_CLUSTER_NAME" \
             --project "$GCP_PROJECT_ID" \
             --region "$GKE_REGION" \
             --node-locations "$node_locations" \
-            --num-nodes "${GKE_NODES_PER_ZONE:-1}" \
-            --machine-type "${GKE_MACHINE_TYPE:-e2-standard-4}" \
-            --disk-type pd-balanced \
+            --num-nodes "$initial_nodes_per_zone" \
+            --machine-type "$machine_type" \
+            --disk-type "${GKE_NODE_DISK_TYPE:-pd-balanced}" \
             --disk-size "${GKE_NODE_DISK_GB:-100}" \
             --release-channel regular \
             --enable-ip-alias \
             --enable-shielded-nodes \
             --enable-dataplane-v2 \
+            --enable-private-nodes \
+            --enable-autorepair \
+            --enable-autoupgrade \
+            --enable-autoscaling \
+            --total-min-nodes "$min_total_nodes" \
+            --total-max-nodes "$max_total_nodes" \
+            --location-policy BALANCED \
+            --max-surge-upgrade=0 \
+            --max-unavailable-upgrade=1 \
+            --logging=SYSTEM \
+            --monitoring=SYSTEM \
+            --enable-cost-allocation \
             --workload-pool "${GCP_PROJECT_ID}.svc.id.goog" \
             --addons GcePersistentDiskCsiDriver,HttpLoadBalancing \
             "${node_service_account_args[@]}"
     else
         echo "Using existing regional GKE cluster $GKE_CLUSTER_NAME."
+
         gcloud container clusters update "$GKE_CLUSTER_NAME" \
-            --project "$GCP_PROJECT_ID" --region "$GKE_REGION" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GKE_REGION" \
             --workload-pool "${GCP_PROJECT_ID}.svc.id.goog" \
-            --update-addons GcePersistentDiskCsiDriver=ENABLED
+            --update-addons GcePersistentDiskCsiDriver=ENABLED \
+            --logging=SYSTEM \
+            --monitoring=SYSTEM \
+            --enable-cost-allocation
+
+        gcloud container clusters update "$GKE_CLUSTER_NAME" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GKE_REGION" \
+            --node-pool default-pool \
+            --enable-autoscaling \
+            --total-min-nodes "$min_total_nodes" \
+            --total-max-nodes "$max_total_nodes" \
+            --location-policy BALANCED
+
+        gcloud container node-pools update default-pool \
+            --cluster "$GKE_CLUSTER_NAME" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GKE_REGION" \
+            --max-surge-upgrade=0 \
+            --max-unavailable-upgrade=1
     fi
 
     gcloud container clusters get-credentials "$GKE_CLUSTER_NAME" --project "$GCP_PROJECT_ID" --region "$GKE_REGION"
-    check_cluster
-    resolve_gke_zones
-    local cluster_location_type
-    cluster_location_type="$(gcloud container clusters describe "$GKE_CLUSTER_NAME" --project "$GCP_PROJECT_ID" --region "$GKE_REGION" --format='value(locationType)')"
-    if [[ "$cluster_location_type" != "REGIONAL" ]]; then
-        echo "ERROR: $GKE_CLUSTER_NAME is not a regional GKE cluster."
+
+    echo "Verifying GKE node-pool autoscaling guardrails..."
+    local actual_min actual_max
+    actual_min="$(gcloud container node-pools describe default-pool \
+        --cluster "$GKE_CLUSTER_NAME" \
+        --project "$GCP_PROJECT_ID" \
+        --region "$GKE_REGION" \
+        --format='value(autoscaling.totalMinNodeCount)' 2>/dev/null || true)"
+    actual_max="$(gcloud container node-pools describe default-pool \
+        --cluster "$GKE_CLUSTER_NAME" \
+        --project "$GCP_PROJECT_ID" \
+        --region "$GKE_REGION" \
+        --format='value(autoscaling.totalMaxNodeCount)' 2>/dev/null || true)"
+
+    if [[ -n "$actual_max" && "$actual_max" =~ ^[0-9]+$ ]] && (( actual_max > 6 )); then
+        echo "ERROR: Node-pool maximum is ${actual_max}, above the BlockGo cost ceiling of 6."
         return 1
     fi
-    local zone
-    for zone in "$GKE_ZONE_A" "$GKE_ZONE_B" "$GKE_ZONE_C"; do
-        if ! kubectl get nodes -l "topology.kubernetes.io/zone=${zone}" -o name | grep -q .; then
-            echo "ERROR: The cluster has no schedulable node in required zone $zone."
-            return 1
-        fi
-    done
-    echo "GKE cluster is ready. Run: $0 production apply"
+    if [[ -n "$actual_min" && -n "$actual_max" ]]; then
+        echo "GKE autoscaling verified: total min=${actual_min}, total max=${actual_max}."
+    else
+        echo "WARNING: Could not read total node autoscaling values back from GKE."
+    fi
 }
 
 preserve_existing_local_pvc_request() {
@@ -3050,8 +3224,13 @@ deploy_orderers_sequentially() {
             echo "ERROR: Production configtx must declare six Raft consenters; found $consenter_count."
             return 1
         fi
-        if ! grep -q 'replication-type: regional-pd' ./k8s/01a-storage-class.yaml; then
-            echo "ERROR: Production storage must use GKE regional persistent disks."
+        if ! grep -Eq '^[[:space:]]*type:[[:space:]]*pd-standard[[:space:]]*$' ./k8s/01a-storage-class.yaml; then
+            echo "ERROR: Production fabric-storage must use pd-standard."
+            return 1
+        fi
+
+        if grep -Eq '^[[:space:]]*replication-type:[[:space:]]*regional-pd' ./k8s/01a-storage-class.yaml; then
+            echo "ERROR: regional-pd is disabled for this BlockGo deployment."
             return 1
         fi
     fi
@@ -3264,6 +3443,9 @@ configure_peer_channel_endpoint_aliases() {
     echo "Phase 4/7 - IPFS and bootstrap jobs"
     echo "======================================"
     apply_manifest "$TMP_K8S_DIR/09-ipfs.yaml"
+    # Older manifests created a second, hostless public GCE ingress for /ipfs.
+    # The production-domain main ingress is now the sole public entry point.
+    kubectl delete ingress ipfs-ingress -n plv-fabric --ignore-not-found >/dev/null
     configure_local_application_rollouts
     ensure_ipfs_ready ipfs-node plv-fabric
     ensure_ipfs_ready ipfs-annex plv-annex-campus

@@ -1,14 +1,15 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
-const rateLimit = require('express-rate-limit');
 const { closePools, getPools } = require('../shared/database');
 const { jwtKey, required, serviceUrl, corsOrigins } = require('../shared/config');
 const { requireInternalKey } = require('../shared/auth');
 const { requestJson } = require('../shared/internal-http');
 const createLogger = require('../shared/logger');
 const { normalizeAuthRole } = require('../shared/roles');
+const { createLoginLimiter } = require('../shared/login-rate-limit');
 const { createServiceApp, installErrorHandler, listen } = require('../shared/service-app');
 
 const serviceName = 'auth-service';
@@ -60,16 +61,7 @@ async function activeUser(username) {
     };
 }
 
-const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 5,
-    standardHeaders: true,
-    legacyHeaders: false,
-    handler: async (req, res) => {
-        await recordSecurityEvent(req, 'LOGIN_RATE_LIMIT', 'HIGH', req.body?.username, 'More than five login attempts were made within fifteen minutes.');
-        res.status(429).json({ error: 'Too many login attempts from this IP, please try again after 15 minutes.' });
-    }
-});
+const loginLimiter = createLoginLimiter({ recordSecurityEvent });
 
 app.post('/api/login', loginLimiter, async (req, res) => {
     try {
