@@ -196,6 +196,7 @@ export const approveCurriculum = async (id) => fetchWithAuth(`/Curriculums/${enc
 export const returnCurriculum = async (id, reason) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/return`, { method: 'POST', body: JSON.stringify({ reason }) });
 export const publishCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/publish`, { method: 'POST' });
 export const archiveCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+export const assignProgramCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/program-assignment`, { method: 'PUT' });
 export const assignStudentCurriculum = async (id, studentEmail) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/students`, { method: 'PUT', body: JSON.stringify({ studentEmail }) });
 export const fetchStudentCurriculum = async () => fetchWithAuth('/Curriculums/student');
 export const fetchFacultyCurriculums = async () => fetchWithAuth('/Curriculums/faculty');

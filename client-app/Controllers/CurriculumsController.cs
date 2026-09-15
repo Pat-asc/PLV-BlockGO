@@ -443,7 +443,7 @@ namespace Client_app.Controllers
                 "CURRICULUM_ARCHIVED", "Registrar archived the published curriculum.", null, true, cancellationToken);
 
         [HttpPut("{id:long}/program-assignment")]
-        [Authorize(Roles = "department_admin")]
+        [Authorize(Roles = "department_admin,registrar")]
         public async Task<IActionResult> AssignProgram(long id, CancellationToken cancellationToken)
         {
             await using var connection = await OpenConnectionAsync(cancellationToken);
@@ -451,12 +451,15 @@ namespace Client_app.Controllers
             var curriculum = await RequireStatusAsync(connection, transaction, id,
                 new[] { CurriculumStatuses.Published, CurriculumStatuses.Archived }, cancellationToken);
             var actor = await GetActorAsync(connection, transaction, cancellationToken);
-            await ResolveOwnedProgramAsync(connection, transaction, actor.Id, curriculum.ProgramCode, cancellationToken);
+            if (actor.Role == "department_admin")
+            {
+                await ResolveOwnedProgramAsync(connection, transaction, actor.Id, curriculum.ProgramCode, cancellationToken);
+            }
             var affectedStudents = await AssignProgramCurriculumAsync(
                 connection, transaction, curriculum.ProgramId, id, actor.Id, cancellationToken);
             await _auditLog.LogAsync(actor.Email, actor.Role, "PROGRAM_CURRICULUM_ASSIGNED", "curriculum", id.ToString(), null,
                 new { curriculum.ProgramId, affectedStudents },
-                "Department Head changed the active curriculum for the academic program.",
+                $"{(actor.Role == "registrar" ? "Registrar" : "Department Head")} changed the active curriculum for the academic program.",
                 IpAddress(), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             await TryRecordLedgerAuditAsync("PROGRAM_CURRICULUM_ASSIGNED", id, actor,
@@ -775,7 +778,8 @@ namespace Client_app.Controllers
                   AND (@subjectId IS NULL OR subject_id <> @subjectId);", connection, transaction);
             command.Parameters.AddWithValue("curriculumId", curriculumId);
             command.Parameters.AddWithValue("prerequisite", prerequisite);
-            command.Parameters.AddWithValue("subjectId", (object?)subjectId ?? DBNull.Value);
+            var subjectIdParameter = command.Parameters.Add("subjectId", NpgsqlDbType.Bigint);
+            subjectIdParameter.Value = (object?)subjectId ?? DBNull.Value;
             if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 0)
             {
                 throw new ArgumentException("Prerequisite subject must already exist in this curriculum.");
@@ -852,6 +856,7 @@ namespace Client_app.Controllers
                     UPDATE student_enrollments
                     SET curriculum_id = @curriculumId, updated_at = CURRENT_TIMESTAMP
                     WHERE program_id = @programId
+                      AND status = 'ENROLLED'
                     RETURNING student_user_id
                 )
                 SELECT COUNT(DISTINCT student_user_id)::int FROM updated;", connection, transaction))

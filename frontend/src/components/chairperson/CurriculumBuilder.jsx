@@ -22,6 +22,7 @@ const CurriculumBuilder = ({ department = '' }) => {
   const [notice, setNotice] = useState(null);
   const [preview, setPreview] = useState(false);
   const [uploadName, setUploadName] = useState('');
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [prerequisiteOpen, setPrerequisiteOpen] = useState(false);
   const [prerequisiteSearch, setPrerequisiteSearch] = useState('');
   const fileRef = useRef(null);
@@ -129,14 +130,61 @@ const CurriculumBuilder = ({ department = '' }) => {
 
   const importCsv = async (file) => {
     setUploadName(file?.name || ''); if (!file || !selected || !editable) return;
+    if (!file.name?.toLowerCase().endsWith('.csv')) {
+      setNotice({ type: 'error', message: 'Please choose a CSV file.' });
+      return;
+    }
     setSaving(true); setNotice(null);
     try {
       const rows = (await file.text()).split(/\r?\n/).filter(Boolean).slice(1).map((line) => line.split(',').map((cell) => cell.trim())).filter((row) => row.length >= 5);
       if (!rows.length) throw new Error('No valid subject rows were found.');
-      for (const row of rows) await addCurriculumSubject(selected.curriculumId, { ...emptySubject, yearLevel: Number(row[0]), semester: row[1].toUpperCase(), subjectCode: row[2], subjectTitle: row[3], units: Number(row[4]), prerequisite: row[5] || '' });
-      await load(); setNotice({ type: 'success', message: `${rows.length} subjects imported successfully.` });
+      const records = rows.map((row) => ({ ...emptySubject, yearLevel: Number(row[0]), semester: row[1].toUpperCase(), subjectCode: row[2], subjectTitle: row[3], units: Number(row[4]), prerequisite: row[5] || '' }));
+      const subjectSlot = (item) => `${Number(item.yearLevel)}|${String(item.semester).toUpperCase()}|${String(item.subjectCode).trim().toUpperCase()}`;
+      const uploadedSlots = new Set();
+      for (const record of records) {
+        const slot = subjectSlot(record);
+        if (uploadedSlots.has(slot)) throw new Error(`Duplicate subject ${record.subjectCode} was found in the CSV.`);
+        uploadedSlots.add(slot);
+      }
+      const existingSlots = new Set(subjects.map(subjectSlot));
+      const pendingRecords = records.filter((record) => !existingSlots.has(subjectSlot(record)));
+      for (const record of pendingRecords) await addCurriculumSubject(selected.curriculumId, record);
+      await load();
+      const skippedCount = records.length - pendingRecords.length;
+      const skippedMessage = skippedCount === 1
+        ? '1 subject already existed and was skipped.'
+        : `${skippedCount} subjects already existed and were skipped.`;
+      setNotice({
+        type: 'success',
+        message: pendingRecords.length
+          ? `${pendingRecords.length} subjects imported successfully.${skippedCount ? ` ${skippedMessage}` : ''}`
+          : `All ${skippedCount} subjects already exist in this curriculum.`,
+      });
     } catch (error) { setNotice({ type: 'error', message: error.message }); }
     finally { setSaving(false); }
+  };
+
+  const canImportCsv = Boolean(editable && !saving);
+  const openFilePicker = () => {
+    if (canImportCsv) fileRef.current?.click();
+  };
+  const handleFileChange = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    importCsv(file);
+  };
+  const handleDragOver = (event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = canImportCsv ? 'copy' : 'none';
+    if (canImportCsv) setIsDraggingFile(true);
+  };
+  const handleDragLeave = (event) => {
+    if (!event.currentTarget.contains(event.relatedTarget)) setIsDraggingFile(false);
+  };
+  const handleDrop = (event) => {
+    event.preventDefault();
+    setIsDraggingFile(false);
+    if (canImportCsv) importCsv(event.dataTransfer.files?.[0]);
   };
 
   return <div className="space-y-3 text-[13px] text-[#102a56]">
@@ -169,7 +217,33 @@ const CurriculumBuilder = ({ department = '' }) => {
           <div className="flex items-end justify-end gap-2 md:col-span-2 xl:col-span-2"><button type="button" onClick={() => { setSubjectForm(emptySubject); setEditingId(null); setPrerequisiteOpen(false); }} className="h-9 min-w-20 whitespace-nowrap rounded-lg border border-slate-300 px-3 text-xs font-bold">↻ Clear</button><button disabled={saving} className="h-9 min-w-28 whitespace-nowrap rounded-lg bg-[#073b82] px-4 text-xs font-bold text-white">{editingId ? 'Update Subject' : '+ Add Subject'}</button></div>
         </div>
       </form>}</section>}
-    </> : <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold">Bulk Upload Curriculum</h2><div className="mt-4 grid gap-5 lg:grid-cols-[1.2fr_.8fr]"><button disabled={!editable || saving} onClick={() => fileRef.current?.click()} className="flex min-h-52 flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 disabled:opacity-50"><span className="mb-3 rounded-lg bg-emerald-100 p-3 font-black text-emerald-700">CSV</span><strong>{uploadName || 'Drag and drop your CSV file here'}</strong><span className="mt-2 text-xs text-slate-500">or click to choose a file</span><input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => importCsv(e.target.files?.[0])} /></button><div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"><h3 className="font-bold">Template Columns</h3>{['Year Level', 'Semester', 'Course Code', 'Course Title', 'Units', 'Prerequisite(s)'].map((item) => <div key={item} className="border-b border-amber-200 py-2 last:border-0">{item}</div>)}</div></div></section>}
+    </> : <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-bold">Bulk Upload Curriculum</h2>
+        {curricula.length > 1 && <select aria-label="Curriculum version for bulk upload" value={selectedId} onChange={(e) => setSelectedId(e.target.value)} className={`${inputClass} mt-0 min-w-48`}>{curricula.map((item) => <option key={item.curriculumId} value={item.curriculumId}>{item.curriculumVersion} ({item.status})</option>)}</select>}
+      </div>
+      <div className="mt-4 grid gap-5 lg:grid-cols-[1.2fr_.8fr]">
+        <div>
+          <input ref={fileRef} aria-label="Curriculum CSV file" type="file" accept=".csv,text/csv" className="hidden" onChange={handleFileChange} />
+          <button
+            type="button"
+            disabled={!canImportCsv}
+            onClick={openFilePicker}
+            onDragEnter={handleDragOver}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className={`flex min-h-52 w-full flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 transition disabled:cursor-not-allowed disabled:opacity-50 ${isDraggingFile ? 'border-blue-600 bg-blue-50' : 'border-slate-300 bg-slate-50'}`}
+          >
+            <span className="mb-3 rounded-lg bg-emerald-100 p-3 font-black text-emerald-700">CSV</span>
+            <strong>{uploadName || 'Drag and drop your CSV file here'}</strong>
+            <span className="mt-2 text-xs text-slate-500">or click to choose a file</span>
+          </button>
+          {!editable && <p className="mt-2 text-xs text-amber-700">Select or create a curriculum in Draft or Returned status before importing subjects.</p>}
+        </div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"><h3 className="font-bold">Template Columns</h3>{['Year Level', 'Semester', 'Course Code', 'Course Title', 'Units', 'Prerequisite(s)'].map((item) => <div key={item} className="border-b border-amber-200 py-2 last:border-0">{item}</div>)}</div>
+      </div>
+    </section>}
 
     <section className="rounded-xl border border-slate-200 bg-white shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3 border-b p-4"><div><h2 className="font-bold">Current Curriculum Checklist</h2></div><div className="flex flex-wrap gap-2"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search subjects..." className={`${inputClass} mt-0 w-52`} /><span className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-bold">Total Subjects: {subjects.length}</span><span className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-bold">Total Units: {totalUnits}</span></div></div><div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead className="bg-slate-50 text-slate-600"><tr>{['#', 'Year Level', 'Semester', 'Course Code', 'Course Title', 'Units', 'Prerequisite(s)', 'Actions'].map((item) => <th key={item} className="px-4 py-3">{item}</th>)}</tr></thead><tbody>{visibleSubjects.map((item, index) => <tr key={item.subjectId} className="border-t hover:bg-slate-50"><td className="px-4 py-3">{index + 1}</td><td className="px-4 py-3">{years[item.yearLevel]}</td><td className="px-4 py-3">{semesters[item.semester]}</td><td className="px-4 py-3 font-bold">{item.subjectCode}</td><td className="px-4 py-3">{item.subjectTitle}</td><td className="px-4 py-3">{item.units}</td><td className="px-4 py-3"><span className={`rounded px-2 py-1 ${item.prerequisite ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>{item.prerequisite || 'None'}</span></td><td className="whitespace-nowrap px-4 py-3"><button disabled={!editable} onClick={() => editSubject(item)} className="mr-3 font-bold text-blue-700 disabled:opacity-30">Edit</button><button disabled={!editable} onClick={() => deleteSubject(item)} className="font-bold text-red-600 disabled:opacity-30">Delete</button></td></tr>)}{!loading && !visibleSubjects.length && <tr><td colSpan="8" className="p-10 text-center text-slate-400">No subjects found in this curriculum.</td></tr>}</tbody></table></div></section>
     {selected && <footer className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3"><p className="text-xs"><strong>Reminder:</strong> Save your changes before submitting for Registrar review.</p><div className="flex flex-wrap gap-2"><button disabled={!editable || saving} onClick={saveMetadata} className="rounded-lg border bg-white px-3 py-2 text-xs font-bold disabled:opacity-50">Save Changes</button><button onClick={() => setPreview(true)} className="rounded-lg border bg-white px-3 py-2 text-xs font-bold">Preview Checklist</button><button disabled={!editable || saving || !subjects.length} onClick={submit} className="rounded-lg bg-[#073b82] px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Submit for Review</button></div></footer>}
