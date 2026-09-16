@@ -4,6 +4,10 @@ const tls = require('tls');
 const path = require('path');
 const { isContainerized, middlewareRoot, parsePositiveInt } = require('../shared/config');
 const { findIdentity } = require('./wallet-manager');
+const { safeFabricReason } = require('./ledger-errors');
+const createLogger = require('../shared/logger');
+
+const logger = createLogger('fabric-gateway');
 
 const gatewayCache = new Map();
 const idleTimeout = parsePositiveInt(process.env.GATEWAY_IDLE_TIMEOUT_MS, 5 * 60 * 1000);
@@ -95,6 +99,20 @@ function fabricEndpointUrls() {
             orderer6: process.env.FABRIC_ORDERER_6_URL || 'grpcs://orderer-6.plv-pubad-campus.svc.cluster.local:7050'
         });
     }
+
+    const disabledOrderers = new Set(
+        String(process.env.FABRIC_DISABLED_ORDERERS || '')
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean)
+    );
+
+    for (const name of disabledOrderers) {
+        if (name !== 'orderer' && name.startsWith('orderer')) {
+            delete endpoints[name];
+        }
+    }
+
     return endpoints;
 }
 
@@ -125,7 +143,10 @@ function profileForIdentity(identity) {
         profile.peers['peer1.faculty.capstone.com'] = endpoint(urls.facultySecondary, tls('faculty'), 'peer1.faculty.capstone.com');
         profile.peers['peer1.department.capstone.com'] = endpoint(urls.departmentSecondary, tls('department'), 'peer1.department.capstone.com');
         for (let number = 2; number <= 6; number += 1) {
-            profile.orderers[`orderer${number}.capstone.com`] = endpoint(urls[`orderer${number}`], tls('orderer'), `orderer${number}.capstone.com`);
+            const ordererUrl = urls[`orderer${number}`];
+            if (ordererUrl) {
+                profile.orderers[`orderer${number}.capstone.com`] = endpoint(ordererUrl, tls('orderer'), `orderer${number}.capstone.com`);
+            }
         }
     }
     const channelName = process.env.CHANNEL_NAME || 'registrar-channel';
@@ -177,9 +198,15 @@ function ensurePruner() {
 async function contractForUser(username, roleHint) {
     if (!username) throw new Error('A valid user identity is required for the Fabric transaction.');
     ensurePruner();
-    const found = await findIdentity(username, roleHint);
+    let found;
+    try { found = await findIdentity(username, roleHint); }
+    catch (error) {
+        logger.error({ identity: username, role: roleHint, stage: 'wallet', reason: safeFabricReason(error) }, 'Fabric wallet lookup failed');
+        throw error;
+    }
     if (!found) {
         disconnect(username, 'wallet-removed');
+        logger.warn({ identity: username, role: roleHint, stage: 'wallet' }, 'Fabric wallet identity is missing');
         throw new Error(`Access Denied: Wallet identity for '${username}' not found. The Registrar must register this user first.`);
     }
     const cached = gatewayCache.get(username);
@@ -195,16 +222,27 @@ async function contractForUser(username, roleHint) {
     }
     const FabricGateway = gatewayConstructor();
     const gateway = new FabricGateway();
-    await gateway.connect(profileForIdentity(found.identity), {
-        wallet: found.wallet,
-        identity: username,
-        // Kubernetes DNS can route the explicit FQDNs in profileForIdentity. Fabric
-        // discovery may return channel endpoints advertised for another namespace
-        // (or external orderer hostnames), so it must be explicitly opt-in there.
-        discovery: { enabled: fabricDiscoveryEnabled(), asLocalhost: !isContainerized() }
-    });
-    const network = await gateway.getNetwork(process.env.CHANNEL_NAME || 'registrar-channel');
-    const contract = network.getContract(process.env.CHAINCODE_NAME || 'registrar');
+    const channel = process.env.CHANNEL_NAME || 'registrar-channel';
+    const chaincode = process.env.CHAINCODE_NAME || 'registrar';
+    let contract;
+    try {
+        await gateway.connect(profileForIdentity(found.identity), {
+            wallet: found.wallet,
+            identity: username,
+            // Kubernetes DNS can route the explicit FQDNs in profileForIdentity. Fabric
+            // discovery may return channel endpoints advertised for another namespace
+            // (or external orderer hostnames), so it must be explicitly opt-in there.
+            discovery: { enabled: fabricDiscoveryEnabled(), asLocalhost: !isContainerized() }
+        });
+        const network = await gateway.getNetwork(channel);
+        contract = network.getContract(chaincode);
+    } catch (error) {
+        try { gateway.disconnect(); } catch { /* connection did not complete */ }
+        logger.error({ identity: username, mspId: found.identity.mspId, channel, chaincode,
+            stage: 'gateway-or-contract', reason: safeFabricReason(error) }, 'Fabric gateway connection failed');
+        throw error;
+    }
+    logger.info({ identity: username, mspId: found.identity.mspId, channel, chaincode }, 'Fabric contract resolved');
     gatewayCache.set(username, { gateway, contract, mspId: found.identity.mspId, lastAccessed: Date.now() });
     return contract;
 }
@@ -274,4 +312,4 @@ async function closeGateways() {
     for (const username of [...gatewayCache.keys()]) disconnect(username, 'shutdown');
 }
 
-module.exports = { cacheStats, checkFabricEndpoints, closeGateways, contractForUser, disconnect, profileForIdentity };
+module.exports = { cacheStats, checkFabricEndpoints, closeGateways, contractForUser, disconnect, fabricEndpointUrls, profileForIdentity };

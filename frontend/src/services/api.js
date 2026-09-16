@@ -158,6 +158,7 @@ export const updateStudentProfile = async (profileData) => {
 };
 
 export const fetchStudentHistoricalGrades = async () => fetchWithAuth('/Student/grades');
+export const fetchStudentCurrentSubjects = async () => fetchWithAuth('/Student/subjects');
 export const fetchStudentBlockchainTransactions = async () => fetchWithAuth('/Student/blockchain-transactions');
 
 // ==================== MANAGED ACCOUNTS ====================
@@ -405,8 +406,8 @@ export const issueGrade = async (gradeData) => {
     });
 };
 
-export const submitSectionGrades = async (department, section) => {
-    return await fetchWithAuth(`/Grades/submit-section?department=${encodeURIComponent(department)}&section=${encodeURIComponent(section)}`, {
+export const submitSectionGrades = async (department, section, schoolYear, semester) => {
+    return await fetchWithAuth(`/Grades/submit-section?department=${encodeURIComponent(department)}&section=${encodeURIComponent(section)}&schoolYear=${encodeURIComponent(schoolYear || '')}&semester=${encodeURIComponent(semester || '')}`, {
         method: 'POST'
     });
 };

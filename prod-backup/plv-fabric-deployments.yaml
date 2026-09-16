@@ -1,0 +1,2510 @@
+apiVersion: v1
+items:
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "1"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"alloy"},"name":"alloy","namespace":"plv-fabric"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"alloy"}},"strategy":{"type":"Recreate"},"template":{"metadata":{"labels":{"app":"alloy","tier":"observability"}},"spec":{"containers":[{"args":["run","/etc/alloy/config.alloy","--server.http.listen-addr=0.0.0.0:12345"],"image":"grafana/alloy:v1.18.0","imagePullPolicy":"IfNotPresent","name":"alloy","ports":[{"containerPort":12345,"name":"http"}],"readinessProbe":{"httpGet":{"path":"/-/ready","port":"http"},"periodSeconds":5},"resources":{"limits":{"cpu":"500m","memory":"512Mi"},"requests":{"cpu":"5m","memory":"16Mi"}},"volumeMounts":[{"mountPath":"/etc/alloy","name":"config","readOnly":true}]}],"serviceAccountName":"alloy","volumes":[{"configMap":{"name":"alloy-config"},"name":"config"}]}}}}
+    creationTimestamp: "2026-09-14T15:20:05Z"
+    generation: 1
+    labels:
+      app: alloy
+    name: alloy
+    namespace: plv-fabric
+    resourceVersion: "1789399225602687012"
+    uid: abc075aa-9125-42c3-bdf9-afae2f9e692c
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: alloy
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          app: alloy
+          tier: observability
+      spec:
+        containers:
+        - args:
+          - run
+          - /etc/alloy/config.alloy
+          - --server.http.listen-addr=0.0.0.0:12345
+          image: grafana/alloy:v1.18.0
+          imagePullPolicy: IfNotPresent
+          name: alloy
+          ports:
+          - containerPort: 12345
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /-/ready
+              port: http
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 5m
+              memory: 16Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /etc/alloy
+            name: config
+            readOnly: true
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        serviceAccount: alloy
+        serviceAccountName: alloy
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - configMap:
+            defaultMode: 420
+            name: alloy-config
+          name: config
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T15:20:25Z"
+      lastUpdateTime: "2026-09-14T15:20:25Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T15:20:05Z"
+      lastUpdateTime: "2026-09-14T15:20:25Z"
+      message: ReplicaSet "alloy-64b7ff4665" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 1
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "8"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"auth-service","namespace":"plv-fabric"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"auth-service","tier":"application"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"annotations":{"prometheus.io/path":"/metrics","prometheus.io/port":"4001","prometheus.io/scrape":"true"},"labels":{"app":"auth-service","tier":"application"}},"spec":{"containers":[{"command":["npm","run","start:auth"],"env":[{"name":"PORT","value":"4001"},{"name":"NODE_OPTIONS","value":"--max-old-space-size=192"},{"name":"JWT_SECRET","valueFrom":{"secretKeyRef":{"key":"JWT_SECRET","name":"blockgo-secrets"}}},{"name":"INTERNAL_API_KEY","valueFrom":{"secretKeyRef":{"key":"INTERNAL_API_KEY","name":"blockgo-secrets"}}},{"name":"POSTGRES_USER","valueFrom":{"secretKeyRef":{"key":"POSTGRES_USER","name":"blockgo-secrets"}}},{"name":"POSTGRES_PASS","valueFrom":{"secretKeyRef":{"key":"POSTGRES_PASS","name":"blockgo-secrets"}}},{"name":"BOOTSTRAP_REGISTRAR_PASS","valueFrom":{"secretKeyRef":{"key":"BOOTSTRAP_REGISTRAR_PASS","name":"blockgo-secrets"}}},{"name":"BOOTSTRAP_SYSTEM_ADMIN_PASS","valueFrom":{"secretKeyRef":{"key":"BOOTSTRAP_SYSTEM_ADMIN_PASS","name":"blockgo-secrets"}}},{"name":"FRONTEND_URL","valueFrom":{"secretKeyRef":{"key":"FRONTEND_URL","name":"blockgo-secrets","optional":true}}},{"name":"EMAIL_USER","valueFrom":{"secretKeyRef":{"key":"EMAIL_USER","name":"blockgo-secrets","optional":true}}},{"name":"EMAIL_PASS","valueFrom":{"secretKeyRef":{"key":"EMAIL_PASS","name":"blockgo-secrets","optional":true}}}],"envFrom":[{"configMapRef":{"name":"middleware-service-config"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":30,"httpGet":{"path":"/api/health","port":4001},"periodSeconds":5,"timeoutSeconds":3},"name":"auth-service","ports":[{"containerPort":4001,"name":"api"}],"readinessProbe":{"httpGet":{"path":"/api/ready","port":4001},"periodSeconds":5,"timeoutSeconds":3},"resources":{"limits":{"cpu":"400m","memory":"256Mi"},"requests":{"cpu":"100m","memory":"128Mi"}},"startupProbe":{"failureThreshold":30,"httpGet":{"path":"/api/health","port":4001},"periodSeconds":5,"timeoutSeconds":3}}],"terminationGracePeriodSeconds":35}}}}
+    creationTimestamp: "2026-09-14T16:01:48Z"
+    generation: 16
+    name: auth-service
+    namespace: plv-fabric
+    resourceVersion: "1789410883957919022"
+    uid: a96abc7e-9787-410f-88ab-072ca458943c
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: auth-service
+        tier: application
+    strategy:
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        annotations:
+          kubectl.kubernetes.io/restartedAt: "2026-09-15T02:34:29+08:00"
+          prometheus.io/path: /metrics
+          prometheus.io/port: "4001"
+          prometheus.io/scrape: "true"
+        labels:
+          app: auth-service
+          tier: application
+      spec:
+        containers:
+        - command:
+          - npm
+          - run
+          - start:auth
+          env:
+          - name: PORT
+            value: "4001"
+          - name: NODE_OPTIONS
+            value: --max-old-space-size=192
+          - name: JWT_SECRET
+            valueFrom:
+              secretKeyRef:
+                key: JWT_SECRET
+                name: blockgo-secrets
+          - name: INTERNAL_API_KEY
+            valueFrom:
+              secretKeyRef:
+                key: INTERNAL_API_KEY
+                name: blockgo-secrets
+          - name: POSTGRES_USER
+            valueFrom:
+              secretKeyRef:
+                key: POSTGRES_USER
+                name: blockgo-secrets
+          - name: POSTGRES_PASS
+            valueFrom:
+              secretKeyRef:
+                key: POSTGRES_PASS
+                name: blockgo-secrets
+          - name: BOOTSTRAP_REGISTRAR_PASS
+            valueFrom:
+              secretKeyRef:
+                key: BOOTSTRAP_REGISTRAR_PASS
+                name: blockgo-secrets
+          - name: BOOTSTRAP_SYSTEM_ADMIN_PASS
+            valueFrom:
+              secretKeyRef:
+                key: BOOTSTRAP_SYSTEM_ADMIN_PASS
+                name: blockgo-secrets
+          - name: FRONTEND_URL
+            valueFrom:
+              secretKeyRef:
+                key: FRONTEND_URL
+                name: blockgo-secrets
+                optional: true
+          - name: EMAIL_USER
+            valueFrom:
+              secretKeyRef:
+                key: EMAIL_USER
+                name: blockgo-secrets
+                optional: true
+          - name: EMAIL_PASS
+            valueFrom:
+              secretKeyRef:
+                key: EMAIL_PASS
+                name: blockgo-secrets
+                optional: true
+          envFrom:
+          - configMapRef:
+              name: middleware-service-config
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260914
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /api/health
+              port: 4001
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: auth-service
+          ports:
+          - containerPort: 4001
+            name: api
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 4001
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: 400m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /api/health
+              port: 4001
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 35
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:44:46Z"
+      lastUpdateTime: "2026-09-14T16:44:46Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:44:48Z"
+      lastUpdateTime: "2026-09-14T18:34:43Z"
+      message: ReplicaSet "auth-service-66dbb445cf" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 16
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "3"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"dotnet-academic-service","runtime":"dotnet","tier":"application"},"name":"dotnet-academic-service","namespace":"plv-fabric"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"dotnet-academic-service"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"labels":{"app":"dotnet-academic-service","runtime":"dotnet","tier":"application"}},"spec":{"containers":[{"env":[{"name":"DOTNET_SERVICE_NAME","value":"academic"},{"name":"DOTNET_SERVICE_PORT","value":"5102"},{"name":"ASPNETCORE_URLS","value":"http://+:5102"}],"envFrom":[{"configMapRef":{"name":"dotnet-service-config"}},{"secretRef":{"name":"blockgo-secrets"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":60,"httpGet":{"path":"/health","port":5102},"periodSeconds":5,"timeoutSeconds":3},"name":"dotnet-academic-service","ports":[{"containerPort":5102,"name":"http"}],"readinessProbe":{"failureThreshold":3,"httpGet":{"path":"/api/ready","port":5102},"periodSeconds":5,"timeoutSeconds":3},"resources":{"limits":{"cpu":"500m","memory":"384Mi"},"requests":{"cpu":"75m","memory":"128Mi"}},"startupProbe":{"failureThreshold":60,"httpGet":{"path":"/health","port":5102},"periodSeconds":5,"timeoutSeconds":3}}],"terminationGracePeriodSeconds":35}}}}
+    creationTimestamp: "2026-09-14T16:01:55Z"
+    generation: 9
+    labels:
+      app: dotnet-academic-service
+      runtime: dotnet
+      tier: application
+    name: dotnet-academic-service
+    namespace: plv-fabric
+    resourceVersion: "1789404305243231010"
+    uid: 6a9549a3-b4a9-4d2b-b9b4-003adcd6a854
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: dotnet-academic-service
+    strategy:
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        labels:
+          app: dotnet-academic-service
+          runtime: dotnet
+          tier: application
+      spec:
+        containers:
+        - env:
+          - name: DOTNET_SERVICE_NAME
+            value: academic
+          - name: DOTNET_SERVICE_PORT
+            value: "5102"
+          - name: ASPNETCORE_URLS
+            value: http://+:5102
+          envFrom:
+          - configMapRef:
+              name: dotnet-service-config
+          - secretRef:
+              name: blockgo-secrets
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260914
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /health
+              port: 5102
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: dotnet-academic-service
+          ports:
+          - containerPort: 5102
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 5102
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: 500m
+              memory: 384Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /health
+              port: 5102
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 35
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:41:56Z"
+      lastUpdateTime: "2026-09-14T16:41:56Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:44:49Z"
+      lastUpdateTime: "2026-09-14T16:45:05Z"
+      message: ReplicaSet "dotnet-academic-service-75445cbbf7" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 9
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "10"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"dotnet-api-gateway","runtime":"dotnet","tier":"application"},"name":"dotnet-api-gateway","namespace":"plv-fabric"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"dotnet-api-gateway"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"labels":{"app":"dotnet-api-gateway","runtime":"dotnet","tier":"application"}},"spec":{"containers":[{"env":[{"name":"DOTNET_SERVICE_NAME","value":"gateway"},{"name":"DOTNET_SERVICE_PORT","value":"5000"},{"name":"ASPNETCORE_URLS","value":"http://+:5000"}],"envFrom":[{"configMapRef":{"name":"dotnet-service-config"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":3,"httpGet":{"path":"/health","port":5000},"periodSeconds":10,"timeoutSeconds":3},"name":"dotnet-api-gateway","ports":[{"containerPort":5000,"name":"http"}],"readinessProbe":{"failureThreshold":3,"httpGet":{"path":"/api/ready","port":5000},"periodSeconds":5,"timeoutSeconds":4},"resources":{"limits":{"cpu":"300m","memory":"192Mi"},"requests":{"cpu":"50m","memory":"64Mi"}},"startupProbe":{"failureThreshold":60,"httpGet":{"path":"/health","port":5000},"periodSeconds":5,"timeoutSeconds":3}}],"terminationGracePeriodSeconds":35}}}}
+    creationTimestamp: "2026-09-14T16:01:53Z"
+    generation: 13
+    labels:
+      app: dotnet-api-gateway
+      runtime: dotnet
+      tier: application
+    name: dotnet-api-gateway
+    namespace: plv-fabric
+    resourceVersion: "1789410970032591002"
+    uid: 85d421ad-a86f-4b88-b2e1-bd6cd772e97b
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: dotnet-api-gateway
+    strategy:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+      type: RollingUpdate
+    template:
+      metadata:
+        annotations:
+          kubectl.kubernetes.io/restartedAt: "2026-09-15T02:35:58+08:00"
+        labels:
+          app: dotnet-api-gateway
+          runtime: dotnet
+          tier: application
+      spec:
+        containers:
+        - env:
+          - name: JWT_SECRET
+            valueFrom:
+              secretKeyRef:
+                key: JWT_SECRET
+                name: blockgo-secrets
+          - name: DOTNET_SERVICE_NAME
+            value: gateway
+          - name: DOTNET_SERVICE_PORT
+            value: "5000"
+          - name: ASPNETCORE_URLS
+            value: http://+:5000
+          - name: JWT_SECRET
+            valueFrom:
+              secretKeyRef:
+                key: JWT_SECRET
+                name: blockgo-secrets
+          envFrom:
+          - configMapRef:
+              name: dotnet-service-config
+          - secretRef:
+              name: blockgo-secrets
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260915-jwtdebug1
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /health
+              port: 5000
+              scheme: HTTP
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: dotnet-api-gateway
+          ports:
+          - containerPort: 5000
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 5000
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 4
+          resources:
+            limits:
+              cpu: 300m
+              memory: 192Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /health
+              port: 5000
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 35
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:45:09Z"
+      lastUpdateTime: "2026-09-14T16:45:09Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:44:49Z"
+      lastUpdateTime: "2026-09-14T18:36:09Z"
+      message: ReplicaSet "dotnet-api-gateway-77bf9454d6" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 13
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "8"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"dotnet-auth-service","runtime":"dotnet","tier":"application"},"name":"dotnet-auth-service","namespace":"plv-fabric"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"dotnet-auth-service"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"labels":{"app":"dotnet-auth-service","runtime":"dotnet","tier":"application"}},"spec":{"containers":[{"env":[{"name":"DOTNET_SERVICE_NAME","value":"auth"},{"name":"DOTNET_SERVICE_PORT","value":"5101"},{"name":"ASPNETCORE_URLS","value":"http://+:5101"}],"envFrom":[{"configMapRef":{"name":"dotnet-service-config"}},{"secretRef":{"name":"blockgo-secrets"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":60,"httpGet":{"path":"/health","port":5101},"periodSeconds":5,"timeoutSeconds":3},"name":"dotnet-auth-service","ports":[{"containerPort":5101,"name":"http"}],"readinessProbe":{"failureThreshold":3,"httpGet":{"path":"/api/ready","port":5101},"periodSeconds":5,"timeoutSeconds":3},"resources":{"limits":{"cpu":"500m","memory":"384Mi"},"requests":{"cpu":"75m","memory":"128Mi"}},"startupProbe":{"failureThreshold":60,"httpGet":{"path":"/health","port":5101},"periodSeconds":5,"timeoutSeconds":3}}],"terminationGracePeriodSeconds":35}}}}
+    creationTimestamp: "2026-09-14T16:01:54Z"
+    generation: 16
+    labels:
+      app: dotnet-auth-service
+      runtime: dotnet
+      tier: application
+    name: dotnet-auth-service
+    namespace: plv-fabric
+    resourceVersion: "1789410967942879007"
+    uid: 2da66496-dd3e-4de2-b68b-01ee42400539
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: dotnet-auth-service
+    strategy:
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        annotations:
+          kubectl.kubernetes.io/restartedAt: "2026-09-15T02:35:57+08:00"
+        labels:
+          app: dotnet-auth-service
+          runtime: dotnet
+          tier: application
+      spec:
+        containers:
+        - env:
+          - name: DOTNET_SERVICE_NAME
+            value: auth
+          - name: DOTNET_SERVICE_PORT
+            value: "5101"
+          - name: ASPNETCORE_URLS
+            value: http://+:5101
+          envFrom:
+          - configMapRef:
+              name: dotnet-service-config
+          - secretRef:
+              name: blockgo-secrets
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260914
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /health
+              port: 5101
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: dotnet-auth-service
+          ports:
+          - containerPort: 5101
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 5101
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: 500m
+              memory: 384Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /health
+              port: 5101
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 35
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:44:48Z"
+      lastUpdateTime: "2026-09-14T16:44:48Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:44:50Z"
+      lastUpdateTime: "2026-09-14T18:36:07Z"
+      message: ReplicaSet "dotnet-auth-service-78b44cd8f5" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 16
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "3"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"dotnet-grade-service","runtime":"dotnet","tier":"application"},"name":"dotnet-grade-service","namespace":"plv-fabric"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"dotnet-grade-service"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"labels":{"app":"dotnet-grade-service","runtime":"dotnet","tier":"application"}},"spec":{"containers":[{"env":[{"name":"DOTNET_SERVICE_NAME","value":"grade"},{"name":"DOTNET_SERVICE_PORT","value":"5103"},{"name":"ASPNETCORE_URLS","value":"http://+:5103"}],"envFrom":[{"configMapRef":{"name":"dotnet-service-config"}},{"secretRef":{"name":"blockgo-secrets"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":60,"httpGet":{"path":"/health","port":5103},"periodSeconds":5,"timeoutSeconds":3},"name":"dotnet-grade-service","ports":[{"containerPort":5103,"name":"http"}],"readinessProbe":{"failureThreshold":3,"httpGet":{"path":"/api/ready","port":5103},"periodSeconds":5,"timeoutSeconds":3},"resources":{"limits":{"cpu":"750m","memory":"512Mi"},"requests":{"cpu":"100m","memory":"192Mi"}},"startupProbe":{"failureThreshold":60,"httpGet":{"path":"/health","port":5103},"periodSeconds":5,"timeoutSeconds":3}}],"terminationGracePeriodSeconds":35}}}}
+    creationTimestamp: "2026-09-14T16:01:55Z"
+    generation: 11
+    labels:
+      app: dotnet-grade-service
+      runtime: dotnet
+      tier: application
+    name: dotnet-grade-service
+    namespace: plv-fabric
+    resourceVersion: "1789404307224735021"
+    uid: 6895349b-7ff9-4368-b7da-6710d8a4dfda
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: dotnet-grade-service
+    strategy:
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        labels:
+          app: dotnet-grade-service
+          runtime: dotnet
+          tier: application
+      spec:
+        containers:
+        - env:
+          - name: DOTNET_SERVICE_NAME
+            value: grade
+          - name: DOTNET_SERVICE_PORT
+            value: "5103"
+          - name: ASPNETCORE_URLS
+            value: http://+:5103
+          envFrom:
+          - configMapRef:
+              name: dotnet-service-config
+          - secretRef:
+              name: blockgo-secrets
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260914
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /health
+              port: 5103
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: dotnet-grade-service
+          ports:
+          - containerPort: 5103
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 5103
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: 750m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /health
+              port: 5103
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 35
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:44:41Z"
+      lastUpdateTime: "2026-09-14T16:44:41Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:44:51Z"
+      lastUpdateTime: "2026-09-14T16:45:07Z"
+      message: ReplicaSet "dotnet-grade-service-57d846689f" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 11
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "3"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"dotnet-operations-service","runtime":"dotnet","tier":"application"},"name":"dotnet-operations-service","namespace":"plv-fabric"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"dotnet-operations-service"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"labels":{"app":"dotnet-operations-service","runtime":"dotnet","tier":"application"}},"spec":{"containers":[{"env":[{"name":"DOTNET_SERVICE_NAME","value":"operations"},{"name":"DOTNET_SERVICE_PORT","value":"5104"},{"name":"ASPNETCORE_URLS","value":"http://+:5104"}],"envFrom":[{"configMapRef":{"name":"dotnet-service-config"}},{"secretRef":{"name":"blockgo-secrets"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":60,"httpGet":{"path":"/health","port":5104},"periodSeconds":5,"timeoutSeconds":3},"name":"dotnet-operations-service","ports":[{"containerPort":5104,"name":"http"}],"readinessProbe":{"failureThreshold":3,"httpGet":{"path":"/api/ready","port":5104},"periodSeconds":5,"timeoutSeconds":3},"resources":{"limits":{"cpu":"500m","memory":"384Mi"},"requests":{"cpu":"75m","memory":"128Mi"}},"startupProbe":{"failureThreshold":60,"httpGet":{"path":"/health","port":5104},"periodSeconds":5,"timeoutSeconds":3}}],"terminationGracePeriodSeconds":35}}}}
+    creationTimestamp: "2026-09-14T16:01:56Z"
+    generation: 11
+    labels:
+      app: dotnet-operations-service
+      runtime: dotnet
+      tier: application
+    name: dotnet-operations-service
+    namespace: plv-fabric
+    resourceVersion: "1789404303508895003"
+    uid: cd65b7ee-c536-44d3-bc9b-0f4695dcf7da
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: dotnet-operations-service
+    strategy:
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        labels:
+          app: dotnet-operations-service
+          runtime: dotnet
+          tier: application
+      spec:
+        containers:
+        - env:
+          - name: DOTNET_SERVICE_NAME
+            value: operations
+          - name: DOTNET_SERVICE_PORT
+            value: "5104"
+          - name: ASPNETCORE_URLS
+            value: http://+:5104
+          envFrom:
+          - configMapRef:
+              name: dotnet-service-config
+          - secretRef:
+              name: blockgo-secrets
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260914
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /health
+              port: 5104
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: dotnet-operations-service
+          ports:
+          - containerPort: 5104
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 5104
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: 500m
+              memory: 384Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /health
+              port: 5104
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 35
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:44:48Z"
+      lastUpdateTime: "2026-09-14T16:44:48Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:44:51Z"
+      lastUpdateTime: "2026-09-14T16:45:03Z"
+      message: ReplicaSet "dotnet-operations-service-57ffbfdc76" has successfully
+        progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 11
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "3"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"dotnet-realtime-service","runtime":"dotnet","tier":"application"},"name":"dotnet-realtime-service","namespace":"plv-fabric"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"dotnet-realtime-service"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"labels":{"app":"dotnet-realtime-service","runtime":"dotnet","tier":"application"}},"spec":{"containers":[{"env":[{"name":"DOTNET_SERVICE_NAME","value":"realtime"},{"name":"DOTNET_SERVICE_PORT","value":"5105"},{"name":"ASPNETCORE_URLS","value":"http://+:5105"}],"envFrom":[{"configMapRef":{"name":"dotnet-service-config"}},{"secretRef":{"name":"blockgo-secrets"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":60,"httpGet":{"path":"/health","port":5105},"periodSeconds":5,"timeoutSeconds":3},"name":"dotnet-realtime-service","ports":[{"containerPort":5105,"name":"http"}],"readinessProbe":{"failureThreshold":3,"httpGet":{"path":"/api/ready","port":5105},"periodSeconds":5,"timeoutSeconds":3},"resources":{"limits":{"cpu":"500m","memory":"384Mi"},"requests":{"cpu":"75m","memory":"128Mi"}},"startupProbe":{"failureThreshold":60,"httpGet":{"path":"/health","port":5105},"periodSeconds":5,"timeoutSeconds":3}}],"terminationGracePeriodSeconds":60}}}}
+    creationTimestamp: "2026-09-14T16:01:56Z"
+    generation: 11
+    labels:
+      app: dotnet-realtime-service
+      runtime: dotnet
+      tier: application
+    name: dotnet-realtime-service
+    namespace: plv-fabric
+    resourceVersion: "1789404308603343004"
+    uid: f2cd05ec-a72b-4640-b797-d7903fa4d913
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: dotnet-realtime-service
+    strategy:
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        labels:
+          app: dotnet-realtime-service
+          runtime: dotnet
+          tier: application
+      spec:
+        containers:
+        - env:
+          - name: DOTNET_SERVICE_NAME
+            value: realtime
+          - name: DOTNET_SERVICE_PORT
+            value: "5105"
+          - name: ASPNETCORE_URLS
+            value: http://+:5105
+          envFrom:
+          - configMapRef:
+              name: dotnet-service-config
+          - secretRef:
+              name: blockgo-secrets
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/client-app:prod-20260914
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /health
+              port: 5105
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: dotnet-realtime-service
+          ports:
+          - containerPort: 5105
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 5105
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: 500m
+              memory: 384Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /health
+              port: 5105
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 60
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:44:48Z"
+      lastUpdateTime: "2026-09-14T16:44:48Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:44:52Z"
+      lastUpdateTime: "2026-09-14T16:45:08Z"
+      message: ReplicaSet "dotnet-realtime-service-7f84b956df" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 11
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "6"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"fabric-identity-service","namespace":"plv-fabric"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"fabric-identity-service","tier":"application"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"annotations":{"prometheus.io/path":"/metrics","prometheus.io/port":"4002","prometheus.io/scrape":"true"},"labels":{"app":"fabric-identity-service","tier":"application"}},"spec":{"containers":[{"command":["npm","run","start:identity"],"env":[{"name":"PORT","value":"4002"},{"name":"NODE_OPTIONS","value":"--max-old-space-size=256"},{"name":"INTERNAL_API_KEY","valueFrom":{"secretKeyRef":{"key":"INTERNAL_API_KEY","name":"blockgo-secrets"}}},{"name":"COUCHDB_USER","valueFrom":{"secretKeyRef":{"key":"COUCHDB_USER","name":"blockgo-secrets"}}},{"name":"COUCHDB_PASS","valueFrom":{"secretKeyRef":{"key":"COUCHDB_PASS","name":"blockgo-secrets"}}},{"name":"WALLET_ENCRYPTION_KEY","valueFrom":{"secretKeyRef":{"key":"WALLET_ENCRYPTION_KEY","name":"blockgo-secrets","optional":true}}},{"name":"BOOTSTRAP_REGISTRAR_PASS","valueFrom":{"secretKeyRef":{"key":"BOOTSTRAP_REGISTRAR_PASS","name":"blockgo-secrets"}}}],"envFrom":[{"configMapRef":{"name":"middleware-service-config"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":60,"httpGet":{"path":"/api/health","port":4002},"periodSeconds":5,"timeoutSeconds":3},"name":"identity-service","ports":[{"containerPort":4002,"name":"api"}],"readinessProbe":{"httpGet":{"path":"/api/ready","port":4002},"periodSeconds":5,"timeoutSeconds":3},"resources":{"limits":{"cpu":"500m","memory":"384Mi"},"requests":{"cpu":"100m","memory":"192Mi"}},"startupProbe":{"failureThreshold":60,"httpGet":{"path":"/api/health","port":4002},"periodSeconds":5,"timeoutSeconds":3},"volumeMounts":[{"mountPath":"/etc/hyperledger/fabric-ca-roots","name":"fabric-ca-roots","readOnly":true}]}],"initContainers":[{"command":["/bin/sh","-ec","for e in couchdb-wallet-registrar.plv-main-campus.svc.cluster.local:5985 couchdb-wallet-faculty.plv-annex-campus.svc.cluster.local:5985 couchdb-wallet-department.plv-pubad-campus.svc.cluster.local:5985; do until nc -w 2 ${e%:*} ${e##*:} \u003c/dev/null; do sleep 2; done; done"],"image":"busybox:1.36.1","name":"wait-for-wallets"}],"serviceAccountName":"fabric-sa","terminationGracePeriodSeconds":40,"volumes":[{"name":"fabric-ca-roots","secret":{"secretName":"fabric-ca-roots"}}]}}}}
+    creationTimestamp: "2026-09-14T16:01:49Z"
+    generation: 8
+    name: fabric-identity-service
+    namespace: plv-fabric
+    resourceVersion: "1789407616416527011"
+    uid: b786092e-5b9d-4600-bfcc-4198b9d639d5
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: fabric-identity-service
+        tier: application
+    strategy:
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        annotations:
+          prometheus.io/path: /metrics
+          prometheus.io/port: "4002"
+          prometheus.io/scrape: "true"
+        labels:
+          app: fabric-identity-service
+          tier: application
+      spec:
+        containers:
+        - command:
+          - npm
+          - run
+          - start:identity
+          env:
+          - name: PORT
+            value: "4002"
+          - name: NODE_OPTIONS
+            value: --max-old-space-size=256
+          - name: INTERNAL_API_KEY
+            valueFrom:
+              secretKeyRef:
+                key: INTERNAL_API_KEY
+                name: blockgo-secrets
+          - name: COUCHDB_USER
+            valueFrom:
+              secretKeyRef:
+                key: COUCHDB_USER
+                name: blockgo-secrets
+          - name: COUCHDB_PASS
+            valueFrom:
+              secretKeyRef:
+                key: COUCHDB_PASS
+                name: blockgo-secrets
+          - name: WALLET_ENCRYPTION_KEY
+            valueFrom:
+              secretKeyRef:
+                key: WALLET_ENCRYPTION_KEY
+                name: blockgo-secrets
+                optional: true
+          - name: BOOTSTRAP_REGISTRAR_PASS
+            valueFrom:
+              secretKeyRef:
+                key: BOOTSTRAP_REGISTRAR_PASS
+                name: blockgo-secrets
+          envFrom:
+          - configMapRef:
+              name: middleware-service-config
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260915-1
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /api/health
+              port: 4002
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: identity-service
+          ports:
+          - containerPort: 4002
+            name: api
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 4002
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: 500m
+              memory: 384Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /api/health
+              port: 4002
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /etc/hyperledger/fabric-ca-roots
+            name: fabric-ca-roots
+            readOnly: true
+        dnsPolicy: ClusterFirst
+        initContainers:
+        - command:
+          - /bin/sh
+          - -ec
+          - for e in couchdb-wallet-registrar.plv-main-campus.svc.cluster.local:5985
+            couchdb-wallet-faculty.plv-annex-campus.svc.cluster.local:5985 couchdb-wallet-department.plv-pubad-campus.svc.cluster.local:5985;
+            do until nc -w 2 ${e%:*} ${e##*:} </dev/null; do sleep 2; done; done
+          image: busybox:1.36.1
+          imagePullPolicy: IfNotPresent
+          name: wait-for-wallets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        serviceAccount: fabric-sa
+        serviceAccountName: fabric-sa
+        terminationGracePeriodSeconds: 40
+        volumes:
+        - name: fabric-ca-roots
+          secret:
+            defaultMode: 420
+            secretName: fabric-ca-roots
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:27:07Z"
+      lastUpdateTime: "2026-09-14T16:27:07Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:44:53Z"
+      lastUpdateTime: "2026-09-14T17:37:46Z"
+      message: ReplicaSet "fabric-identity-service-69dd846f7c" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 8
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "3"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"frontend","tier":"web"},"name":"frontend","namespace":"plv-fabric"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"frontend"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"labels":{"app":"frontend","tier":"web"}},"spec":{"affinity":{"podAntiAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":[{"podAffinityTerm":{"labelSelector":{"matchExpressions":[{"key":"app","operator":"In","values":["frontend"]}]},"topologyKey":"kubernetes.io/hostname"},"weight":100}]}},"automountServiceAccountToken":false,"containers":[{"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/frontend:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":3,"httpGet":{"path":"/nginx-health","port":80},"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5},"name":"frontend-nginx","ports":[{"containerPort":80,"name":"http","protocol":"TCP"}],"readinessProbe":{"failureThreshold":3,"httpGet":{"path":"/nginx-health","port":80},"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":5},"resources":{"limits":{"cpu":"500m","memory":"512Mi"},"requests":{"cpu":"100m","memory":"128Mi"}},"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"add":["NET_BIND_SERVICE"],"drop":["ALL"]},"privileged":false,"readOnlyRootFilesystem":true,"runAsGroup":101,"runAsNonRoot":true,"runAsUser":101},"volumeMounts":[{"mountPath":"/etc/nginx/conf.d/default.conf","name":"nginx-config","readOnly":true,"subPath":"default.conf"},{"mountPath":"/var/cache/nginx","name":"nginx-cache"},{"mountPath":"/tmp","name":"nginx-tmp"}]}],"securityContext":{"fsGroup":101,"runAsGroup":101,"runAsNonRoot":true,"runAsUser":101,"seccompProfile":{"type":"RuntimeDefault"}},"volumes":[{"configMap":{"name":"frontend-nginx-config"},"name":"nginx-config"},{"emptyDir":{},"name":"nginx-cache"},{"emptyDir":{},"name":"nginx-tmp"}]}}}}
+    creationTimestamp: "2026-09-14T16:01:58Z"
+    generation: 4
+    labels:
+      app: frontend
+      tier: web
+    name: frontend
+    namespace: plv-fabric
+    resourceVersion: "1789404313613215023"
+    uid: 5e2e503c-7e5d-4e9e-87f6-68a3a670aec7
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: frontend
+    strategy:
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        labels:
+          app: frontend
+          tier: web
+      spec:
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                    - frontend
+                topologyKey: kubernetes.io/hostname
+              weight: 100
+        automountServiceAccountToken: false
+        containers:
+        - image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/frontend:prod-20260914
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /nginx-health
+              port: 80
+              scheme: HTTP
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            successThreshold: 1
+            timeoutSeconds: 5
+          name: frontend-nginx
+          ports:
+          - containerPort: 80
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /nginx-health
+              port: 80
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              add:
+              - NET_BIND_SERVICE
+              drop:
+              - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsGroup: 101
+            runAsNonRoot: true
+            runAsUser: 101
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /etc/nginx/conf.d/default.conf
+            name: nginx-config
+            readOnly: true
+            subPath: default.conf
+          - mountPath: /var/cache/nginx
+            name: nginx-cache
+          - mountPath: /tmp
+            name: nginx-tmp
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext:
+          fsGroup: 101
+          runAsGroup: 101
+          runAsNonRoot: true
+          runAsUser: 101
+          seccompProfile:
+            type: RuntimeDefault
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - configMap:
+            defaultMode: 420
+            name: frontend-nginx-config
+          name: nginx-config
+        - emptyDir: {}
+          name: nginx-cache
+        - emptyDir: {}
+          name: nginx-tmp
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:27:07Z"
+      lastUpdateTime: "2026-09-14T16:27:07Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:44:54Z"
+      lastUpdateTime: "2026-09-14T16:45:13Z"
+      message: ReplicaSet "frontend-7f49ccfd5d" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 4
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "1"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"grade-upload-service","namespace":"plv-fabric"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"grade-upload-service","tier":"application"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"annotations":{"prometheus.io/path":"/metrics","prometheus.io/port":"4004","prometheus.io/scrape":"true"},"labels":{"app":"grade-upload-service","tier":"application"}},"spec":{"containers":[{"command":["npm","run","start:upload"],"env":[{"name":"PORT","value":"4004"},{"name":"NODE_OPTIONS","value":"--max-old-space-size=256"},{"name":"INTERNAL_API_KEY","valueFrom":{"secretKeyRef":{"key":"INTERNAL_API_KEY","name":"blockgo-secrets"}}},{"name":"IPFS_ENCRYPTION_KEY","valueFrom":{"secretKeyRef":{"key":"IPFS_ENCRYPTION_KEY","name":"blockgo-secrets"}}}],"envFrom":[{"configMapRef":{"name":"middleware-service-config"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":30,"httpGet":{"path":"/api/health","port":4004},"periodSeconds":5,"timeoutSeconds":3},"name":"upload-service","ports":[{"containerPort":4004,"name":"api"}],"readinessProbe":{"httpGet":{"path":"/api/ready","port":4004},"periodSeconds":5,"timeoutSeconds":3},"resources":{"limits":{"cpu":"1000m","memory":"512Mi"},"requests":{"cpu":"100m","memory":"192Mi"}},"startupProbe":{"failureThreshold":30,"httpGet":{"path":"/api/health","port":4004},"periodSeconds":5,"timeoutSeconds":3},"volumeMounts":[{"mountPath":"/app/uploads","name":"uploads"}]}],"terminationGracePeriodSeconds":35,"volumes":[{"emptyDir":{"sizeLimit":"512Mi"},"name":"uploads"}]}}}}
+    creationTimestamp: "2026-09-14T16:01:51Z"
+    generation: 4
+    name: grade-upload-service
+    namespace: plv-fabric
+    resourceVersion: "1789404285778239022"
+    uid: a846cb1a-6358-4b0a-a167-2d17aaa22204
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: grade-upload-service
+        tier: application
+    strategy:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+      type: RollingUpdate
+    template:
+      metadata:
+        annotations:
+          prometheus.io/path: /metrics
+          prometheus.io/port: "4004"
+          prometheus.io/scrape: "true"
+        labels:
+          app: grade-upload-service
+          tier: application
+      spec:
+        containers:
+        - command:
+          - npm
+          - run
+          - start:upload
+          env:
+          - name: PORT
+            value: "4004"
+          - name: NODE_OPTIONS
+            value: --max-old-space-size=256
+          - name: INTERNAL_API_KEY
+            valueFrom:
+              secretKeyRef:
+                key: INTERNAL_API_KEY
+                name: blockgo-secrets
+          - name: IPFS_ENCRYPTION_KEY
+            valueFrom:
+              secretKeyRef:
+                key: IPFS_ENCRYPTION_KEY
+                name: blockgo-secrets
+          envFrom:
+          - configMapRef:
+              name: middleware-service-config
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260914
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /api/health
+              port: 4004
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: upload-service
+          ports:
+          - containerPort: 4004
+            name: api
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 4004
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 192Mi
+          startupProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /api/health
+              port: 4004
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /app/uploads
+            name: uploads
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 35
+        volumes:
+        - emptyDir:
+            sizeLimit: 512Mi
+          name: uploads
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:22:24Z"
+      lastUpdateTime: "2026-09-14T16:23:48Z"
+      message: ReplicaSet "grade-upload-service-9765f5486" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    - lastTransitionTime: "2026-09-14T16:27:31Z"
+      lastUpdateTime: "2026-09-14T16:27:31Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    observedGeneration: 4
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "1"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"grafana"},"name":"grafana","namespace":"plv-fabric"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"grafana"}},"strategy":{"type":"Recreate"},"template":{"metadata":{"labels":{"app":"grafana","tier":"observability"}},"spec":{"containers":[{"env":[{"name":"GF_SECURITY_ADMIN_USER","valueFrom":{"secretKeyRef":{"key":"admin-user","name":"grafana-admin"}}},{"name":"GF_SECURITY_ADMIN_PASSWORD","valueFrom":{"secretKeyRef":{"key":"admin-password","name":"grafana-admin"}}},{"name":"GF_SERVER_ROOT_URL","value":"%(protocol)s://%(domain)s/api/SystemMonitoring/grafana/"},{"name":"GF_SERVER_SERVE_FROM_SUB_PATH","value":"true"},{"name":"GF_AUTH_PROXY_ENABLED","value":"true"},{"name":"GF_AUTH_PROXY_HEADER_NAME","value":"X-WEBAUTH-USER"},{"name":"GF_AUTH_PROXY_AUTO_SIGN_UP","value":"true"},{"name":"GF_AUTH_DISABLE_LOGIN_FORM","value":"true"},{"name":"GF_AUTH_ANONYMOUS_ENABLED","value":"false"},{"name":"GF_USERS_AUTO_ASSIGN_ORG_ROLE","value":"Admin"},{"name":"GF_USERS_ALLOW_SIGN_UP","value":"false"},{"name":"GF_USERS_DEFAULT_THEME","value":"light"},{"name":"GF_ANALYTICS_REPORTING_ENABLED","value":"false"},{"name":"GF_ANALYTICS_CHECK_FOR_UPDATES","value":"false"},{"name":"GF_SECURITY_ALLOW_EMBEDDING","value":"true"}],"image":"grafana/grafana:13.1.0","imagePullPolicy":"IfNotPresent","livenessProbe":{"httpGet":{"path":"/api/SystemMonitoring/grafana/api/health","port":"http"},"initialDelaySeconds":30,"periodSeconds":10},"name":"grafana","ports":[{"containerPort":3000,"name":"http"}],"readinessProbe":{"httpGet":{"path":"/api/SystemMonitoring/grafana/api/health","port":"http"},"initialDelaySeconds":10,"periodSeconds":5},"resources":{"limits":{"cpu":"1","memory":"768Mi"},"requests":{"cpu":"10m","memory":"24Mi"}},"volumeMounts":[{"mountPath":"/etc/grafana/provisioning/datasources/datasources.yaml","name":"provisioning","readOnly":true,"subPath":"datasources.yaml"},{"mountPath":"/etc/grafana/provisioning/dashboards/dashboards.yaml","name":"provisioning","readOnly":true,"subPath":"dashboards.yaml"},{"mountPath":"/var/lib/grafana/dashboards","name":"dashboards","readOnly":true},{"mountPath":"/var/lib/grafana","name":"data"}]}],"securityContext":{"fsGroup":472},"volumes":[{"configMap":{"name":"grafana-provisioning"},"name":"provisioning"},{"configMap":{"name":"grafana-dashboards"},"name":"dashboards"},{"name":"data","persistentVolumeClaim":{"claimName":"grafana-data"}}]}}}}
+    creationTimestamp: "2026-09-14T15:20:06Z"
+    generation: 1
+    labels:
+      app: grafana
+    name: grafana
+    namespace: plv-fabric
+    resourceVersion: "1789399266012431010"
+    uid: 4f02db3d-ebcc-4fa5-a541-3152c4fe8d95
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: grafana
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          app: grafana
+          tier: observability
+      spec:
+        containers:
+        - env:
+          - name: GF_SECURITY_ADMIN_USER
+            valueFrom:
+              secretKeyRef:
+                key: admin-user
+                name: grafana-admin
+          - name: GF_SECURITY_ADMIN_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: admin-password
+                name: grafana-admin
+          - name: GF_SERVER_ROOT_URL
+            value: '%(protocol)s://%(domain)s/api/SystemMonitoring/grafana/'
+          - name: GF_SERVER_SERVE_FROM_SUB_PATH
+            value: "true"
+          - name: GF_AUTH_PROXY_ENABLED
+            value: "true"
+          - name: GF_AUTH_PROXY_HEADER_NAME
+            value: X-WEBAUTH-USER
+          - name: GF_AUTH_PROXY_AUTO_SIGN_UP
+            value: "true"
+          - name: GF_AUTH_DISABLE_LOGIN_FORM
+            value: "true"
+          - name: GF_AUTH_ANONYMOUS_ENABLED
+            value: "false"
+          - name: GF_USERS_AUTO_ASSIGN_ORG_ROLE
+            value: Admin
+          - name: GF_USERS_ALLOW_SIGN_UP
+            value: "false"
+          - name: GF_USERS_DEFAULT_THEME
+            value: light
+          - name: GF_ANALYTICS_REPORTING_ENABLED
+            value: "false"
+          - name: GF_ANALYTICS_CHECK_FOR_UPDATES
+            value: "false"
+          - name: GF_SECURITY_ALLOW_EMBEDDING
+            value: "true"
+          image: grafana/grafana:13.1.0
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/SystemMonitoring/grafana/api/health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          name: grafana
+          ports:
+          - containerPort: 3000
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/SystemMonitoring/grafana/api/health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            limits:
+              cpu: "1"
+              memory: 768Mi
+            requests:
+              cpu: 10m
+              memory: 24Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /etc/grafana/provisioning/datasources/datasources.yaml
+            name: provisioning
+            readOnly: true
+            subPath: datasources.yaml
+          - mountPath: /etc/grafana/provisioning/dashboards/dashboards.yaml
+            name: provisioning
+            readOnly: true
+            subPath: dashboards.yaml
+          - mountPath: /var/lib/grafana/dashboards
+            name: dashboards
+            readOnly: true
+          - mountPath: /var/lib/grafana
+            name: data
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext:
+          fsGroup: 472
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - configMap:
+            defaultMode: 420
+            name: grafana-provisioning
+          name: provisioning
+        - configMap:
+            defaultMode: 420
+            name: grafana-dashboards
+          name: dashboards
+        - name: data
+          persistentVolumeClaim:
+            claimName: grafana-data
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T15:21:05Z"
+      lastUpdateTime: "2026-09-14T15:21:05Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T15:20:06Z"
+      lastUpdateTime: "2026-09-14T15:21:05Z"
+      message: ReplicaSet "grafana-854466d986" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 1
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "1"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"ipfs-ha-router","namespace":"plv-fabric"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"ipfs-ha-router"}},"template":{"metadata":{"labels":{"app":"ipfs-ha-router"}},"spec":{"containers":[{"image":"nginx:1.27-alpine","imagePullPolicy":"IfNotPresent","livenessProbe":{"httpGet":{"path":"/router-health","port":5001},"initialDelaySeconds":10,"periodSeconds":15},"name":"nginx","ports":[{"containerPort":5001,"name":"api"},{"containerPort":8080,"name":"gateway"}],"readinessProbe":{"httpGet":{"path":"/router-health","port":5001},"periodSeconds":5},"resources":{"limits":{"memory":"64Mi"},"requests":{"cpu":"10m","memory":"16Mi"}},"volumeMounts":[{"mountPath":"/etc/nginx/conf.d/default.conf","name":"config","readOnly":true,"subPath":"default.conf"}]}],"volumes":[{"configMap":{"name":"ipfs-ha-router-config"},"name":"config"}]}}}}
+    creationTimestamp: "2026-09-14T15:59:12Z"
+    generation: 1
+    name: ipfs-ha-router
+    namespace: plv-fabric
+    resourceVersion: "1789401557754991021"
+    uid: 3d8c82f5-a9dd-4a76-a5e5-aff28dd33494
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: ipfs-ha-router
+    strategy:
+      rollingUpdate:
+        maxSurge: 25%
+        maxUnavailable: 25%
+      type: RollingUpdate
+    template:
+      metadata:
+        labels:
+          app: ipfs-ha-router
+      spec:
+        containers:
+        - image: nginx:1.27-alpine
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /router-health
+              port: 5001
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            successThreshold: 1
+            timeoutSeconds: 1
+          name: nginx
+          ports:
+          - containerPort: 5001
+            name: api
+            protocol: TCP
+          - containerPort: 8080
+            name: gateway
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /router-health
+              port: 5001
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            limits:
+              memory: 64Mi
+            requests:
+              cpu: 10m
+              memory: 16Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /etc/nginx/conf.d/default.conf
+            name: config
+            readOnly: true
+            subPath: default.conf
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - configMap:
+            defaultMode: 420
+            name: ipfs-ha-router-config
+          name: config
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T15:59:17Z"
+      lastUpdateTime: "2026-09-14T15:59:17Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T15:59:12Z"
+      lastUpdateTime: "2026-09-14T15:59:17Z"
+      message: ReplicaSet "ipfs-ha-router-65b8bb9b7" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 1
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "1"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"kube-state-metrics"},"name":"kube-state-metrics","namespace":"plv-fabric"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"kube-state-metrics"}},"strategy":{"type":"Recreate"},"template":{"metadata":{"labels":{"app":"kube-state-metrics","tier":"observability"}},"spec":{"containers":[{"image":"registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1","imagePullPolicy":"IfNotPresent","name":"kube-state-metrics","ports":[{"containerPort":8080,"name":"http"}],"readinessProbe":{"httpGet":{"path":"/","port":"http"},"periodSeconds":5},"resources":{"limits":{"cpu":"250m","memory":"256Mi"},"requests":{"cpu":"5m","memory":"8Mi"}}}],"serviceAccountName":"kube-state-metrics"}}}}
+    creationTimestamp: "2026-09-14T15:20:01Z"
+    generation: 1
+    labels:
+      app: kube-state-metrics
+    name: kube-state-metrics
+    namespace: plv-fabric
+    resourceVersion: "1789399205488543010"
+    uid: f47e2b00-8fd9-4caa-a2ac-773374b745eb
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: kube-state-metrics
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          app: kube-state-metrics
+          tier: observability
+      spec:
+        containers:
+        - image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1
+          imagePullPolicy: IfNotPresent
+          name: kube-state-metrics
+          ports:
+          - containerPort: 8080
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /
+              port: http
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            limits:
+              cpu: 250m
+              memory: 256Mi
+            requests:
+              cpu: 5m
+              memory: 8Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        serviceAccount: kube-state-metrics
+        serviceAccountName: kube-state-metrics
+        terminationGracePeriodSeconds: 30
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T15:20:05Z"
+      lastUpdateTime: "2026-09-14T15:20:05Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T15:20:01Z"
+      lastUpdateTime: "2026-09-14T15:20:05Z"
+      message: ReplicaSet "kube-state-metrics-77cf8d8d8d" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 1
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "3"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"ledger-service","namespace":"plv-fabric"},"spec":{"replicas":3,"selector":{"matchLabels":{"app":"ledger-service","tier":"application"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"annotations":{"prometheus.io/path":"/metrics","prometheus.io/port":"4003","prometheus.io/scrape":"true"},"labels":{"app":"ledger-service","tier":"application"}},"spec":{"containers":[{"command":["npm","run","start:ledger"],"env":[{"name":"PORT","value":"4003"},{"name":"NODE_OPTIONS","value":"--max-old-space-size=384"},{"name":"INTERNAL_API_KEY","valueFrom":{"secretKeyRef":{"key":"INTERNAL_API_KEY","name":"blockgo-secrets"}}},{"name":"COUCHDB_USER","valueFrom":{"secretKeyRef":{"key":"COUCHDB_USER","name":"blockgo-secrets"}}},{"name":"COUCHDB_PASS","valueFrom":{"secretKeyRef":{"key":"COUCHDB_PASS","name":"blockgo-secrets"}}},{"name":"WALLET_ENCRYPTION_KEY","valueFrom":{"secretKeyRef":{"key":"WALLET_ENCRYPTION_KEY","name":"blockgo-secrets","optional":true}}}],"envFrom":[{"configMapRef":{"name":"middleware-service-config"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":60,"httpGet":{"path":"/api/health","port":4003},"periodSeconds":5,"timeoutSeconds":3},"name":"ledger-service","ports":[{"containerPort":4003,"name":"api"}],"readinessProbe":{"httpGet":{"path":"/api/ready","port":4003},"periodSeconds":5,"timeoutSeconds":3},"resources":{"limits":{"cpu":"750m","memory":"512Mi"},"requests":{"cpu":"150m","memory":"256Mi"}},"startupProbe":{"failureThreshold":60,"httpGet":{"path":"/api/health","port":4003},"periodSeconds":5,"timeoutSeconds":3},"volumeMounts":[{"mountPath":"/etc/hyperledger/fabric-gateway-tls","name":"fabric-gateway-tls-roots","readOnly":true}]}],"initContainers":[{"command":["/bin/sh","-ec","for e in couchdb-wallet-registrar.plv-main-campus.svc.cluster.local:5985 couchdb-wallet-faculty.plv-annex-campus.svc.cluster.local:5985 couchdb-wallet-department.plv-pubad-campus.svc.cluster.local:5985; do until nc -w 2 ${e%:*} ${e##*:} \u003c/dev/null; do sleep 2; done; done"],"image":"busybox:1.36.1","name":"wait-for-wallets"}],"serviceAccountName":"fabric-sa","terminationGracePeriodSeconds":45,"volumes":[{"name":"fabric-gateway-tls-roots","secret":{"secretName":"fabric-gateway-tls-roots"}}]}}}}
+    creationTimestamp: "2026-09-14T16:01:50Z"
+    generation: 11
+    name: ledger-service
+    namespace: plv-fabric
+    resourceVersion: "1789423178016175001"
+    uid: 5549397e-60ec-499c-98fc-61713c33ae3f
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: ledger-service
+        tier: application
+    strategy:
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        annotations:
+          prometheus.io/path: /metrics
+          prometheus.io/port: "4003"
+          prometheus.io/scrape: "true"
+        labels:
+          app: ledger-service
+          tier: application
+      spec:
+        containers:
+        - command:
+          - npm
+          - run
+          - start:ledger
+          env:
+          - name: PORT
+            value: "4003"
+          - name: NODE_OPTIONS
+            value: --max-old-space-size=384
+          - name: INTERNAL_API_KEY
+            valueFrom:
+              secretKeyRef:
+                key: INTERNAL_API_KEY
+                name: blockgo-secrets
+          - name: COUCHDB_USER
+            valueFrom:
+              secretKeyRef:
+                key: COUCHDB_USER
+                name: blockgo-secrets
+          - name: COUCHDB_PASS
+            valueFrom:
+              secretKeyRef:
+                key: COUCHDB_PASS
+                name: blockgo-secrets
+          - name: WALLET_ENCRYPTION_KEY
+            valueFrom:
+              secretKeyRef:
+                key: WALLET_ENCRYPTION_KEY
+                name: blockgo-secrets
+                optional: true
+          envFrom:
+          - configMapRef:
+              name: middleware-service-config
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260914
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /api/health
+              port: 4003
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: ledger-service
+          ports:
+          - containerPort: 4003
+            name: api
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 4003
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: 750m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            failureThreshold: 60
+            httpGet:
+              path: /api/health
+              port: 4003
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /etc/hyperledger/fabric-gateway-tls
+            name: fabric-gateway-tls-roots
+            readOnly: true
+        dnsPolicy: ClusterFirst
+        initContainers:
+        - command:
+          - /bin/sh
+          - -ec
+          - for e in couchdb-wallet-registrar.plv-main-campus.svc.cluster.local:5985
+            couchdb-wallet-faculty.plv-annex-campus.svc.cluster.local:5985 couchdb-wallet-department.plv-pubad-campus.svc.cluster.local:5985;
+            do until nc -w 2 ${e%:*} ${e##*:} </dev/null; do sleep 2; done; done
+          image: busybox:1.36.1
+          imagePullPolicy: IfNotPresent
+          name: wait-for-wallets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        serviceAccount: fabric-sa
+        serviceAccountName: fabric-sa
+        terminationGracePeriodSeconds: 45
+        volumes:
+        - name: fabric-gateway-tls-roots
+          secret:
+            defaultMode: 420
+            secretName: fabric-gateway-tls-roots
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:44:55Z"
+      lastUpdateTime: "2026-09-14T16:44:55Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:44:54Z"
+      lastUpdateTime: "2026-09-14T16:45:08Z"
+      message: ReplicaSet "ledger-service-84f5587559" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 11
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "1"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"loki"},"name":"loki","namespace":"plv-fabric"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"loki"}},"strategy":{"type":"Recreate"},"template":{"metadata":{"labels":{"app":"loki","tier":"observability"}},"spec":{"containers":[{"args":["-config.file=/etc/loki/loki.yaml"],"image":"grafana/loki:3.7.3","imagePullPolicy":"IfNotPresent","livenessProbe":{"httpGet":{"path":"/ready","port":"http"},"initialDelaySeconds":20,"periodSeconds":10},"name":"loki","ports":[{"containerPort":3100,"name":"http"}],"readinessProbe":{"httpGet":{"path":"/ready","port":"http"},"periodSeconds":5},"resources":{"limits":{"cpu":"1","memory":"1Gi"},"requests":{"cpu":"10m","memory":"32Mi"}},"volumeMounts":[{"mountPath":"/etc/loki","name":"config","readOnly":true},{"mountPath":"/loki","name":"data"}]}],"securityContext":{"fsGroup":10001},"volumes":[{"configMap":{"name":"loki-config"},"name":"config"},{"name":"data","persistentVolumeClaim":{"claimName":"loki-data"}}]}}}}
+    creationTimestamp: "2026-09-14T15:20:03Z"
+    generation: 1
+    labels:
+      app: loki
+    name: loki
+    namespace: plv-fabric
+    resourceVersion: "1789399241666463017"
+    uid: d2e7c29e-d045-4158-9548-609a83e9af1f
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: loki
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          app: loki
+          tier: observability
+      spec:
+        containers:
+        - args:
+          - -config.file=/etc/loki/loki.yaml
+          image: grafana/loki:3.7.3
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /ready
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          name: loki
+          ports:
+          - containerPort: 3100
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /ready
+              port: http
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /etc/loki
+            name: config
+            readOnly: true
+          - mountPath: /loki
+            name: data
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext:
+          fsGroup: 10001
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - configMap:
+            defaultMode: 420
+            name: loki-config
+          name: config
+        - name: data
+          persistentVolumeClaim:
+            claimName: loki-data
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T15:20:41Z"
+      lastUpdateTime: "2026-09-14T15:20:41Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T15:20:03Z"
+      lastUpdateTime: "2026-09-14T15:20:41Z"
+      message: ReplicaSet "loki-8c959bf7c" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 1
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "3"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"middleware-api","namespace":"plv-fabric"},"spec":{"replicas":3,"selector":{"matchLabels":{"app":"middleware-api","tier":"application"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"annotations":{"prometheus.io/path":"/metrics","prometheus.io/port":"4000","prometheus.io/scrape":"true"},"labels":{"app":"middleware-api","tier":"application"}},"spec":{"containers":[{"command":["npm","run","start:gateway"],"env":[{"name":"PORT","value":"4000"},{"name":"NODE_OPTIONS","value":"--max-old-space-size=160"},{"name":"FRONTEND_URL","valueFrom":{"secretKeyRef":{"key":"FRONTEND_URL","name":"blockgo-secrets","optional":true}}},{"name":"CORS_ORIGINS","valueFrom":{"secretKeyRef":{"key":"CORS_ORIGINS","name":"blockgo-secrets","optional":true}}}],"envFrom":[{"configMapRef":{"name":"middleware-service-config"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":30,"httpGet":{"path":"/api/health","port":4000},"periodSeconds":5,"timeoutSeconds":3},"name":"api-gateway","ports":[{"containerPort":4000,"name":"api"}],"readinessProbe":{"failureThreshold":3,"httpGet":{"path":"/api/ready","port":4000},"periodSeconds":5,"timeoutSeconds":4},"resources":{"limits":{"cpu":"300m","memory":"192Mi"},"requests":{"cpu":"100m","memory":"128Mi"}},"startupProbe":{"failureThreshold":30,"httpGet":{"path":"/api/health","port":4000},"periodSeconds":5,"timeoutSeconds":3}}],"terminationGracePeriodSeconds":35}}}}
+    creationTimestamp: "2026-09-14T16:01:47Z"
+    generation: 11
+    name: middleware-api
+    namespace: plv-fabric
+    resourceVersion: "1789423178573951004"
+    uid: 97e66c5b-a932-4346-95d6-8ed568112bb3
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: middleware-api
+        tier: application
+    strategy:
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        annotations:
+          prometheus.io/path: /metrics
+          prometheus.io/port: "4000"
+          prometheus.io/scrape: "true"
+        labels:
+          app: middleware-api
+          tier: application
+      spec:
+        containers:
+        - command:
+          - npm
+          - run
+          - start:gateway
+          env:
+          - name: PORT
+            value: "4000"
+          - name: NODE_OPTIONS
+            value: --max-old-space-size=160
+          - name: FRONTEND_URL
+            valueFrom:
+              secretKeyRef:
+                key: FRONTEND_URL
+                name: blockgo-secrets
+                optional: true
+          - name: CORS_ORIGINS
+            valueFrom:
+              secretKeyRef:
+                key: CORS_ORIGINS
+                name: blockgo-secrets
+                optional: true
+          envFrom:
+          - configMapRef:
+              name: middleware-service-config
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260914
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /api/health
+              port: 4000
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: api-gateway
+          ports:
+          - containerPort: 4000
+            name: api
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 4000
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 4
+          resources:
+            limits:
+              cpu: 300m
+              memory: 192Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /api/health
+              port: 4000
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 35
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:44:54Z"
+      lastUpdateTime: "2026-09-14T16:44:54Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:44:55Z"
+      lastUpdateTime: "2026-09-14T16:45:11Z"
+      message: ReplicaSet "middleware-api-678647b649" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 11
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "1"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"prometheus"},"name":"prometheus","namespace":"plv-fabric"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"prometheus"}},"strategy":{"type":"Recreate"},"template":{"metadata":{"labels":{"app":"prometheus","tier":"observability"}},"spec":{"containers":[{"args":["--config.file=/etc/prometheus/prometheus.yml","--storage.tsdb.path=/prometheus","--storage.tsdb.retention.time=15d","--web.enable-lifecycle"],"image":"prom/prometheus:v3.12.0","imagePullPolicy":"IfNotPresent","livenessProbe":{"httpGet":{"path":"/-/healthy","port":"http"},"initialDelaySeconds":15,"periodSeconds":10},"name":"prometheus","ports":[{"containerPort":9090,"name":"http"}],"readinessProbe":{"httpGet":{"path":"/-/ready","port":"http"},"periodSeconds":5},"resources":{"limits":{"cpu":"1","memory":"1Gi"},"requests":{"cpu":"10m","memory":"24Mi"}},"volumeMounts":[{"mountPath":"/etc/prometheus","name":"config","readOnly":true},{"mountPath":"/prometheus","name":"data"}]}],"securityContext":{"fsGroup":65534},"serviceAccountName":"prometheus","volumes":[{"configMap":{"name":"prometheus-config"},"name":"config"},{"name":"data","persistentVolumeClaim":{"claimName":"prometheus-data"}}]}}}}
+    creationTimestamp: "2026-09-14T15:20:00Z"
+    generation: 1
+    labels:
+      app: prometheus
+    name: prometheus
+    namespace: plv-fabric
+    resourceVersion: "1789399235846079021"
+    uid: 97a1d592-4480-4a7f-9590-a0660ff3c1c0
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: prometheus
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          app: prometheus
+          tier: observability
+      spec:
+        containers:
+        - args:
+          - --config.file=/etc/prometheus/prometheus.yml
+          - --storage.tsdb.path=/prometheus
+          - --storage.tsdb.retention.time=15d
+          - --web.enable-lifecycle
+          image: prom/prometheus:v3.12.0
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /-/healthy
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          name: prometheus
+          ports:
+          - containerPort: 9090
+            name: http
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /-/ready
+              port: http
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            requests:
+              cpu: 10m
+              memory: 24Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /etc/prometheus
+            name: config
+            readOnly: true
+          - mountPath: /prometheus
+            name: data
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext:
+          fsGroup: 65534
+        serviceAccount: prometheus
+        serviceAccountName: prometheus
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - configMap:
+            defaultMode: 420
+            name: prometheus-config
+          name: config
+        - name: data
+          persistentVolumeClaim:
+            claimName: prometheus-data
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T15:20:35Z"
+      lastUpdateTime: "2026-09-14T15:20:35Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T15:20:00Z"
+      lastUpdateTime: "2026-09-14T15:20:35Z"
+      message: ReplicaSet "prometheus-558887b85" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 1
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "1"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"redis-master","namespace":"plv-fabric"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"redis-master"}},"template":{"metadata":{"labels":{"app":"redis-master"}},"spec":{"containers":[{"image":"redis:7-alpine","imagePullPolicy":"IfNotPresent","livenessProbe":{"initialDelaySeconds":15,"periodSeconds":20,"tcpSocket":{"port":6379}},"name":"redis","ports":[{"containerPort":6379,"name":"redis"}],"readinessProbe":{"initialDelaySeconds":5,"periodSeconds":10,"tcpSocket":{"port":6379}},"resources":{"limits":{"cpu":"250m","memory":"256Mi"},"requests":{"cpu":"100m","memory":"128Mi"}}}]}}}}
+    creationTimestamp: "2026-09-14T15:18:27Z"
+    generation: 1
+    name: redis-master
+    namespace: plv-fabric
+    resourceVersion: "1789399122070111001"
+    uid: 0709da6d-dfeb-49f0-858d-be65084585ad
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: redis-master
+    strategy:
+      rollingUpdate:
+        maxSurge: 25%
+        maxUnavailable: 25%
+      type: RollingUpdate
+    template:
+      metadata:
+        labels:
+          app: redis-master
+      spec:
+        containers:
+        - image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            successThreshold: 1
+            tcpSocket:
+              port: 6379
+            timeoutSeconds: 1
+          name: redis
+          ports:
+          - containerPort: 6379
+            name: redis
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            tcpSocket:
+              port: 6379
+            timeoutSeconds: 1
+          resources:
+            limits:
+              cpu: 250m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T15:18:42Z"
+      lastUpdateTime: "2026-09-14T15:18:42Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T15:18:27Z"
+      lastUpdateTime: "2026-09-14T15:18:42Z"
+      message: ReplicaSet "redis-master-6698b97f8f" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 1
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "1"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"settings-service","namespace":"plv-fabric"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"settings-service","tier":"application"}},"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"},"template":{"metadata":{"annotations":{"prometheus.io/path":"/metrics","prometheus.io/port":"4005","prometheus.io/scrape":"true"},"labels":{"app":"settings-service","tier":"application"}},"spec":{"containers":[{"command":["npm","run","start:settings"],"env":[{"name":"PORT","value":"4005"},{"name":"NODE_OPTIONS","value":"--max-old-space-size=160"},{"name":"INTERNAL_API_KEY","valueFrom":{"secretKeyRef":{"key":"INTERNAL_API_KEY","name":"blockgo-secrets"}}},{"name":"POSTGRES_USER","valueFrom":{"secretKeyRef":{"key":"POSTGRES_USER","name":"blockgo-secrets"}}},{"name":"POSTGRES_PASS","valueFrom":{"secretKeyRef":{"key":"POSTGRES_PASS","name":"blockgo-secrets"}}}],"envFrom":[{"configMapRef":{"name":"middleware-service-config"}}],"image":"asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260914","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":30,"httpGet":{"path":"/api/health","port":4005},"periodSeconds":5,"timeoutSeconds":3},"name":"settings-service","ports":[{"containerPort":4005,"name":"api"}],"readinessProbe":{"httpGet":{"path":"/api/ready","port":4005},"periodSeconds":5,"timeoutSeconds":3},"resources":{"limits":{"cpu":"300m","memory":"192Mi"},"requests":{"cpu":"100m","memory":"128Mi"}},"startupProbe":{"failureThreshold":30,"httpGet":{"path":"/api/health","port":4005},"periodSeconds":5,"timeoutSeconds":3}}],"terminationGracePeriodSeconds":35}}}}
+    creationTimestamp: "2026-09-14T16:01:51Z"
+    generation: 2
+    name: settings-service
+    namespace: plv-fabric
+    resourceVersion: "1789403042372351004"
+    uid: a85de59b-5dca-4682-b6c2-81b051692555
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: settings-service
+        tier: application
+    strategy:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+      type: RollingUpdate
+    template:
+      metadata:
+        annotations:
+          prometheus.io/path: /metrics
+          prometheus.io/port: "4005"
+          prometheus.io/scrape: "true"
+        labels:
+          app: settings-service
+          tier: application
+      spec:
+        containers:
+        - command:
+          - npm
+          - run
+          - start:settings
+          env:
+          - name: PORT
+            value: "4005"
+          - name: NODE_OPTIONS
+            value: --max-old-space-size=160
+          - name: INTERNAL_API_KEY
+            valueFrom:
+              secretKeyRef:
+                key: INTERNAL_API_KEY
+                name: blockgo-secrets
+          - name: POSTGRES_USER
+            valueFrom:
+              secretKeyRef:
+                key: POSTGRES_USER
+                name: blockgo-secrets
+          - name: POSTGRES_PASS
+            valueFrom:
+              secretKeyRef:
+                key: POSTGRES_PASS
+                name: blockgo-secrets
+          envFrom:
+          - configMapRef:
+              name: middleware-service-config
+          image: asia-east1-docker.pkg.dev/project-40ba6a5d-f690-467b-bc9/blockgo/fabric-middleware:prod-20260914
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /api/health
+              port: 4005
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          name: settings-service
+          ports:
+          - containerPort: 4005
+            name: api
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/ready
+              port: 4005
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: 300m
+              memory: 192Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /api/health
+              port: 4005
+              scheme: HTTP
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 35
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2026-09-14T16:24:02Z"
+      lastUpdateTime: "2026-09-14T16:24:02Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2026-09-14T16:24:02Z"
+      lastUpdateTime: "2026-09-14T16:24:02Z"
+      message: ReplicaSet "settings-service-548fc5fc9f" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 2
+    readyReplicas: 1
+    replicas: 1
+    terminatingReplicas: 0
+    updatedReplicas: 1
+kind: List
+metadata:
+  resourceVersion: ""

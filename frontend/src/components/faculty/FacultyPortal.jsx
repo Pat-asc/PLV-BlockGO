@@ -6,6 +6,7 @@ import YearTabs from './YearTabs';
 import ProgramCard from './ProgramCard';
 import FacultyCurriculumPanel from './FacultyCurriculumPanel';
 import { getGradeEquivalent } from '../../utils/gradingHelpers';
+import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from '../../utils/studentAcademicHelpers';
 
 const normalizeYearLabel = (value) => {
   const raw = String(value || '').trim();
@@ -614,16 +615,22 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         };
         const backendStudents = actualStudents.filter(s => 
           s.department === sec.department && 
-          (String(s.section) === String(sec.section) || String(s.sectionNum) === String(sec.section)) && 
+          String(s.section || '').match(/\b\d+-\d+\b/)?.[0] ===
+            String(sec.canonicalSection || sec.section || '').match(/\b\d+-\d+\b/)?.[0] &&
+          !!String(s.section || '').match(/\b\d+-\d+\b/) &&
           (s.assignmentStatus === 'Enrolled' || s.enrollmentStatus === 'Enrolled')
         );
-        const rosterSource =
-          Array.isArray(matchedAssignment?.rosterStudents) &&
-          matchedAssignment.rosterStudents.length
-            ? matchedAssignment.rosterStudents
-            : backendStudents;
+        const rosterSource = backendStudents.length
+          ? backendStudents
+          : (matchedAssignment?.rosterStudents || []);
         const enrolledStudents = rosterSource.map(studentRecord => {
+          const backendStudent = backendStudents.find((student) =>
+            ((studentRecord.userId || studentRecord.id) &&
+              String(student.id) === String(studentRecord.userId || studentRecord.id)) ||
+            (!!studentRecord.email && normalizeText(student.email) === normalizeText(studentRecord.email))
+          );
           const preferredStudentNo =
+            backendStudent?.studentno ||
             studentRecord.studentno ||
             studentRecord.studentNo ||
             "";
@@ -659,9 +666,9 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             ) ||
             null;
           const resolvedStudentNo =
-            preferredStudentNo ||
             backendMatch?.studentno ||
-            globalStudentMatch?.studentno ||
+            (globalStudentMatch && backendStudents.some((student) => student.id === globalStudentMatch.id)
+              ? globalStudentMatch.studentno : "") ||
             "";
           const savedGrade = [...sectionGrades].reverse().find(g => {
             const gradeStudentKey = normalizeText(getGradeStudentKey(g));
@@ -694,7 +701,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
           return {
             id: resolvedStudentNo || rosterStudentId,
-            studentNo: resolvedStudentNo || rosterStudentId,
+            studentNo: resolvedStudentNo,
             userId: backendMatch?.id || globalStudentMatch?.id || studentRecord.id || "",
             name: fullName,
             email: globalStudentMatch?.email || studentRecord.email || "",
@@ -713,13 +720,14 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           subjectCode: matchedAssignment?.subjectCode || sec.subject || `${sec.department}-${sec.section}`, 
           subjectTitle: matchedAssignment?.subjectTitle || sec.subject || `Assigned Subject (${sec.department})`, 
           sectionCourse: sec.department,
-          canonicalSection: matchedAssignment?.sectionName || sec.section || sectionKey,
+          canonicalSection: sec.canonicalSection || matchedAssignment?.sectionName || sec.section || sectionKey,
+          academicSectionId: sec.academicSectionId || null,
           units: matchedAssignment?.units || "Not Available",
           schedule: getOptionalAssignmentValue(matchedAssignment?.schedule),
           day: getOptionalAssignmentValue(matchedAssignment?.day),
           date: getOptionalAssignmentValue(matchedAssignment?.date),
-          schoolYear: matchedAssignment?.schoolYear || "Not Available",
-          semester: matchedAssignment?.semester || encodingSemester || "Not Available",
+          schoolYear: sec.schoolYear || "Not Available",
+          semester: sec.semester || "Not Available",
           reviewNote: sectionReviewState.note,
           students: enrolledStudents
         };
@@ -799,7 +807,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       if (!isBackground) setIsLoadingData(false);
     }
   }, [
-    encodingSemester,
     encodingTerm,
     facultyBulkUploadStorageKey,
     facultyData.email,
@@ -1076,8 +1083,14 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     if (!file) return;
 
     const sectionData = sections[sectionName];
-    const semester = encodingSemester; 
-    const schoolYear = "2024";
+    const semester = canonicalAcademicSemester(sectionData.semester);
+    const schoolYear = canonicalAcademicSchoolYear(sectionData.schoolYear);
+    if (!sectionData.academicSectionId || !['FIRST', 'SECOND', 'MIDYEAR'].includes(semester) ||
+        !/^\d{4}-\d{4}$/.test(schoolYear)) {
+      alert('The assigned subject has no active enrolled academic period. Ask the Registrar to verify the section before uploading grades.');
+      e.target.value = null;
+      return;
+    }
     const course = sectionData.subjectCode || sectionData.sectionCourse || sectionName;
     const canonicalSection = sectionData.canonicalSection || sectionName;
 
@@ -1117,20 +1130,28 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     
     try {
       const sectionData = sections[sectionName];
+      if (!sectionData.academicSectionId ||
+          !['FIRST', 'SECOND', 'MIDYEAR'].includes(canonicalAcademicSemester(sectionData.semester)) ||
+          !/^\d{4}-\d{4}$/.test(canonicalAcademicSchoolYear(sectionData.schoolYear))) {
+        throw new Error('The assigned subject has no active enrolled academic period. Ask the Registrar to verify the section before saving grades.');
+      }
+      if (students.some((student) => !student.studentNo)) {
+        throw new Error('A roster student has no Registrar student number. Refresh the section roster before saving.');
+      }
       const canonicalSection = sectionData.canonicalSection || sectionName;
       const promises = students.map(student => {
           const finalAverage = calculateFinalAverage(student);
-          const resolvedStudentId = student.studentNo || student.id || "";
+          const resolvedStudentId = student.studentNo;
           const gradePayload = {
               student_id: resolvedStudentId,
               student_name: student.name || [student.lastName, student.firstName].filter(Boolean).join(", "),
               student_hash: student.email || resolvedStudentId,
               section: canonicalSection,
-              course: sectionData.sectionCourse || sectionData.subjectCode || sectionName,
+              course: facultyData.department || sectionData.sectionCourse || '',
               subject_code: sectionData.subjectCode,
               subject_name: sectionData.subjectTitle || sectionData.subjectCode,
               professor_name: facultyData.name || facultyData.email,
-              program: sectionData.sectionCourse || '',
+              program: facultyData.department || sectionData.sectionCourse || '',
               term: encodingTerm,
               units: Number(sectionData.units) || 3,
               year_level: sectionData.year || "",
@@ -1141,8 +1162,8 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                 standing: student.standing || STUDENT_STATUS_ACTIVE,
                 flagged: !!student.flagged,
               }),
-              semester: encodingSemester,
-              school_year: "2024",
+              semester: canonicalAcademicSemester(sectionData.semester),
+              school_year: canonicalAcademicSchoolYear(sectionData.schoolYear),
               faculty_id: facultyData.email,
               date: new Date().toISOString().split('T')[0],
               status: "Issued"
@@ -1162,6 +1183,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       const idle = {};
       students.forEach((_, i) => { idle[i] = 'idle'; });
       setRowSaveState(prev => ({ ...prev, [sectionName]: idle }));
+      throw error;
     }
   };
 
@@ -1191,7 +1213,9 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       
       await submitSectionGrades(
         sectionData.sectionCourse,
-        sectionData.canonicalSection || sectionName
+        `${sectionData.canonicalSection || sectionName} (${sectionData.subjectCode})`,
+        canonicalAcademicSchoolYear(sectionData.schoolYear),
+        canonicalAcademicSemester(sectionData.semester)
       );
       updateSectionTermStatus(sectionName, encodingTerm, 'submitted');
       setSubmitConfirmSection(null);
@@ -1578,7 +1602,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
               </div>
               <div className="flex gap-3">
                 <button
-                  onClick={() => handleSaveAll(activeSection)}
+                  onClick={() => handleSaveAll(activeSection).catch(() => {})}
                   disabled={isGradeEncodingLocked || hasValidationErrors(activeSection) || isClosed}
                   className="rounded-xl border border-[#003366] bg-white px-5 py-2.5 text-sm font-bold text-[#003366] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
                 >

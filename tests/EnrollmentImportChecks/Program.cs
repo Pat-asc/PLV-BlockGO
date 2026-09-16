@@ -1,10 +1,45 @@
 using Client_app.Services;
+using BlockGo.Models;
+using BlockGo.Services;
 using System.Globalization;
 
 static void Check(bool condition, string message)
 {
     if (!condition) throw new Exception(message);
 }
+
+Check(GradeAcademicPeriod.SchoolYear("2026") == "2026-2027", "Legacy Faculty year did not resolve to its academic range.");
+Check(GradeAcademicPeriod.SchoolYear("2026-2027") == "2026-2027", "Canonical academic year changed unexpectedly.");
+Check(GradeAcademicPeriod.SchoolYear("2027") == "2027-2028", "Wrong year was treated as the current academic year.");
+Check(GradeAcademicPeriod.SchoolYear("2026-2028") == null, "Invalid year range was accepted.");
+Check(GradeAcademicPeriod.Semester("2nd Semester") == "SECOND", "Second semester display label did not normalize.");
+Check(GradeAcademicPeriod.Semester("FIRST") == "FIRST", "First semester canonical value did not normalize.");
+Check(GradeAcademicPeriod.Semester("MIDYEAR") == "MIDYEAR", "Midyear canonical value did not normalize.");
+Check(GradeAcademicPeriod.Semester("unknown") == null, "Unknown semester was accepted.");
+Check(GradeAcademicPeriod.SemesterAliases("SECOND").Contains("2nd semester"), "Legacy Draft semester cannot be submitted.");
+Console.WriteLine("PASS: grade academic period normalization and wrong-period separation.");
+
+var approvedGrade = new AcademicRecord {
+    Id = "22146ad0-bd15-414a-a78d-28d369fbb92e", StudentNo = "26-0035",
+    StudentHash = "student@plv.edu.ph", Section = "BSIT 1-1", SubjectCode = "IT 101",
+    SchoolYear = "2026-2027", Semester = "FIRST", Grade = "{\"midterm\":85}"
+};
+var issuedGrade = new AcademicRecord {
+    Id = approvedGrade.Id, StudentNo = approvedGrade.StudentNo,
+    StudentHash = approvedGrade.StudentHash, Section = approvedGrade.Section,
+    SubjectCode = approvedGrade.SubjectCode, SchoolYear = approvedGrade.SchoolYear,
+    Semester = approvedGrade.Semester, Grade = approvedGrade.Grade, Status = "Issued"
+};
+Check(GradeLedgerMatch.IsSameGrade(approvedGrade, issuedGrade), "Committed issue was not recognized as the same staged grade.");
+issuedGrade.Semester = "SECOND";
+Check(!GradeLedgerMatch.IsSameGrade(approvedGrade, issuedGrade), "Wrong-semester ledger grade was accepted for finalization.");
+issuedGrade.Semester = "FIRST";
+issuedGrade.StudentNo = "26-0039";
+Check(!GradeLedgerMatch.IsSameGrade(approvedGrade, issuedGrade), "A UUID collision with another student was accepted.");
+issuedGrade.StudentNo = approvedGrade.StudentNo;
+issuedGrade.Grade = "{\"midterm\":90}";
+Check(!GradeLedgerMatch.IsSameGrade(approvedGrade, issuedGrade), "A changed ledger grade was accepted for staging cleanup.");
+Console.WriteLine("PASS: Registrar ledger UUID identity and staged-grade retry verification.");
 
 foreach (var alias in new[] { "Birthdate", "Birth Date", "Birthday", "DOB", "Date of Birth", "date_of_birth" })
 {

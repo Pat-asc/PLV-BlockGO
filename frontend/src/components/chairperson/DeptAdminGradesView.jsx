@@ -11,6 +11,7 @@ import Modal from '../../services/Modal';
 import StudentSectioning from './StudentSectioning';
 import AcademicAssignment from './AcademicAssignment';
 import { getGradeEquivalent } from '../../utils/gradingHelpers';
+import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from '../../utils/studentAcademicHelpers';
 
 const getRecordGrade = (record) => record?.grade || record?.Grade || '';
 
@@ -90,8 +91,8 @@ const resolveAssignmentForGradeRecord = (record, assignments = [], facultyIdenti
     const normalizedFacultyId = normalizeFacultyIdentity(getRecordFacultyKey(record));
     const normalizedStudentKey = normalizeText(getRecordStudentKey(record));
     const normalizedSubjectCode = normalizeText(getRecordSubjectKey(record));
-    const normalizedSemester = normalizeText(record?.semester || record?.Semester || '');
-    const normalizedSchoolYear = normalizeText(record?.schoolYear || record?.SchoolYear || '');
+    const normalizedSemester = canonicalAcademicSemester(record?.semester || record?.Semester || '');
+    const normalizedSchoolYear = canonicalAcademicSchoolYear(record?.schoolYear || record?.SchoolYear || '');
 
     const matchingAssignments = assignments.filter((assignment) => {
         const assignmentFacultyKey = normalizeFacultyIdentity(
@@ -102,8 +103,8 @@ const resolveAssignmentForGradeRecord = (record, assignments = [], facultyIdenti
             return false;
         }
 
-        const assignmentSemester = normalizeText(assignment?.semester);
-        const assignmentSchoolYear = normalizeText(assignment?.schoolYear);
+        const assignmentSemester = canonicalAcademicSemester(assignment?.semester);
+        const assignmentSchoolYear = canonicalAcademicSchoolYear(assignment?.schoolYear);
         const assignmentSubjectCode = normalizeText(assignment?.subjectCode);
 
         if (normalizedSemester && assignmentSemester && assignmentSemester !== normalizedSemester) {
@@ -321,13 +322,13 @@ const findSavedSectionRoster = ({
         const sameSchoolYear =
             !normalizeText(section?.schoolYear) ||
             !normalizeText(assignment?.schoolYear || schoolYear) ||
-            normalizeText(section?.schoolYear) ===
-                normalizeText(assignment?.schoolYear || schoolYear);
+            canonicalAcademicSchoolYear(section?.schoolYear) ===
+                canonicalAcademicSchoolYear(assignment?.schoolYear || schoolYear);
         const sameSemester =
             !normalizeText(section?.semester) ||
             !normalizeText(assignment?.semester || semester) ||
-            normalizeText(section?.semester) ===
-                normalizeText(assignment?.semester || semester);
+            canonicalAcademicSemester(section?.semester) ===
+                canonicalAcademicSemester(assignment?.semester || semester);
 
         return sameProgram && sameSection && sameSchoolYear && sameSemester;
     });
@@ -350,11 +351,11 @@ const resolveAssignmentForSectionGroup = (group, assignments = [], facultyIdenti
         const sameSchoolYear =
             !normalizeText(assignment?.schoolYear) ||
             !normalizeText(group?.schoolYear) ||
-            normalizeText(assignment?.schoolYear) === normalizeText(group?.schoolYear);
+            canonicalAcademicSchoolYear(assignment?.schoolYear) === canonicalAcademicSchoolYear(group?.schoolYear);
         const sameSemester =
             !normalizeText(assignment?.semester) ||
             !normalizeText(group?.semester) ||
-            normalizeText(assignment?.semester) === normalizeText(group?.semester);
+            canonicalAcademicSemester(assignment?.semester) === canonicalAcademicSemester(group?.semester);
 
         return sameFaculty && sameProgram && sameSection && sameSubject && sameSchoolYear && sameSemester;
     }) || null;

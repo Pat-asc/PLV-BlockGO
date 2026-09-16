@@ -1120,7 +1120,7 @@ function RegistrarStudentSectioning({
   const handleDownloadSectionTemplate = () => {
     const templateRows = [
       {
-        studentId: "2026-0001",
+        studentId: "26-0001",
         sex: "Male",
         lastName: "Dela Cruz",
         firstName: "Juan",

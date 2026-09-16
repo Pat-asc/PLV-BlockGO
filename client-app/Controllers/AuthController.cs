@@ -1825,7 +1825,7 @@ namespace Client_app.Controllers
                 cmdProfile.Parameters.AddWithValue("id", id);
                 await cmdProfile.ExecuteNonQueryAsync();
 
-                var canonicalSectionLabel = request.Section.Trim();
+                var canonicalSectionLabel = $"{(await ResolveEnrollmentProgramAsync(conn, null, canonicalDepartment, HttpContext.RequestAborted)).Code} {yearLevel}-{sectionNumber}";
                 using (var migrateLegacySection = new NpgsqlCommand(@"
                     UPDATE FacultySections legacy
                     SET section = @canonicalSection
@@ -1965,6 +1965,7 @@ namespace Client_app.Controllers
                             throw new ArgumentException("Section year must match Year Level.");
 
                         var program = await ResolveEnrollmentProgramAsync(connection, null, programInput, cancellationToken);
+                        section = $"{program.Code} {yearLevel}-{sectionNumber}";
                         if (!await CanManageAcademicProgramAsync(connection, program.Code, cancellationToken))
                         {
                             results.Add(new { row = rowNumber, faculty = facultyIdentifier, success = false, error = "The authenticated Chairperson cannot manage this academic program." });
@@ -2269,9 +2270,33 @@ namespace Client_app.Controllers
 
                 var sections = new List<object>();
                 using var cmd = new NpgsqlCommand(@"
-                    SELECT fs.department, fs.section, fs.year_level, fs.subject 
+                    SELECT fs.department, fs.section, fs.year_level, fs.subject,
+                           period.school_year, period.semester, period.academic_section_id,
+                           period.canonical_section
                     FROM FacultySections fs 
                     JOIN Users u ON fs.user_id = u.id 
+                    LEFT JOIN LATERAL (
+                        SELECT e.school_year, e.semester, e.academic_section_id,
+                               CONCAT(p.program_code, ' ', s.year_level, '-', s.section_num) AS canonical_section
+                        FROM student_enrollments e
+                        JOIN academicsections s ON s.id = e.academic_section_id
+                            AND s.year_level = e.year_level
+                        JOIN academic_programs p ON p.program_id = e.program_id
+                            AND LOWER(TRIM(fs.department)) IN (LOWER(TRIM(p.program_code)), LOWER(TRIM(p.program_name)))
+                            AND LOWER(TRIM(s.department)) IN (LOWER(TRIM(p.program_code)), LOWER(TRIM(p.program_name)))
+                        JOIN curriculums c ON c.curriculum_id = e.curriculum_id
+                            AND c.program_id = p.program_id AND c.status IN ('PUBLISHED', 'ARCHIVED')
+                        JOIN curriculum_subjects subject ON subject.curriculum_id = c.curriculum_id
+                            AND LOWER(TRIM(subject.subject_code)) = LOWER(TRIM(fs.subject))
+                            AND subject.year_level = e.year_level AND subject.semester = e.semester
+                        WHERE e.status = 'ENROLLED'
+                          AND (SUBSTRING(fs.section FROM '([1-4]-[0-9]+)') = CONCAT(s.year_level, '-', s.section_num)
+                               OR (TRIM(fs.section) = s.section_num::text AND TRIM(fs.year_level) = s.year_level::text))
+                        ORDER BY e.school_year DESC,
+                                 CASE e.semester WHEN 'MIDYEAR' THEN 3 WHEN 'SECOND' THEN 2 ELSE 1 END DESC,
+                                 e.enrollment_id DESC
+                        LIMIT 1
+                    ) period ON TRUE
                     WHERE LOWER(u.email) = LOWER(@email) AND u.status = 'APPROVED'
                     ORDER BY fs.department, fs.year_level, fs.section", conn);
                 
@@ -2284,7 +2309,11 @@ namespace Client_app.Controllers
                         department = reader.GetString(0),
                         section = reader.GetString(1),
                         yearLevel = reader.IsDBNull(2) ? "N/A" : reader.GetString(2),
-                        subject = reader.IsDBNull(3) ? "N/A" : reader.GetString(3)
+                        subject = reader.IsDBNull(3) ? "N/A" : reader.GetString(3),
+                        schoolYear = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        semester = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        academicSectionId = reader.IsDBNull(6) ? (int?)null : reader.GetInt32(6),
+                        canonicalSection = reader.IsDBNull(7) ? null : reader.GetString(7)
                     });
                 }
 

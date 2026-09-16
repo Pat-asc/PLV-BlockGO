@@ -13,6 +13,7 @@ import {
   upsertPublishedStudentGrades,
 } from "../../utils/publishedGradesHelpers";
 import { isChairpersonForwardedGradeStatus } from "../../utils/gradeStatus";
+import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from "../../utils/studentAcademicHelpers";
 
 const getStudentId = (student = {}) => student.studentId || student.id || "";
 
@@ -61,11 +62,11 @@ const findSavedSectionRoster = ({ studentSections = [], assignment }) => {
     const sameSection =
       normalizeText(section.section) === normalizeText(assignment.sectionName);
     const sameSchoolYear =
-      normalizeText(section.schoolYear) === normalizeText(assignment.schoolYear);
+      canonicalAcademicSchoolYear(section.schoolYear) === canonicalAcademicSchoolYear(assignment.schoolYear);
     const sameSemester =
       !normalizeText(section.semester) ||
       !normalizeText(assignment.semester) ||
-      normalizeText(section.semester) === normalizeText(assignment.semester);
+      canonicalAcademicSemester(section.semester) === canonicalAcademicSemester(assignment.semester);
 
     return sameProgram && sameSection && sameSchoolYear && sameSemester;
   });
@@ -242,8 +243,8 @@ function GradeFinalization({ allGrades = {} }) {
           program: assignment.program || review.department,
           sectionName: assignment.sectionName || review.sectionName,
           subjectCode: assignment.subjectCode || review.subjectCode,
-          schoolYear: assignment.schoolYear || review.schoolYear,
-          semester: assignment.semester || review.semester,
+          schoolYear: canonicalAcademicSchoolYear(review.schoolYear || assignment.schoolYear),
+          semester: canonicalAcademicSemester(review.semester || assignment.semester),
         };
         const students = resolveSectionStudents({
           assignment: resolvedAssignment,

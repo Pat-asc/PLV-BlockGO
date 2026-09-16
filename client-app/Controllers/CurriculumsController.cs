@@ -490,21 +490,25 @@ namespace Client_app.Controllers
         {
             await using var connection = await OpenConnectionAsync(cancellationToken);
             await using var command = new NpgsqlCommand(@"
-                SELECT pca.curriculum_id
+                SELECT c.curriculum_id
                 FROM users u
                 JOIN studentprofiles sp ON sp.user_id = u.id
-                LEFT JOIN LATERAL (
-                    SELECT se.program_id
+                JOIN LATERAL (
+                    SELECT se.program_id, se.curriculum_id, se.status
                     FROM student_enrollments se
                     WHERE se.student_user_id = u.id
-                    ORDER BY se.updated_at DESC, se.enrollment_id DESC
+                      AND LOWER(TRIM(se.student_no)) = LOWER(TRIM(sp.student_no))
+                    ORDER BY se.school_year DESC,
+                             CASE se.semester WHEN 'MIDYEAR' THEN 3 WHEN 'SECOND' THEN 2 ELSE 1 END DESC,
+                             se.enrollment_id DESC
                     LIMIT 1
                 ) enrollment ON TRUE
-                JOIN academic_programs p ON p.program_id = enrollment.program_id
-                    OR (enrollment.program_id IS NULL AND
-                        (LOWER(p.program_name) = LOWER(sp.department) OR LOWER(p.program_code) = LOWER(sp.department)))
-                JOIN program_curriculum_assignments pca ON pca.program_id = p.program_id
-                WHERE LOWER(u.email) = LOWER(@actor) AND LOWER(u.role) = 'student';", connection);
+                LEFT JOIN program_curriculum_assignments pca ON pca.program_id = enrollment.program_id
+                JOIN curriculums c ON c.curriculum_id = COALESCE(enrollment.curriculum_id, pca.curriculum_id)
+                    AND c.program_id = enrollment.program_id AND c.status IN ('PUBLISHED', 'ARCHIVED')
+                WHERE LOWER(u.email) = LOWER(@actor) AND LOWER(u.role) = 'student'
+                  AND LOWER(u.status) = 'approved' AND u.is_active
+                  AND enrollment.status = 'ENROLLED';", connection);
             command.Parameters.AddWithValue("actor", ActorEmail());
             long? resolvedId = null;
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
@@ -514,12 +518,10 @@ namespace Client_app.Controllers
                     resolvedId = reader.IsDBNull(0) ? null : reader.GetInt64(0);
                 }
             }
-            if (!resolvedId.HasValue) return NotFound(new { status = "Error", message = "No active curriculum is assigned to your program." });
-            if (!resolvedId.HasValue) return Ok(new { status = "Success", data = (object?)null, message = "No active curriculum is assigned to your program." });
+            if (!resolvedId.HasValue) return NotFound(new { status = "Error", message = "No published curriculum is assigned to your academic program." });
             var curriculum = await LoadCurriculumAsync(connection, resolvedId.Value, cancellationToken);
             if (curriculum.Status is not (CurriculumStatuses.Published or CurriculumStatuses.Archived))
                 return NotFound(new { status = "Error", message = "Your program curriculum is not available." });
-                return Ok(new { status = "Success", data = (object?)null, message = "Your program curriculum is not available." });
             return Ok(new { status = "Success", data = curriculum });
         }
 

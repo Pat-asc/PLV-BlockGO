@@ -7,6 +7,7 @@ const { normalizeAuthRole } = require('../shared/roles');
 const { createServiceApp, installErrorHandler, listen } = require('../shared/service-app');
 const { cacheStats, checkFabricEndpoints, closeGateways, contractForUser, disconnect } = require('../fabric/gateway-manager');
 const { checkWallets } = require('../fabric/wallet-manager');
+const { classifyLedgerError, safeFabricReason } = require('../fabric/ledger-errors');
 
 const serviceName = 'ledger-service';
 const logger = createLogger(serviceName);
@@ -37,12 +38,33 @@ function onLedgerError(username, error) {
     if (username && shouldReconnect(error)) disconnect(username, 'ledger-error');
 }
 
+function sendFabricFailure(res, error, functionName, actor, recordId) {
+    const failure = classifyLedgerError(error, functionName);
+    logger.error({ identity: actor?.username, role: actor?.dbRole,
+        channel: process.env.CHANNEL_NAME || 'registrar-channel',
+        chaincode: process.env.CHAINCODE_NAME || 'registrar',
+        functionName, recordId: recordId || null, code: failure.code,
+        reason: safeFabricReason(error) }, 'Fabric operation failed');
+    onLedgerError(actor?.username, error);
+    return res.status(failure.status).json({ code: failure.code, error: failure.reason });
+}
+
+function sendActorFailure(res, error, functionName, recordId) {
+    logger.error({ functionName, recordId: recordId || null, reason: safeFabricReason(error) }, 'Ledger caller identity could not be resolved');
+    const denied = [401, 403, 404].includes(Number(error.status));
+    return res.status(denied ? 403 : 503).json({
+        code: denied ? 'ACTOR_NOT_AUTHORIZED' : 'ACTOR_LOOKUP_UNAVAILABLE',
+        error: denied ? 'The active academic account is not authorized for this ledger operation.'
+            : 'Academic account validation is temporarily unavailable.'
+    });
+}
+
 async function contractWithReadFallback(actor) {
     try {
         return await contractForUser(actor.username, actor.dbRole);
     } catch (error) {
-        if (actor.dbRole === 'student') throw error;
-        logger.warn({ username: actor.username, err: error }, 'Using registrar read identity fallback');
+        if (actor.dbRole === 'student' || classifyLedgerError(error).code !== 'WALLET_IDENTITY_MISSING') throw error;
+        logger.warn({ username: actor.username, reason: safeFabricReason(error) }, 'Using registrar read identity fallback');
         return contractForUser('system-admin-registrar', 'registrar');
     }
 }
@@ -66,15 +88,10 @@ app.get('/api/all-grades', authenticate, async (req, res) => {
     let actor;
     try {
         actor = await actorForRequest(req);
-        let contract = await contractWithReadFallback(actor);
-        let result;
-        try { result = await contract.evaluateTransaction('GetAllGrades'); }
-        catch (error) {
-            if (!shouldReconnect(error) || actor.dbRole === 'student') throw error;
-            disconnect(actor.username, 'read-fallback');
-            contract = await contractForUser('system-admin-registrar', 'registrar');
-            result = await contract.evaluateTransaction('GetAllGrades');
-        }
+        const contract = await contractWithReadFallback(actor);
+        const result = await contract.evaluateTransaction('GetAllGrades');
+        logger.info({ identity: actor.username, functionName: 'GetAllGrades',
+            channel: process.env.CHANNEL_NAME || 'registrar-channel' }, 'Fabric ledger evaluation completed');
         let grades;
         try { grades = JSON.parse(result.toString()); }
         catch { return res.json({ status: 'success', data: result.toString() }); }
@@ -102,8 +119,8 @@ app.get('/api/all-grades', authenticate, async (req, res) => {
         }
         res.json({ status: 'success', data: grades });
     } catch (error) {
-        onLedgerError(actor?.username, error);
-        res.status(error.status || 500).json({ error: error.message });
+        if (!actor) sendActorFailure(res, error, 'GetAllGrades');
+        else sendFabricFailure(res, error, 'GetAllGrades', actor);
     }
 });
 
@@ -179,18 +196,26 @@ app.post('/api/fabric/audit-event', authenticate, requireRegistrarOrInternal, as
 });
 
 app.post('/api/issue-grade', authenticate, authorizeRole(['faculty', 'department_admin']), async (req, res) => {
-    const actor = await actorForRequest(req);
+    let actor;
     try {
+        actor = await actorForRequest(req);
         const result = await (await contractForUser(actor.username, actor.dbRole)).submitTransaction('IssueGrade', JSON.stringify(req.body));
+        logger.info({ identity: actor.username, functionName: 'IssueGrade',
+            recordId: req.body?.id || req.body?.Id, commitStatus: 'VALID' }, 'Fabric transaction committed');
         res.status(201).json({ status: 'success', message: 'Grade recorded', details: result.toString() });
-    } catch (error) { onLedgerError(actor.username, error); throw error; }
+    } catch (error) {
+        if (!actor) sendActorFailure(res, error, 'IssueGrade', req.body?.id || req.body?.Id);
+        else sendFabricFailure(res, error, 'IssueGrade', actor, req.body?.id || req.body?.Id);
+    }
 });
 
 app.get('/api/get-grade/:id', authenticate, async (req, res) => {
-    const actor = await actorForRequest(req);
+    let actor;
     try {
+        actor = await actorForRequest(req);
         const contract = await contractWithReadFallback(actor);
         const record = JSON.parse((await contract.evaluateTransaction('ReadGrade', req.params.id)).toString());
+        logger.info({ identity: actor.username, functionName: 'ReadGrade', recordId: req.params.id }, 'Fabric ledger evaluation completed');
         if (actor.dbRole === 'student') {
             const identifiers = [record.student_hash, record.student_id, record.studentId].filter(Boolean).map((value) => String(value).toLowerCase());
             if (!identifiers.includes(actor.username.toLowerCase()) && !identifiers.includes(actor.username.split('@')[0].toLowerCase())) {
@@ -198,18 +223,27 @@ app.get('/api/get-grade/:id', authenticate, async (req, res) => {
             }
         }
         res.json(record);
-    } catch (error) { onLedgerError(actor.username, error); res.status(404).json({ error: process.env.NODE_ENV === 'production' ? 'Record not found' : error.message }); }
+    } catch (error) {
+        if (!actor) sendActorFailure(res, error, 'ReadGrade', req.params.id);
+        else sendFabricFailure(res, error, 'ReadGrade', actor, req.params.id);
+    }
 });
 
 function submitRoute(path, roles, transaction, message, status = 200, withBody = false) {
     app.post(path, authenticate, authorizeRole(roles), async (req, res) => {
-        const actor = await actorForRequest(req);
+        let actor;
         try {
+            actor = await actorForRequest(req);
             const args = withBody ? [JSON.stringify(req.body)] : [req.params.id];
             if (transaction === 'ReturnGrade') args.push(req.body?.note || 'Returned for revision');
             const result = await (await contractForUser(actor.username, actor.dbRole)).submitTransaction(transaction, ...args);
+            logger.info({ identity: actor.username, functionName: transaction,
+                recordId: req.params.id || req.body?.id || req.body?.Id, commitStatus: 'VALID' }, 'Fabric transaction committed');
             res.status(status).json({ status: 'success', message, ...(result?.length ? { details: result.toString() } : {}) });
-        } catch (error) { onLedgerError(actor.username, error); throw error; }
+        } catch (error) {
+            if (!actor) sendActorFailure(res, error, transaction, req.params.id);
+            else sendFabricFailure(res, error, transaction, actor, req.params.id);
+        }
     });
 }
 

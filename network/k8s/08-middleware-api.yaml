@@ -34,6 +34,7 @@ data:
   FABRIC_GATEWAY_TLS_ROOTS: /etc/hyperledger/fabric-gateway-tls
   FABRIC_DISCOVERY_ENABLED: "true"
   FABRIC_HA_ENABLED: "true"
+  FABRIC_DISABLED_ORDERERS: "orderer5,orderer6"
   FABRIC_PEER_REGISTRAR_2_URL: grpcs://peer-registrar-2.plv-main-campus.svc.cluster.local:7051
   FABRIC_PEER_FACULTY_2_URL: grpcs://peer-faculty-2.plv-annex-campus.svc.cluster.local:7051
   FABRIC_PEER_DEPARTMENT_2_URL: grpcs://peer-department-2.plv-pubad-campus.svc.cluster.local:7051

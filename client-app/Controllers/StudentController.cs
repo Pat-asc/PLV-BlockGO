@@ -111,6 +111,109 @@ namespace Client_app.Controllers
             }
         }
 
+        [HttpGet("subjects")]
+        [Authorize(Roles = "student")]
+        public async Task<IActionResult> GetCurrentSubjects(CancellationToken cancellationToken)
+        {
+            var email = User.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(email)) return Unauthorized();
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var enrollment = new NpgsqlCommand(@"
+                SELECT sp.student_no, se.school_year, se.semester, se.year_level,
+                       p.program_id, p.program_code, p.program_name, s.id, s.section_num,
+                       c.curriculum_id
+                FROM users u
+                JOIN studentprofiles sp ON sp.user_id = u.id
+                JOIN LATERAL (
+                    SELECT current.* FROM student_enrollments current
+                    WHERE current.student_user_id = u.id
+                      AND LOWER(TRIM(current.student_no)) = LOWER(TRIM(sp.student_no))
+                    ORDER BY current.school_year DESC,
+                             CASE current.semester WHEN 'MIDYEAR' THEN 3 WHEN 'SECOND' THEN 2 ELSE 1 END DESC,
+                             current.enrollment_id DESC
+                    LIMIT 1
+                ) se ON TRUE
+                JOIN academic_programs p ON p.program_id = se.program_id AND p.is_active = TRUE
+                JOIN academicsections s ON s.id = se.academic_section_id
+                    AND s.year_level = se.year_level
+                    AND LOWER(TRIM(s.department)) IN (LOWER(TRIM(p.program_code)), LOWER(TRIM(p.program_name)))
+                JOIN program_curriculum_assignments pca ON pca.program_id = p.program_id
+                JOIN curriculums c ON c.curriculum_id = pca.curriculum_id
+                    AND c.program_id = p.program_id AND c.status IN ('PUBLISHED', 'ARCHIVED')
+                WHERE LOWER(u.email) = LOWER(@email)
+                  AND LOWER(u.role) = 'student' AND LOWER(u.status) = 'approved' AND u.is_active
+                  AND se.status = 'ENROLLED';", connection);
+            enrollment.Parameters.AddWithValue("email", email);
+            string studentNo, schoolYear, semester, programCode, department;
+            short yearLevel;
+            int programId, sectionId, sectionNumber;
+            long curriculumId;
+            await using (var reader = await enrollment.ExecuteReaderAsync(cancellationToken))
+            {
+                if (!await reader.ReadAsync(cancellationToken))
+                    return NotFound(new { status = "Error", message = "No enrolled academic section with an assigned published curriculum was found for this student." });
+                studentNo = reader.GetString(0);
+                schoolYear = reader.GetString(1);
+                semester = reader.GetString(2);
+                yearLevel = reader.GetInt16(3);
+                programId = reader.GetInt32(4);
+                programCode = reader.GetString(5);
+                department = reader.GetString(6);
+                sectionId = reader.GetInt32(7);
+                sectionNumber = reader.GetInt32(8);
+                curriculumId = reader.GetInt64(9);
+            }
+
+            var sectionToken = $"{yearLevel}-{sectionNumber}";
+            var subjects = new List<object>();
+            await using var command = new NpgsqlCommand(@"
+                SELECT cs.subject_code, cs.subject_title, cs.units,
+                       faculty.full_name
+                FROM curriculum_subjects cs
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(fp.full_name, u.email) AS full_name
+                    FROM facultysections fs
+                    JOIN users u ON u.id = fs.user_id
+                        AND LOWER(u.role) = 'faculty' AND LOWER(u.status) = 'approved' AND u.is_active
+                    LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
+                    WHERE LOWER(TRIM(fs.subject)) = LOWER(TRIM(cs.subject_code))
+                      AND LOWER(TRIM(fs.department)) IN (LOWER(TRIM(@department)), LOWER(TRIM(@programCode)))
+                      AND (
+                          SUBSTRING(fs.section FROM '([1-4]-[0-9]+)') = @sectionToken
+                          OR (TRIM(fs.section) = @sectionNumber AND TRIM(fs.year_level) = @yearLevel)
+                      )
+                    ORDER BY u.id LIMIT 1
+                ) faculty ON TRUE
+                WHERE cs.curriculum_id = @curriculumId
+                  AND cs.year_level = @yearLevelNumber AND cs.semester = @semester
+                ORDER BY cs.subject_code;", connection);
+            command.Parameters.AddWithValue("curriculumId", curriculumId);
+            command.Parameters.AddWithValue("yearLevelNumber", yearLevel);
+            command.Parameters.AddWithValue("yearLevel", yearLevel.ToString(CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("sectionNumber", sectionNumber.ToString(CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("sectionToken", sectionToken);
+            command.Parameters.AddWithValue("department", department);
+            command.Parameters.AddWithValue("programCode", programCode);
+            command.Parameters.AddWithValue("semester", semester);
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            {
+                while (await reader.ReadAsync(cancellationToken))
+                    subjects.Add(new
+                    {
+                        subjectCode = reader.GetString(0), subjectTitle = reader.GetString(1),
+                        units = reader.GetDecimal(2),
+                        facultyName = reader.IsDBNull(3) ? "To be assigned" : reader.GetString(3),
+                        status = "Enrolled"
+                    });
+            }
+            return Ok(new { status = "Success", data = new {
+                studentNo, schoolYear, semester, section = $"{programCode} {sectionToken}",
+                sectionId, yearLevel, department, programCode, programId, curriculumId, subjects
+            } });
+        }
+
         [HttpGet("grades")]
         [Authorize(Roles = "student")]
         public async Task<IActionResult> GetHistoricalGrades(CancellationToken cancellationToken)
@@ -146,14 +249,23 @@ namespace Client_app.Controllers
                     using var conn = new NpgsqlConnection(_connectionString);
                     await conn.OpenAsync(cancellationToken);
                     using var dbCmd = new NpgsqlCommand(@"
-                        SELECT id, student_hash, student_no, student_name, course, subject_code, subject_title, grade, term, status, date, semester, school_year, faculty_id, units, section, year_level
-                        FROM pending_grade_records
-                        WHERE (LOWER(student_hash) = LOWER(@email)
-                           OR LOWER(student_no) = LOWER(@email)
-                           OR student_hash IN (SELECT student_no FROM studentprofiles WHERE LOWER(student_email) = LOWER(@email))
-                           OR student_hash IN (SELECT student_no FROM studentprofiles sp JOIN users u ON u.id = sp.user_id WHERE LOWER(u.email) = LOWER(@email)))
-                          AND status IN ('Finalized', 'DepartmentApproved', 'Issued')
-                        ORDER BY school_year DESC, semester DESC, subject_code ASC", conn);
+                        SELECT grade.id, grade.student_hash, grade.student_no, grade.student_name,
+                               grade.course, grade.subject_code, grade.subject_title, grade.grade,
+                               grade.term, grade.status, grade.date, grade.semester, grade.school_year,
+                               grade.faculty_id, grade.units, grade.section,
+                               COALESCE(enrollment.year_level::text, '') AS year_level
+                        FROM pending_grade_records grade
+                        JOIN users student ON LOWER(student.email) = LOWER(@email)
+                          AND LOWER(student.role) = 'student'
+                        JOIN studentprofiles sp ON sp.user_id = student.id
+                        LEFT JOIN student_enrollments enrollment
+                          ON enrollment.student_user_id = student.id
+                         AND enrollment.school_year = grade.school_year
+                         AND enrollment.semester = grade.semester
+                        WHERE LOWER(grade.student_hash) = LOWER(student.email)
+                          AND LOWER(grade.student_no) = LOWER(sp.student_no)
+                          AND LOWER(grade.status) = 'finalized'
+                        ORDER BY grade.school_year DESC, grade.semester DESC, grade.subject_code ASC", conn);
                     dbCmd.Parameters.AddWithValue("email", email.Trim());
                     using var reader = await dbCmd.ExecuteReaderAsync(cancellationToken);
                     while (await reader.ReadAsync(cancellationToken))
@@ -168,6 +280,8 @@ namespace Client_app.Controllers
                             Status = reader["status"]?.ToString(),
                             Date = reader["date"]?.ToString(),
                             StudentHash = reader["student_hash"]?.ToString() ?? reader["student_no"]?.ToString(),
+                            StudentNo = reader["student_no"]?.ToString() ?? "",
+                            StudentId = reader["student_no"]?.ToString() ?? "",
                             Course = reader["course"]?.ToString(),
                             SchoolYear = reader["school_year"]?.ToString(),
                             Semester = reader["semester"]?.ToString(),
