@@ -395,9 +395,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           return {};
         }
       })();
-      const facultyLoadResetAt = parseTimestamp(
-        localStorage.getItem("facultyLoadResetAt")
-      );
 
       const savedAssignmentsBySection = new Map(
         savedAssignments.map((assignment) => [
@@ -571,16 +568,12 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             normalizeText(assignment.subjectCode) === normalizeText(sec.subject)
           ) ||
           null;
-        const assignmentUploadedAt = parseTimestamp(matchedAssignment?.uploadedAt);
-
-        if (
-          facultyLoadResetAt > 0 &&
-          (!matchedAssignment || assignmentUploadedAt < facultyLoadResetAt)
-        ) {
-          return;
-        }
+        // actualSections is the authoritative backend assignment list. Local
+        // timestamps only enrich display data and must never hide a newly
+        // recreated server-side assignment after a reset.
         const sectionKey = `${sec.department} ${sec.section}${sec.subject ? ` (${sec.subject})` : ''}`; 
         const savedSectionSnapshot = savedGradeSnapshots[sectionKey] || {};
+        const activeAssignmentCycleId = String(sec.assignmentCycleId || sec.assignment_cycle_id || '');
         const sectionGrades = actualGrades.filter((grade) => {
           const gradeSubjectKey = normalizeText(getGradeSubjectKey(grade));
           const gradeRecordSectionKey = normalizeText(getGradeRecordSectionKey(grade));
@@ -601,8 +594,10 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             expectedSectionKeys.includes(gradeDisplaySectionKey);
           const subjectMatches =
             !expectedSubjectCode || gradeSubjectKey === expectedSubjectCode;
+          const gradeAssignmentCycleId = String(grade.assignment_cycle_id || grade.assignmentCycleId || grade.AssignmentCycleId || '');
+          const assignmentCycleMatches = !activeAssignmentCycleId || gradeAssignmentCycleId === activeAssignmentCycleId;
 
-          return sectionMatches && subjectMatches;
+          return sectionMatches && subjectMatches && assignmentCycleMatches;
         });
         const sectionReviewState = deriveSectionReviewState(
           sectionGrades,
@@ -685,10 +680,10 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             const sameStudent = studentCandidates.includes(gradeStudentKey);
             return sameStudent;
           });
-          const snapshotStudent =
+          const snapshotStudent = !activeAssignmentCycleId ? (
             savedSectionSnapshot?.students?.[normalizeText(globalStudentMatch?.email || studentRecord.email || resolvedStudentNo || rosterStudentId)] ||
             savedSectionSnapshot?.students?.[normalizeText(resolvedStudentNo || rosterStudentId)] ||
-            null;
+            null) : null;
           const savedValues = savedGrade
             ? parseSavedGrade(savedGrade?.grade || savedGrade?.Grade)
             : {
@@ -728,6 +723,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           date: getOptionalAssignmentValue(matchedAssignment?.date),
           schoolYear: sec.schoolYear || "Not Available",
           semester: sec.semester || "Not Available",
+          assignmentCycleId: activeAssignmentCycleId,
           reviewNote: sectionReviewState.note,
           students: enrolledStudents
         };
@@ -737,7 +733,8 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         const mergedSections = {};
 
         Object.entries(newSections).forEach(([sectionKey, sectionValue]) => {
-          const previousStudents = previousSections[sectionKey]?.students || [];
+          const sameAssignmentCycle = !!sectionValue.assignmentCycleId && sectionValue.assignmentCycleId === previousSections[sectionKey]?.assignmentCycleId;
+          const previousStudents = sameAssignmentCycle ? (previousSections[sectionKey]?.students || []) : [];
           const previousStudentsById = new Map(
             previousStudents.map((student) => [
               normalizeText(student.email || student.id),

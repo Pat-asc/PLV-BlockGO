@@ -905,7 +905,7 @@ const RegistrarGradesView = ({
                     {mainTab === 'sectioning' && (
                         <div className="space-y-3">
                             <div>
-                                <h2 className="text-xl font-bold text-slate-900">Department Sections</h2>
+                                <h2 className="text-xl font-bold text-slate-900">Section Creator</h2>
                                 
                             </div>
                             <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm lg:grid-cols-[1fr_250px] lg:items-end">

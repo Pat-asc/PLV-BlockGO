@@ -14,7 +14,7 @@ import {
   syncSectionedStudentsToStorage,
 } from "../../utils/studentSectioningHelpers";
 import { downloadTemplateButtonClass } from "../shared/downloadButtonStyles";
-import { fetchNextStudentId, fetchUnassignedEnrolledStudents } from "../../services/api";
+import { fetchNextStudentId, fetchUnassignedEnrolledStudents, getSystemSetting } from "../../services/api";
 import { syncSectioningBatchToBackend } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
 
@@ -174,6 +174,7 @@ function RegistrarStudentSectioning({
     String(new Date().getMonth() >= 5 ? CURRENT_YEAR : CURRENT_YEAR - 1)
   );
   const [sectioningSemester, setSectioningSemester] = useState(() => new Date().getMonth() >= 5 ? "FIRST" : "SECOND");
+  const [activeTermLoaded, setActiveTermLoaded] = useState(false);
   const schoolYear = `${sectioningBatchYear}-${Number(sectioningBatchYear) + 1}`;
   const [enrolledCount, setEnrolledCount] = useState(0);
   const [enrolledLoading, setEnrolledLoading] = useState(true);
@@ -226,6 +227,21 @@ function RegistrarStudentSectioning({
   const [persistedSequences, setPersistedSequences] = useState({});
   const [studentIdLoading, setStudentIdLoading] = useState(false);
   const [studentIdError, setStudentIdError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    getSystemSetting("encoding_period").then((response) => {
+      if (!active || response?.status !== "Success") return;
+      const setting = response.value || {};
+      const semester = String(setting.semester || "").toUpperCase();
+      if (semester.includes("MID") || semester.includes("SUMMER")) setSectioningSemester("MIDYEAR");
+      else if (semester.includes("SECOND") || semester.includes("2ND")) setSectioningSemester("SECOND");
+      else if (semester) setSectioningSemester("FIRST");
+      const startYear = Number(String(setting.schoolYear || setting.startDate || "").match(/\d{4}/)?.[0]);
+      if (startYear) setSectioningBatchYear(String(startYear));
+    }).catch(() => {}).finally(() => { if (active) setActiveTermLoaded(true); });
+    return () => { active = false; };
+  }, []);
 
   const syncBatchToBackend = async (batch, successMessage = "") => {
     if (!batch || !isRegistrarMode) return false;
@@ -570,6 +586,7 @@ function RegistrarStudentSectioning({
   }, [batches]);
 
   useEffect(() => {
+    if (!activeTermLoaded) return;
     let cancelled = false;
     setEnrolledLoading(true);
     setEnrolledError("");
@@ -608,7 +625,7 @@ function RegistrarStudentSectioning({
       .catch((error) => { if (!cancelled) setEnrolledError(error.message || "Could not load enrolled students."); })
       .finally(() => { if (!cancelled) setEnrolledLoading(false); });
     return () => { cancelled = true; };
-  }, [chairpersonDepartment, schoolYear, sectioningBatchYear, sectioningSemester, selectedYearLevel, enrollmentRefresh]);
+  }, [activeTermLoaded, chairpersonDepartment, schoolYear, sectioningBatchYear, sectioningSemester, selectedYearLevel, enrollmentRefresh]);
 
   useEffect(() => {
     if (!studentIdYear || Object.prototype.hasOwnProperty.call(persistedSequences, studentIdYear)) {
@@ -2509,15 +2526,9 @@ function RegistrarStudentSectioning({
               </div>
 
               <div className="mt-3 flex flex-wrap items-end gap-3">
-                <label className="text-xs font-medium text-slate-700">Enrollment semester
-                  <select aria-label="Enrollment semester" value={sectioningSemester}
-                    onChange={(event) => { setSectioningSemester(event.target.value); setSelectedBatchKey(""); }}
-                    className="ml-2 rounded-md border border-slate-300 px-2 py-2">
-                    <option value="FIRST">First Semester</option>
-                    <option value="SECOND">Second Semester</option>
-                    <option value="MIDYEAR">Midyear</option>
-                  </select>
-                </label>
+                <span className="rounded-md bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700" aria-label="Active enrollment term">
+                  {sectioningSemester === "FIRST" ? "First Semester" : sectioningSemester === "SECOND" ? "Second Semester" : "Midyear"} (active term)
+                </span>
                 <button type="button" disabled={enrolledLoading || savingSections}
                   onClick={() => setEnrollmentRefresh((value) => value + 1)}
                   className="rounded-md border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700 disabled:opacity-50">
@@ -2845,7 +2856,7 @@ function RegistrarStudentSectioning({
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-7 w-7"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2"/><path d="M3 20v-2a6 6 0 0 1 12 0v2m0-5a4 4 0 0 1 6 3v2"/></svg>
                   </span>
                   <div>
-                    <button type="button" onClick={() => setIsRosterView(false)} className="mb-2 text-xs font-medium text-blue-700 hover:underline">Department Sections &nbsp;›</button>
+                    <button type="button" onClick={() => setIsRosterView(false)} className="mb-2 text-xs font-medium text-blue-700 hover:underline">Section Creator &nbsp;›</button>
                     <h3 className="text-2xl font-bold text-[#003366]">
                     {selectedSection
                       ? selectedSection.sectionName ||
@@ -2860,7 +2871,7 @@ function RegistrarStudentSectioning({
                 </div>
 
                 <button type="button" onClick={() => setIsRosterView(false)} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold text-[#003366] hover:bg-slate-50">
-                  <span aria-hidden="true">←</span> Back to Department Sections
+                  <span aria-hidden="true">←</span> Back to Section Creator
                 </button>
               </div>
 
@@ -3025,7 +3036,7 @@ function RegistrarStudentSectioning({
             </section>
             ) : null}
 
-            {isRegistrarMode ? (
+            {isRegistrarMode && isRosterView ? (
             <section ref={addStudentRef} className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="text-xl font-bold text-[#003366]">
                 Add Student
@@ -3094,7 +3105,7 @@ function RegistrarStudentSectioning({
             </section>
             ) : null}
 
-            {isRegistrarMode ? (
+            {isRegistrarMode && isRosterView ? (
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="mb-5">
                 <h3 className="text-xl font-bold text-[#003366]">

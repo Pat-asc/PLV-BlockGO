@@ -3732,7 +3732,7 @@ verify_deployed_application_revision() {
     }
 
     kubectl exec "$frontend_pod" -n plv-fabric -- sh -ec \
-        "for route in login registrar department-admin faculty student system-admin; do wget -qO- http://127.0.0.1/\${route} | grep -q '<div id=\"root\"></div>'; done" || {
+        "for route in login registrar department-admin faculty student system-admin; do wget -qO- http://127.0.0.1/\${route} | grep -q '<div id=\"root\"'; done" || {
         echo "ERROR: One or more frontend role deep links do not return the React application."
         return 1
     }

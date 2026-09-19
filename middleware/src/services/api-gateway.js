@@ -14,7 +14,9 @@ const app = express();
 const allowedOrigins = corsOrigins();
 
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+const proxyCidrs = String(process.env.TRUST_PROXY_CIDRS || '').split(',').map((value) => value.trim()).filter(Boolean);
+const proxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS || '', 10);
+app.set('trust proxy', proxyCidrs.length ? proxyCidrs : (Number.isInteger(proxyHops) && proxyHops > 0 ? proxyHops : ['loopback', 'linklocal', 'uniquelocal']));
 app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');

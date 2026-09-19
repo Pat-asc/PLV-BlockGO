@@ -5,6 +5,7 @@ const { createLoginLimiter } = require('../src/shared/login-rate-limit');
 
 async function withLoginServer(max, callback) {
     const app = express();
+    app.set('trust proxy', ['loopback']);
     const securityEvents = [];
     app.use(express.json());
     app.post('/api/login', createLoginLimiter({
@@ -21,9 +22,9 @@ async function withLoginServer(max, callback) {
     });
     try {
         const { port } = server.address();
-        const login = (username, password) => fetch(`http://127.0.0.1:${port}/api/login`, {
+        const login = (username, password, source) => fetch(`http://127.0.0.1:${port}/api/login`, {
             method: 'POST',
-            headers: { 'content-type': 'application/json' },
+            headers: { 'content-type': 'application/json', ...(source ? { 'x-forwarded-for': source } : {}) },
             body: JSON.stringify({ username, password })
         });
         await callback({ login, securityEvents });
@@ -60,5 +61,22 @@ test('service failures do not consume the failed-attempt budget', async () => {
         assert.equal((await login('faculty@plv.edu.ph', 'server-error')).status, 503);
         assert.equal((await login('faculty@plv.edu.ph', 'wrong')).status, 401);
         assert.equal((await login('faculty@plv.edu.ph', 'wrong')).status, 429);
+    });
+});
+
+test('a successful login clears prior account failures', async () => {
+    await withLoginServer(2, async ({ login }) => {
+        assert.equal((await login('faculty@plv.edu.ph', 'wrong')).status, 401);
+        assert.equal((await login('faculty@plv.edu.ph', 'correct')).status, 200);
+        assert.equal((await login('faculty@plv.edu.ph', 'wrong')).status, 401);
+        assert.equal((await login('faculty@plv.edu.ph', 'wrong')).status, 401);
+    });
+});
+
+test('the same account cannot evade its budget by changing trusted source addresses', async () => {
+    await withLoginServer(2, async ({ login }) => {
+        assert.equal((await login('faculty@plv.edu.ph', 'wrong', '198.51.100.10')).status, 401);
+        assert.equal((await login('faculty@plv.edu.ph', 'wrong', '198.51.100.11')).status, 401);
+        assert.equal((await login('faculty@plv.edu.ph', 'wrong', '198.51.100.12')).status, 429);
     });
 });

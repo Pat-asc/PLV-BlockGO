@@ -4,11 +4,17 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#003366" />
     <meta
       name="description"
-      content="PLV BlockGO registrar and grade management system"
+      content="PLV BlockGO is the Grade Records Management System of Pamantasan ng Lungsod ng Valenzuela using Hyperledger Fabric for secure academic grade records."
     />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://plv-blockgo.com/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://plv-blockgo.com/" />
+    <meta property="og:title" content="PLV BlockGO | Grade Records Management System" />
+    <meta property="og:description" content="Secure academic grade records management for Pamantasan ng Lungsod ng Valenzuela." />
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
     <!--
       manifest.json provides metadata used when your web app is installed on a
@@ -24,13 +30,14 @@
       work correctly both with client-side routing and a non-root public URL.
       Learn how to configure a non-root public URL by running `npm run build`.
     -->
-    <title>PLV BlockGO</title>
+    <title>PLV BlockGO | Grade Records Management System</title>
+    <script>if (location.pathname !== '/') document.querySelector('meta[name="robots"]').setAttribute('content', 'noindex, nofollow');</script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
   </head>
   <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root"></div>
+    <noscript>JavaScript is required to sign in to PLV BlockGO.</noscript>
+    <div id="root"><main><h1>PLV BlockGO</h1><h2>Grade Records Management System</h2><p>Pamantasan ng Lungsod ng Valenzuela uses BlockGO for secure academic grade management backed by Hyperledger Fabric.</p></main></div>
     <!--
       This HTML file is a template.
       If you open it directly in the browser, you will see an empty page.

@@ -361,8 +361,9 @@ namespace BlockGo.Controllers
                     return Forbid();
                 }
 
+                string assignmentCycleId = "";
                 using (var assignment = new NpgsqlCommand(@"
-                    SELECT fs.section, fs.year_level FROM FacultySections fs
+                    SELECT fs.id, fs.section, fs.year_level FROM FacultySections fs
                     JOIN Users u ON u.id = fs.user_id
                     WHERE LOWER(u.email) = LOWER(@faculty) AND LOWER(u.role) = 'faculty'
                       AND LOWER(u.status) = 'approved'
@@ -376,13 +377,18 @@ namespace BlockGo.Controllers
                     var assigned = false;
                     while (await assignmentReader.ReadAsync())
                     {
-                        var assignedSection = assignmentReader.GetString(0);
+                        var candidateCycleId = assignmentReader.GetInt32(0).ToString();
+                        var assignedSection = assignmentReader.GetString(1);
                         var assignedToken = Regex.Match(assignedSection, @"\b\d+-\d+\b").Value;
                         if (string.IsNullOrWhiteSpace(assignedToken) &&
                             int.TryParse(assignedSection, out var sectionNumber) &&
-                            int.TryParse(assignmentReader.GetString(1), out var yearNumber))
+                            int.TryParse(assignmentReader.GetString(2), out var yearNumber))
                             assignedToken = $"{yearNumber}-{sectionNumber}";
-                        assigned |= string.Equals(assignedToken, sectionToken, StringComparison.OrdinalIgnoreCase);
+                        if (string.Equals(assignedToken, sectionToken, StringComparison.OrdinalIgnoreCase))
+                        {
+                            assigned = true;
+                            assignmentCycleId = candidateCycleId;
+                        }
                     }
                     if (!assigned && AuthenticatedRole() == "faculty")
                     {
@@ -399,6 +405,8 @@ namespace BlockGo.Controllers
                 request.Program = facDept;
 
                 request.FacultyId = effectiveFacultyId ?? jwtUser;
+                if (string.IsNullOrWhiteSpace(assignmentCycleId))
+                    assignmentCycleId = $"administrative:{canonicalSchoolYear}:{enrollmentSemester}:{sectionToken}";
                 request.ProfessorName = await ResolveFacultyDisplayNameAsync(conn, request.FacultyId);
                 request.Term = InferGradeTerm(request.Term, request.Grade);
                 if (request.Units <= 0) request.Units = 3;
@@ -426,6 +434,7 @@ namespace BlockGo.Controllers
                                 status = 'Draft'
                             WHERE LOWER(TRIM(student_hash)) = LOWER(TRIM(@sh))
                               AND LOWER(TRIM(faculty_id)) = LOWER(TRIM(@fac))
+                              AND assignment_cycle_id = @assignmentCycleId
                               AND LOWER(status) IN ('draft', 'returned')
                               AND LOWER(TRIM(subject_code)) = LOWER(TRIM(@subj))
                               AND LOWER(TRIM(school_year)) = LOWER(TRIM(@sy))
@@ -436,10 +445,10 @@ namespace BlockGo.Controllers
                               )
                             RETURNING id
                         ), inserted AS (
-                        INSERT INTO pending_grade_records (id, student_hash, student_no, student_name, section, course, subject_code, grade, semester, school_year, faculty_id, date, ipfs_cid, status)
-                        SELECT @id, @sh, @studentNo, @studentName, @sec, @course, @subj, @gr, @sem, @sy, @fac, @dt, @ipfs, 'Draft'
+                        INSERT INTO pending_grade_records (id, student_hash, student_no, student_name, section, course, subject_code, grade, semester, school_year, faculty_id, date, ipfs_cid, status, assignment_cycle_id)
+                        SELECT @id, @sh, @studentNo, @studentName, @sec, @course, @subj, @gr, @sem, @sy, @fac, @dt, @ipfs, 'Draft', @assignmentCycleId
                         WHERE NOT EXISTS (SELECT 1 FROM updated)
-                        ON CONFLICT ON CONSTRAINT unique_grade_entry_section DO UPDATE SET
+                        ON CONFLICT ON CONSTRAINT unique_grade_entry_assignment_cycle DO UPDATE SET
                             student_no = EXCLUDED.student_no,
                             student_name = EXCLUDED.student_name,
                             section = EXCLUDED.section,
@@ -465,11 +474,22 @@ namespace BlockGo.Controllers
                     cmdStage.Parameters.AddWithValue("sem", blockchainRecord.Semester ?? "");
                     cmdStage.Parameters.AddWithValue("sy", blockchainRecord.SchoolYear ?? "");
                     cmdStage.Parameters.AddWithValue("fac", blockchainRecord.FacultyId ?? "");
+                    cmdStage.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
                     cmdStage.Parameters.AddWithValue("dt", blockchainRecord.Date ?? "");
                     cmdStage.Parameters.AddWithValue("ipfs", blockchainRecord.IpfsCid ?? "");
                     var stagedId = await cmdStage.ExecuteScalarAsync();
                     if (stagedId == null)
                         return Conflict(new { status = "Error", message = "This grade is already submitted or approved and cannot be edited by Faculty." });
+
+                    using (var cycleMap = new NpgsqlCommand(@"
+                        INSERT INTO grade_assignment_cycles (record_id, assignment_cycle_id)
+                        VALUES (@recordId, @assignmentCycleId)
+                        ON CONFLICT (record_id) DO UPDATE SET assignment_cycle_id = EXCLUDED.assignment_cycle_id;", conn, transaction))
+                    {
+                        cycleMap.Parameters.AddWithValue("recordId", stagedId.ToString()!);
+                        cycleMap.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
+                        await cycleMap.ExecuteNonQueryAsync();
+                    }
 
                     using var cmdMetadata = new NpgsqlCommand(@"
                         UPDATE pending_grade_records
@@ -850,14 +870,12 @@ namespace BlockGo.Controllers
 
             DO $$
             BEGIN
-                IF NOT EXISTS (
-                    SELECT 1
-                    FROM pg_constraint
-                    WHERE conname = 'unique_grade_entry_section'
-                ) THEN
-                    ALTER TABLE pending_grade_records
-                    ADD CONSTRAINT unique_grade_entry_section
-                    UNIQUE (student_hash, subject_code, school_year, semester, section);
+                IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_grade_entry_section') THEN
+                    ALTER TABLE pending_grade_records DROP CONSTRAINT unique_grade_entry_section;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_grade_entry_assignment_cycle') THEN
+                    ALTER TABLE pending_grade_records ADD CONSTRAINT unique_grade_entry_assignment_cycle
+                    UNIQUE (student_hash, subject_code, school_year, semester, section, assignment_cycle_id);
                 END IF;
             END $$;";
 
@@ -887,6 +905,7 @@ namespace BlockGo.Controllers
                 ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMP WITH TIME ZONE;
                 ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(255);
                 ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS transaction_hash VARCHAR(255);
+                ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS assignment_cycle_id VARCHAR(100) NOT NULL DEFAULT 'legacy';
             END $$;";
 
         private async Task EnsurePendingGradeSchemaAsync(NpgsqlConnection connection)
@@ -905,6 +924,11 @@ namespace BlockGo.Controllers
                         date VARCHAR(50), ipfs_cid VARCHAR(255), status VARCHAR(50), note TEXT
                     );
                     ALTER TABLE pending_grade_records ALTER COLUMN grade TYPE TEXT;
+                    CREATE TABLE IF NOT EXISTS grade_assignment_cycles (
+                        record_id VARCHAR(255) PRIMARY KEY,
+                        assignment_cycle_id VARCHAR(100) NOT NULL,
+                        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
                 " + EnsurePendingGradeRecordIdentityColumnsSql() + EnsurePendingGradeSectionScopedConstraintSql() + @"
                     DO $$
                     BEGIN
@@ -1352,29 +1376,45 @@ namespace BlockGo.Controllers
                             if (blockchainRecord.Units <= 0) blockchainRecord.Units = 3;
                             blockchainRecord.IpfsCid = ipfsCid;
 
+                            string assignmentCycleId = "";
+                            await using (var assignmentCommand = new NpgsqlCommand(@"
+                                SELECT fs.id::text FROM FacultySections fs
+                                JOIN users u ON u.id = fs.user_id
+                                WHERE LOWER(u.email) = LOWER(@faculty)
+                                  AND LOWER(TRIM(fs.department)) = LOWER(TRIM(@department))
+                                  AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(@subject))
+                                  AND SUBSTRING(fs.section FROM '([1-4]-[0-9]+)') = SUBSTRING(@section FROM '([1-4]-[0-9]+)')
+                                ORDER BY fs.id DESC LIMIT 1;", conn))
+                            {
+                                assignmentCommand.Parameters.AddWithValue("faculty", effectiveFacultyId);
+                                assignmentCommand.Parameters.AddWithValue("department", facDept ?? "");
+                                assignmentCommand.Parameters.AddWithValue("subject", blockchainRecord.SubjectCode ?? "");
+                                assignmentCommand.Parameters.AddWithValue("section", blockchainRecord.Section ?? "");
+                                assignmentCycleId = (string?)await assignmentCommand.ExecuteScalarAsync() ?? "";
+                            }
+                            if (string.IsNullOrWhiteSpace(assignmentCycleId))
+                            {
+                                failureCount++;
+                                errors.Add(new BulkUploadError { StudentId = record.StudentId ?? "", Reason = "No active faculty assignment matches this subject and section." });
+                                continue;
+                            }
+
                             string? existingId = null;
                             string? existingGradeJson = null;
                             
-                            using (var cmdCheck = new NpgsqlCommand("SELECT id, grade FROM pending_grade_records WHERE LOWER(student_hash) = LOWER(@sh) AND LOWER(subject_code) = LOWER(@subj) AND school_year = @sy AND semester = @sem AND LOWER(section) = LOWER(@sec) LIMIT 1", conn))
+                            using (var cmdCheck = new NpgsqlCommand("SELECT id, grade FROM pending_grade_records WHERE LOWER(student_hash) = LOWER(@sh) AND LOWER(subject_code) = LOWER(@subj) AND school_year = @sy AND semester = @sem AND LOWER(section) = LOWER(@sec) AND assignment_cycle_id = @assignmentCycleId LIMIT 1", conn))
                             {
                                 cmdCheck.Parameters.AddWithValue("sh", blockchainRecord.StudentHash ?? "");
                                 cmdCheck.Parameters.AddWithValue("subj", blockchainRecord.SubjectCode ?? "");
                                 cmdCheck.Parameters.AddWithValue("sy", blockchainRecord.SchoolYear ?? "");
                                 cmdCheck.Parameters.AddWithValue("sem", blockchainRecord.Semester ?? "");
                                 cmdCheck.Parameters.AddWithValue("sec", blockchainRecord.Section ?? "");
+                                cmdCheck.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
                                 using var checkReader = await cmdCheck.ExecuteReaderAsync();
                                 if (await checkReader.ReadAsync())
                                 {
                                     existingId = checkReader.GetString(0);
                                     existingGradeJson = checkReader.GetString(1);
-                                }
-                            }
-
-                            if (existingId == null)
-                            {
-                                if (ledgerGradesByKey.TryGetValue(LedgerLookupKey(blockchainRecord), out var existingLedgerRecord)) {
-                                    existingId = existingLedgerRecord.Id;
-                                    existingGradeJson = existingLedgerRecord.Grade;
                                 }
                             }
 
@@ -1405,8 +1445,8 @@ namespace BlockGo.Controllers
                             try
                             {
                                 using var cmdStage = new NpgsqlCommand(@"
-                                    INSERT INTO pending_grade_records (id, student_hash, student_no, student_name, section, course, subject_code, grade, semester, school_year, faculty_id, date, ipfs_cid, status)
-                        VALUES (@id, @sh, @studentNo, @studentName, @sec, @course, @subj, @gr, @sem, @sy, @fac, @dt, @ipfs, 'Draft')
+                                    INSERT INTO pending_grade_records (id, student_hash, student_no, student_name, section, course, subject_code, grade, semester, school_year, faculty_id, date, ipfs_cid, status, assignment_cycle_id)
+                        VALUES (@id, @sh, @studentNo, @studentName, @sec, @course, @subj, @gr, @sem, @sy, @fac, @dt, @ipfs, 'Draft', @assignmentCycleId)
                                     ON CONFLICT (id) DO UPDATE SET
                                         student_no = EXCLUDED.student_no,
                                         student_name = EXCLUDED.student_name,
@@ -1428,9 +1468,20 @@ namespace BlockGo.Controllers
                                 cmdStage.Parameters.AddWithValue("sem", blockchainRecord.Semester ?? "");
                                 cmdStage.Parameters.AddWithValue("sy", blockchainRecord.SchoolYear ?? "");
                                 cmdStage.Parameters.AddWithValue("fac", blockchainRecord.FacultyId ?? "");
+                                cmdStage.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
                                 cmdStage.Parameters.AddWithValue("dt", blockchainRecord.Date ?? "");
                                 cmdStage.Parameters.AddWithValue("ipfs", blockchainRecord.IpfsCid ?? "");
                                 await cmdStage.ExecuteNonQueryAsync();
+
+                                using (var cycleMap = new NpgsqlCommand(@"
+                                    INSERT INTO grade_assignment_cycles (record_id, assignment_cycle_id)
+                                    VALUES (@recordId, @assignmentCycleId)
+                                    ON CONFLICT (record_id) DO UPDATE SET assignment_cycle_id = EXCLUDED.assignment_cycle_id;", conn, transaction))
+                                {
+                                    cycleMap.Parameters.AddWithValue("recordId", blockchainRecord.Id ?? "");
+                                    cycleMap.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
+                                    await cycleMap.ExecuteNonQueryAsync();
+                                }
 
                                 using var cmdMetadata = new NpgsqlCommand(@"
                                     UPDATE pending_grade_records
@@ -1953,7 +2004,7 @@ namespace BlockGo.Controllers
                     SELECT id, student_hash, student_no, student_name, section, course, subject_code, grade,
                            semester, school_year, faculty_id, date, ipfs_cid, status, note,
                            subject_title, professor_name, program, term, units, submitted_by,
-                           recorded_at, transaction_id, transaction_hash
+                           recorded_at, transaction_id, transaction_hash, assignment_cycle_id
                     FROM pending_grade_records", conn);
                 using var reader = await cmd.ExecuteReaderAsync();
                 while (await reader.ReadAsync())
@@ -1983,11 +2034,19 @@ namespace BlockGo.Controllers
                         Timestamp = reader.IsDBNull(21) ? "" : reader.GetFieldValue<DateTimeOffset>(21).ToString("O"),
                         TransactionId = reader.IsDBNull(22) ? "" : reader.GetString(22),
                         TransactionHash = reader.IsDBNull(23) ? "" : reader.GetString(23),
+                        AssignmentCycleId = reader.IsDBNull(24) ? "" : reader.GetString(24),
                         University = "PLV",
                         Version = 1
                     });
                 }
                 await reader.CloseAsync();
+
+                var assignmentCycles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                using (var cycleCommand = new NpgsqlCommand("SELECT record_id, assignment_cycle_id FROM grade_assignment_cycles", conn))
+                using (var cycleReader = await cycleCommand.ExecuteReaderAsync())
+                    while (await cycleReader.ReadAsync()) assignmentCycles[cycleReader.GetString(0)] = cycleReader.GetString(1);
+                foreach (var grade in allGrades)
+                    if (assignmentCycles.TryGetValue(grade.Id ?? "", out var cycleId)) grade.AssignmentCycleId = cycleId;
 
                 // Deduplicate records that might temporarily exist in both staging and the ledger.
                 // Prefer the richer local staged copy when it contains student number/name metadata.
@@ -2127,6 +2186,7 @@ namespace BlockGo.Controllers
                         { "note", g.Note ?? "" },
                         { "university", g.University ?? "" },
                         { "version", g.Version },
+                        { "assignment_cycle_id", g.AssignmentCycleId ?? "" },
                         { "department", dept },
                         { "year_level", year }
                     });

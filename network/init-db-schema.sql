@@ -332,6 +332,12 @@ CREATE TABLE IF NOT EXISTS student_id_sequences (
 );
 
 CREATE UNIQUE INDEX idx_unique_faculty_section ON FacultySections(user_id, department, section, subject);
+COMMENT ON TABLE facultysections IS 'Each row is a distinct active faculty-assignment workflow cycle.';
+CREATE TABLE IF NOT EXISTS grade_assignment_cycles (
+    record_id VARCHAR(255) PRIMARY KEY,
+    assignment_cycle_id VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX idx_gradetemplates_department ON GradeTemplates(department);
 
 

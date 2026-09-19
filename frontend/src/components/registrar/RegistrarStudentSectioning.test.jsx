@@ -1,11 +1,11 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import RegistrarStudentSectioning from './RegistrarStudentSectioning';
-import { fetchNextStudentId, fetchUnassignedEnrolledStudents } from '../../services/api';
+import { fetchNextStudentId, fetchUnassignedEnrolledStudents, getSystemSetting } from '../../services/api';
 import { syncSectioningBatchToBackend } from '../../utils/registrarSectioningBackendSync';
 import { STUDENT_BATCHES_KEY } from '../../utils/studentSectioningHelpers';
 
-jest.mock('../../services/api', () => ({ fetchNextStudentId: jest.fn(), fetchUnassignedEnrolledStudents: jest.fn() }));
+jest.mock('../../services/api', () => ({ fetchNextStudentId: jest.fn(), fetchUnassignedEnrolledStudents: jest.fn(), getSystemSetting: jest.fn() }));
 jest.mock('../../utils/registrarSectioningBackendSync', () => ({ syncSectioningBatchToBackend: jest.fn() }));
 jest.mock('../../utils/sharedClientState', () => ({ pushSectioningSharedState: jest.fn() }));
 
@@ -17,6 +17,7 @@ beforeEach(() => {
   localStorage.clear();
   window.alert = jest.fn();
   fetchNextStudentId.mockResolvedValue({ highestSequence: 42 });
+  getSystemSetting.mockResolvedValue({ status: 'Success', value: { schoolYear: '2026-2027', semester: 'FIRST' } });
   fetchUnassignedEnrolledStudents.mockImplementation(async (period) => ({ data: [{ ...student, ...period }] }));
   syncSectioningBatchToBackend.mockResolvedValue({ sectionsSynced: 1, studentsSynced: 1 });
 });
@@ -33,15 +34,13 @@ test('loads enrollments automatically and generates sections using the saved stu
   }));
 });
 
-test('switching semesters keeps enrollment workspaces separate', async () => {
+test('uses the active encoding period without a manual semester control', async () => {
   render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
-  await waitFor(() => expect(JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))).toHaveLength(1));
-  const initial = screen.getByLabelText('Enrollment semester').value;
-  const next = initial === 'FIRST' ? 'SECOND' : 'FIRST';
-  fireEvent.change(screen.getByLabelText('Enrollment semester'), { target: { value: next } });
-  await waitFor(() => expect(JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))).toHaveLength(2));
+  expect(screen.queryByLabelText('Enrollment semester')).not.toBeInTheDocument();
+  expect(await screen.findByLabelText('Active enrollment term')).toHaveTextContent('First Semester');
+  await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled \(1\)/ })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Generate Sections' }));
-  await waitFor(() => expect(syncSectioningBatchToBackend).toHaveBeenCalledWith(expect.objectContaining({ semester: next })));
+  await waitFor(() => expect(syncSectioningBatchToBackend).toHaveBeenCalledWith(expect.objectContaining({ semester: 'FIRST', schoolYear: '2026-2027' })));
 });
 
 test('shows fetch failures and allows refresh even with zero students', async () => {
@@ -59,6 +58,7 @@ test('ignores a stale response after the department changes', async () => {
     ? new Promise((resolve) => { resolveFirst = resolve; })
     : Promise.resolve({ data: [] }));
   const { rerender } = render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  await waitFor(() => expect(resolveFirst).toEqual(expect.any(Function)));
   rerender(<RegistrarStudentSectioning chairpersonDepartment="BSCS" />);
   await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled/ })).toBeEnabled());
   await act(async () => resolveFirst({ data: [student] }));

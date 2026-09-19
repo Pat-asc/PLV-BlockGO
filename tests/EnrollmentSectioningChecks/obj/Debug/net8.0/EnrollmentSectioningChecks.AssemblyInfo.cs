@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("EnrollmentSectioningChecks")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+45e11a37ba3198e8c9f2604ed1f62bce3483f3d9")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+06e0e7ceefa72168b2a9660a61c49370cd98267d")]
 [assembly: System.Reflection.AssemblyProductAttribute("EnrollmentSectioningChecks")]
 [assembly: System.Reflection.AssemblyTitleAttribute("EnrollmentSectioningChecks")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

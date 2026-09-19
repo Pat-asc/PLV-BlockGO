@@ -1014,9 +1014,9 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
           </div>
         </div>
 
-        <div className="mt-4 overflow-x-auto">
-          <table className="min-w-full">
-            <thead>
+        <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+          <table className="min-w-[1280px]">
+            <thead className="sticky top-0 z-10">
               <tr className="bg-[#003366] text-white">
                 <th className="px-4 py-3 text-left text-sm">Mode</th>
                 <th className="px-4 py-3 text-left text-sm">Faculty</th>

@@ -2,14 +2,15 @@ import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import AcademicAssignment from "./AcademicAssignment";
-import { fetchApprovedFaculties, fetchCurriculums, assignFacultyLoadToBackend } from "../../services/api";
-jest.mock("../../services/api", () => ({ fetchApprovedFaculties: jest.fn(), fetchCurriculums: jest.fn(), assignFacultyLoadToBackend: jest.fn() }));
+import { fetchApprovedFaculties, fetchCurriculums, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend } from "../../services/api";
+jest.mock("../../services/api", () => ({ fetchApprovedFaculties: jest.fn(), fetchCurriculums: jest.fn(), fetchFacultyAssignmentOptions: jest.fn(), assignFacultyLoadToBackend: jest.fn() }));
 jest.mock("../../utils/sharedClientState", () => ({ pushAssignmentsSharedState: jest.fn() }));
 jest.mock("./FacultyLoading", () => () => <div>Bulk import</div>);
 beforeEach(() => {
   localStorage.clear(); jest.clearAllMocks();
   fetchApprovedFaculties.mockResolvedValue({ faculties: [{ id: 1, fullname: "Carlos Reyes", department: "Bachelor of Science in Information Technology" }] });
   fetchCurriculums.mockResolvedValue({ data: [{ programCode: "BSIT", status: "PUBLISHED", subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems and Technologies", yearLevel: 3, semester: "SECOND", units: 3 }] }] });
+  fetchFacultyAssignmentOptions.mockResolvedValue({ subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems and Technologies", yearLevel: 3, semester: "SECOND", units: 3 }], enrollmentPeriods: [{ schoolYear: "2026-2027", semester: "SECOND", yearLevel: 3, section: "3-1" }] });
   assignFacultyLoadToBackend.mockResolvedValue({ status: "Success" });
   localStorage.setItem("studentSections", JSON.stringify([{ program: "Bachelor of Science in Information Technology", yearLevel: "3rd Year", section: "IT 3A", schoolYear: "2026", semester: "2nd Semester", students: [] }]));
 });
@@ -27,7 +28,7 @@ test("stages assignments, prevents duplicates, and persists only on Save", async
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   fireEvent.click(await screen.findByRole("button", { name: /Carlos Reyes/ }));
   fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
-  fireEvent.change(screen.getByLabelText("Schedule for IT 3A"), { target: { value: "Mon 8:00 AM – 10:00 AM" } });
+  fireEvent.change(screen.getByLabelText("Schedule for BSIT 3-1"), { target: { value: "Mon 8:00 AM – 10:00 AM" } });
   fireEvent.click(screen.getByRole("button", { name: "＋ Assign" }));
   expect(localStorage.getItem("registrarAssignments")).toBeNull();
   expect(screen.getByText("1 pending assignment")).toBeInTheDocument();
@@ -37,7 +38,7 @@ test("stages assignments, prevents duplicates, and persists only on Save", async
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Assignments saved successfully"));
   const saved = JSON.parse(localStorage.getItem("registrarAssignments"));
   expect(saved).toHaveLength(1);
-  expect(saved[0]).toMatchObject({ facultyId: "1", subjectCode: "IT 321", sectionName: "IT 3A", schedule: "Mon 8:00 AM – 10:00 AM" });
+  expect(saved[0]).toMatchObject({ facultyId: "1", subjectCode: "IT 321", sectionName: "BSIT 3-1", schedule: "Mon 8:00 AM – 10:00 AM" });
   expect(assignFacultyLoadToBackend).toHaveBeenCalledTimes(1);
 });
 test("saves only the selected professor's pending load", async () => {
@@ -65,7 +66,7 @@ test("allows removing a pending assignment without saving", async () => {
   fireEvent.click(await screen.findByRole("button", { name: /Carlos Reyes/ }));
   fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
   fireEvent.click(screen.getByRole("button", { name: "＋ Assign" }));
-  fireEvent.click(screen.getByRole("button", { name: "Remove IT 321 IT 3A" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove IT 321 BSIT 3-1" }));
   expect(screen.getByRole("button", { name: "Save Assignments" })).toBeDisabled();
   expect(localStorage.getItem("registrarAssignments")).toBeNull();
 });

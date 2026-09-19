@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from "react";
 import FacultyLoading from "./FacultyLoading";
 import { programOptions } from "../../data/registrarData";
-import { fetchApprovedFaculties, fetchCurriculums, assignFacultyLoadToBackend } from "../../services/api";
-import { STUDENT_BATCHES_KEY, getDefaultSectionName } from "../../utils/studentSectioningHelpers";
+import { fetchApprovedFaculties, fetchCurriculums, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend } from "../../services/api";
 import { pushAssignmentsSharedState } from "../../utils/sharedClientState";
 import "./SubjectAssignment.css";
 
@@ -20,6 +19,7 @@ function Heading({ icon, title }) { return <div className="sa-heading"><span cla
 export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   const [faculty, setFaculty] = useState([]);
   const [curricula, setCurricula] = useState([]);
+  const [assignmentOptions, setAssignmentOptions] = useState({ subjects: [], enrollmentPeriods: [] });
   const [loading, setLoading] = useState(true);
   const [professor, setProfessor] = useState("");
   const [lookup, setLookup] = useState("");
@@ -39,34 +39,33 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   const [schedules, setSchedules] = useState({});
   useEffect(() => {
     let active = true;
-    Promise.allSettled([fetchApprovedFaculties(), fetchCurriculums()]).then(([people, courses]) => {
+    Promise.allSettled([fetchApprovedFaculties(), fetchCurriculums(), fetchFacultyAssignmentOptions(chairpersonDepartment)]).then(([people, courses, options]) => {
       if (!active) return;
       if (people.status === "fulfilled") setFaculty(people.value.faculties || []);
       if (courses.status === "fulfilled") setCurricula(courses.value.data || []);
-      if (people.status === "rejected" || courses.status === "rejected") setNotice("Some data could not be loaded. Refresh the page to retry.");
+      if (options.status === "fulfilled") setAssignmentOptions(options.value || { subjects: [], enrollmentPeriods: [] });
+      if (people.status === "rejected" || courses.status === "rejected" || options.status === "rejected") setNotice("Some data could not be loaded. Refresh the page to retry.");
       setLoading(false);
     });
     return () => { active = false; };
-  }, []);
+  }, [chairpersonDepartment]);
   const departmentFaculty = faculty.filter((person) => (person.department || person.program) === chairpersonDepartment || (person.department || person.program) === program);
   const selectedProfessor = departmentFaculty.find((person) => idOf(person) === professor);
   const programName = programOptions.find((item) => item.code === program)?.name || program;
   const curriculum = curricula.find((item) => item.programCode === program && item.status === "PUBLISHED");
-  const subjects = (curriculum?.subjects || []).filter((item) => Number(item.yearLevel) === years.indexOf(year) + 1 && item.semester === term);
+  const canonicalSubjects = assignmentOptions.subjects?.length ? assignmentOptions.subjects : (curriculum?.subjects || []);
+  const subjects = canonicalSubjects.filter((item) => Number(item.yearLevel) === years.indexOf(year) + 1 && item.semester === term);
   const visibleSubjects = subjects.filter((item) => `${item.subjectCode} ${item.subjectTitle}`.toLowerCase().includes(query.toLowerCase()));
   const subject = subjects.find((item) => item.subjectCode === subjectCode);
-  const allSections = [...read("studentSections"), ...read(STUDENT_BATCHES_KEY).filter((batch) => batch.status !== "Promoted").flatMap((batch) => (batch.sectionPlans || []).map((section) => ({
-    program: batch.program, yearLevel: section.yearLevel, section: section.sectionName || getDefaultSectionName(batch.program, section.sectionCode), schoolYear: batch.batchYear, semester: batch.semester,
-    students: (batch.students || []).filter((student) => student.sectionCode === section.sectionCode && (!student.yearLevel || student.yearLevel === section.yearLevel)),
-  })))];
-  const sections = allSections.filter((item, index, items) => item.program === programName && item.yearLevel === year && (!item.semester || item.semester === terms[term]) && items.findIndex((other) => other.section === item.section && other.program === item.program && other.schoolYear === item.schoolYear && other.semester === item.semester) === index);
+  const allSections = (assignmentOptions.enrollmentPeriods || []).map((period) => ({ program: programName, yearLevel: years[Number(period.yearLevel) - 1], section: `${program} ${period.section}`, schoolYear: period.schoolYear, semester: terms[period.semester] || period.semesterDisplay, semesterCode: period.semester, students: [] }));
+  const sections = allSections.filter((item, index, items) => item.program === programName && item.yearLevel === year && item.semesterCode === term && items.findIndex((other) => other.section === item.section && other.program === item.program && other.schoolYear === item.schoolYear && other.semesterCode === item.semesterCode) === index);
   const rows = [...saved, ...draft].filter((item) => String(item.facultyId) === professor);
   const professorDraft = draft.filter((item) => String(item.facultyId) === professor);
   const totalUnits = rows.reduce((sum, item) => sum + (Number(item.units) || 0), 0);
   const selectProfessor = (person) => { setProfessor(idOf(person)); setLookup(""); setProfessorListOpen(false); };
   const add = (section, index) => {
     if (!subject || !selectedProfessor) return;
-    const item = { id: `subject-${Date.now()}-${index}`, facultyId: professor, facultyName: nameOf(selectedProfessor), program: programName, sectionName: section.section, yearLevel: year, schoolYear: section.schoolYear, semester: terms[term], subjectCode: subject.subjectCode, subjectTitle: subject.subjectTitle, units: String(subject.units || 0), schedule: schedules[`${program}|${section.section}|${section.schoolYear}`] || "", day: "", date: "", rosterStudents: section.students || [], rosterFileName: "Created section roster", loadMode: "Manual Section Distribution", uploadedAt: new Date().toISOString() };
+    const item = { id: `subject-${Date.now()}-${index}`, facultyId: professor, facultyName: nameOf(selectedProfessor), program: programName, sectionName: section.section, yearLevel: year, schoolYear: section.schoolYear, semester: terms[term], semesterCode: term, subjectCode: subject.subjectCode, subjectTitle: subject.subjectTitle, units: String(subject.units || 0), schedule: schedules[`${program}|${section.section}|${section.schoolYear}`] || "", day: "", date: "", rosterStudents: section.students || [], rosterFileName: "Created section roster", loadMode: "Manual Section Distribution", uploadedAt: new Date().toISOString() };
     if ([...saved, ...draft].some((other) => identity(other) === identity(item))) { setNotice("This subject and section already have an assignment for this term."); return; }
     setDraft((current) => [...current, item]); setNotice("");
   };
@@ -76,13 +75,16 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     try {
       const latest = read("registrarAssignments");
       if (professorDraft.some((item) => latest.some((other) => identity(other) === identity(item)))) throw new Error("An assignment was added elsewhere. Reload before saving to avoid duplicates.");
-      const next = [...latest, ...professorDraft];
+      const pending = [...professorDraft];
+      const results = await Promise.allSettled(pending.map((item) => assignFacultyLoadToBackend(item)));
+      const successful = pending.filter((_item, index) => results[index].status === "fulfilled");
+      const next = [...latest, ...successful];
       localStorage.setItem("registrarAssignments", JSON.stringify(next));
       setSaved(next);
-      const pending = [...professorDraft]; setDraft((current) => current.filter((item) => String(item.facultyId) !== professor));
-      const results = await Promise.allSettled(pending.map((item) => assignFacultyLoadToBackend(item)));
+      setDraft((current) => current.filter((item) => !successful.some((savedItem) => savedItem.id === item.id)));
       await pushAssignmentsSharedState();
-      setNotice(results.some((result) => result.status === "rejected") ? "Assignments saved locally. Some faculty loads could not sync to the server." : "Assignments saved successfully.");
+      const failed = results.find((result) => result.status === "rejected");
+      setNotice(failed ? `Some assignments were not saved: ${failed.reason?.message || "The server rejected the assignment."}` : "Assignments saved successfully.");
     } catch (error) { setNotice(error.message || "Unable to save assignments."); }
     finally { setSaving(false); }
   };

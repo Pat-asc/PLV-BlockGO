@@ -1685,7 +1685,7 @@ namespace Client_app.Controllers
             }
             var subjects = new List<object>();
             await using (var command = new NpgsqlCommand(@"
-                SELECT cs.subject_code, cs.subject_title, cs.year_level, cs.semester
+                SELECT cs.subject_code, cs.subject_title, cs.year_level, cs.semester, cs.units
                 FROM curriculum_subjects cs
                 JOIN curriculums c ON c.curriculum_id = cs.curriculum_id AND c.status = 'PUBLISHED'
                 JOIN academic_programs p ON p.program_id = c.program_id
@@ -1698,7 +1698,7 @@ namespace Client_app.Controllers
                     subjects.Add(new
                     {
                         subjectCode = reader.GetString(0), subjectTitle = reader.GetString(1),
-                        yearLevel = reader.GetInt16(2), semester = reader.GetString(3)
+                        yearLevel = reader.GetInt16(2), semester = reader.GetString(3), units = reader.GetDecimal(4)
                     });
             }
             var enrollmentPeriods = new List<object>();
@@ -1746,8 +1746,9 @@ namespace Client_app.Controllers
             try
             {
                 if (id <= 0 || string.IsNullOrWhiteSpace(request.Department) ||
-                    string.IsNullOrWhiteSpace(request.Section) || string.IsNullOrWhiteSpace(request.YearLevel))
-                    throw new ArgumentException("Faculty, academic program, year level, and section are required.");
+                    string.IsNullOrWhiteSpace(request.Section) || string.IsNullOrWhiteSpace(request.YearLevel) ||
+                    string.IsNullOrWhiteSpace(request.Subject))
+                    throw new ArgumentException("Faculty, academic program, year level, section, and subject are required.");
                 var yearMatch = System.Text.RegularExpressions.Regex.Match(request.YearLevel.Trim(), @"^([1-4])(?:st|nd|rd|th)?(?:\s+year)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                 if (!yearMatch.Success) throw new ArgumentException("Year level must be from 1 to 4.");
                 var yearLevel = int.Parse(yearMatch.Groups[1].Value);
@@ -1782,6 +1783,25 @@ namespace Client_app.Controllers
                         ?? throw new ArgumentException("The selected section does not exist in the academic program.");
                 }
                 var canonicalSubject = string.IsNullOrWhiteSpace(request.Subject) ? null : request.Subject.Trim();
+                var canonicalSchoolYear = NormalizeSchoolYear(request.SchoolYear);
+                var canonicalSemester = NormalizeEnrollmentSemester(request.Semester);
+                await using (var periodCommand = new NpgsqlCommand(@"
+                    SELECT 1 FROM student_enrollments e
+                    JOIN academic_programs p ON p.program_id = e.program_id
+                    JOIN academicsections s ON s.id = e.academic_section_id
+                    WHERE LOWER(@department) IN (LOWER(p.program_code), LOWER(p.program_name))
+                      AND e.school_year = @schoolYear AND e.semester = @semester
+                      AND e.year_level = @yearLevel AND s.section_num = @sectionNumber
+                      AND e.status = 'ENROLLED' LIMIT 1;", conn))
+                {
+                    periodCommand.Parameters.AddWithValue("department", canonicalDepartment);
+                    periodCommand.Parameters.AddWithValue("schoolYear", canonicalSchoolYear);
+                    periodCommand.Parameters.AddWithValue("semester", canonicalSemester);
+                    periodCommand.Parameters.AddWithValue("yearLevel", yearLevel);
+                    periodCommand.Parameters.AddWithValue("sectionNumber", sectionNumber);
+                    if (await periodCommand.ExecuteScalarAsync() is null)
+                        throw new ArgumentException("The selected section has no active enrollment in that school year and semester.");
+                }
                 if (canonicalSubject is not null)
                 {
                     await using var subjectCommand = new NpgsqlCommand(@"
@@ -2272,7 +2292,7 @@ namespace Client_app.Controllers
                 using var cmd = new NpgsqlCommand(@"
                     SELECT fs.department, fs.section, fs.year_level, fs.subject,
                            period.school_year, period.semester, period.academic_section_id,
-                           period.canonical_section
+                           period.canonical_section, fs.id, fs.assigned_at
                     FROM FacultySections fs 
                     JOIN Users u ON fs.user_id = u.id 
                     LEFT JOIN LATERAL (
@@ -2313,7 +2333,9 @@ namespace Client_app.Controllers
                         schoolYear = reader.IsDBNull(4) ? null : reader.GetString(4),
                         semester = reader.IsDBNull(5) ? null : reader.GetString(5),
                         academicSectionId = reader.IsDBNull(6) ? (int?)null : reader.GetInt32(6),
-                        canonicalSection = reader.IsDBNull(7) ? null : reader.GetString(7)
+                        canonicalSection = reader.IsDBNull(7) ? null : reader.GetString(7),
+                        assignmentCycleId = reader.GetInt32(8).ToString(),
+                        assignedAt = reader.IsDBNull(9) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(9)
                     });
                 }
 
@@ -2490,7 +2512,7 @@ namespace Client_app.Controllers
             var worksheet = workbook.Worksheets.Add("Student Enrollment");
             var headers = new[]
             {
-                "Student ID", "First Name", "Last Name", "Middle Name", "Birthday",
+                "Student ID", "First Name", "Last Name", "Middle Name", "Sex", "Birthday",
                 "Email Address", "Contact Number", "Home Address", "Academic Program", "Year Level"
             };
             for (var index = 0; index < headers.Length; index++)
@@ -2503,8 +2525,8 @@ namespace Client_app.Controllers
             header.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             worksheet.SheetView.FreezeRows(1);
             worksheet.Range(1, 1, 1001, headers.Length).SetAutoFilter();
-            worksheet.Column(5).Style.DateFormat.Format = "mm/dd/yyyy";
-            worksheet.Column(10).Style.NumberFormat.Format = "@";
+            worksheet.Column(6).Style.DateFormat.Format = "mm/dd/yyyy";
+            worksheet.Column(11).Style.NumberFormat.Format = "@";
 
             var options = workbook.Worksheets.Add("Academic Program Options");
             options.Cell(1, 1).Value = "Program Code";
@@ -2516,12 +2538,16 @@ namespace Client_app.Controllers
             }
             var courseOptions = options.Range(2, 1, programs.Count + 1, 1);
             workbook.DefinedNames.Add("AcademicPrograms", courseOptions);
-            var programValidation = worksheet.Range("I2:I1001").CreateDataValidation();
+            var sexValidation = worksheet.Range("E2:E1001").CreateDataValidation();
+            sexValidation.List("\"Male,Female\"", true);
+            sexValidation.IgnoreBlanks = false;
+            sexValidation.ShowErrorMessage = true;
+            var programValidation = worksheet.Range("J2:J1001").CreateDataValidation();
             programValidation.List("AcademicPrograms", true);
             programValidation.IgnoreBlanks = true;
             programValidation.ShowErrorMessage = false;
 
-            var yearValidation = worksheet.Range("J2:J1001").CreateDataValidation();
+            var yearValidation = worksheet.Range("K2:K1001").CreateDataValidation();
             yearValidation.List("\"1st,2nd,3rd,4th\"", true);
             yearValidation.IgnoreBlanks = true;
             yearValidation.ShowErrorMessage = false;
@@ -2529,20 +2555,21 @@ namespace Client_app.Controllers
 
             worksheet.Column(1).Width = 14;
             worksheet.Columns(2, 4).Width = 18;
-            worksheet.Column(5).Width = 14;
-            worksheet.Column(6).Width = 28;
-            worksheet.Column(7).Width = 18;
-            worksheet.Column(8).Width = 32;
-            worksheet.Column(9).Width = 16;
-            worksheet.Column(10).Width = 12;
+            worksheet.Column(5).Width = 12;
+            worksheet.Column(6).Width = 14;
+            worksheet.Column(7).Width = 28;
+            worksheet.Column(8).Width = 18;
+            worksheet.Column(9).Width = 32;
+            worksheet.Column(10).Width = 16;
+            worksheet.Column(11).Width = 12;
 
-            worksheet.Cell("L1").Value = "Instructions";
-            worksheet.Cell("L1").Style.Font.Bold = true;
-            worksheet.Cell("L2").Value = "Birthday is required for new students and must use MM/DD/YYYY.";
-            worksheet.Cell("L3").Value = "Academic Program must be selected from the dropdown.";
-            worksheet.Cell("L4").Value = "Year Level defaults to 1st. Change it to 2nd, 3rd, or 4th when applicable.";
-            worksheet.Cell("L5").Value = "Sections are intentionally omitted and are assigned later in Operations.";
-            worksheet.Column(12).Width = 75;
+            worksheet.Cell("M1").Value = "Instructions";
+            worksheet.Cell("M1").Style.Font.Bold = true;
+            worksheet.Cell("M2").Value = "Sex and birthday are required for new students; birthday must use MM/DD/YYYY.";
+            worksheet.Cell("M3").Value = "Academic Program must be selected from the dropdown.";
+            worksheet.Cell("M4").Value = "Year Level defaults to 1st. Change it to 2nd, 3rd, or 4th when applicable.";
+            worksheet.Cell("M5").Value = "Sections are intentionally omitted and are assigned later in Operations.";
+            worksheet.Column(13).Width = 75;
 
             await using var stream = new MemoryStream();
             workbook.SaveAs(stream);
@@ -2713,6 +2740,12 @@ namespace Client_app.Controllers
                         dobStr = dobStr.Trim();
                         middleName = middleName.Trim();
                         sex = sex.Trim();
+                        if (!string.IsNullOrWhiteSpace(sex))
+                        {
+                            sex = char.ToUpperInvariant(sex[0]) + sex[1..].ToLowerInvariant();
+                            if (sex != "Male" && sex != "Female")
+                                throw new Exception("Sex must be Male or Female.");
+                        }
                         phone = phone.Trim();
                         address = address.Trim();
                         if (!System.Text.RegularExpressions.Regex.IsMatch(loginId, @"^\d{2,4}-\d{4,}$"))
@@ -2766,6 +2799,8 @@ namespace Client_app.Controllers
                             throw new Exception("Student does not exist yet. Use Bulk Enroll first.");
                         if (!exists && string.IsNullOrWhiteSpace(name))
                             throw new Exception("New students require name (or first and last name) columns.");
+                        if (!exists && string.IsNullOrWhiteSpace(sex))
+                            throw new Exception("New students require Sex (Male or Female).");
 
                         if (!string.IsNullOrWhiteSpace(name))
                         {

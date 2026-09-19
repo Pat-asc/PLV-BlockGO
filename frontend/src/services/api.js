@@ -502,6 +502,9 @@ export const fetchApprovedFaculties = async () => {
     return await fetchWithAuth(`/Auth/faculty/approved`);
 };
 
+export const fetchFacultyAssignmentOptions = async (department) =>
+    fetchWithAuth(`/Auth/faculty/assignment-options?department=${encodeURIComponent(department)}`);
+
 export const assignFaculty = async (id, assignmentData) => {
     return await fetchWithAuth(`/Auth/faculty/${encodeURIComponent(id)}/assign`, {
         method: 'PUT',
@@ -527,6 +530,8 @@ export const assignFacultyLoadToBackend = async (assignmentData) => {
         Section: assignmentData.sectionName || assignmentData.section || '',
         YearLevel: assignmentData.yearLevel || '',
         Subject: assignmentData.subjectCode || assignmentData.subject || '',
+        SchoolYear: assignmentData.schoolYear || '',
+        Semester: assignmentData.semesterCode || assignmentData.semester || '',
     });
 };
 

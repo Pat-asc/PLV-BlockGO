@@ -108,32 +108,37 @@ const CurriculumManagement = () => {
 
   return (
     <div className="space-y-5">
+      <header className="border-b border-slate-200 pb-4">
+        <p className="text-xs font-bold uppercase tracking-wide text-blue-700">Enrollment Management</p>
+        <h2 className="mt-1 text-2xl font-bold text-[#003366]">Curriculum Management</h2>
+        <p className="mt-1 max-w-3xl text-sm text-slate-600">Review program versions, subject requirements, units, and prerequisites before publishing or assigning a curriculum.</p>
+      </header>
       {notice ? (
         <div className={`rounded-lg p-3 text-sm ${notice.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-800'}`}>
           {notice.message}
         </div>
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Curriculum status filters">
         {tabs.map((tab) => (
           <button
             key={tab}
             type="button"
             onClick={() => setActiveTab(tab)}
-            className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === tab ? 'bg-[#003366] text-white' : 'border border-slate-300 bg-white text-slate-700'}`}
+            className={`whitespace-nowrap rounded-lg px-4 py-2 text-sm font-bold ${activeTab === tab ? 'bg-[#003366] text-white' : 'border border-slate-300 bg-white text-slate-700'}`}
           >
             {labels[tab]} ({tab === 'ALL' ? curricula.length : curricula.filter((item) => item.status === tab).length})
           </button>
         ))}
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="grid items-start gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <aside className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm lg:sticky lg:top-4">
           <h2 className="mb-3 font-bold text-[#003366]">Curriculum Versions</h2>
           {loading ? (
             <p className="py-6 text-center text-slate-500">Loading…</p>
           ) : (
-            <div className="space-y-2">
+            <div className="max-h-[65vh] space-y-2 overflow-y-auto pr-1">
               {filtered.map((curriculum) => (
                 <button
                   key={curriculum.curriculumId}

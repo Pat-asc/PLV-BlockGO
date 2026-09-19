@@ -25,12 +25,14 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   const [file, setFile] = useState(null);
   const [students, setStudents] = useState([]);
   const [curricula, setCurricula] = useState([]);
-  const [manualForm, setManualForm] = useState({ firstName: '', lastName: '', middleName: '', birthdate: '', email: '', contactNumber: '', homeAddress: '' });
+  const emptyManualForm = { firstName: '', lastName: '', middleName: '', sex: '', birthdate: '', email: '', contactNumber: '', homeAddress: '' };
+  const [manualForm, setManualForm] = useState(emptyManualForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState(null);
   const [enrollmentSearch, setEnrollmentSearch] = useState('');
   const [enrollmentMethod, setEnrollmentMethod] = useState('bulk');
+  const [programFilter, setProgramFilter] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,13 +62,15 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   );
   const visibleStudents = useMemo(() => {
     const query = enrollmentSearch.trim().toLowerCase();
-    if (!query) return students;
-    return students.filter((student) =>
+    const programStudents = programFilter ? students.filter((student) => String(student.department || '').toLowerCase() === programFilter.toLowerCase()) : students;
+    if (!query) return programStudents;
+    return programStudents.filter((student) =>
       [student.fullname, student.studentno, student.email, student.department]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(query))
     );
-  }, [students, enrollmentSearch]);
+  }, [students, enrollmentSearch, programFilter]);
+  const availablePrograms = useMemo(() => [...new Set([...programs, ...students.map((student) => student.department)].filter(Boolean))].sort(), [programs, students]);
 
   useEffect(() => {
     if (matchingCurricula.some((item) => String(item.curriculumId) === String(form.curriculumId))) return;
@@ -121,13 +125,13 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
     setSaving(true); setResult(null);
     try {
       const csv = buildCsvContent([
-        ['First Name', 'Last Name', 'Middle Name', 'Birthdate', 'Email Address', 'Contact Number', 'Home Address'],
-        [manualForm.firstName, manualForm.lastName, manualForm.middleName, manualForm.birthdate, manualForm.email, manualForm.contactNumber, manualForm.homeAddress],
+        ['First Name', 'Last Name', 'Middle Name', 'Sex', 'Birthdate', 'Email Address', 'Contact Number', 'Home Address'],
+        [manualForm.firstName, manualForm.lastName, manualForm.middleName, manualForm.sex, manualForm.birthdate, manualForm.email, manualForm.contactNumber, manualForm.homeAddress],
       ]);
       const manualFile = new File([csv], 'manual-student-enrollment.csv', { type: 'text/csv' });
       const response = await registrarBulkEnrollStudents(manualFile, form.department, enrollmentPayload());
       setResult(response);
-      setManualForm({ firstName: '', lastName: '', middleName: '', birthdate: '', email: '', contactNumber: '', homeAddress: '' });
+      setManualForm(emptyManualForm);
       await load();
     } catch (error) {
       setResult({ status: 'Error', message: error.message || 'Student enrollment failed.' });
@@ -138,8 +142,8 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
 
   const downloadTemplate = () => {
     downloadCsvFile(buildCsvContent([
-      ['First Name', 'Last Name', 'Middle Name', 'Birthdate', 'Email Address', 'Contact Number', 'Home Address'],
-      ['Juan', 'Dela Cruz', 'Andres', '05/15/2005', 'juan.delacruz@plv.edu.ph', '09123456789', 'Valenzuela City'],
+      ['First Name', 'Last Name', 'Middle Name', 'Sex', 'Birthdate', 'Email Address', 'Contact Number', 'Home Address'],
+      ['Juan', 'Dela Cruz', 'Andres', 'Male', '05/15/2005', 'juan.delacruz@plv.edu.ph', '09123456789', 'Valenzuela City'],
     ]), `student-enrollment-${form.schoolYear}.csv`);
   };
 
@@ -217,16 +221,17 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
                 ['email', 'Email Address', 'e.g. student@plv.edu.ph', true, 'email'],
                 ['contactNumber', 'Contact Number', 'Enter contact number', true, 'tel'],
               ].map(([field, label, placeholder, required, type]) => <label key={field} className="text-[10px] font-semibold text-slate-700">{label}{required && <span className="text-red-500"> *</span>}<input required={required} type={type} value={manualForm[field]} onChange={(event) => setManualForm((current) => ({ ...current, [field]: event.target.value }))} placeholder={placeholder} className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-3 text-xs font-normal outline-none focus:border-blue-600" /></label>)}
+              <label className="text-[10px] font-semibold text-slate-700">Sex <span className="text-red-500"> *</span><select required value={manualForm.sex} onChange={(event) => setManualForm((current) => ({ ...current, sex: event.target.value }))} className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-3 text-xs font-normal"><option value="">Select sex</option><option value="Male">Male</option><option value="Female">Female</option></select></label>
               <label className="text-[10px] font-semibold text-slate-700 md:col-span-2 xl:col-span-3">Home Address <span className="text-red-500">*</span><textarea required value={manualForm.homeAddress} onChange={(event) => setManualForm((current) => ({ ...current, homeAddress: event.target.value }))} placeholder="Enter complete home address" rows="2" className="mt-1 w-full resize-none rounded-lg border border-slate-300 px-3 py-2 text-xs font-normal outline-none focus:border-blue-600" /></label>
             </div>
             
-            <div className="mt-4 flex justify-end gap-2 border-t border-slate-100 p-4"><button type="button" onClick={() => setManualForm({ firstName: '', lastName: '', middleName: '', birthdate: '', email: '', contactNumber: '', homeAddress: '' })} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-slate-600">Cancel</button><button disabled={saving || loading} className="rounded-lg bg-[#003366] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : '♙  Save Student'}</button></div>
+            <div className="mt-4 flex justify-end gap-2 border-t border-slate-100 p-4"><button type="button" onClick={() => setManualForm(emptyManualForm)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-slate-600">Cancel</button><button disabled={saving || loading} className="rounded-lg bg-[#003366] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : '♙  Save Student'}</button></div>
           </div>
         </form>}
       </section>
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><h4 className="text-sm font-bold text-[#003366]">Current Student Enrollments</h4><div className="flex gap-2"><input value={enrollmentSearch} onChange={(event) => setEnrollmentSearch(event.target.value)} placeholder="Search by student name or ID..." className="h-9 w-full rounded-lg border border-slate-300 px-3 text-xs outline-none sm:w-64"/><button type="button" onClick={load} className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700">Refresh</button></div></div>
+        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between"><h4 className="text-sm font-bold text-[#003366]">Current Student Enrollments</h4><div className="flex flex-col gap-2 sm:flex-row"><select aria-label="Program / Course" value={programFilter} onChange={(event) => setProgramFilter(event.target.value)} className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs"><option value="">All Programs</option>{availablePrograms.map((program) => <option key={program} value={program}>{program}</option>)}</select><input value={enrollmentSearch} onChange={(event) => setEnrollmentSearch(event.target.value)} placeholder="Search by student name or ID..." className="h-9 w-full rounded-lg border border-slate-300 px-3 text-xs outline-none sm:w-64"/><button type="button" onClick={load} className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700">Refresh</button></div></div>
         <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr className="bg-slate-50 text-slate-600"><th className="px-4 py-3">Student</th><th className="px-4 py-3">Program / Year Level</th><th className="px-4 py-3">School Year</th><th className="px-4 py-3">Curriculum</th><th className="px-4 py-3">Status</th></tr></thead><tbody>{visibleStudents.map((student) => <tr key={student.id} className="border-b"><td className="px-4 py-3"><span className="block font-semibold">{student.fullname}</span><span className="text-xs text-slate-500">{student.studentno}</span></td><td className="px-4 py-3">{student.department || 'Unassigned'}<span className="block text-xs text-slate-500">Year {student.yearLevel || '—'}</span></td><td className="px-4 py-3">{student.schoolYear || '—'}</td><td className="px-4 py-3">{student.curriculumVersion || 'Not assigned'}</td><td className="px-4 py-3">{student.enrollmentStatus || student.assignmentStatus || 'Unassigned'}</td></tr>)}{!loading && visibleStudents.length === 0 ? <tr><td colSpan="5" className="px-4 py-8 text-center text-slate-500">No active student enrollment yet.</td></tr> : null}</tbody></table></div>
       </section>
     </div>

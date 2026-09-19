@@ -56,8 +56,10 @@ test('manually enrolls a student in the selected academic period and curriculum'
   fireEvent.change(screen.getByLabelText(/^semester/i), { target: { value: 'SECOND' } });
   fireEvent.change(screen.getByLabelText(/^year level/i), { target: { value: '2' } });
   fireEvent.click(screen.getByRole('button', { name: /manual entry/i }));
+  expect(screen.getByLabelText(/^sex/i)).toBeRequired();
   fireEvent.change(screen.getByLabelText(/first name/i), { target: { value: 'Maria' } });
   fireEvent.change(screen.getByLabelText(/last name/i), { target: { value: 'Santos' } });
+  fireEvent.change(screen.getByLabelText(/^sex/i), { target: { value: 'Female' } });
   fireEvent.change(screen.getByLabelText(/birthdate/i), { target: { value: '2006-02-28' } });
   fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'maria.santos@plv.edu.ph' } });
   fireEvent.change(screen.getByLabelText(/contact number/i), { target: { value: '09123456789' } });
@@ -75,4 +77,16 @@ test('manually enrolls a student in the selected academic period and curriculum'
     yearLevel: '2',
     semester: 'SECOND',
   });
+});
+
+test('filters current enrollments by the dynamic Program / Course dropdown', async () => {
+  fetchApprovedStudents.mockResolvedValue({ students: [
+    { id: 1, fullname: 'BSIT Student', studentno: '26-0001', department: program },
+    { id: 2, fullname: 'BSA Student', studentno: '26-0002', department: 'Bachelor of Science in Accountancy' },
+  ] });
+  render(<StudentEnrollmentManagement programs={[program]} />);
+  await screen.findByText('BSIT Student');
+  fireEvent.change(screen.getByLabelText('Program / Course'), { target: { value: 'Bachelor of Science in Accountancy' } });
+  expect(screen.getByText('BSA Student')).toBeInTheDocument();
+  expect(screen.queryByText('BSIT Student')).not.toBeInTheDocument();
 });
