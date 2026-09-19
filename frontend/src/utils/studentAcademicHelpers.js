@@ -3,10 +3,11 @@ import { getGradeEquivalent } from './gradingHelpers';
 export const normalizeAcademicSemester = (value = '') => String(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 export const canonicalAcademicSchoolYear = (value) => {
-  const trimmed = String(value || '').trim();
+  const trimmed = String(value || '').trim().replace(/[‐‑‒–—―−]/g, '-');
   if (/^\d{4}$/.test(trimmed) && Number(trimmed) < 9999)
     return `${trimmed}-${Number(trimmed) + 1}`;
-  return trimmed;
+  const range = trimmed.match(/^(\d{4})\s*[-/]\s*(\d{4})$/);
+  return range && Number(range[2]) === Number(range[1]) + 1 ? `${range[1]}-${range[2]}` : trimmed;
 };
 
 export const canonicalAcademicSemester = (value) => {
@@ -25,7 +26,7 @@ export const finalizedSubjectGrades = (grades = []) => {
     const existing = bySubject.get(code);
     const grade = record.finalAverage || (String(record.term).toLowerCase() === 'finals' ? record.grade : '');
     if (!grade || !Number.isFinite(Number(grade))) return;
-    const period = `${record.schoolYear || ''}|${normalizeAcademicSemester(record.semester)}`;
+    const period = `${canonicalAcademicSchoolYear(record.schoolYear)}|${canonicalAcademicSemester(record.semester)}`;
     if (!existing || period >= existing.period) bySubject.set(code, { ...record, grade, period });
   });
   return bySubject;
@@ -41,8 +42,8 @@ export const curriculumProgress = (subjects = [], currentSubjects = [], grades =
     const equivalent = record ? Number(record.grade) > 5 ? Number(getGradeEquivalent(record.grade)) : Number(record.grade) : null;
     const isCurrent = enrolled.has(code);
     const finalizedThisPeriod = record && currentEnrollment &&
-      record.schoolYear === currentEnrollment.schoolYear &&
-      normalizeAcademicSemester(record.semester) === normalizeAcademicSemester(currentEnrollment.semester);
+      canonicalAcademicSchoolYear(record.schoolYear) === canonicalAcademicSchoolYear(currentEnrollment.schoolYear) &&
+      canonicalAcademicSemester(record.semester) === canonicalAcademicSemester(currentEnrollment.semester);
     progress[code] = isCurrent && !finalizedThisPeriod
       ? { status: 'In Progress', grade: null }
       : record

@@ -1,12 +1,15 @@
 using Client_app.Services;
 using BlockGo.Models;
 using BlockGo.Services;
+using BlockGo.Checks;
 using System.Globalization;
 
 static void Check(bool condition, string message)
 {
     if (!condition) throw new Exception(message);
 }
+
+StudentSubjectGradeChecks.Run();
 
 Check(GradeAcademicPeriod.SchoolYear("2026") == "2026-2027", "Legacy Faculty year did not resolve to its academic range.");
 Check(GradeAcademicPeriod.SchoolYear("2026-2027") == "2026-2027", "Canonical academic year changed unexpectedly.");

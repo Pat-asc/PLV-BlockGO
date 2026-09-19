@@ -7,7 +7,14 @@ namespace Client_app.Services
     {
         public static string? SchoolYear(string? value)
         {
-            var trimmed = value?.Trim() ?? "";
+            var trimmed = (value ?? "").Trim()
+                .Replace('\u2010', '-')
+                .Replace('\u2011', '-')
+                .Replace('\u2012', '-')
+                .Replace('\u2013', '-')
+                .Replace('\u2014', '-')
+                .Replace('\u2015', '-')
+                .Replace('\u2212', '-');
             if (Regex.IsMatch(trimmed, @"^\d{4}$") &&
                 int.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var start) && start < 9999)
                 return $"{start:0000}-{start + 1:0000}";

@@ -17,7 +17,7 @@ const enrolled = [{ subjectCode: 'IT 101', subjectTitle: 'Introduction to Comput
 
 test('current subjects stay visible without finalized grades or a Faculty assignment', () => {
   render(<StudentCurrentSubjects subjects={[...enrolled, { subjectCode: 'IT 103', subjectTitle: 'Programming', units: 3 }]}
-    grades={[]} schoolYear="2026-2027" semester="FIRST" gradeError="Blockchain unavailable" />);
+    schoolYear="2026-2027" semester="FIRST" />);
   expect(screen.getByText('IT 101')).toBeInTheDocument();
   expect(screen.getByText('IT 103')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /IT 101/ }));
@@ -25,6 +25,30 @@ test('current subjects stay visible without finalized grades or a Faculty assign
   expect(screen.getAllByText('Not Yet Available').length).toBeGreaterThan(0);
   fireEvent.click(screen.getByRole('button', { name: /IT 103/ }));
   expect(screen.getByText('To be assigned')).toBeInTheDocument();
+});
+
+test('finalized grade exists and the Subject List uses the canonical backend association', () => {
+  render(<StudentCurrentSubjects subjects={[{
+    ...enrolled[0], enrollmentId: 1001, professor: 'Faculty Testing one', assignmentCycleId: '22',
+    gradeRecordId: 'grade-101', finalizedGrade: 89, gradeEquivalent: '1.75',
+    gradeStatus: 'Completed', isFinalized: true, gradeAvailability: 'Finalized',
+    blockchainTransactionHash: 'tx-finalized-it101',
+  }]} schoolYear="2026-2027" semester="FIRST" />);
+  fireEvent.click(screen.getByRole('button', { name: /IT 101/ }));
+  expect(screen.getByText('1.75')).toBeInTheDocument();
+  expect(screen.getByText('Completed')).toBeInTheDocument();
+  expect(screen.getByText('tx-finalized-it101')).toBeInTheDocument();
+  expect(screen.queryByText('In Progress')).not.toBeInTheDocument();
+});
+
+test('Fabric outage is not rendered as Not Yet Available', () => {
+  render(<StudentCurrentSubjects subjects={[{
+    ...enrolled[0], enrollmentId: 1001, professor: 'Faculty Testing one',
+    gradeStatus: 'Temporarily Unavailable', isFinalized: false, gradeAvailability: 'LedgerUnavailable',
+  }]} schoolYear="2026-2027" semester="FIRST" />);
+  fireEvent.click(screen.getByRole('button', { name: /IT 101/ }));
+  expect(screen.getAllByText('Temporarily Unavailable').length).toBeGreaterThanOrEqual(2);
+  expect(screen.queryByText('Not Yet Available')).not.toBeInTheDocument();
 });
 
 test('checklist covers all years, stored prerequisites, and enrollment progress without grades', () => {
@@ -55,6 +79,7 @@ test('only finalized grades determine completed or failed status', () => {
 
 test('Chairperson and Registrar period matching keeps a legacy roster aligned with canonical grades', () => {
   expect(canonicalAcademicSchoolYear('2026')).toBe('2026-2027');
+  expect(canonicalAcademicSchoolYear('2026–2027')).toBe('2026-2027');
   expect(canonicalAcademicSemester('2nd Semester')).toBe('SECOND');
   expect(canonicalAcademicSchoolYear('2027')).not.toBe('2026-2027');
   expect(canonicalAcademicSemester('FIRST')).not.toBe('SECOND');
