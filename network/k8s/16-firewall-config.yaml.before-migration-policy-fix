@@ -55,14 +55,6 @@ spec:
     ports:
     - protocol: TCP
       port: 5432
-  # Allow the schema migration Job to update the primary PostgreSQL database.
-  - from:
-    - podSelector:
-        matchLabels:
-          app: postgres-schema-migrations
-    ports:
-    - protocol: TCP
-      port: 5432
   - from:
     - podSelector:
         matchLabels:
