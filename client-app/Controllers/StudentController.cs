@@ -184,12 +184,10 @@ namespace Client_app.Controllers
                         AND LOWER(u.role) = 'faculty' AND LOWER(u.status) = 'approved' AND u.is_active
                     LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
                     WHERE LOWER(TRIM(fs.subject)) = LOWER(TRIM(cs.subject_code))
-                      AND LOWER(TRIM(fs.department)) IN (LOWER(TRIM(@department)), LOWER(TRIM(@programCode)))
-                      AND (
-                          SUBSTRING(fs.section FROM '([1-4]-[0-9]+)') = @sectionToken
-                          OR (TRIM(fs.section) = @sectionNumber AND TRIM(fs.year_level) = @yearLevel)
-                      )
-                    ORDER BY fs.id DESC LIMIT 1
+                      AND fs.academic_section_id = @academicSectionId
+                      AND fs.school_year = @schoolYear AND fs.semester = @semester
+                      AND fs.is_active = TRUE
+                    LIMIT 1
                 ) faculty ON TRUE
                 WHERE cs.curriculum_id = @curriculumId
                   AND cs.year_level = @yearLevelNumber AND cs.semester = @semester
@@ -202,6 +200,8 @@ namespace Client_app.Controllers
             command.Parameters.AddWithValue("department", department);
             command.Parameters.AddWithValue("programCode", programCode);
             command.Parameters.AddWithValue("semester", semester);
+            command.Parameters.AddWithValue("schoolYear", schoolYear);
+            command.Parameters.AddWithValue("academicSectionId", sectionId);
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             {
                 while (await reader.ReadAsync(cancellationToken))

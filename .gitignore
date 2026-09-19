@@ -24,7 +24,12 @@ temp/
 .cache/
 *.cache
 *.cache.json
-/tests/
+/tests/*
+!/tests/AssignmentRegressionTests/
+!/tests/AssignmentRegressionTests/AssignmentRegressionTests.csproj
+!/tests/AssignmentRegressionTests/Program.cs
+/tests/AssignmentRegressionTests/bin/
+/tests/AssignmentRegressionTests/obj/
 /test-results/
 
 # =========================

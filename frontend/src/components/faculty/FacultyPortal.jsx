@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { fetchFacultySections, fetchFacultyStudents, fetchAllGrades, batchUploadGrades, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
+import { fetchFacultySections, fetchFacultyStudents, fetchAllGrades, batchUploadGrades, downloadGradingSheet, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
 import Modal from '../../services/Modal';
 import FacultyHeader from './FacultyHeader';
 import YearTabs from './YearTabs';
@@ -191,22 +191,6 @@ const getAcademicStatus = (student = {}) => {
   return finalAverage >= 75 ? "Passed" : "Failed";
 };
 
-const getTemporarySheetHeader = () => [
-  "Student ID",
-  "Student Name",
-  "Quizzes (20%)",
-  "Assignments (10%)",
-  "Attendance (10%)",
-  "Midterm Exam (60%)",
-  "Midterm Grade",
-  "Final Quizzes (20%)",
-  "Final Assignments (10%)",
-  "Final Attendance (10%)",
-  "Final Exam (60%)",
-  "Final Grade",
-  "Final Rating",
-];
-
 const FacultyPortal = ({ facultyData, onLogout }) => {
   const [portalView, setPortalView] = useState('grades');
   const [activeSection, setActiveSection] = useState(null);
@@ -359,11 +343,17 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
     try {
       const sectionsData = await fetchFacultySections(facultyData.email).catch(() => null);
-      const studentsData = await fetchFacultyStudents(facultyData.email).catch(() => null);
       const gradesData = await fetchAllGrades(facultyData.email).catch(() => null);
 
       const actualSections = Array.isArray(sectionsData?.sections) ? sectionsData.sections : [];
-      const actualStudents = Array.isArray(studentsData?.students) ? studentsData.students : [];
+      const rosterResponses = await Promise.all(
+        actualSections.map((assignment) =>
+          fetchFacultyStudents(facultyData.email, assignment.assignmentCycleId).catch(() => ({ students: [] }))
+        )
+      );
+      const actualStudents = rosterResponses.flatMap((response) =>
+        Array.isArray(response?.students) ? response.students : []
+      );
       const actualGrades = Array.isArray(gradesData) ? gradesData : (gradesData?.data || []);
       const studentsByStudentNo = new Map(
         actualStudents
@@ -571,7 +561,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         // actualSections is the authoritative backend assignment list. Local
         // timestamps only enrich display data and must never hide a newly
         // recreated server-side assignment after a reset.
-        const sectionKey = `${sec.department} ${sec.section}${sec.subject ? ` (${sec.subject})` : ''}`; 
+        const sectionKey = `${sec.department} ${sec.section}${sec.subject ? ` (${sec.subject})` : ''} [${sec.assignmentCycleId}]`;
         const savedSectionSnapshot = savedGradeSnapshots[sectionKey] || {};
         const activeAssignmentCycleId = String(sec.assignmentCycleId || sec.assignment_cycle_id || '');
         const sectionGrades = actualGrades.filter((grade) => {
@@ -608,16 +598,11 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           ...createDefaultSectionTermStatuses(),
           [normalizeEncodingTerm(encodingTerm)]: sectionReviewState.status,
         };
-        const backendStudents = actualStudents.filter(s => 
-          s.department === sec.department && 
-          String(s.section || '').match(/\b\d+-\d+\b/)?.[0] ===
-            String(sec.canonicalSection || sec.section || '').match(/\b\d+-\d+\b/)?.[0] &&
-          !!String(s.section || '').match(/\b\d+-\d+\b/) &&
-          (s.assignmentStatus === 'Enrolled' || s.enrollmentStatus === 'Enrolled')
+        const backendStudents = actualStudents.filter(s =>
+          String(s.facultySectionId) === String(sec.assignmentCycleId) &&
+          String(s.enrollmentStatus).toUpperCase() === 'ENROLLED'
         );
-        const rosterSource = backendStudents.length
-          ? backendStudents
-          : (matchedAssignment?.rosterStudents || []);
+        const rosterSource = backendStudents;
         const enrolledStudents = rosterSource.map(studentRecord => {
           const backendStudent = backendStudents.find((student) =>
             ((studentRecord.userId || studentRecord.id) &&
@@ -724,6 +709,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           schoolYear: sec.schoolYear || "Not Available",
           semester: sec.semester || "Not Available",
           assignmentCycleId: activeAssignmentCycleId,
+          facultySectionId: activeAssignmentCycleId,
           reviewNote: sectionReviewState.note,
           students: enrolledStudents
         };
@@ -1026,53 +1012,11 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     }
   };
 
-  const handleDownloadTemporaryGradingSheet = (sectionName) => {
+  const handleDownloadTemporaryGradingSheet = async (sectionName) => {
     const sectionData = sections[sectionName];
-    if (!sectionData || !sectionData.students) return;
-
-    const header = `${getTemporarySheetHeader().join(",")}\n`;
-    const rows = sectionData.students
-      .map((student, index) => {
-        const rowNumber = index + 2;
-        const midtermFormula = `"=ROUND((C${rowNumber}*20%)+(D${rowNumber}*10%)+(E${rowNumber}*10%)+(F${rowNumber}*60%),2)"`;
-        const finalFormula = `"=ROUND((H${rowNumber}*20%)+(I${rowNumber}*10%)+(J${rowNumber}*10%)+(K${rowNumber}*60%),2)"`;
-        const finalRatingFormula = `"=ROUND(AVERAGE(G${rowNumber},L${rowNumber}),2)"`;
-        const studentName =
-          student.name ||
-          [student.lastName, student.firstName].filter(Boolean).join(", ");
-
-        return [
-          student.studentNo || student.id || "",
-          `"${studentName}"`,
-          "",
-          "",
-          "",
-          "",
-          midtermFormula,
-          "",
-          "",
-          "",
-          "",
-          finalFormula,
-          finalRatingFormula,
-        ].join(",");
-      })
-      .join("\n");
-
-    const blob = new Blob([header + rows], { type: "text/csv;charset=utf-8;" });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
+    if (!sectionData?.facultySectionId) return;
     const safeSectionName = String(sectionName || "section").replace(/[^a-zA-Z0-9-]/g, "_");
-
-    link.href = url;
-    link.setAttribute(
-      "download",
-      `${safeSectionName}_temporary_grading_sheet.csv`
-    );
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
+    await downloadGradingSheet(sectionData.facultySectionId, `${safeSectionName}_grading_sheet`);
   };
 
   const handleFileUpload = async (sectionName, e) => {
@@ -1094,7 +1038,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     setUploadingSection(sectionName);
 
     try {
-      const res = await batchUploadGrades(file, semester, schoolYear, course, facultyData.email, encodingTerm, canonicalSection);
+      const res = await batchUploadGrades(file, semester, schoolYear, course, facultyData.email, encodingTerm, canonicalSection, sectionData.facultySectionId || sectionData.assignmentCycleId);
       if (res.status === 'Success' || res.status === 'Partial Success') {
         setUploadResult({ 
           type: 'success', 
@@ -1132,6 +1076,9 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           !/^\d{4}-\d{4}$/.test(canonicalAcademicSchoolYear(sectionData.schoolYear))) {
         throw new Error('The assigned subject has no active enrolled academic period. Ask the Registrar to verify the section before saving grades.');
       }
+      if (!students.length) {
+        throw new Error('This assignment has no active Registrar enrollment roster. Grades cannot be saved until students are enrolled.');
+      }
       if (students.some((student) => !student.studentNo)) {
         throw new Error('A roster student has no Registrar student number. Refresh the section roster before saving.');
       }
@@ -1162,6 +1109,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
               semester: canonicalAcademicSemester(sectionData.semester),
               school_year: canonicalAcademicSchoolYear(sectionData.schoolYear),
               faculty_id: facultyData.email,
+              faculty_section_id: Number(sectionData.facultySectionId || sectionData.assignmentCycleId),
               date: new Date().toISOString().split('T')[0],
               status: "Issued"
           };
@@ -1212,7 +1160,8 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         sectionData.sectionCourse,
         `${sectionData.canonicalSection || sectionName} (${sectionData.subjectCode})`,
         canonicalAcademicSchoolYear(sectionData.schoolYear),
-        canonicalAcademicSemester(sectionData.semester)
+        canonicalAcademicSemester(sectionData.semester),
+        sectionData.facultySectionId || sectionData.assignmentCycleId
       );
       updateSectionTermStatus(sectionName, encodingTerm, 'submitted');
       setSubmitConfirmSection(null);
@@ -1422,7 +1371,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                     <div className="relative overflow-hidden">
                       <input
                         type="file"
-                        accept=".csv, .xlsx"
+                        accept=".xlsx"
                         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                         onChange={(e) => handleFileUpload(activeSection, e)}
                         disabled={uploadingSection === activeSection || isClosed}

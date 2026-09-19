@@ -9,6 +9,7 @@ jest.mock('../../services/api', () => ({
 }));
 
 const assignment = {
+  id: 77, academicSectionId: 1,
   program: 'BSIT', sectionName: 'BSIT 1-1', subjectCode: 'IT 101', subjectTitle: 'Introduction to IT',
   yearLevel: '1', schoolYear: '2026-2027', semester: '2nd Semester',
   rosterStudents: [{ studentId: '2026-0001', email: '26-0001', firstName: 'Juan' }],
@@ -20,11 +21,11 @@ beforeEach(() => {
   window.alert = jest.fn();
   localStorage.setItem('registrarAssignments', JSON.stringify([assignment]));
   getSystemSetting.mockResolvedValue({ status: 'Success', value: { startDate: '2020-01-01', endDate: '2099-12-31', semester: '2nd Semester', term: 'midterm' } });
-  fetchFacultySections.mockResolvedValue({ sections: [{ department: 'BSIT', section: 'BSIT 1-1',
+  fetchFacultySections.mockResolvedValue({ sections: [{ id: 77, assignmentCycleId: 77, department: 'BSIT', section: 'BSIT 1-1',
     canonicalSection: 'BSIT 1-1', academicSectionId: 1, schoolYear: '2026-2027', semester: 'FIRST',
     yearLevel: '1', subject: 'IT 101' }] });
-  fetchFacultyStudents.mockResolvedValue({ students: [{ id: 5, studentno: '26-0001', fullname: 'Juan Andres Dela Cruz',
-    email: '26-0001', department: 'BSIT', section: '1-1', enrollmentStatus: 'Enrolled' }] });
+  fetchFacultyStudents.mockResolvedValue({ students: [{ id: 5, facultySectionId: 77, studentno: '26-0001', fullname: 'Juan Andres Dela Cruz',
+    email: '26-0001', department: 'BSIT', section: '1-1', enrollmentStatus: 'ENROLLED' }] });
   fetchAllGrades.mockResolvedValue({ data: [] });
   issueGrade.mockResolvedValue({ status: 'Success' });
   submitSectionGrades.mockResolvedValue({ status: 'Success' });
@@ -46,7 +47,7 @@ test('backend enrollment period overrides a stale SECOND assignment and Save sen
   })));
   fireEvent.click(screen.getByRole('button', { name: 'Submit to Chairperson' }));
   fireEvent.click(screen.getByRole('button', { name: 'Yes, Submit Final Grades' }));
-  await waitFor(() => expect(submitSectionGrades).toHaveBeenCalledWith('BSIT', 'BSIT 1-1 (IT 101)', '2026-2027', 'FIRST'));
+  await waitFor(() => expect(submitSectionGrades).toHaveBeenCalledWith('BSIT', 'BSIT 1-1 (IT 101)', '2026-2027', 'FIRST', '77'));
 });
 
 test('legacy Faculty year 2026 resolves to the enrollment year range for Save and Submit', async () => {
@@ -59,11 +60,11 @@ test('legacy Faculty year 2026 resolves to the enrollment year range for Save an
     student_id: '26-0001', school_year: '2026-2027', semester: 'FIRST',
   })));
   await waitFor(() => expect(submitSectionGrades).toHaveBeenCalledWith(
-    'BSIT', 'BSIT 1-1 (IT 101)', '2026-2027', 'FIRST'));
+    'BSIT', 'BSIT 1-1 (IT 101)', '2026-2027', 'FIRST', '77'));
 });
 
 test('legacy Faculty section 1 resolves to academic section BSIT 1-1', async () => {
-  fetchFacultySections.mockResolvedValue({ sections: [{ department: 'BSIT', section: '1',
+  fetchFacultySections.mockResolvedValue({ sections: [{ id: 77, assignmentCycleId: 77, department: 'BSIT', section: '1',
     canonicalSection: 'BSIT 1-1', academicSectionId: 1, schoolYear: '2026-2027',
     semester: 'FIRST', yearLevel: '1', subject: 'IT 101' }] });
   await openSection();
@@ -76,7 +77,7 @@ test('legacy Faculty section 1 resolves to academic section BSIT 1-1', async () 
 });
 
 test('assignment without an authoritative active period cannot save grades', async () => {
-  fetchFacultySections.mockResolvedValue({ sections: [{ department: 'BSIT', section: 'BSIT 1-1',
+  fetchFacultySections.mockResolvedValue({ sections: [{ id: 77, assignmentCycleId: 77, department: 'BSIT', section: 'BSIT 1-1',
     yearLevel: '1', subject: 'IT 101' }] });
   await openSection();
   fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }));
@@ -107,16 +108,16 @@ test('failed Save never submits a section', async () => {
   expect(submitSectionGrades).not.toHaveBeenCalled();
 });
 
-test('an unverified legacy roster cannot stage grades', async () => {
+test('an empty authoritative enrollment roster cannot stage grades', async () => {
   fetchFacultyStudents.mockResolvedValue({ students: [] });
   await openSection();
   fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }));
-  await waitFor(() => expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('no Registrar student number')));
+  await waitFor(() => expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('no active Registrar enrollment roster')));
   expect(issueGrade).not.toHaveBeenCalled();
 });
 
 test('a returned grade retains its note, can be corrected, and resubmits the same assignment', async () => {
-  fetchAllGrades.mockResolvedValue({ data: [{ id: 'grade-1', student_no: '26-0001',
+  fetchAllGrades.mockResolvedValue({ data: [{ id: 'grade-1', assignment_cycle_id: 77, student_no: '26-0001',
     record_section: 'BSIT 1-1', subject_code: 'IT 101', status: 'Returned', note: 'Correct the grade',
     grade: JSON.stringify({ midterm: 85, finals: '', standing: 'active' }), date: '2026-09-15' }] });
   render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
@@ -126,11 +127,11 @@ test('a returned grade retains its note, can be corrected, and resubmits the sam
   fireEvent.click(screen.getByRole('button', { name: 'Submit to Chairperson' }));
   fireEvent.click(screen.getByRole('button', { name: 'Yes, Submit Final Grades' }));
   await waitFor(() => expect(issueGrade).toHaveBeenCalledWith(expect.objectContaining({ student_id: '26-0001' })));
-  await waitFor(() => expect(submitSectionGrades).toHaveBeenCalledWith('BSIT', 'BSIT 1-1 (IT 101)', '2026-2027', 'FIRST'));
+  await waitFor(() => expect(submitSectionGrades).toHaveBeenCalledWith('BSIT', 'BSIT 1-1 (IT 101)', '2026-2027', 'FIRST', '77'));
 });
 
 test('chairperson-approved grades stay locked against Faculty editing', async () => {
-  fetchAllGrades.mockResolvedValue({ data: [{ id: 'grade-1', student_no: '26-0001',
+  fetchAllGrades.mockResolvedValue({ data: [{ id: 'grade-1', assignment_cycle_id: 77, student_no: '26-0001',
     record_section: 'BSIT 1-1', subject_code: 'IT 101', status: 'ChairpersonApproved',
     grade: JSON.stringify({ midterm: 85, finals: '', standing: 'active' }), date: '2026-09-15' }] });
   render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);

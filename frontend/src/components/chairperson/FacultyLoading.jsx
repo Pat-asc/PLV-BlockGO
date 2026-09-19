@@ -9,6 +9,7 @@ import {
 import {
   assignFacultyLoadToBackend,
   fetchApprovedFaculties,
+  unassignFacultySection,
 } from "../../services/api";
 import { downloadTemplateButtonClass } from "../shared/downloadButtonStyles";
 import { pushAssignmentsSharedState } from "../../utils/sharedClientState";
@@ -73,15 +74,6 @@ const mapFacultyLoadingRows = (csvText = "") => {
     );
 
   return { headers, rows: mappedRows };
-};
-
-const syncFacultyLoadToBackend = (assignment) => {
-  assignFacultyLoadToBackend(assignment).catch((error) => {
-    console.warn(
-      "Backend faculty load assignment failed; local assignment was still saved.",
-      error
-    );
-  });
 };
 
 function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) {
@@ -229,7 +221,6 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     (section) => section.section === selectedSectionName
   );
 
-  const selectedSectionStudents = selectedSection?.students || [];
   const selectedDaysText = scheduleDay;
 
   const resetForm = () => {
@@ -245,7 +236,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     setSelectedFile(null);
   };
 
-  const handleDistributeSectionToFaculty = () => {
+  const handleDistributeSectionToFaculty = async () => {
     if (
       !selectedProgram ||
       !selectedFacultyId ||
@@ -274,7 +265,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       return;
     }
 
-    const saveAssignment = (rosterStudents, rosterFileName = "Created section roster") => {
+    const saveAssignment = async () => {
       const alreadyExists = savedAssignments.some(
         (item) =>
           String(item.facultyId) === String(selectedFacultyId) &&
@@ -290,8 +281,9 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       }
 
       const newAssignment = {
-        id: Date.now(),
+        id: null,
         facultyId: selectedFacultyId,
+        facultyEmail: selectedFaculty.email,
         facultyName: getFacultyDisplayName(selectedFaculty),
         program: selectedProgram,
         sectionName: selectedSection.section,
@@ -305,31 +297,36 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
         schoolYear: selectedSection.schoolYear,
         semester: semester.trim(),
         loadMode: "Manual Section Distribution",
-        rosterFileName,
-        rosterStudents,
+        rosterFileName: "Canonical enrollment roster",
+        rosterStudents: [],
         uploadedAt: new Date().toISOString(),
       };
 
-      const updatedAssignments = [...savedAssignments, newAssignment];
+      let serverResult;
+      try {
+        serverResult = await assignFacultyLoadToBackend(newAssignment);
+      } catch (error) {
+        alert(error.message || "The server rejected this faculty assignment.");
+        return;
+      }
+      const savedAssignment = {
+        ...newAssignment,
+        id: serverResult.assignment?.id,
+        academicSectionId: serverResult.assignment?.academicSectionId,
+      };
+      const updatedAssignments = [...savedAssignments, savedAssignment];
       setSavedAssignments(updatedAssignments);
       localStorage.setItem(
         "registrarAssignments",
         JSON.stringify(updatedAssignments)
       );
       pushAssignmentsSharedState();
-      syncFacultyLoadToBackend(newAssignment);
-
       alert("Section distributed to faculty successfully.");
       resetForm();
     };
 
     if (!selectedFile) {
-      if (!selectedSectionStudents.length) {
-        alert("Selected section has no students to distribute.");
-        return;
-      }
-
-      saveAssignment(selectedSectionStudents);
+      await saveAssignment();
       return;
     }
 
@@ -352,7 +349,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
         return;
       }
 
-      saveAssignment(parsedStudents, selectedFile.name);
+      saveAssignment();
     };
 
     reader.readAsText(selectedFile);
@@ -482,6 +479,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
 
       const duplicateKey = buildFacultyLoadingKey({
         facultyId: getFacultyKey(faculty),
+        facultyEmail: faculty.email,
         sectionName: section.section,
         schoolYear: section.schoolYear,
         semester: rowSemester,
@@ -597,18 +595,30 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     reader.readAsText(facultyLoadingFile);
   };
 
-  const handleConfirmFacultyLoading = () => {
+  const handleConfirmFacultyLoading = async () => {
     if (!facultyLoadingPreview.length) {
       alert("No faculty loading preview to distribute.");
       return;
     }
 
-    const timestamp = Date.now();
-    const importedAssignments = facultyLoadingPreview.map((item, index) => ({
-      ...item,
-      id: item.existingAssignmentId || timestamp + index,
-      uploadedAt: new Date().toISOString(),
-    }));
+    const results = await Promise.allSettled(
+      facultyLoadingPreview.map((item) => assignFacultyLoadToBackend(item))
+    );
+    const importedAssignments = facultyLoadingPreview.flatMap((item, index) => {
+      const result = results[index];
+      if (result.status !== "fulfilled") return [];
+      return [{
+        ...item,
+        id: result.value.assignment?.id,
+        academicSectionId: result.value.assignment?.academicSectionId,
+        rosterStudents: [],
+        uploadedAt: new Date().toISOString(),
+      }];
+    });
+    if (!importedAssignments.length) {
+      alert(results.find((result) => result.status === "rejected")?.reason?.message || "The server rejected all faculty assignments.");
+      return;
+    }
     const assignmentMap = new Map(
       savedAssignments.map((item) => [buildFacultyLoadingKey(item), item])
     );
@@ -622,7 +632,6 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     setSavedAssignments(updatedAssignments);
     localStorage.setItem("registrarAssignments", JSON.stringify(updatedAssignments));
     pushAssignmentsSharedState();
-    importedAssignments.forEach(syncFacultyLoadToBackend);
     setFacultyLoadingFile(null);
     setFacultyLoadingPreview([]);
     setFacultyLoadingErrors([]);
@@ -634,7 +643,18 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     );
   };
 
-  const handleDeleteAssignment = (id) => {
+  const handleDeleteAssignment = async (item) => {
+    if (!item.id || !item.facultyEmail) {
+      alert("This legacy browser-only record has no authoritative server assignment ID and cannot be removed here.");
+      return;
+    }
+    try {
+      await unassignFacultySection(item.facultyEmail, item.id);
+    } catch (error) {
+      alert(error.message || "The assignment could not be removed.");
+      return;
+    }
+    const id = item.id;
     const updatedAssignments = savedAssignments.filter((item) => item.id !== id);
     setSavedAssignments(updatedAssignments);
     localStorage.setItem(
@@ -1066,7 +1086,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
                     <td className="px-4 py-3">{item.day || "--"}</td>
                     <td className="px-4 py-3">
                       <button
-                        onClick={() => handleDeleteAssignment(item.id)}
+                        onClick={() => handleDeleteAssignment(item)}
                         className="rounded-lg border border-red-200 px-3 py-1 text-sm font-medium text-red-600 hover:bg-red-50"
                       >
                         Remove

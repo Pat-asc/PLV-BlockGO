@@ -19,7 +19,7 @@ function Heading({ icon, title }) { return <div className="sa-heading"><span cla
 export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   const [faculty, setFaculty] = useState([]);
   const [curricula, setCurricula] = useState([]);
-  const [assignmentOptions, setAssignmentOptions] = useState({ subjects: [], enrollmentPeriods: [] });
+  const [assignmentOptions, setAssignmentOptions] = useState({ sections: [], subjects: [], enrollmentPeriods: [], schoolYears: [] });
   const [loading, setLoading] = useState(true);
   const [professor, setProfessor] = useState("");
   const [lookup, setLookup] = useState("");
@@ -43,7 +43,7 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
       if (!active) return;
       if (people.status === "fulfilled") setFaculty(people.value.faculties || []);
       if (courses.status === "fulfilled") setCurricula(courses.value.data || []);
-      if (options.status === "fulfilled") setAssignmentOptions(options.value || { subjects: [], enrollmentPeriods: [] });
+      if (options.status === "fulfilled") setAssignmentOptions(options.value || { sections: [], subjects: [], enrollmentPeriods: [], schoolYears: [] });
       if (people.status === "rejected" || courses.status === "rejected" || options.status === "rejected") setNotice("Some data could not be loaded. Refresh the page to retry.");
       setLoading(false);
     });
@@ -57,7 +57,21 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   const subjects = canonicalSubjects.filter((item) => Number(item.yearLevel) === years.indexOf(year) + 1 && item.semester === term);
   const visibleSubjects = subjects.filter((item) => `${item.subjectCode} ${item.subjectTitle}`.toLowerCase().includes(query.toLowerCase()));
   const subject = subjects.find((item) => item.subjectCode === subjectCode);
-  const allSections = (assignmentOptions.enrollmentPeriods || []).map((period) => ({ program: programName, yearLevel: years[Number(period.yearLevel) - 1], section: `${program} ${period.section}`, schoolYear: period.schoolYear, semester: terms[period.semester] || period.semesterDisplay, semesterCode: period.semester, students: [] }));
+  const availableSchoolYears = assignmentOptions.schoolYears?.length
+    ? assignmentOptions.schoolYears
+    : [...new Set((assignmentOptions.enrollmentPeriods || []).map((period) => period.schoolYear))];
+  const allSections = (assignmentOptions.sections || []).flatMap((academicSection) =>
+    availableSchoolYears.map((schoolYear) => ({
+      academicSectionId: academicSection.id,
+      program: academicSection.department,
+      yearLevel: years[Number(academicSection.yearLevel) - 1],
+      section: `${academicSection.programCode} ${academicSection.section}`,
+      schoolYear,
+      semester: terms[term],
+      semesterCode: term,
+      students: [],
+    }))
+  );
   const sections = allSections.filter((item, index, items) => item.program === programName && item.yearLevel === year && item.semesterCode === term && items.findIndex((other) => other.section === item.section && other.program === item.program && other.schoolYear === item.schoolYear && other.semesterCode === item.semesterCode) === index);
   const rows = [...saved, ...draft].filter((item) => String(item.facultyId) === professor);
   const professorDraft = draft.filter((item) => String(item.facultyId) === professor);
@@ -77,7 +91,17 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
       if (professorDraft.some((item) => latest.some((other) => identity(other) === identity(item)))) throw new Error("An assignment was added elsewhere. Reload before saving to avoid duplicates.");
       const pending = [...professorDraft];
       const results = await Promise.allSettled(pending.map((item) => assignFacultyLoadToBackend(item)));
-      const successful = pending.filter((_item, index) => results[index].status === "fulfilled");
+      const successful = pending.flatMap((item, index) => {
+        const result = results[index];
+        if (result.status !== "fulfilled") return [];
+        return [{
+          ...item,
+          id: result.value.assignment?.id,
+          facultyEmail: selectedProfessor?.email,
+          academicSectionId: result.value.assignment?.academicSectionId,
+          rosterStudents: [],
+        }];
+      });
       const next = [...latest, ...successful];
       localStorage.setItem("registrarAssignments", JSON.stringify(next));
       setSaved(next);

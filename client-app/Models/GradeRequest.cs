@@ -52,6 +52,9 @@ namespace BlockGo.Models
         [JsonPropertyName("faculty_id")]
         public string FacultyId { get; set; } = string.Empty;
 
+        [JsonPropertyName("faculty_section_id")]
+        public int FacultySectionId { get; set; }
+
         [JsonPropertyName("date")]
         public string Date { get; set; } = string.Empty;
 

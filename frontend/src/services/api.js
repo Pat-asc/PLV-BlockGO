@@ -320,7 +320,7 @@ export const batchIssueGradeToBlockchain = async (grades = []) => {
     });
 };
 
-export const batchUploadGrades = async (file, semester = '', schoolYear = '', course = '', facultyId = '', term = '', section = '') => {
+export const batchUploadGrades = async (file, semester = '', schoolYear = '', course = '', facultyId = '', term = '', section = '', facultySectionId = '') => {
     const formData = new FormData();
     formData.append('file', file);
 
@@ -333,6 +333,7 @@ export const batchUploadGrades = async (file, semester = '', schoolYear = '', co
     if (resolvedFacultyId) formData.append('facultyId', resolvedFacultyId);
     if (term) formData.append('term', term);
     if (section) formData.append('section', section);
+    if (facultySectionId) formData.append('facultySectionId', String(facultySectionId));
 
     return await fetchWithAuth(`/Grades/bulk-upload`, {
         method: 'POST',
@@ -406,14 +407,14 @@ export const issueGrade = async (gradeData) => {
     });
 };
 
-export const submitSectionGrades = async (department, section, schoolYear, semester) => {
-    return await fetchWithAuth(`/Grades/submit-section?department=${encodeURIComponent(department)}&section=${encodeURIComponent(section)}&schoolYear=${encodeURIComponent(schoolYear || '')}&semester=${encodeURIComponent(semester || '')}`, {
+export const submitSectionGrades = async (department, section, schoolYear, semester, facultySectionId) => {
+    return await fetchWithAuth(`/Grades/submit-section?department=${encodeURIComponent(department)}&section=${encodeURIComponent(section)}&schoolYear=${encodeURIComponent(schoolYear || '')}&semester=${encodeURIComponent(semester || '')}&facultySectionId=${encodeURIComponent(facultySectionId || '')}`, {
         method: 'POST'
     });
 };
 
-export const submitFacultySectionToChairperson = async ({ department, section }) => {
-    return await submitSectionGrades(department, section);
+export const submitFacultySectionToChairperson = async ({ department, section, schoolYear, semester, facultySectionId }) => {
+    return await submitSectionGrades(department, section, schoolYear, semester, facultySectionId);
 };
 
 export const fetchChairpersonGradeRecords = async (invokerId = 'chairperson') => {
@@ -551,8 +552,8 @@ export const dropStudent = async (id) => {
     });
 };
 
-export const unassignFacultySection = async (email, department, yearLevel, section, subject) => {
-    return await fetchWithAuth(`/Auth/faculty/${encodeURIComponent(email)}/assigned-sections?department=${encodeURIComponent(department)}&yearLevel=${encodeURIComponent(yearLevel)}&section=${encodeURIComponent(section)}&subject=${encodeURIComponent(subject || '')}`, {
+export const unassignFacultySection = async (email, facultySectionId) => {
+    return await fetchWithAuth(`/Auth/faculty/${encodeURIComponent(email)}/assigned-sections?facultySectionId=${encodeURIComponent(facultySectionId)}`, {
         method: 'DELETE'
     });
 };
@@ -572,8 +573,8 @@ export const saveSharedClientState = async (key, value) => {
     });
 };
 
-export const fetchFacultyStudents = async (email) => {
-    return await fetchWithAuth(`/Auth/faculty/${encodeURIComponent(email)}/students`);
+export const fetchFacultyStudents = async (email, facultySectionId) => {
+    return await fetchWithAuth(`/Auth/faculty/${encodeURIComponent(email)}/students?facultySectionId=${encodeURIComponent(facultySectionId)}`);
 };
 
 export const createSection = async (sectionData) => {
@@ -828,10 +829,10 @@ export const searchRegistrarRecords = async (params = {}) => {
     return await fetchWithAuth(`/registrar/Search${query ? `?${query}` : ''}`);
 };
 
-export const downloadGradingSheet = async (department, section) => {
+export const downloadGradingSheet = async (facultySectionId, suggestedName = 'Faculty_Grade_Template') => {
     const baseUrl = getBaseUrl('/GradeTemplate');
     const token = getAuthToken();
-    const endpoint = `/GradeTemplate/department/${encodeURIComponent(department)}/section/${encodeURIComponent(section)}/download`;
+    const endpoint = `/GradeTemplate/faculty-section/${encodeURIComponent(facultySectionId)}/download`;
     
     const response = await fetch(`${baseUrl}${endpoint}`, {
         method: 'GET',
@@ -849,7 +850,7 @@ export const downloadGradingSheet = async (department, section) => {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `GradingSheet_${department}_${section}.xlsx`;
+    a.download = `${suggestedName}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();

@@ -293,7 +293,13 @@ CREATE TABLE IF NOT EXISTS facultysections (
     section VARCHAR(50) NOT NULL,
     year_level VARCHAR(50),
     subject VARCHAR(100),
-    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    academic_section_id INTEGER REFERENCES academicsections(id) ON DELETE RESTRICT,
+    school_year VARCHAR(20),
+    semester VARCHAR(20),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    deactivated_at TIMESTAMP WITH TIME ZONE,
+    deactivated_by VARCHAR(255)
 );
 
 CREATE TABLE IF NOT EXISTS shared_client_state (

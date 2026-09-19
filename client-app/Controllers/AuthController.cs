@@ -83,6 +83,24 @@ namespace Client_app.Controllers
                         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='facultysections' AND column_name='subject') THEN
                             ALTER TABLE facultysections ADD COLUMN subject VARCHAR(100);
                         END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='facultysections' AND column_name='academic_section_id') THEN
+                            ALTER TABLE facultysections ADD COLUMN academic_section_id INTEGER REFERENCES academicsections(id) ON DELETE RESTRICT;
+                        END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='facultysections' AND column_name='school_year') THEN
+                            ALTER TABLE facultysections ADD COLUMN school_year VARCHAR(20);
+                        END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='facultysections' AND column_name='semester') THEN
+                            ALTER TABLE facultysections ADD COLUMN semester VARCHAR(20);
+                        END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='facultysections' AND column_name='is_active') THEN
+                            ALTER TABLE facultysections ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE;
+                        END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='facultysections' AND column_name='deactivated_at') THEN
+                            ALTER TABLE facultysections ADD COLUMN deactivated_at TIMESTAMP WITH TIME ZONE;
+                        END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='facultysections' AND column_name='deactivated_by') THEN
+                            ALTER TABLE facultysections ADD COLUMN deactivated_by VARCHAR(255);
+                        END IF;
                         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='facultyprofiles' AND column_name='faculty_type') THEN
                             ALTER TABLE facultyprofiles ADD COLUMN faculty_type VARCHAR(20);
                         END IF;
@@ -135,7 +153,6 @@ namespace Client_app.Controllers
                         updated_by VARCHAR(255)
                     );
 
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_faculty_section ON facultysections(user_id, department, section, subject);
                     CREATE UNIQUE INDEX IF NOT EXISTS ux_studentprofiles_normalized_full_name
                         ON studentprofiles ((LOWER(REGEXP_REPLACE(BTRIM(full_name), '\s+', ' ', 'g'))))
                         WHERE NULLIF(BTRIM(full_name), '') IS NOT NULL;
@@ -1702,6 +1719,7 @@ namespace Client_app.Controllers
                     });
             }
             var enrollmentPeriods = new List<object>();
+            var schoolYears = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { CurrentSchoolYear() };
             await using (var command = new NpgsqlCommand(@"
                 SELECT DISTINCT se.school_year, se.semester, se.year_level,
                        COALESCE(se.section, CONCAT(se.year_level, '-', s.section_num)),
@@ -1718,6 +1736,7 @@ namespace Client_app.Controllers
                 while (await reader.ReadAsync())
                 {
                     var semester = NormalizeEnrollmentSemester(reader.GetString(1));
+                    schoolYears.Add(reader.GetString(0));
                     enrollmentPeriods.Add(new
                     {
                         schoolYear = reader.GetString(0), semester,
@@ -1730,6 +1749,7 @@ namespace Client_app.Controllers
             return Ok(new
             {
                 status = "Success", sections, subjects, enrollmentPeriods,
+                schoolYears = schoolYears.OrderByDescending(value => value),
                 semesterAliases = new Dictionary<string, string[]>
                 {
                     ["FIRST"] = new[] { "FIRST", "First Semester", "1st Semester" },
@@ -1747,8 +1767,9 @@ namespace Client_app.Controllers
             {
                 if (id <= 0 || string.IsNullOrWhiteSpace(request.Department) ||
                     string.IsNullOrWhiteSpace(request.Section) || string.IsNullOrWhiteSpace(request.YearLevel) ||
-                    string.IsNullOrWhiteSpace(request.Subject))
-                    throw new ArgumentException("Faculty, academic program, year level, section, and subject are required.");
+                    string.IsNullOrWhiteSpace(request.Subject) || string.IsNullOrWhiteSpace(request.SchoolYear) ||
+                    string.IsNullOrWhiteSpace(request.Semester))
+                    throw new ArgumentException("Faculty, academic program, year level, section, subject, school year, and semester are required.");
                 var yearMatch = System.Text.RegularExpressions.Regex.Match(request.YearLevel.Trim(), @"^([1-4])(?:st|nd|rd|th)?(?:\s+year)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                 if (!yearMatch.Success) throw new ArgumentException("Year level must be from 1 to 4.");
                 var yearLevel = int.Parse(yearMatch.Groups[1].Value);
@@ -1765,9 +1786,13 @@ namespace Client_app.Controllers
                 if (!await CanManageAcademicProgramAsync(conn, request.Department, HttpContext.RequestAborted))
                     return Forbid();
 
+                var canonicalSchoolYear = NormalizeSchoolYear(request.SchoolYear);
+                var canonicalSemester = NormalizeEnrollmentSemester(request.Semester);
                 string canonicalDepartment;
+                string canonicalProgramCode;
+                int academicSectionId;
                 await using (var sectionCommand = new NpgsqlCommand(@"
-                    SELECT p.program_name
+                    SELECT s.id, p.program_code, p.program_name
                     FROM academicsections s
                     JOIN academic_programs p
                       ON LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name))
@@ -1779,29 +1804,16 @@ namespace Client_app.Controllers
                     sectionCommand.Parameters.AddWithValue("yearLevel", yearLevel);
                     sectionCommand.Parameters.AddWithValue("sectionNumber", sectionNumber);
                     sectionCommand.Parameters.AddWithValue("department", request.Department.Trim());
-                    canonicalDepartment = (string?)await sectionCommand.ExecuteScalarAsync()
-                        ?? throw new ArgumentException("The selected section does not exist in the academic program.");
+                    await using var sectionReader = await sectionCommand.ExecuteReaderAsync();
+                    if (!await sectionReader.ReadAsync())
+                        throw new ArgumentException("The selected section does not exist in the academic program.");
+                    academicSectionId = sectionReader.GetInt32(0);
+                    canonicalProgramCode = sectionReader.GetString(1);
+                    canonicalDepartment = sectionReader.GetString(2);
                 }
                 var canonicalSubject = string.IsNullOrWhiteSpace(request.Subject) ? null : request.Subject.Trim();
-                var canonicalSchoolYear = NormalizeSchoolYear(request.SchoolYear);
-                var canonicalSemester = NormalizeEnrollmentSemester(request.Semester);
-                await using (var periodCommand = new NpgsqlCommand(@"
-                    SELECT 1 FROM student_enrollments e
-                    JOIN academic_programs p ON p.program_id = e.program_id
-                    JOIN academicsections s ON s.id = e.academic_section_id
-                    WHERE LOWER(@department) IN (LOWER(p.program_code), LOWER(p.program_name))
-                      AND e.school_year = @schoolYear AND e.semester = @semester
-                      AND e.year_level = @yearLevel AND s.section_num = @sectionNumber
-                      AND e.status = 'ENROLLED' LIMIT 1;", conn))
-                {
-                    periodCommand.Parameters.AddWithValue("department", canonicalDepartment);
-                    periodCommand.Parameters.AddWithValue("schoolYear", canonicalSchoolYear);
-                    periodCommand.Parameters.AddWithValue("semester", canonicalSemester);
-                    periodCommand.Parameters.AddWithValue("yearLevel", yearLevel);
-                    periodCommand.Parameters.AddWithValue("sectionNumber", sectionNumber);
-                    if (await periodCommand.ExecuteScalarAsync() is null)
-                        throw new ArgumentException("The selected section has no active enrollment in that school year and semester.");
-                }
+                // The Manual Assignment workflow deliberately omits the active enrollment check here
+                // to allow Chairpersons to assign professors to sections before students are enrolled.
                 if (canonicalSubject is not null)
                 {
                     await using var subjectCommand = new NpgsqlCommand(@"
@@ -1845,37 +1857,16 @@ namespace Client_app.Controllers
                 cmdProfile.Parameters.AddWithValue("id", id);
                 await cmdProfile.ExecuteNonQueryAsync();
 
-                var canonicalSectionLabel = $"{(await ResolveEnrollmentProgramAsync(conn, null, canonicalDepartment, HttpContext.RequestAborted)).Code} {yearLevel}-{sectionNumber}";
-                using (var migrateLegacySection = new NpgsqlCommand(@"
-                    UPDATE FacultySections legacy
-                    SET section = @canonicalSection
-                    WHERE legacy.user_id = @id
-                      AND legacy.department = @dept
-                      AND legacy.year_level = @year
-                      AND legacy.section = @legacySection
-                      AND (legacy.subject = @subj OR (legacy.subject IS NULL AND @subj IS NULL))
-                      AND NOT EXISTS (
-                        SELECT 1 FROM FacultySections current
-                        WHERE current.user_id = @id
-                          AND current.department = @dept
-                          AND current.year_level = @year
-                          AND current.section = @canonicalSection
-                          AND (current.subject = @subj OR (current.subject IS NULL AND @subj IS NULL))
-                      );", conn))
-                {
-                    migrateLegacySection.Parameters.AddWithValue("id", id);
-                    migrateLegacySection.Parameters.AddWithValue("dept", canonicalDepartment);
-                    migrateLegacySection.Parameters.AddWithValue("year", yearLevel.ToString());
-                    migrateLegacySection.Parameters.AddWithValue("legacySection", sectionNumber.ToString());
-                    migrateLegacySection.Parameters.AddWithValue("canonicalSection", canonicalSectionLabel);
-                    migrateLegacySection.Parameters.AddWithValue("subj", (object?)canonicalSubject ?? DBNull.Value);
-                    await migrateLegacySection.ExecuteNonQueryAsync();
-                }
+                var canonicalSectionLabel = $"{canonicalProgramCode} {yearLevel}-{sectionNumber}";
 
                 string insertSectionQuery = @"
-                    INSERT INTO FacultySections (user_id, department, section, year_level, subject) 
-                    VALUES (@id, @dept, @section, @year, @subj)
-                    ON CONFLICT (user_id, department, section, subject) DO NOTHING";
+                    INSERT INTO FacultySections
+                        (user_id, department, section, year_level, subject,
+                         academic_section_id, school_year, semester, is_active)
+                    VALUES (@id, @dept, @section, @year, @subj,
+                            @academicSectionId, @schoolYear, @semester, TRUE)
+                    ON CONFLICT DO NOTHING
+                    RETURNING id";
                 
                 using var cmdSection = new NpgsqlCommand(insertSectionQuery, conn);
                 cmdSection.Parameters.AddWithValue("id", id);
@@ -1883,12 +1874,27 @@ namespace Client_app.Controllers
                 cmdSection.Parameters.AddWithValue("section", canonicalSectionLabel);
                 cmdSection.Parameters.AddWithValue("year", yearLevel.ToString());
                 cmdSection.Parameters.AddWithValue("subj", (object?)canonicalSubject ?? DBNull.Value);
+                cmdSection.Parameters.AddWithValue("academicSectionId", academicSectionId);
+                cmdSection.Parameters.AddWithValue("schoolYear", canonicalSchoolYear);
+                cmdSection.Parameters.AddWithValue("semester", canonicalSemester);
 
-                int rows = await cmdSection.ExecuteNonQueryAsync();
+                var insertedId = await cmdSection.ExecuteScalarAsync();
                 
-                if (rows == 0) 
+                if (insertedId is null)
                 {
-                    return Ok(new { status = "Info", message = $"Faculty is already assigned to {canonicalDepartment} Section {yearLevel}-{sectionNumber}." });
+                    await using var existing = new NpgsqlCommand(@"
+                        SELECT id FROM facultysections
+                        WHERE user_id = @id AND academic_section_id = @academicSectionId
+                          AND school_year = @schoolYear AND semester = @semester
+                          AND LOWER(subject) = LOWER(@subject) AND is_active = TRUE
+                        LIMIT 1;", conn);
+                    existing.Parameters.AddWithValue("id", id);
+                    existing.Parameters.AddWithValue("academicSectionId", academicSectionId);
+                    existing.Parameters.AddWithValue("schoolYear", canonicalSchoolYear);
+                    existing.Parameters.AddWithValue("semester", canonicalSemester);
+                    existing.Parameters.AddWithValue("subject", canonicalSubject!);
+                    insertedId = await existing.ExecuteScalarAsync();
+                    return Ok(new { status = "Info", message = $"Faculty is already assigned to {canonicalDepartment} Section {yearLevel}-{sectionNumber} for {canonicalSchoolYear} {canonicalSemester}.", assignment = new { id = insertedId, facultyId = id, department = canonicalDepartment, section = canonicalSectionLabel, yearLevel, subject = canonicalSubject, academicSectionId, schoolYear = canonicalSchoolYear, semester = canonicalSemester } });
                 }
 
                 var emailSubject = "PLV Faculty Assignment";
@@ -1897,7 +1903,7 @@ namespace Client_app.Controllers
 
                _cache.Remove("approved_faculties");
                 await NotifyAcademicDataChangedAsync("faculty_assigned", canonicalDepartment, userEmail);
-                return Ok(new { status = "Success", message = "Faculty assigned successfully." });
+                return Ok(new { status = "Success", message = "Faculty assigned successfully.", assignment = new { id = Convert.ToInt32(insertedId), facultyId = id, department = canonicalDepartment, section = canonicalSectionLabel, yearLevel, subject = canonicalSubject, academicSectionId, schoolYear = canonicalSchoolYear, semester = canonicalSemester } });
             }
             catch (ArgumentException ex)
             {
@@ -1935,12 +1941,12 @@ namespace Client_app.Controllers
                 if (!HasAny(headers, "faculty_id", "staff_id", "faculty_email", "email") ||
                     !HasAny(headers, "academic_program", "program", "department") ||
                     !HasAny(headers, "subject_code", "subject") ||
-                    !headers.Contains("section"))
+                    !headers.Contains("section") || !headers.Contains("school_year") || !headers.Contains("semester"))
                 {
                     return BadRequest(new
                     {
                         status = "Error",
-                        message = "CSV headings must include Faculty ID or Email, Academic Program, Subject Code, and Section. Year Level may be supplied or inferred from Section."
+                        message = "CSV headings must include Faculty ID or Email, Academic Program, Subject Code, Section, School Year, and Semester. Year Level may be supplied or inferred from Section."
                     });
                 }
 
@@ -1968,9 +1974,13 @@ namespace Client_app.Controllers
                     var subject = Value("subject_code", "subject");
                     var section = Value("section");
                     var yearInput = Value("year_level", "year", "level");
+                    var schoolYearInput = Value("school_year");
+                    var semesterInput = Value("semester");
 
                     try
                     {
+                        var schoolYear = NormalizeSchoolYear(schoolYearInput);
+                        var semester = NormalizeEnrollmentSemester(semesterInput);
                         if (string.IsNullOrWhiteSpace(facultyIdentifier) || string.IsNullOrWhiteSpace(programInput) ||
                             string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(section))
                             throw new ArgumentException("Faculty ID or Email, Academic Program, Subject Code, and Section are required.");
@@ -2018,8 +2028,9 @@ namespace Client_app.Controllers
                         }
 
                         string canonicalProgram;
+                        int academicSectionId;
                         await using (var assignment = new NpgsqlCommand(@"
-                            SELECT p.program_name
+                            SELECT section.id, p.program_name
                             FROM academicsections section
                             JOIN academic_programs p
                               ON LOWER(section.department) IN (LOWER(p.program_code), LOWER(p.program_name))
@@ -2033,6 +2044,7 @@ namespace Client_app.Controllers
                                   WHERE curriculum.program_id = p.program_id
                                     AND curriculum.status = 'PUBLISHED'
                                     AND subject.year_level = @yearLevel
+                                    AND subject.semester = @semester
                                     AND LOWER(subject.subject_code) = LOWER(@subject)
                               )
                             LIMIT 1;", connection, transaction))
@@ -2041,8 +2053,12 @@ namespace Client_app.Controllers
                             assignment.Parameters.AddWithValue("yearLevel", (int)yearLevel);
                             assignment.Parameters.AddWithValue("sectionNumber", sectionNumber);
                             assignment.Parameters.AddWithValue("subject", subject);
-                            canonicalProgram = (string?)await assignment.ExecuteScalarAsync(cancellationToken)
-                                ?? throw new ArgumentException("The section does not exist, or the subject is not in the published curriculum for that program and year level.");
+                            assignment.Parameters.AddWithValue("semester", semester);
+                            await using var assignmentReader = await assignment.ExecuteReaderAsync(cancellationToken);
+                            if (!await assignmentReader.ReadAsync(cancellationToken))
+                                throw new ArgumentException("The section does not exist, or the subject is not in the published curriculum for that program, year level, and semester.");
+                            academicSectionId = assignmentReader.GetInt32(0);
+                            canonicalProgram = assignmentReader.GetString(1);
                         }
 
                         await using (var profile = new NpgsqlCommand(@"
@@ -2058,15 +2074,21 @@ namespace Client_app.Controllers
 
                         int inserted;
                         await using (var insert = new NpgsqlCommand(@"
-                            INSERT INTO facultysections (user_id, department, section, year_level, subject)
-                            VALUES (@facultyId, @program, @section, @yearLevel, @subject)
-                            ON CONFLICT (user_id, department, section, subject) DO NOTHING;", connection, transaction))
+                            INSERT INTO facultysections
+                                (user_id, department, section, year_level, subject,
+                                 academic_section_id, school_year, semester, is_active)
+                            VALUES (@facultyId, @program, @section, @yearLevel, @subject,
+                                    @academicSectionId, @schoolYear, @semester, TRUE)
+                            ON CONFLICT DO NOTHING;", connection, transaction))
                         {
                             insert.Parameters.AddWithValue("facultyId", facultyUserId);
                             insert.Parameters.AddWithValue("program", canonicalProgram);
                             insert.Parameters.AddWithValue("section", section);
                             insert.Parameters.AddWithValue("yearLevel", yearLevel.ToString());
                             insert.Parameters.AddWithValue("subject", subject);
+                            insert.Parameters.AddWithValue("academicSectionId", academicSectionId);
+                            insert.Parameters.AddWithValue("schoolYear", schoolYear);
+                            insert.Parameters.AddWithValue("semester", semester);
                             inserted = await insert.ExecuteNonQueryAsync(cancellationToken);
                         }
 
@@ -2074,7 +2096,7 @@ namespace Client_app.Controllers
                             User.Identity?.Name ?? "department_admin", "department_admin",
                             inserted == 0 ? "FACULTY_LOAD_ALREADY_ASSIGNED" : "FACULTY_LOAD_ASSIGNED",
                             "faculty_assignment", facultyUserId.ToString(), null,
-                            new { facultyEmail, program = canonicalProgram, section, yearLevel, subject },
+                            new { facultyEmail, program = canonicalProgram, section, yearLevel, subject, academicSectionId, schoolYear, semester },
                             "Chairperson processed a faculty-load CSV row.",
                             HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
                         await transaction.CommitAsync(cancellationToken);
@@ -2087,7 +2109,7 @@ namespace Client_app.Controllers
                             faculty = facultyIdentifier,
                             success = true,
                             idempotent = inserted == 0,
-                            data = new { facultyUserId, facultyEmail, program = canonicalProgram, section, yearLevel, subject }
+                            data = new { facultyUserId, facultyEmail, program = canonicalProgram, section, yearLevel, subject, academicSectionId, schoolYear, semester }
                         });
                     }
                     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or PostgresException)
@@ -2163,8 +2185,14 @@ namespace Client_app.Controllers
 
                 using var tx = await conn.BeginTransactionAsync();
 
-                using var delSecCmd = new NpgsqlCommand("DELETE FROM FacultySections WHERE user_id = @id", conn, tx);
+                using var delSecCmd = new NpgsqlCommand(@"
+                    UPDATE FacultySections
+                    SET is_active = FALSE,
+                        deactivated_at = COALESCE(deactivated_at, CURRENT_TIMESTAMP),
+                        deactivated_by = COALESCE(deactivated_by, @actor)
+                    WHERE user_id = @id AND is_active = TRUE", conn, tx);
                 delSecCmd.Parameters.AddWithValue("id", id);
+                delSecCmd.Parameters.AddWithValue("actor", User.Identity?.Name ?? "system_admin");
                 await delSecCmd.ExecuteNonQueryAsync();
 
                 using var delProfileCmd = new NpgsqlCommand("DELETE FROM FacultyProfiles WHERE user_id = @id", conn, tx);
@@ -2291,33 +2319,18 @@ namespace Client_app.Controllers
                 var sections = new List<object>();
                 using var cmd = new NpgsqlCommand(@"
                     SELECT fs.department, fs.section, fs.year_level, fs.subject,
-                           period.school_year, period.semester, period.academic_section_id,
-                           period.canonical_section, fs.id, fs.assigned_at
+                           fs.school_year, fs.semester, fs.academic_section_id,
+                           CASE WHEN s.id IS NULL THEN fs.section
+                                ELSE CONCAT(p.program_code, ' ', s.year_level, '-', s.section_num) END,
+                           fs.id, fs.assigned_at,
+                           CASE WHEN fs.academic_section_id IS NOT NULL AND fs.school_year IS NOT NULL AND fs.semester IS NOT NULL
+                                THEN 'EXACT' ELSE 'UNRESOLVED_LEGACY' END
                     FROM FacultySections fs 
                     JOIN Users u ON fs.user_id = u.id 
-                    LEFT JOIN LATERAL (
-                        SELECT e.school_year, e.semester, e.academic_section_id,
-                               CONCAT(p.program_code, ' ', s.year_level, '-', s.section_num) AS canonical_section
-                        FROM student_enrollments e
-                        JOIN academicsections s ON s.id = e.academic_section_id
-                            AND s.year_level = e.year_level
-                        JOIN academic_programs p ON p.program_id = e.program_id
-                            AND LOWER(TRIM(fs.department)) IN (LOWER(TRIM(p.program_code)), LOWER(TRIM(p.program_name)))
-                            AND LOWER(TRIM(s.department)) IN (LOWER(TRIM(p.program_code)), LOWER(TRIM(p.program_name)))
-                        JOIN curriculums c ON c.curriculum_id = e.curriculum_id
-                            AND c.program_id = p.program_id AND c.status IN ('PUBLISHED', 'ARCHIVED')
-                        JOIN curriculum_subjects subject ON subject.curriculum_id = c.curriculum_id
-                            AND LOWER(TRIM(subject.subject_code)) = LOWER(TRIM(fs.subject))
-                            AND subject.year_level = e.year_level AND subject.semester = e.semester
-                        WHERE e.status = 'ENROLLED'
-                          AND (SUBSTRING(fs.section FROM '([1-4]-[0-9]+)') = CONCAT(s.year_level, '-', s.section_num)
-                               OR (TRIM(fs.section) = s.section_num::text AND TRIM(fs.year_level) = s.year_level::text))
-                        ORDER BY e.school_year DESC,
-                                 CASE e.semester WHEN 'MIDYEAR' THEN 3 WHEN 'SECOND' THEN 2 ELSE 1 END DESC,
-                                 e.enrollment_id DESC
-                        LIMIT 1
-                    ) period ON TRUE
-                    WHERE LOWER(u.email) = LOWER(@email) AND u.status = 'APPROVED'
+                    LEFT JOIN academicsections s ON s.id = fs.academic_section_id
+                    LEFT JOIN academic_programs p
+                      ON LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name))
+                    WHERE LOWER(u.email) = LOWER(@email) AND u.status = 'APPROVED' AND fs.is_active = TRUE
                     ORDER BY fs.department, fs.year_level, fs.section", conn);
                 
                 cmd.Parameters.AddWithValue("email", email);
@@ -2335,7 +2348,8 @@ namespace Client_app.Controllers
                         academicSectionId = reader.IsDBNull(6) ? (int?)null : reader.GetInt32(6),
                         canonicalSection = reader.IsDBNull(7) ? null : reader.GetString(7),
                         assignmentCycleId = reader.GetInt32(8).ToString(),
-                        assignedAt = reader.IsDBNull(9) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(9)
+                        assignedAt = reader.IsDBNull(9) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(9),
+                        periodResolution = reader.GetString(10)
                     });
                 }
 
@@ -2349,31 +2363,48 @@ namespace Client_app.Controllers
 
         [HttpDelete("faculty/{email}/assigned-sections")]
         [Authorize(Roles = "department_admin,registrar")]
-        public async Task<IActionResult> UnassignFacultySection(string email, [FromQuery] string department, [FromQuery] string yearLevel, [FromQuery] string section, [FromQuery] string? subject)
+        public async Task<IActionResult> UnassignFacultySection(string email, [FromQuery] int facultySectionId)
         {
             try
             {
                 using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
-                if (!await CanManageAcademicProgramAsync(conn, department, HttpContext.RequestAborted))
+                var resolution = await FacultyAssignmentRosterService.ResolveAsync(conn, facultySectionId, false, HttpContext.RequestAborted);
+                if (resolution.Status == FacultyAssignmentRosterService.ResolutionStatus.NotFound)
+                    return NotFound(new { status = "Error", message = resolution.Message });
+                if (resolution.Value is null)
+                    return Conflict(new { status = "Error", message = resolution.Message });
+                if (!string.Equals(resolution.Value.FacultyEmail, email, StringComparison.OrdinalIgnoreCase))
+                    return Forbid();
+                if (!await CanManageAcademicProgramAsync(conn, resolution.Value.Department, HttpContext.RequestAborted))
                     return Forbid();
 
                 using var cmd = new NpgsqlCommand(@"
-                    DELETE FROM FacultySections 
-                    WHERE user_id = (SELECT id FROM Users WHERE LOWER(email) = LOWER(@email) LIMIT 1)
-                    AND department = @dept AND year_level = @year AND section = @sec
-                    AND (subject = @subj OR (subject IS NULL AND @subj IS NULL))", conn);
-                
-                cmd.Parameters.AddWithValue("email", email);
-                cmd.Parameters.AddWithValue("dept", department);
-                cmd.Parameters.AddWithValue("year", yearLevel);
-                cmd.Parameters.AddWithValue("sec", section);
-                cmd.Parameters.AddWithValue("subj", (object?)subject?.Trim() ?? DBNull.Value);
+                    UPDATE FacultySections
+                    SET is_active = FALSE, deactivated_at = CURRENT_TIMESTAMP, deactivated_by = @actor
+                    WHERE id = @id AND is_active = TRUE", conn);
+                cmd.Parameters.AddWithValue("actor", User.Identity?.Name ?? "unknown");
+                cmd.Parameters.AddWithValue("id", facultySectionId);
+                var changed = await cmd.ExecuteNonQueryAsync();
+                if (changed == 0) return Conflict(new { status = "Error", message = "Assignment is already inactive." });
 
-                await cmd.ExecuteNonQueryAsync();
+                await using var historyCommand = new NpgsqlCommand(@"
+                    SELECT EXISTS (
+                        SELECT 1 FROM pending_grade_records
+                        WHERE assignment_cycle_id = @cycleId
+                          AND LOWER(COALESCE(status, '')) = 'finalized'
+                    );", conn);
+                historyCommand.Parameters.AddWithValue("cycleId", facultySectionId.ToString());
+                var hasFinalizedHistory = (bool)(await historyCommand.ExecuteScalarAsync() ?? false);
 
-                await NotifyAcademicDataChangedAsync("faculty_section_unassigned", department, email);
-                return Ok(new { status = "Success", message = "Class unassigned successfully." });
+                await NotifyAcademicDataChangedAsync("faculty_section_unassigned", resolution.Value.Department, email);
+                return Ok(new {
+                    status = "Success",
+                    message = hasFinalizedHistory
+                        ? "Current assignment deactivated; finalized grade history was preserved."
+                        : "Current assignment deactivated successfully.",
+                    hasFinalizedHistory
+                });
             }
             catch (Exception ex)
             {
@@ -2383,7 +2414,7 @@ namespace Client_app.Controllers
 
         [HttpGet("faculty/{email}/students")]
         [Authorize(Roles = "faculty,department_admin,registrar")]
-        public async Task<IActionResult> GetFacultyStudents(string email)
+        public async Task<IActionResult> GetFacultyStudents(string email, [FromQuery] int facultySectionId)
         {
             try
             {
@@ -2392,44 +2423,30 @@ namespace Client_app.Controllers
                 if (!await CanViewFacultyAcademicDataAsync(conn, email, HttpContext.RequestAborted))
                     return Forbid();
 
-                // Fetch all approved students matching ANY of the faculty's assigned sections across multiple departments
-                var students = new List<object>();
-                using var cmdStudents = new NpgsqlCommand(@"
-                    SELECT DISTINCT u.id, sp.full_name, u.email, sp.student_no, sp.assignment_status, sp.department, sp.section, fs.section, fs.year_level
-                    FROM Users u 
-                    JOIN StudentProfiles sp ON u.id = sp.user_id
-                    JOIN FacultySections fs ON LOWER(TRIM(sp.department)) = LOWER(TRIM(fs.department)) 
-                      AND (LOWER(TRIM(sp.section)) = LOWER(TRIM(fs.section)) 
-                        OR LOWER(TRIM(fs.section)) LIKE CONCAT('% ', LOWER(TRIM(sp.section)))
-                        OR LOWER(TRIM(sp.section)) = LOWER(TRIM(CONCAT(fs.year_level, fs.section))) 
-                        OR LOWER(TRIM(sp.section)) = LOWER(TRIM(CONCAT(fs.year_level, '-', fs.section))) 
-                        OR LOWER(TRIM(sp.section)) = LOWER(TRIM(CONCAT(fs.department, '-', fs.year_level, fs.section))) 
-                        OR LOWER(TRIM(sp.section)) = LOWER(TRIM(CONCAT(fs.department, fs.year_level, fs.section)))
-                        OR LOWER(TRIM(sp.section)) = LOWER(TRIM(CONCAT(fs.department, '-', fs.section))))
-                    JOIN Users fu ON fs.user_id = fu.id
-                    WHERE u.role = 'student' AND u.status = 'APPROVED'
-                      AND sp.assignment_status IN ('Enrolled', 'Pending Department Approval')
-                      AND fu.email = @email AND fu.status = 'APPROVED'", conn);
-                
-                cmdStudents.Parameters.AddWithValue("email", email);
-
-                using (var reader = await cmdStudents.ExecuteReaderAsync())
-                {
-                    while (await reader.ReadAsync())
-                    {
-                        students.Add(new {
-                            id = reader.GetInt32(0),
-                            fullname = reader.GetString(1),
-                            email = reader.GetString(2),
-                            studentno = reader.IsDBNull(3) ? "N/A" : reader.GetString(3),
-                            enrollmentStatus = reader.IsDBNull(4) ? "Unassigned" : reader.GetString(4),
-                            department = reader.IsDBNull(5) ? "N/A" : reader.GetString(5),
-                            section = reader.IsDBNull(6) ? "N/A" : reader.GetString(6),
-                            sectionNum = reader.IsDBNull(7) ? "N/A" : reader.GetString(7),
-                            yearLevel = reader.IsDBNull(8) ? "N/A" : reader.GetString(8)
-                        });
-                    }
-                }
+                if (facultySectionId <= 0)
+                    return BadRequest(new { status = "Error", message = "facultySectionId is required." });
+                var resolution = await FacultyAssignmentRosterService.ResolveAsync(conn, facultySectionId, false, HttpContext.RequestAborted);
+                if (resolution.Status == FacultyAssignmentRosterService.ResolutionStatus.NotFound)
+                    return NotFound(new { status = "Error", message = resolution.Message });
+                if (resolution.Status == FacultyAssignmentRosterService.ResolutionStatus.AmbiguousLegacy)
+                    return Conflict(new { status = "Ambiguous", message = resolution.Message });
+                if (resolution.Value is null)
+                    return BadRequest(new { status = "Error", message = resolution.Message });
+                if (!string.Equals(resolution.Value.FacultyEmail, email, StringComparison.OrdinalIgnoreCase))
+                    return Forbid();
+                var roster = await FacultyAssignmentRosterService.GetRosterAsync(conn, resolution.Value, HttpContext.RequestAborted);
+                var students = roster.Select(student => new {
+                    id = student.StudentUserId,
+                    fullname = student.FullName,
+                    email = student.Email,
+                    studentno = student.StudentNo,
+                    enrollmentId = student.EnrollmentId,
+                    enrollmentStatus = student.EnrollmentStatus,
+                    academicSectionId = student.AcademicSectionId,
+                    schoolYear = student.SchoolYear,
+                    semester = student.Semester,
+                    facultySectionId = resolution.Value.Id
+                }).ToList();
 
                 return Ok(new { status = "Success", students });
             }
@@ -3239,22 +3256,22 @@ namespace Client_app.Controllers
                     return NotFound(new { status = "Error", message = "User profile not found." });
                 }
 
-                // NEW: If student, fetch their enrolled subjects from FacultySections
-                if (normalizedRole == "student" && !string.IsNullOrEmpty(userProfile.Section))
+                // Fetch the student's enrolled subjects from their canonical enrollment and curriculum,
+                // NOT from FacultySections, to decouple Faculty Assignment from Student Enrollment.
+                if (normalizedRole == "student")
                 {
                     try
                     {
                         var subjects = new List<string>();
                         using var cmdSub = new NpgsqlCommand(@"
-                            SELECT DISTINCT subject 
-                            FROM FacultySections 
-                            WHERE LOWER(TRIM(department)) = LOWER(TRIM(@dept)) 
-                            AND (LOWER(TRIM(section)) = LOWER(TRIM(@sec))
-                                 OR LOWER(TRIM(CONCAT(year_level, section))) = LOWER(TRIM(@sec))
-                                 OR LOWER(TRIM(CONCAT(year_level, '-', section))) = LOWER(TRIM(@sec)))
-                            AND subject IS NOT NULL", conn);
-                        cmdSub.Parameters.AddWithValue("dept", userProfile.Department ?? "");
-                        cmdSub.Parameters.AddWithValue("sec", userProfile.Section);
+                            SELECT DISTINCT cs.subject_code
+                            FROM student_enrollments e
+                            JOIN curriculums c ON c.curriculum_id = e.curriculum_id
+                            JOIN curriculum_subjects cs ON cs.curriculum_id = c.curriculum_id
+                                                       AND cs.year_level = e.year_level
+                                                       AND cs.semester = e.semester
+                            WHERE e.student_user_id = @userId AND e.status = 'ENROLLED'", conn);
+                        cmdSub.Parameters.AddWithValue("userId", userProfile.Id);
 
                         using var readerSub = await cmdSub.ExecuteReaderAsync();
                         while (await readerSub.ReadAsync())
@@ -3426,18 +3443,6 @@ namespace Client_app.Controllers
                         cmdSec.Parameters.AddWithValue("sec", parsedSectionNumber);
                         await cmdSec.ExecuteNonQueryAsync();
 
-                        // Assign Section To Faculty
-                        using var cmdAssign = new NpgsqlCommand(@"
-                            INSERT INTO FacultySections (user_id, department, section, year_level, subject) 
-                            VALUES (@uid, @dept, @sec, @year, @subj) 
-                            ON CONFLICT (user_id, department, section, subject) DO NOTHING", conn, tx);
-                        cmdAssign.Parameters.AddWithValue("uid", facultyUserId);
-                        cmdAssign.Parameters.AddWithValue("dept", department);
-                        cmdAssign.Parameters.AddWithValue("sec", section);
-                        cmdAssign.Parameters.AddWithValue("year", yearLevel);
-                        cmdAssign.Parameters.AddWithValue("subj", subjectCode);
-                        await cmdAssign.ExecuteNonQueryAsync();
-
                         // 3. Resolve an officially enrolled Student
                         int studentUserId = 0;
                         using (var checkStu = new NpgsqlCommand(@"
@@ -3520,6 +3525,10 @@ namespace Client_app.Controllers
             public string? AssignToEmail { get; set; }
             [JsonPropertyName("subject")]
             public string? Subject { get; set; }
+            [JsonPropertyName("schoolYear")]
+            public string? SchoolYear { get; set; }
+            [JsonPropertyName("semester")]
+            public string? Semester { get; set; }
         }
 
         [Authorize(Roles = "registrar")]
@@ -3547,6 +3556,10 @@ namespace Client_app.Controllers
 
                 if (!string.IsNullOrWhiteSpace(request.AssignToEmail))
                 {
+                    if (string.IsNullOrWhiteSpace(request.Subject) || string.IsNullOrWhiteSpace(request.SchoolYear) || string.IsNullOrWhiteSpace(request.Semester))
+                        throw new ArgumentException("Subject, school year, and semester are required when assigning the new section to a faculty member.");
+                    var assignmentSchoolYear = NormalizeSchoolYear(request.SchoolYear);
+                    var assignmentSemester = NormalizeEnrollmentSemester(request.Semester);
                     using var cmdUser = new NpgsqlCommand("SELECT id FROM Users WHERE LOWER(email) = LOWER(@email) LIMIT 1", conn, transaction);
                     cmdUser.Parameters.AddWithValue("email", request.AssignToEmail);
                     var userIdObj = await cmdUser.ExecuteScalarAsync();
@@ -3554,14 +3567,20 @@ namespace Client_app.Controllers
                     if (userIdObj != null && userIdObj != DBNull.Value)
                     {
                         using var cmdAssign = new NpgsqlCommand(@"
-                            INSERT INTO FacultySections (user_id, department, section, year_level, subject) 
-                            VALUES (@uid, @dept, @sec, @year, @subj) 
-                            ON CONFLICT (user_id, department, section, subject) DO NOTHING", conn, transaction);
+                            INSERT INTO FacultySections
+                                (user_id, department, section, year_level, subject,
+                                 academic_section_id, school_year, semester, is_active)
+                            VALUES (@uid, @dept, @sec, @year, @subj,
+                                    @academicSectionId, @schoolYear, @semester, TRUE)
+                            ON CONFLICT DO NOTHING", conn, transaction);
                         cmdAssign.Parameters.AddWithValue("uid", Convert.ToInt32(userIdObj));
                         cmdAssign.Parameters.AddWithValue("dept", request.Department);
-                        cmdAssign.Parameters.AddWithValue("sec", request.SectionNum);
+                        cmdAssign.Parameters.AddWithValue("sec", $"{program.Code} {request.YearLevel}-{request.SectionNum}");
                         cmdAssign.Parameters.AddWithValue("year", request.YearLevel);
                         cmdAssign.Parameters.AddWithValue("subj", request.Subject != null ? (object)request.Subject.Trim() : DBNull.Value);
+                        cmdAssign.Parameters.AddWithValue("academicSectionId", Convert.ToInt32(id));
+                        cmdAssign.Parameters.AddWithValue("schoolYear", assignmentSchoolYear);
+                        cmdAssign.Parameters.AddWithValue("semester", assignmentSemester);
                         await cmdAssign.ExecuteNonQueryAsync();
                     }
                 }
@@ -3701,11 +3720,15 @@ namespace Client_app.Controllers
 
                 using var tx = await conn.BeginTransactionAsync();
 
-                using var cmdFac = new NpgsqlCommand("DELETE FROM FacultySections WHERE department = @dept AND year_level = @year AND section = @sec", conn, tx);
-                cmdFac.Parameters.AddWithValue("dept", dept);
-                cmdFac.Parameters.AddWithValue("year", year);
-                cmdFac.Parameters.AddWithValue("sec", secNum);
-                await cmdFac.ExecuteNonQueryAsync();
+                using (var assignmentCheck = new NpgsqlCommand("SELECT COUNT(*) FROM FacultySections WHERE academic_section_id = @id", conn, tx))
+                {
+                    assignmentCheck.Parameters.AddWithValue("id", sectionId);
+                    if (Convert.ToInt64(await assignmentCheck.ExecuteScalarAsync()) > 0)
+                    {
+                        await tx.RollbackAsync();
+                        return Conflict(new { status = "Error", message = "This section has faculty-assignment history and cannot be deleted. Deactivate current assignments instead." });
+                    }
+                }
 
                 using var cmdSec = new NpgsqlCommand("DELETE FROM AcademicSections WHERE id = @id", conn, tx);
                 cmdSec.Parameters.AddWithValue("id", sectionId);
@@ -3728,9 +3751,15 @@ namespace Client_app.Controllers
                 await conn.OpenAsync();
                 using var tx = await conn.BeginTransactionAsync();
 
-                using var cmdFac = new NpgsqlCommand("DELETE FROM FacultySections WHERE department = @dept", conn, tx);
-                cmdFac.Parameters.AddWithValue("dept", department);
-                await cmdFac.ExecuteNonQueryAsync();
+                using (var assignmentCheck = new NpgsqlCommand("SELECT COUNT(*) FROM FacultySections WHERE LOWER(department) = LOWER(@dept)", conn, tx))
+                {
+                    assignmentCheck.Parameters.AddWithValue("dept", department);
+                    if (Convert.ToInt64(await assignmentCheck.ExecuteScalarAsync()) > 0)
+                    {
+                        await tx.RollbackAsync();
+                        return Conflict(new { status = "Error", message = "This department has faculty-assignment history and its sections cannot be deleted." });
+                    }
+                }
 
                 using var cmdSec = new NpgsqlCommand("DELETE FROM AcademicSections WHERE department = @dept", conn, tx);
                 cmdSec.Parameters.AddWithValue("dept", department);

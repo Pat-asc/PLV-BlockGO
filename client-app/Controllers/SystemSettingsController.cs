@@ -119,12 +119,16 @@ namespace Client_app.Controllers
                 await conn.OpenAsync();
                 using var tx = await conn.BeginTransactionAsync();
 
-                using var cmdClearGrades = new NpgsqlCommand(
-                    "DELETE FROM pending_grade_records WHERE LOWER(COALESCE(status, '')) <> 'finalized'", conn, tx);
-                var clearedDraftGradeCount = await cmdClearGrades.ExecuteNonQueryAsync();
-
-                using var cmdClearFacSections = new NpgsqlCommand("DELETE FROM FacultySections", conn, tx);
-                await cmdClearFacSections.ExecuteNonQueryAsync();
+                // End the current teaching cycles without deleting their workflow or
+                // academic history. New assignments receive new FacultySections IDs.
+                using var cmdDeactivateAssignments = new NpgsqlCommand(@"
+                    UPDATE FacultySections
+                    SET is_active = FALSE,
+                        deactivated_at = CURRENT_TIMESTAMP,
+                        deactivated_by = @actor
+                    WHERE is_active = TRUE", conn, tx);
+                cmdDeactivateAssignments.Parameters.AddWithValue("actor", User.Identity?.Name ?? "unknown");
+                var deactivatedAssignmentCount = await cmdDeactivateAssignments.ExecuteNonQueryAsync();
 
                 const string resetEncodingPeriod = "{\"semester\":\"2nd Semester\",\"startDate\":\"\",\"endDate\":\"\",\"term\":\"midterm\"}";
                 using var cmdResetEncodingPeriod = new NpgsqlCommand(@"
@@ -146,8 +150,9 @@ namespace Client_app.Controllers
                 return Ok(new
                 {
                     status = "Success",
-                    message = "Encoding season reset. Non-finalized grade work and faculty assignments were cleared; finalized ledger records and saved sections were preserved.",
-                    clearedDraftGradeCount
+                    message = "Encoding season reset. Current faculty assignments were deactivated; grade workflow history, finalized ledger records, and saved sections were preserved.",
+                    deactivatedAssignmentCount,
+                    clearedDraftGradeCount = 0
                 });
             }
             catch (Exception ex)

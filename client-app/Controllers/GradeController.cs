@@ -318,85 +318,30 @@ namespace BlockGo.Controllers
                         stuSection = stuReader.IsDBNull(4) ? null : stuReader.GetString(4);
                     }
                 }
-                if (stuDept == null || string.IsNullOrWhiteSpace(stuEmail))
+                if (string.IsNullOrWhiteSpace(stuEmail))
                     return BadRequest(new { status = "Error", message = "Student account was not found. The Registrar must create the student before grades can be encoded." });
-                if (!string.Equals(facDept.Trim(), stuDept.Trim(), StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogWarning("Grade rejected: department mismatch. Faculty={Faculty}, Student={StudentId}, FacultyDepartment={FacultyDepartment}, StudentDepartment={StudentDepartment}",
-                        effectiveFacultyId, stuNumber, facDept, stuDept);
+                if (request.FacultySectionId <= 0)
+                    return BadRequest(new { status = "Error", message = "faculty_section_id is required." });
+                var assignmentResolution = await FacultyAssignmentRosterService.ResolveAsync(
+                    conn, request.FacultySectionId, false, HttpContext.RequestAborted);
+                if (assignmentResolution.Value is null)
+                    return assignmentResolution.Status == FacultyAssignmentRosterService.ResolutionStatus.AmbiguousLegacy
+                        ? Conflict(new { status = "Ambiguous", message = assignmentResolution.Message })
+                        : BadRequest(new { status = "Error", message = assignmentResolution.Message });
+                var facultyAssignment = assignmentResolution.Value;
+                if (AuthenticatedRole() == "faculty" &&
+                    !string.Equals(facultyAssignment.FacultyEmail, effectiveFacultyId, StringComparison.OrdinalIgnoreCase))
                     return Forbid();
-                }
-
-                var sectionToken = Regex.Match(request.Section, @"\b\d+-\d+\b").Value;
-                using (var enrollment = new NpgsqlCommand(@"
-                    SELECT s.year_level, s.section_num, p.program_code FROM student_enrollments e
-                    JOIN StudentProfiles sp ON sp.user_id = e.student_user_id
-                    JOIN academicsections s ON s.id = e.academic_section_id
-                        AND s.year_level = e.year_level
-                    JOIN academic_programs p ON p.program_id = e.program_id
-                        AND LOWER(TRIM(s.department)) IN (LOWER(TRIM(p.program_code)), LOWER(TRIM(p.program_name)))
-                        AND LOWER(TRIM(sp.department)) IN (LOWER(TRIM(p.program_code)), LOWER(TRIM(p.program_name)))
-                    WHERE LOWER(TRIM(sp.student_no)) = LOWER(TRIM(@studentNo))
-                      AND LOWER(TRIM(e.student_no)) = LOWER(TRIM(sp.student_no))
-                      AND e.school_year IN (@schoolYear, @legacySchoolYear) AND e.semester = @semester
-                      AND e.status = 'ENROLLED'
-                    ORDER BY CASE WHEN e.school_year = @schoolYear THEN 0 ELSE 1 END,
-                             e.enrollment_id DESC
-                    LIMIT 1", conn))
-                {
-                    enrollment.Parameters.AddWithValue("studentNo", stuNumber);
-                    enrollment.Parameters.AddWithValue("schoolYear", canonicalSchoolYear);
-                    enrollment.Parameters.AddWithValue("legacySchoolYear", canonicalSchoolYear[..4]);
-                    enrollment.Parameters.AddWithValue("semester", enrollmentSemester);
-                    using var reader = await enrollment.ExecuteReaderAsync();
-                    stuSection = await reader.ReadAsync()
-                        ? $"{reader.GetString(2)} {reader.GetInt32(0)}-{reader.GetInt32(1)}"
-                        : null;
-                }
-                if (string.IsNullOrWhiteSpace(stuSection) || string.IsNullOrWhiteSpace(sectionToken) ||
-                    !string.Equals(Regex.Match(stuSection, @"\b\d+-\d+\b").Value, sectionToken, StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogWarning("Grade rejected: enrollment section mismatch. Student={StudentId}, EnrollmentSection={EnrollmentSection}, RequestedSection={RequestedSection}, SchoolYear={SchoolYear}, Semester={Semester}",
-                        stuNumber, stuSection, request.Section, canonicalSchoolYear, enrollmentSemester);
+                if (!string.Equals(facultyAssignment.Subject, request.SubjectCode, StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { status = "Error", message = "Subject does not match the selected faculty assignment." });
+                var roster = await FacultyAssignmentRosterService.GetRosterAsync(conn, facultyAssignment, HttpContext.RequestAborted);
+                if (!roster.Any(student => string.Equals(student.StudentNo, stuNumber, StringComparison.OrdinalIgnoreCase)))
                     return Forbid();
-                }
-
-                string assignmentCycleId = "";
-                using (var assignment = new NpgsqlCommand(@"
-                    SELECT fs.id, fs.section, fs.year_level FROM FacultySections fs
-                    JOIN Users u ON u.id = fs.user_id
-                    WHERE LOWER(u.email) = LOWER(@faculty) AND LOWER(u.role) = 'faculty'
-                      AND LOWER(u.status) = 'approved'
-                      AND LOWER(TRIM(fs.department)) = LOWER(TRIM(@department))
-                      AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(@subject))", conn))
-                {
-                    assignment.Parameters.AddWithValue("faculty", effectiveFacultyId ?? "");
-                    assignment.Parameters.AddWithValue("department", facDept);
-                    assignment.Parameters.AddWithValue("subject", request.SubjectCode);
-                    using var assignmentReader = await assignment.ExecuteReaderAsync();
-                    var assigned = false;
-                    while (await assignmentReader.ReadAsync())
-                    {
-                        var candidateCycleId = assignmentReader.GetInt32(0).ToString();
-                        var assignedSection = assignmentReader.GetString(1);
-                        var assignedToken = Regex.Match(assignedSection, @"\b\d+-\d+\b").Value;
-                        if (string.IsNullOrWhiteSpace(assignedToken) &&
-                            int.TryParse(assignedSection, out var sectionNumber) &&
-                            int.TryParse(assignmentReader.GetString(2), out var yearNumber))
-                            assignedToken = $"{yearNumber}-{sectionNumber}";
-                        if (string.Equals(assignedToken, sectionToken, StringComparison.OrdinalIgnoreCase))
-                        {
-                            assigned = true;
-                            assignmentCycleId = candidateCycleId;
-                        }
-                    }
-                    if (!assigned && AuthenticatedRole() == "faculty")
-                    {
-                        _logger.LogWarning("Grade rejected: Faculty assignment mismatch. Faculty={Faculty}, Subject={Subject}, Section={Section}, Department={Department}",
-                            effectiveFacultyId, request.SubjectCode, request.Section, facDept);
-                        return Forbid();
-                    }
-                }
+                stuSection = facultyAssignment.CanonicalSection;
+                canonicalSchoolYear = facultyAssignment.SchoolYear;
+                enrollmentSemester = facultyAssignment.Semester;
+                request.Section = facultyAssignment.CanonicalSection;
+                var assignmentCycleId = facultyAssignment.Id.ToString();
 
                 request.StudentId = stuNumber;
                 request.SchoolYear = canonicalSchoolYear;
@@ -405,8 +350,6 @@ namespace BlockGo.Controllers
                 request.Program = facDept;
 
                 request.FacultyId = effectiveFacultyId ?? jwtUser;
-                if (string.IsNullOrWhiteSpace(assignmentCycleId))
-                    assignmentCycleId = $"administrative:{canonicalSchoolYear}:{enrollmentSemester}:{sectionToken}";
                 request.ProfessorName = await ResolveFacultyDisplayNameAsync(conn, request.FacultyId);
                 request.Term = InferGradeTerm(request.Term, request.Grade);
                 if (request.Units <= 0) request.Units = 3;
@@ -537,7 +480,7 @@ namespace BlockGo.Controllers
         [HttpPost("submit-section")]
         [Authorize(Roles = "faculty,department_admin")]
         public async Task<IActionResult> SubmitSection([FromQuery] string department, [FromQuery] string section,
-            [FromQuery] string? schoolYear, [FromQuery] string? semester)
+            [FromQuery] string? schoolYear, [FromQuery] string? semester, [FromQuery] int facultySectionId)
         {
             var facultyId = User.Identity?.Name 
                 ?? User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Email)?.Value
@@ -546,9 +489,9 @@ namespace BlockGo.Controllers
             if (string.IsNullOrWhiteSpace(facultyId))
                 return BadRequest(new { status = "Error", message = "Faculty identity is required." });
 
-            if (string.IsNullOrWhiteSpace(section) || string.IsNullOrWhiteSpace(schoolYear) ||
+            if (facultySectionId <= 0 || string.IsNullOrWhiteSpace(section) || string.IsNullOrWhiteSpace(schoolYear) ||
                 string.IsNullOrWhiteSpace(semester))
-                return BadRequest(new { status = "Error", message = "Section, school year and semester are required." });
+                return BadRequest(new { status = "Error", message = "Faculty assignment, section, school year and semester are required." });
             var canonicalSchoolYear = GradeAcademicPeriod.SchoolYear(schoolYear);
             var canonicalSemester = GradeAcademicPeriod.Semester(semester);
             if (canonicalSchoolYear == null || canonicalSemester == null)
@@ -559,16 +502,28 @@ namespace BlockGo.Controllers
                 using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
 
+                var assignmentResolution = await FacultyAssignmentRosterService.ResolveAsync(
+                    conn, facultySectionId, false, HttpContext.RequestAborted);
+                if (assignmentResolution.Value is null)
+                    return assignmentResolution.Status == FacultyAssignmentRosterService.ResolutionStatus.AmbiguousLegacy
+                        ? Conflict(new { status = "Ambiguous", message = assignmentResolution.Message })
+                        : BadRequest(new { status = "Error", message = assignmentResolution.Message });
+                var facultyAssignment = assignmentResolution.Value;
+                if (!string.Equals(facultyAssignment.FacultyEmail, facultyId, StringComparison.OrdinalIgnoreCase))
+                    return Forbid();
+                if (!string.Equals(facultyAssignment.SchoolYear, canonicalSchoolYear, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(facultyAssignment.Semester, canonicalSemester, StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { status = "Error", message = "Submitted period does not match the selected faculty assignment." });
+
                 var resolvedFaculty = await ResolveApprovedAcademicIdentityAsync(
                     conn,
                     facultyId,
                     facultyId
                 );
                 var effectiveFacultyId = resolvedFaculty.Identity ?? facultyId;
-                var compactSection = ExtractCompactSectionToken(section);
-                var subjectCodeFromLabel = ExtractSubjectCodeFromSectionLabel(section);
-                if (resolvedFaculty.Department == null || string.IsNullOrWhiteSpace(subjectCodeFromLabel) ||
-                    string.IsNullOrWhiteSpace(compactSection))
+                var compactSection = facultyAssignment.CanonicalSection;
+                var subjectCodeFromLabel = facultyAssignment.Subject;
+                if (resolvedFaculty.Department == null || string.IsNullOrWhiteSpace(subjectCodeFromLabel))
                     return BadRequest(new { status = "Error", message = "An assigned subject and section are required for submission." });
                 string? departmentCode;
                 using (var program = new NpgsqlCommand(@"
@@ -584,32 +539,6 @@ namespace BlockGo.Controllers
                     !(string.Equals(department?.Trim(), resolvedFaculty.Department, StringComparison.OrdinalIgnoreCase) ||
                       string.Equals(department?.Trim(), departmentCode, StringComparison.OrdinalIgnoreCase)))
                     return Forbid();
-
-                using (var assignedSection = new NpgsqlCommand(@"
-                    SELECT fs.section, fs.year_level FROM FacultySections fs JOIN Users u ON u.id = fs.user_id
-                    WHERE LOWER(u.email) = LOWER(@faculty) AND LOWER(u.role) = 'faculty'
-                      AND LOWER(u.status) = 'approved'
-                      AND LOWER(TRIM(fs.department)) = LOWER(TRIM(@department))
-                      AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(@subject))", conn))
-                {
-                    assignedSection.Parameters.AddWithValue("faculty", effectiveFacultyId);
-                    assignedSection.Parameters.AddWithValue("department", resolvedFaculty.Department);
-                    assignedSection.Parameters.AddWithValue("subject", subjectCodeFromLabel);
-                    using var assignedReader = await assignedSection.ExecuteReaderAsync();
-                    var assigned = false;
-                    var requestedToken = Regex.Match(compactSection, @"\b\d+-\d+\b").Value;
-                    while (await assignedReader.ReadAsync())
-                    {
-                        var savedSection = assignedReader.GetString(0);
-                        var savedToken = Regex.Match(savedSection, @"\b\d+-\d+\b").Value;
-                        if (string.IsNullOrWhiteSpace(savedToken) &&
-                            int.TryParse(savedSection, out var sectionNumber) &&
-                            int.TryParse(assignedReader.GetString(1), out var yearNumber))
-                            savedToken = $"{yearNumber}-{sectionNumber}";
-                        assigned |= string.Equals(savedToken, requestedToken, StringComparison.OrdinalIgnoreCase);
-                    }
-                    if (!assigned && AuthenticatedRole() == "faculty") return Forbid();
-                }
 
                 await EnsurePendingGradeSchemaAsync(conn);
 
@@ -648,6 +577,7 @@ namespace BlockGo.Controllers
                             )
                         )
                     WHERE LOWER(TRIM(faculty_id)) = LOWER(TRIM(@faculty))
+                      AND assignment_cycle_id = @assignmentCycleId
                       AND LOWER(status) IN ('draft', 'returned')
                       AND LOWER(TRIM(school_year)) IN (LOWER(TRIM(@schoolYear)), LOWER(TRIM(@legacySchoolYear)))
                       AND LOWER(TRIM(semester)) = ANY(@semesterAliases)
@@ -656,6 +586,7 @@ namespace BlockGo.Controllers
                       AND (LOWER(TRIM(COALESCE(section, ''))) = LOWER(TRIM(@section))
                            OR LOWER(TRIM(COALESCE(section, ''))) = LOWER(TRIM(@compactSection)))", conn);
                 cmd.Parameters.AddWithValue("faculty", effectiveFacultyId);
+                cmd.Parameters.AddWithValue("assignmentCycleId", facultyAssignment.Id.ToString());
                 cmd.Parameters.AddWithValue("department", resolvedFaculty.Department);
                 cmd.Parameters.AddWithValue("departmentCode", departmentCode);
                 cmd.Parameters.AddWithValue("section", section);
@@ -1049,12 +980,14 @@ namespace BlockGo.Controllers
         [HttpPost("bulk-upload")]
         [Authorize(Roles = "faculty,department_admin")]
         [Consumes("multipart/form-data")]
-        public async Task<IActionResult> BulkUploadGrades([FromForm] IFormFile file, [FromForm] string? semester, [FromForm] string? schoolYear, [FromForm] string? facultyId, [FromForm] string? course, [FromForm] string? term, [FromForm] string? section)
+        public async Task<IActionResult> BulkUploadGrades([FromForm] IFormFile file, [FromForm] int facultySectionId, [FromForm] string? semester, [FromForm] string? schoolYear, [FromForm] string? facultyId, [FromForm] string? course, [FromForm] string? term, [FromForm] string? section)
         {
             _logger.LogInformation("Bulk upload initiated by user: {User}", User.Identity?.Name);
 
             if (file == null || file.Length == 0)
                 return BadRequest(new { status = "Error", message = "A .csv or .xlsx file is required." });
+            if (facultySectionId <= 0)
+                return BadRequest(new { status = "Error", message = "facultySectionId is required." });
             if (file.Length > 10 * 1024 * 1024)
                 return BadRequest(new { status = "Error", message = "Grade upload files cannot exceed 10 MB." });
 
@@ -1177,6 +1110,23 @@ namespace BlockGo.Controllers
                                 return null;
                             }
 
+                            string? WeightedGrade(string[] quiz, string[] assignment, string[] attendance, string[] exam)
+                            {
+                                static bool Number(string? value, out decimal result) =>
+                                    decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out result);
+                                if (!Number(GetVal(quiz), out var q) || !Number(GetVal(assignment), out var a) ||
+                                    !Number(GetVal(attendance), out var at) || !Number(GetVal(exam), out var ex)) return null;
+                                return decimal.Round((q * .20m) + (a * .10m) + (at * .10m) + (ex * .60m), 2)
+                                    .ToString("0.00", CultureInfo.InvariantCulture);
+                            }
+
+                            var computedMidterm = GetVal("midterm_grade") ?? WeightedGrade(
+                                new[] { "quizzes_20" }, new[] { "assignments_10" },
+                                new[] { "attendance_10" }, new[] { "midterm_exam_60" });
+                            var computedFinals = GetVal("final_grade", "finals_grade") ?? WeightedGrade(
+                                new[] { "final_quizzes_20" }, new[] { "final_assignments_10" },
+                                new[] { "final_attendance_10" }, new[] { "final_exam_60" });
+
                             var sId = GetVal("student_id", "student_no", "id_number", "student_number");
                             if (string.IsNullOrEmpty(sId)) continue;
 
@@ -1187,8 +1137,8 @@ namespace BlockGo.Controllers
                                 Section = !string.IsNullOrWhiteSpace(section) ? section : (GetVal("section", "class_section", "sec") ?? ""),
                                 Grade = BuildUploadedGradePayload(
                                     GetUploadedTermGrade(GetVal, term),
-                                    GetUploadedMidtermGrade(GetVal, term),
-                                    GetUploadedFinalGrade(GetVal, term),
+                                    computedMidterm ?? GetUploadedMidtermGrade(GetVal, term),
+                                    computedFinals ?? GetUploadedFinalGrade(GetVal, term),
                                     term),
                                 SubjectCode = GetVal("subject_code", "course_code", "code", "subject") ?? course ?? "Unknown",
                                 SubjectName = GetVal("subject_name", "descriptive_title", "course") ?? course ?? "Unknown",
@@ -1297,6 +1247,20 @@ namespace BlockGo.Controllers
                         return BadRequest(new { status = "Error", message = "The authenticated Faculty account is not approved." });
                     }
                     var professorName = await ResolveFacultyDisplayNameAsync(conn, effectiveFacultyId);
+                    var assignmentResolution = await FacultyAssignmentRosterService.ResolveAsync(
+                        conn, facultySectionId, false, HttpContext.RequestAborted);
+                    if (assignmentResolution.Value is null)
+                        return assignmentResolution.Status == FacultyAssignmentRosterService.ResolutionStatus.AmbiguousLegacy
+                            ? Conflict(new { status = "Ambiguous", message = assignmentResolution.Message })
+                            : BadRequest(new { status = "Error", message = assignmentResolution.Message });
+                    var facultyAssignment = assignmentResolution.Value;
+                    if (!string.Equals(facultyAssignment.FacultyEmail, effectiveFacultyId, StringComparison.OrdinalIgnoreCase))
+                        return Forbid();
+                    var canonicalRoster = await FacultyAssignmentRosterService.GetRosterAsync(
+                        conn, facultyAssignment, HttpContext.RequestAborted);
+                    var rosterStudentNumbers = canonicalRoster
+                        .Select(student => student.StudentNo)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
                     static string LedgerLookupKey(AcademicRecord grade) => string.Join("\u001f",
                         grade.StudentHash?.Trim().ToLowerInvariant() ?? string.Empty,
                         grade.SubjectCode?.Trim().ToLowerInvariant() ?? string.Empty,
@@ -1356,15 +1320,8 @@ namespace BlockGo.Controllers
                                 errors.Add(new BulkUploadError { StudentId = record.StudentId ?? "", Reason = "Student account not found. Registrar registration is required before grade upload." });
                                 continue;
                             }
-                            if (stuDept == null || !string.Equals(facDept.Trim(), stuDept.Trim(), StringComparison.OrdinalIgnoreCase))
-                            {
-                                failureCount++;
-                                errors.Add(new BulkUploadError { StudentId = record.StudentId ?? "", Reason = "Student belongs to a different academic program." });
-                                continue;
-                            }
-
                             var blockchainRecord = record.ToBlockchainRecord("PLV");
-                            blockchainRecord.Section = !string.IsNullOrWhiteSpace(record.Section) ? record.Section : (section ?? "");
+                            blockchainRecord.Section = facultyAssignment.CanonicalSection;
                             blockchainRecord.StudentHash = stuEmail ?? "";
                             blockchainRecord.StudentNo = stuNumber;
                             blockchainRecord.StudentName = stuName;
@@ -1376,26 +1333,19 @@ namespace BlockGo.Controllers
                             if (blockchainRecord.Units <= 0) blockchainRecord.Units = 3;
                             blockchainRecord.IpfsCid = ipfsCid;
 
-                            string assignmentCycleId = "";
-                            await using (var assignmentCommand = new NpgsqlCommand(@"
-                                SELECT fs.id::text FROM FacultySections fs
-                                JOIN users u ON u.id = fs.user_id
-                                WHERE LOWER(u.email) = LOWER(@faculty)
-                                  AND LOWER(TRIM(fs.department)) = LOWER(TRIM(@department))
-                                  AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(@subject))
-                                  AND SUBSTRING(fs.section FROM '([1-4]-[0-9]+)') = SUBSTRING(@section FROM '([1-4]-[0-9]+)')
-                                ORDER BY fs.id DESC LIMIT 1;", conn))
-                            {
-                                assignmentCommand.Parameters.AddWithValue("faculty", effectiveFacultyId);
-                                assignmentCommand.Parameters.AddWithValue("department", facDept ?? "");
-                                assignmentCommand.Parameters.AddWithValue("subject", blockchainRecord.SubjectCode ?? "");
-                                assignmentCommand.Parameters.AddWithValue("section", blockchainRecord.Section ?? "");
-                                assignmentCycleId = (string?)await assignmentCommand.ExecuteScalarAsync() ?? "";
-                            }
-                            if (string.IsNullOrWhiteSpace(assignmentCycleId))
+                            var assignmentCycleId = facultyAssignment.Id.ToString();
+                            if (!string.Equals(blockchainRecord.SubjectCode, facultyAssignment.Subject, StringComparison.OrdinalIgnoreCase))
                             {
                                 failureCount++;
-                                errors.Add(new BulkUploadError { StudentId = record.StudentId ?? "", Reason = "No active faculty assignment matches this subject and section." });
+                                errors.Add(new BulkUploadError { StudentId = record.StudentId ?? "", Reason = "Uploaded subject does not match the selected faculty assignment." });
+                                continue;
+                            }
+                            blockchainRecord.SchoolYear = facultyAssignment.SchoolYear;
+                            blockchainRecord.Semester = facultyAssignment.Semester;
+                            if (!rosterStudentNumbers.Contains(record.StudentId!.Trim()))
+                            {
+                                failureCount++;
+                                errors.Add(new BulkUploadError { StudentId = record.StudentId, Reason = "Student is not ENROLLED in this faculty assignment's exact section and period." });
                                 continue;
                             }
 

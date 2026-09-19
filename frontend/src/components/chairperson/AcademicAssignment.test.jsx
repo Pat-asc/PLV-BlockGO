@@ -10,8 +10,12 @@ beforeEach(() => {
   localStorage.clear(); jest.clearAllMocks();
   fetchApprovedFaculties.mockResolvedValue({ faculties: [{ id: 1, fullname: "Carlos Reyes", department: "Bachelor of Science in Information Technology" }] });
   fetchCurriculums.mockResolvedValue({ data: [{ programCode: "BSIT", status: "PUBLISHED", subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems and Technologies", yearLevel: 3, semester: "SECOND", units: 3 }] }] });
-  fetchFacultyAssignmentOptions.mockResolvedValue({ subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems and Technologies", yearLevel: 3, semester: "SECOND", units: 3 }], enrollmentPeriods: [{ schoolYear: "2026-2027", semester: "SECOND", yearLevel: 3, section: "3-1" }] });
-  assignFacultyLoadToBackend.mockResolvedValue({ status: "Success" });
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems and Technologies", yearLevel: 3, semester: "SECOND", units: 3 }],
+    sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
+    schoolYears: ["2026-2027"], enrollmentPeriods: []
+  });
+  assignFacultyLoadToBackend.mockResolvedValue({ status: "Success", assignment: { id: 77, academicSectionId: 31 } });
   localStorage.setItem("studentSections", JSON.stringify([{ program: "Bachelor of Science in Information Technology", yearLevel: "3rd Year", section: "IT 3A", schoolYear: "2026", semester: "2nd Semester", students: [] }]));
 });
 test("limits professors and programs to the chairperson department", async () => {

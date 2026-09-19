@@ -967,10 +967,12 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     const loadMyClasses = useCallback(async () => {
         try {
             const secRes = await fetchFacultySections(loggedInEmail);
-            if (secRes.status === 'Success' || secRes.sections) setMySections(secRes.sections || secRes.data || []);
-            
-            const stuRes = await fetchFacultyStudents(loggedInEmail);
-            if (stuRes.status === 'Success' || stuRes.students) setMyStudents(stuRes.students || stuRes.data || []);
+            const assignments = secRes.sections || secRes.data || [];
+            if (secRes.status === 'Success' || secRes.sections) setMySections(assignments);
+            const rosterResponses = await Promise.all(
+                assignments.map((assignment) => fetchFacultyStudents(loggedInEmail, assignment.assignmentCycleId))
+            );
+            setMyStudents(rosterResponses.flatMap((response) => response.students || response.data || []));
         } catch (e) { console.error("Failed to load classes:", e); }
     }, [loggedInEmail]);
 
@@ -1108,10 +1110,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     useEffect(() => {
         if (selectedMySection && mainTab === 'myClasses') {
             const initialGrades = {};
-            const sectionStudents = myStudents.filter(s => 
-                s.department === selectedMySection.department && 
-                String(s.yearLevel) === String(selectedMySection.yearLevel) && 
-                String(s.sectionNum || s.section) === String(selectedMySection.sectionNum || selectedMySection.section)
+            const sectionStudents = myStudents.filter(s =>
+                String(s.facultySectionId) === String(selectedMySection.assignmentCycleId)
             );
             sectionStudents.forEach(student => {
                 const existing = grades.find(g => {
@@ -1294,7 +1294,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             const facultyId = loggedInEmail;
             const section = `${selectedMySection?.department || ''} ${selectedMySection?.sectionNum || selectedMySection?.section || ''}${selectedMySection?.subject ? ` (${selectedMySection.subject})` : ''}`.trim();
 
-            const res = await batchUploadGrades(uploadFile, semester, schoolYear, course, facultyId, activeEncodingTerm, section);
+            const res = await batchUploadGrades(uploadFile, semester, schoolYear, course, facultyId, activeEncodingTerm, section, selectedMySection?.assignmentCycleId);
             if (res.status === 'Success' || res.status === 'Partial Success') {
                 addNotification(`Uploaded successfully! Processed: ${res.totalProcessed}, Success: ${res.successful}`, 'success');
                 setUploadFile(null);
@@ -1319,10 +1319,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
 
         setIsSavingGrades(true);
         try {
-            const sectionStudents = myStudents.filter(s => 
-                s.department === selectedMySection.department && 
-                String(s.yearLevel) === String(selectedMySection.yearLevel) && 
-                String(s.sectionNum || s.section) === String(selectedMySection.sectionNum || selectedMySection.section)
+            const sectionStudents = myStudents.filter(s =>
+                String(s.facultySectionId) === String(selectedMySection.assignmentCycleId)
             );
 
             for (const student of sectionStudents) {
@@ -1361,10 +1359,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
 
     const handleExportClassGrades = () => {
         if (!selectedMySection) return;
-        const sectionStudents = myStudents.filter(s => 
-            s.department === selectedMySection.department && 
-            String(s.yearLevel) === String(selectedMySection.yearLevel) && 
-            String(s.sectionNum || s.section) === String(selectedMySection.sectionNum || selectedMySection.section)
+        const sectionStudents = myStudents.filter(s =>
+            String(s.facultySectionId) === String(selectedMySection.assignmentCycleId)
         );
         
         const headers = ["Student ID", "Student Name", "Midterm", "Finals", "Final Grade"];
@@ -1420,7 +1416,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             message: `Are you sure you want to unassign ${selectedMySection.department} ${selectedMySection.yearLevel}-${selectedMySection.sectionNum || selectedMySection.section} from your classes?`,
             onConfirm: async () => {
                 try {
-                    await unassignFacultySection(loggedInEmail, selectedMySection.department, selectedMySection.yearLevel, selectedMySection.sectionNum || selectedMySection.section);
+                    await unassignFacultySection(loggedInEmail, selectedMySection.assignmentCycleId);
                     addNotification("Class unassigned successfully.", "success");
                     setSelectedMySection(null);
                     loadMyClasses();
@@ -1650,7 +1646,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {myStudents.filter(s => s.department === selectedMySection.department && String(s.yearLevel) === String(selectedMySection.yearLevel) && String(s.sectionNum || s.section) === String(selectedMySection.sectionNum || selectedMySection.section))
+                                                    {myStudents.filter(s => String(s.facultySectionId) === String(selectedMySection.assignmentCycleId))
                                                     .filter(s => {
                                                         const standing = (classGrades[s.id] || {}).standing || 'Enrolled';
                                                         return statusFilter === "All" || standing === statusFilter;
@@ -1700,7 +1696,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                                             </tr>
                                                         );
                                                     })}
-                                                    {myStudents.filter(s => s.department === selectedMySection.department && String(s.yearLevel) === String(selectedMySection.yearLevel) && String(s.sectionNum || s.section) === String(selectedMySection.sectionNum || selectedMySection.section)).length === 0 && (
+                                                    {myStudents.filter(s => String(s.facultySectionId) === String(selectedMySection.assignmentCycleId)).length === 0 && (
                                                         <tr><td colSpan="9" className="p-8 text-center text-slate-500 bg-slate-50 rounded-b-xl text-base">No students are currently assigned to this section.</td></tr>
                                                     )}
                                                 </tbody>
