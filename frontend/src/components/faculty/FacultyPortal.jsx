@@ -123,8 +123,6 @@ const mergeSectionTermStatuses = (previousEntry, nextEntry) => {
 };
 const buildFacultyGradeSnapshotKey = (facultyEmail = "") =>
   `facultySectionGrades:${normalizeText(facultyEmail || "faculty")}`;
-const buildFacultyBulkUploadKey = (facultyEmail = "") =>
-  `facultyBulkUploads:${normalizeText(facultyEmail || "faculty")}`;
 const getFacultyResetToken = () => localStorage.getItem("facultyLoadResetAt") || "";
 const loadResetAwareLocalData = (storageKey) => {
   try {
@@ -208,14 +206,12 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
   const [uploadingSection, setUploadingSection] = useState(null);
   const [uploadResult, setUploadResult] = useState(null);
   const [isLoadingData, setIsLoadingData] = useState(true);
-  const [bulkUploadedSections, setBulkUploadedSections] = useState({});
   const [submitConfirmSection, setSubmitConfirmSection] = useState(null);
   const hasHydratedFacultyDataRef = useRef(false);
 
   const [sections, setSections] = useState({});
   const sectionStatusStorageKey = `facultySectionStatuses:${normalizeText(facultyData?.email || "faculty")}`;
   const facultyGradeSnapshotStorageKey = buildFacultyGradeSnapshotKey(facultyData?.email || "");
-  const facultyBulkUploadStorageKey = buildFacultyBulkUploadKey(facultyData?.email || "");
 
   const [encodingStart, setEncodingStart] = useState(null);
   const [encodingEnd, setEncodingEnd] = useState(null);
@@ -333,16 +329,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     }
   }, [facultyGradeSnapshotStorageKey, sections]);
 
-  useEffect(() => {
-    if (!hasHydratedFacultyDataRef.current) return;
-
-    try {
-      saveResetAwareLocalData(facultyBulkUploadStorageKey, bulkUploadedSections);
-    } catch (error) {
-      console.warn("Failed to persist faculty bulk upload flags.", error);
-    }
-  }, [bulkUploadedSections, facultyBulkUploadStorageKey]);
-
   const loadFacultyData = useCallback(async (isBackground = false) => {
     if (!isBackground) setIsLoadingData(true);
 
@@ -351,20 +337,22 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       const gradesData = await fetchAllGrades(facultyData.email).catch(() => null);
 
       const actualSections = Array.isArray(sectionsData?.sections) ? sectionsData.sections : [];
-      const rosterResponses = await Promise.all(
-        actualSections.map((assignment) =>
-          fetchFacultyStudents(facultyData.email, getFacultySectionId(assignment)).catch(() => ({ students: [] }))
-        )
+      const rosterEntries = await Promise.all(
+        actualSections.map(async (assignment) => {
+          const facultySectionId = String(getFacultySectionId(assignment));
+          const response = await fetchFacultyStudents(facultyData.email, facultySectionId)
+            .catch(() => ({ students: [] }));
+          const students = Array.isArray(response?.students)
+            ? response.students.filter((student) =>
+                String(student.facultySectionId) === facultySectionId &&
+                String(student.enrollmentStatus).toUpperCase() === 'ENROLLED'
+              )
+            : [];
+          return [facultySectionId, students];
+        })
       );
-      const actualStudents = rosterResponses.flatMap((response) =>
-        Array.isArray(response?.students) ? response.students : []
-      );
+      const rostersByFacultySectionId = new Map(rosterEntries);
       const actualGrades = Array.isArray(gradesData) ? gradesData : (gradesData?.data || []);
-      const studentsByStudentNo = new Map(
-        actualStudents
-          .filter((student) => getRosterStudentNumber(student))
-          .map((student) => [getRosterStudentNumber(student), student])
-      );
       const savedAssignments = (() => {
         try {
           const saved = localStorage.getItem("registrarAssignments");
@@ -382,15 +370,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           return {};
         }
       })();
-      const savedBulkUploadedSections = (() => {
-        try {
-          return loadResetAwareLocalData(facultyBulkUploadStorageKey) || {};
-        } catch (error) {
-          console.warn("Failed to parse saved faculty bulk upload flags.", error);
-          return {};
-        }
-      })();
-
       const savedAssignmentsBySection = new Map(
         savedAssignments.map((assignment) => [
           buildFacultyAssignmentLookupKey({
@@ -405,7 +384,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
       const newSections = {};
       const nextSectionStatuses = {};
-      const nextBulkUploadedSections = {};
 
       const parseSavedGrade = (rawGrade) => {
         if (!rawGrade) {
@@ -599,15 +577,11 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           sectionGrades,
           encodingTerm
         );
-        nextBulkUploadedSections[sectionKey] = !!savedBulkUploadedSections[sectionKey];
         nextSectionStatuses[sectionKey] = {
           ...createDefaultSectionTermStatuses(),
           [normalizeEncodingTerm(encodingTerm)]: sectionReviewState.status,
         };
-        const backendStudents = actualStudents.filter(s =>
-          String(s.facultySectionId) === authoritativeFacultySectionId &&
-          String(s.enrollmentStatus).toUpperCase() === 'ENROLLED'
-        );
+        const backendStudents = rostersByFacultySectionId.get(authoritativeFacultySectionId) || [];
         const rosterSource = backendStudents;
         const enrolledStudents = rosterSource.map(studentRecord => {
           const resolvedStudentNo = getRosterStudentNumber(studentRecord);
@@ -626,7 +600,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                 fullName = fullName.split('@')[0];
             }
 
-          const globalStudentMatch = studentsByStudentNo.get(resolvedStudentNo) || studentRecord;
+          const globalStudentMatch = studentRecord;
           const savedGrade = [...sectionGrades].reverse().find(g => {
             const gradeStudentKey = normalizeText(getGradeStudentKey(g));
             const studentCandidates = [
@@ -757,7 +731,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
         return mergedStatuses;
       });
-      setBulkUploadedSections(nextBulkUploadedSections);
     } catch (error) {
       console.error("Failed to load faculty sections:", error);
     } finally {
@@ -766,7 +739,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     }
   }, [
     encodingTerm,
-    facultyBulkUploadStorageKey,
     facultyData.email,
     facultyGradeSnapshotStorageKey,
   ]);
@@ -780,7 +752,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       setSectionStatus({});
       localStorage.removeItem(sectionStatusStorageKey);
       localStorage.removeItem(facultyGradeSnapshotStorageKey);
-      localStorage.removeItem(facultyBulkUploadStorageKey);
       loadFacultyData();
     };
     const handleStorageChanged = (event) => {
@@ -800,7 +771,13 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       window.removeEventListener('storage', handleStorageChanged);
       window.removeEventListener('focus', handleWindowFocus);
     };
-  }, [facultyBulkUploadStorageKey, facultyGradeSnapshotStorageKey, loadFacultyData, sectionStatusStorageKey]);
+  }, [facultyGradeSnapshotStorageKey, loadFacultyData, sectionStatusStorageKey]);
+
+  const openSection = useCallback((sectionName) => {
+    setValidationErrors({});
+    setRowSaveState({});
+    setActiveSection(sectionName);
+  }, []);
 
   const getSectionTermStatus = useCallback(
     (sectionName, term = encodingTerm) =>
@@ -863,7 +840,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
   };
 
   const handleGradeChange = useCallback((sectionName, index, field, value) => {
-    if (bulkUploadedSections[sectionName]) return;
     if (isLockedSectionStatus(getSectionTermStatus(sectionName))) return;
     if (field === 'midterm' && encodingTerm !== 'midterm') return;
     if (field === 'finals' && encodingTerm !== 'finals') return;
@@ -880,7 +856,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     
     setSections(updated);
     setRowSaveState(prev => ({ ...prev, [sectionName]: { ...(prev[sectionName] || {}), [index]: 'idle' } }));
-  }, [sections, encodingTerm, getSectionTermStatus, bulkUploadedSections]);
+  }, [sections, encodingTerm, getSectionTermStatus]);
 
   const handleStudentStatusChange = useCallback((sectionName, index, value) => {
     if (isLockedSectionStatus(getSectionTermStatus(sectionName))) return;
@@ -1033,7 +1009,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             ? res.errors
             : 'All records processed successfully.'
         });
-        setBulkUploadedSections((prev) => ({ ...prev, [sectionName]: true }));
         updateSectionTermStatus(sectionName, encodingTerm, 'draft');
         loadFacultyData();
       } else {
@@ -1160,8 +1135,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
   const currentStatus = activeSection ? getSectionTermStatus(activeSection) : null;
   const isSubmittedToChairperson = isLockedSectionStatus(currentStatus);
-  const isBulkUploadedSection = activeSection ? !!bulkUploadedSections[activeSection] : false;
-  const isGradeEncodingLocked = isSubmittedToChairperson || isBulkUploadedSection;
+  const isGradeEncodingLocked = isSubmittedToChairperson;
   const isMidtermLocked = encodingTerm !== 'midterm';
   const isFinalsLocked = encodingTerm !== 'finals';
 
@@ -1291,7 +1265,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                     key={sectionName}
                     sectionName={sectionName}
                     sectionData={sectionData}
-                    onClick={() => setActiveSection(sectionName)}
+                    onClick={() => openSection(sectionName)}
                     progress={progressPct}
                     reviewStatus={
                       secStatus === 'returned'
@@ -1395,12 +1369,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                 <p className="mt-1">{sections[activeSection].reviewNote}</p>
               </div>
             ) : null}
-
-            {!isSubmittedToChairperson && isBulkUploadedSection && (
-              <div className="border-b border-amber-200 bg-amber-50 p-4 text-center text-sm font-semibold text-amber-800">
-                 Manual encoding is locked because this section was bulk uploaded. To edit grades, upload an updated grading sheet.
-              </div>
-            )}
 
             <div className="overflow-x-auto">
               <table className="w-full min-w-[800px] text-left text-sm">

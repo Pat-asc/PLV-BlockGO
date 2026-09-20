@@ -113,36 +113,8 @@ public static class FacultyAssignmentRosterService
                 new(id, facultyUserId, facultyEmail, department, section, yearLevel, subject,
                     academicSectionId.Value, schoolYear, semester, canonicalSection, false), null);
 
-        await using var legacy = new NpgsqlCommand(@"
-            SELECT DISTINCT s.id, e.school_year, e.semester,
-                   CONCAT(p.program_code, ' ', s.year_level, '-', s.section_num)
-            FROM facultysections fs
-            JOIN academicsections s
-              ON s.year_level::text = TRIM(fs.year_level)
-             AND (TRIM(fs.section) = s.section_num::text
-                  OR SUBSTRING(fs.section FROM '([1-4]-[0-9]+)') = CONCAT(s.year_level, '-', s.section_num))
-            JOIN academic_programs p
-              ON LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name))
-             AND LOWER(fs.department) IN (LOWER(p.program_code), LOWER(p.program_name))
-            JOIN student_enrollments e ON e.academic_section_id = s.id
-            WHERE fs.id = @id
-            ORDER BY s.id, e.school_year, e.semester;", connection);
-        legacy.Parameters.AddWithValue("id", facultySectionId);
-        var candidates = new List<(int SectionId, string SchoolYear, string Semester, string Label)>();
-        await using var legacyReader = await legacy.ExecuteReaderAsync(cancellationToken);
-        while (await legacyReader.ReadAsync(cancellationToken))
-            candidates.Add((legacyReader.GetInt32(0), legacyReader.GetString(1), legacyReader.GetString(2), legacyReader.GetString(3)));
-
-        if (candidates.Count == 0)
-            return new(ResolutionStatus.UnresolvedLegacy, null,
-                "Legacy faculty assignment has no uniquely identifiable academic period.");
-        if (candidates.Count > 1)
-            return new(ResolutionStatus.AmbiguousLegacy, null,
-                "Legacy faculty assignment matches multiple academic periods; an explicit period is required.");
-        var candidate = candidates[0];
-        return new(ResolutionStatus.Resolved,
-            new(id, facultyUserId, facultyEmail, department, section, yearLevel, subject,
-                candidate.SectionId, candidate.SchoolYear, candidate.Semester, candidate.Label, true), null);
+        return new(ResolutionStatus.UnresolvedLegacy, null,
+            "Faculty assignment is missing its exact academic section or period. Ask the Registrar to recreate the assignment before grading.");
     }
 
     public static async Task<List<RosterStudent>> GetRosterAsync(

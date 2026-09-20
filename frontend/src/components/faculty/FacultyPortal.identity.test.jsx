@@ -178,3 +178,78 @@ test('a rejected Bulk Upload preserves manually entered grades and shows the bac
   expect(await screen.findByText('The workbook belongs to a different Faculty assignment.')).toBeInTheDocument();
   expect(gradeInput).toHaveValue(88);
 });
+
+test('switching exact FacultySections replaces the visible roster instead of merging students', async () => {
+  fetchFacultySections.mockResolvedValue({ sections: [
+    { id: 77, facultySectionId: 77, department: 'BSIT', section: 'BSIT 1-1', canonicalSection: 'BSIT 1-1',
+      academicSectionId: 1, schoolYear: '2026-2027', semester: 'FIRST', yearLevel: '1', subject: 'IT 101' },
+    { id: 88, facultySectionId: 88, department: 'BSIT', section: 'BSIT 1-2', canonicalSection: 'BSIT 1-2',
+      academicSectionId: 2, schoolYear: '2026-2027', semester: 'FIRST', yearLevel: '1', subject: 'IT 101' },
+  ] });
+  fetchFacultyStudents.mockImplementation((_, facultySectionId) => Promise.resolve({ students:
+    String(facultySectionId) === '77'
+      ? [{ internalStudentId: 5, facultySectionId: 77, studentNumber: '26-0001', fullName: 'Section A Student',
+          email: 'a@plv.edu.ph', enrollmentStatus: 'ENROLLED' }]
+      : [{ internalStudentId: 6, facultySectionId: 88, studentNumber: '26-0002', fullName: 'Section B Student',
+          email: 'b@plv.edu.ph', enrollmentStatus: 'ENROLLED' }]
+  }));
+
+  render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
+  const sectionButtons = await screen.findAllByRole('button', { name: 'Encode Now' });
+  fireEvent.click(sectionButtons[0]);
+  expect(screen.getByText('Section A Student')).toBeInTheDocument();
+  expect(screen.queryByText('Section B Student')).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Back to section' }));
+  fireEvent.click(screen.getAllByRole('button', { name: 'Encode Now' })[1]);
+  expect(screen.getByText('Section B Student')).toBeInTheDocument();
+  expect(screen.queryByText('Section A Student')).not.toBeInTheDocument();
+  expect(fetchFacultyStudents).toHaveBeenCalledWith('faculty@plv.edu.ph', '77');
+  expect(fetchFacultyStudents).toHaveBeenCalledWith('faculty@plv.edu.ph', '88');
+});
+
+test('bulk-uploaded Draft values remain editable and a manual correction can be saved', async () => {
+  batchUploadGrades.mockImplementation(async () => {
+    fetchAllGrades.mockResolvedValue({ data: [{
+      id: 'bulk-grade-1', assignment_cycle_id: 77, student_no: '26-0001',
+      record_section: 'BSIT 1-1', subject_code: 'IT 101', status: 'Draft',
+      grade: JSON.stringify({ midterm: 80, finals: '', standing: 'active' }), date: '2026-09-20',
+    }] });
+    return { status: 'Success', totalProcessed: 1, successful: 1 };
+  });
+  await openSection();
+
+  const file = new File(['workbook'], 'grades.xlsx', {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
+
+  const gradeInput = screen.getAllByPlaceholderText('60-100')[0];
+  await waitFor(() => expect(gradeInput).toHaveValue(80));
+  expect(gradeInput).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Save Draft' })).toBeEnabled();
+
+  fireEvent.change(gradeInput, { target: { value: '85' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }));
+  await waitFor(() => expect(issueGrade).toHaveBeenCalledWith(expect.objectContaining({
+    student_id: '26-0001',
+    grade: expect.stringContaining('"midterm":85'),
+  })));
+});
+
+test('only explicit submission locks a bulk-imported Draft, while Returned remains editable', async () => {
+  fetchAllGrades.mockResolvedValue({ data: [{ id: 'grade-1', assignment_cycle_id: 77, student_no: '26-0001',
+    record_section: 'BSIT 1-1', subject_code: 'IT 101', status: 'SubmittedToChairperson',
+    grade: JSON.stringify({ midterm: 85, finals: '', standing: 'active' }), date: '2026-09-20' }] });
+  render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'View Grades' }));
+  expect(screen.getAllByPlaceholderText('60-100')[0]).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+
+  fetchAllGrades.mockResolvedValue({ data: [{ id: 'grade-1', assignment_cycle_id: 77, student_no: '26-0001',
+    record_section: 'BSIT 1-1', subject_code: 'IT 101', status: 'Returned', note: 'Revise',
+    grade: JSON.stringify({ midterm: 85, finals: '', standing: 'active' }), date: '2026-09-21' }] });
+  fireEvent(window, new Event('focus'));
+  await waitFor(() => expect(screen.getAllByPlaceholderText('60-100')[0]).toBeEnabled());
+  expect(screen.getByRole('button', { name: 'Save Draft' })).toBeEnabled();
+});
