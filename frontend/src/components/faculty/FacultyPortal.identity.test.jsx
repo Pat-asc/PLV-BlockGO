@@ -1,12 +1,15 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import FacultyPortal from './FacultyPortal';
-import { fetchFacultySections, fetchFacultyStudents, fetchAllGrades, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
+import { batchUploadGrades, fetchFacultySections, fetchFacultyStudents, fetchAllGrades, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
 
 jest.mock('../../services/api', () => ({
   fetchFacultySections: jest.fn(), fetchFacultyStudents: jest.fn(), fetchAllGrades: jest.fn(),
   getSystemSetting: jest.fn(), issueGrade: jest.fn(), submitSectionGrades: jest.fn(),
+  batchUploadGrades: jest.fn(), downloadGradingSheet: jest.fn(),
 }));
+
+jest.setTimeout(15000);
 
 const assignment = {
   id: 77, academicSectionId: 1,
@@ -21,14 +24,15 @@ beforeEach(() => {
   window.alert = jest.fn();
   localStorage.setItem('registrarAssignments', JSON.stringify([assignment]));
   getSystemSetting.mockResolvedValue({ status: 'Success', value: { startDate: '2020-01-01', endDate: '2099-12-31', semester: '2nd Semester', term: 'midterm' } });
-  fetchFacultySections.mockResolvedValue({ sections: [{ id: 77, assignmentCycleId: 77, department: 'BSIT', section: 'BSIT 1-1',
+  fetchFacultySections.mockResolvedValue({ sections: [{ id: 77, facultySectionId: 77, assignmentCycleId: 77, department: 'BSIT', section: 'BSIT 1-1',
     canonicalSection: 'BSIT 1-1', academicSectionId: 1, schoolYear: '2026-2027', semester: 'FIRST',
     yearLevel: '1', subject: 'IT 101' }] });
-  fetchFacultyStudents.mockResolvedValue({ students: [{ id: 5, facultySectionId: 77, studentno: '26-0001', fullname: 'Juan Andres Dela Cruz',
+  fetchFacultyStudents.mockResolvedValue({ students: [{ internalStudentId: 5, facultySectionId: 77, studentNumber: '26-0001', fullName: 'Juan Andres Dela Cruz',
     email: '26-0001', department: 'BSIT', section: '1-1', enrollmentStatus: 'ENROLLED' }] });
   fetchAllGrades.mockResolvedValue({ data: [] });
   issueGrade.mockResolvedValue({ status: 'Success' });
   submitSectionGrades.mockResolvedValue({ status: 'Success' });
+  batchUploadGrades.mockResolvedValue({ status: 'Success', totalProcessed: 1, successful: 1 });
 });
 
 const openSection = async () => {
@@ -138,4 +142,39 @@ test('chairperson-approved grades stay locked against Faculty editing', async ()
   fireEvent.click(await screen.findByRole('button', { name: 'View Grades' }));
   expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
   expect(screen.getAllByPlaceholderText('60-100')[0]).toBeDisabled();
+});
+
+test('Bulk Upload sends FacultySections.id instead of academicSectionId', async () => {
+  fetchFacultySections.mockResolvedValue({ sections: [{ id: 123, facultySectionId: 123, assignmentCycleId: '123',
+    department: 'BSIT', section: 'BSIT 1-1', canonicalSection: 'BSIT 1-1', academicSectionId: 45,
+    schoolYear: '2026-2027', semester: 'FIRST', yearLevel: '1', subject: 'IT 101' }] });
+  fetchFacultyStudents.mockResolvedValue({ students: [{ internalStudentId: 5, facultySectionId: 123,
+    studentNumber: '26-0001', fullName: 'Juan Andres Dela Cruz', email: 'student@plv.edu.ph',
+    enrollmentStatus: 'ENROLLED' }] });
+  await openSection();
+
+  const file = new File(['workbook'], 'grades.xlsx', {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
+
+  await waitFor(() => expect(batchUploadGrades).toHaveBeenCalledWith(file, expect.objectContaining({
+    facultySectionId: '123',
+    academicSectionId: 45,
+    subjectCode: 'IT 101',
+    section: 'BSIT 1-1',
+  })));
+  expect(batchUploadGrades.mock.calls[0][1].facultySectionId).not.toBe(45);
+});
+
+test('a rejected Bulk Upload preserves manually entered grades and shows the backend error', async () => {
+  batchUploadGrades.mockRejectedValue(new Error('The workbook belongs to a different Faculty assignment.'));
+  await openSection();
+  const gradeInput = screen.getAllByPlaceholderText('60-100')[0];
+  fireEvent.change(gradeInput, { target: { value: '88' } });
+  const file = new File(['workbook'], 'wrong-assignment.xlsx');
+  fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
+
+  expect(await screen.findByText('The workbook belongs to a different Faculty assignment.')).toBeInTheDocument();
+  expect(gradeInput).toHaveValue(88);
 });

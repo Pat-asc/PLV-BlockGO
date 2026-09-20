@@ -2439,6 +2439,8 @@ namespace Client_app.Controllers
                 while (await reader.ReadAsync())
                 {
                     sections.Add(new {
+                        id = reader.GetInt32(8),
+                        facultySectionId = reader.GetInt32(8),
                         department = reader.GetString(0),
                         section = reader.GetString(1),
                         yearLevel = reader.IsDBNull(2) ? "N/A" : reader.GetString(2),
@@ -2536,6 +2538,8 @@ namespace Client_app.Controllers
                     return Forbid();
                 var roster = await FacultyAssignmentRosterService.GetRosterAsync(conn, resolution.Value, HttpContext.RequestAborted);
                 var students = roster.Select(student => new {
+                    internalStudentId = student.StudentUserId,
+                    studentNumber = student.StudentNo,
                     id = student.StudentUserId,
                     fullname = student.FullName,
                     email = student.Email,
@@ -2549,6 +2553,15 @@ namespace Client_app.Controllers
                 }).ToList();
 
                 return Ok(new { status = "Success", students });
+            }
+            catch (FacultyAssignmentRosterService.RosterDataIntegrityException ex)
+            {
+                return Conflict(new {
+                    status = "DataIntegrityError",
+                    message = ex.Message,
+                    enrollmentId = ex.EnrollmentId,
+                    internalStudentId = ex.StudentUserId
+                });
             }
             catch (Exception ex)
             {

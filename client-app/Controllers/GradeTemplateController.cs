@@ -145,6 +145,15 @@ namespace Client_app.Controllers
                 return File(content, FacultyGradeWorkbookService.ContentType,
                     $"{assignment.Subject}_{safeSection}_{assignment.SchoolYear}_{assignment.Semester}.xlsx");
             }
+            catch (FacultyAssignmentRosterService.RosterDataIntegrityException ex)
+            {
+                return Conflict(new {
+                    status = "DataIntegrityError",
+                    message = ex.Message,
+                    enrollmentId = ex.EnrollmentId,
+                    internalStudentId = ex.StudentUserId
+                });
+            }
             catch (Exception ex)
             {
                 return StatusCode(500, new { status = "Error", message = $"Excel generation failed: {ex.Message}" });

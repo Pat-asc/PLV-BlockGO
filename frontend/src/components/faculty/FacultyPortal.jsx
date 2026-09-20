@@ -30,6 +30,11 @@ const normalizeYearLabel = (value) => {
 };
 
 const normalizeText = (value = "") => String(value || "").trim().toLowerCase();
+const getFacultySectionId = (assignment = {}) =>
+  assignment.facultySectionId ?? assignment.id ?? assignment.assignmentCycleId ?? assignment.assignment_cycle_id ?? "";
+const getRosterStudentNumber = (student = {}) => String(
+  student.studentNumber ?? student.studentNo ?? student.studentno ?? student.student_number ?? ""
+).trim();
 const getOptionalAssignmentValue = (value) => {
   const normalizedValue = String(value || "").trim();
   return normalizedValue || "Not Available";
@@ -348,7 +353,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       const actualSections = Array.isArray(sectionsData?.sections) ? sectionsData.sections : [];
       const rosterResponses = await Promise.all(
         actualSections.map((assignment) =>
-          fetchFacultyStudents(facultyData.email, assignment.assignmentCycleId).catch(() => ({ students: [] }))
+          fetchFacultyStudents(facultyData.email, getFacultySectionId(assignment)).catch(() => ({ students: [] }))
         )
       );
       const actualStudents = rosterResponses.flatMap((response) =>
@@ -357,8 +362,8 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       const actualGrades = Array.isArray(gradesData) ? gradesData : (gradesData?.data || []);
       const studentsByStudentNo = new Map(
         actualStudents
-          .filter((student) => String(student.studentno || '').trim())
-          .map((student) => [String(student.studentno || '').trim(), student])
+          .filter((student) => getRosterStudentNumber(student))
+          .map((student) => [getRosterStudentNumber(student), student])
       );
       const savedAssignments = (() => {
         try {
@@ -561,9 +566,10 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         // actualSections is the authoritative backend assignment list. Local
         // timestamps only enrich display data and must never hide a newly
         // recreated server-side assignment after a reset.
-        const sectionKey = `${sec.department} ${sec.section}${sec.subject ? ` (${sec.subject})` : ''} [${sec.assignmentCycleId}]`;
+        const authoritativeFacultySectionId = String(getFacultySectionId(sec));
+        const sectionKey = `${sec.department} ${sec.section}${sec.subject ? ` (${sec.subject})` : ''} [${authoritativeFacultySectionId}]`;
         const savedSectionSnapshot = savedGradeSnapshots[sectionKey] || {};
-        const activeAssignmentCycleId = String(sec.assignmentCycleId || sec.assignment_cycle_id || '');
+        const activeAssignmentCycleId = authoritativeFacultySectionId;
         const sectionGrades = actualGrades.filter((grade) => {
           const gradeSubjectKey = normalizeText(getGradeSubjectKey(grade));
           const gradeRecordSectionKey = normalizeText(getGradeRecordSectionKey(grade));
@@ -599,30 +605,18 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           [normalizeEncodingTerm(encodingTerm)]: sectionReviewState.status,
         };
         const backendStudents = actualStudents.filter(s =>
-          String(s.facultySectionId) === String(sec.assignmentCycleId) &&
+          String(s.facultySectionId) === authoritativeFacultySectionId &&
           String(s.enrollmentStatus).toUpperCase() === 'ENROLLED'
         );
         const rosterSource = backendStudents;
         const enrolledStudents = rosterSource.map(studentRecord => {
-          const backendStudent = backendStudents.find((student) =>
-            ((studentRecord.userId || studentRecord.id) &&
-              String(student.id) === String(studentRecord.userId || studentRecord.id)) ||
-            (!!studentRecord.email && normalizeText(student.email) === normalizeText(studentRecord.email))
-          );
-          const preferredStudentNo =
-            backendStudent?.studentno ||
-            studentRecord.studentno ||
-            studentRecord.studentNo ||
-            "";
-          const rosterStudentId =
-            preferredStudentNo ||
-            studentRecord.studentId ||
-            studentRecord.id ||
-
-            (studentRecord.email ? studentRecord.email.split('@')[0] : 'N/A');
+          const resolvedStudentNo = getRosterStudentNumber(studentRecord);
+          const internalStudentId = studentRecord.internalStudentId ?? studentRecord.userId ?? studentRecord.id ?? "";
+          const rosterStudentId = resolvedStudentNo || 'N/A';
           const firstName = studentRecord.firstName || "";
           const lastName = studentRecord.lastName || "";
             let fullName =
+            studentRecord.fullName ||
             studentRecord.fullname ||
             studentRecord.name ||
             [lastName, firstName].filter(Boolean).join(", ") ||
@@ -632,32 +626,13 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                 fullName = fullName.split('@')[0];
             }
 
-          const backendMatch = backendStudents.find(
-            (student) =>
-              String(student.studentno || "").trim() === String(rosterStudentId).trim() ||
-              normalizeText(student.email) === normalizeText(studentRecord.email)
-          );
-          const globalStudentMatch =
-            backendMatch ||
-            studentsByStudentNo.get(String(rosterStudentId).trim()) ||
-            actualStudents.find(
-              (student) =>
-                normalizeText(student.email) === normalizeText(studentRecord.email)
-            ) ||
-            null;
-          const resolvedStudentNo =
-            backendMatch?.studentno ||
-            (globalStudentMatch && backendStudents.some((student) => student.id === globalStudentMatch.id)
-              ? globalStudentMatch.studentno : "") ||
-            "";
+          const globalStudentMatch = studentsByStudentNo.get(resolvedStudentNo) || studentRecord;
           const savedGrade = [...sectionGrades].reverse().find(g => {
             const gradeStudentKey = normalizeText(getGradeStudentKey(g));
             const studentCandidates = [
               studentRecord.email,
-              backendMatch?.email,
               globalStudentMatch?.email,
-              backendMatch?.studentno,
-              globalStudentMatch?.studentno,
+              getRosterStudentNumber(globalStudentMatch),
               rosterStudentId,
             ]
               .map((value) => normalizeText(value))
@@ -682,11 +657,11 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           return {
             id: resolvedStudentNo || rosterStudentId,
             studentNo: resolvedStudentNo,
-            userId: backendMatch?.id || globalStudentMatch?.id || studentRecord.id || "",
+            userId: internalStudentId,
             name: fullName,
             email: globalStudentMatch?.email || studentRecord.email || "",
-            firstName: firstName || globalStudentMatch?.fullname?.split(", ").slice(1).join(", ") || "",
-            lastName: lastName || globalStudentMatch?.fullname?.split(", ")[0] || fullName,
+            firstName: firstName || (globalStudentMatch?.fullName || globalStudentMatch?.fullname)?.split(", ").slice(1).join(", ") || "",
+            lastName: lastName || (globalStudentMatch?.fullName || globalStudentMatch?.fullname)?.split(", ")[0] || fullName,
             midterm: savedValues.midterm,
             finals: savedValues.finals,
             standing: savedValues.standing || STUDENT_STATUS_ACTIVE,
@@ -1032,13 +1007,23 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       e.target.value = null;
       return;
     }
-    const course = sectionData.subjectCode || sectionData.sectionCourse || sectionName;
+    const course = sectionData.sectionCourse || '';
     const canonicalSection = sectionData.canonicalSection || sectionName;
 
     setUploadingSection(sectionName);
 
     try {
-      const res = await batchUploadGrades(file, semester, schoolYear, course, facultyData.email, encodingTerm, canonicalSection, sectionData.facultySectionId || sectionData.assignmentCycleId);
+      const res = await batchUploadGrades(file, {
+        semester,
+        schoolYear,
+        course,
+        facultyId: facultyData.email,
+        term: encodingTerm,
+        section: canonicalSection,
+        facultySectionId: sectionData.facultySectionId,
+        academicSectionId: sectionData.academicSectionId,
+        subjectCode: sectionData.subjectCode,
+      });
       if (res.status === 'Success' || res.status === 'Partial Success') {
         setUploadResult({ 
           type: 'success', 

@@ -320,20 +320,27 @@ export const batchIssueGradeToBlockchain = async (grades = []) => {
     });
 };
 
-export const batchUploadGrades = async (file, semester = '', schoolYear = '', course = '', facultyId = '', term = '', section = '', facultySectionId = '') => {
+export const batchUploadGrades = async (file, context = {}) => {
+    const {
+        semester = '', schoolYear = '', course = '', facultyId = '', term = '', section = '',
+        facultySectionId, academicSectionId, subjectCode = '',
+    } = context;
+    if (!facultySectionId) {
+        throw new Error('The exact Faculty assignment is missing. Refresh the assigned sections and try again.');
+    }
+
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('facultySectionId', String(facultySectionId));
 
-    const legacyFacultyId = !schoolYear && !course && !facultyId ? semester : '';
-    const resolvedFacultyId = facultyId || legacyFacultyId;
-
-    if (!legacyFacultyId && semester) formData.append('semester', semester);
+    if (semester) formData.append('semester', semester);
     if (schoolYear) formData.append('schoolYear', schoolYear);
     if (course) formData.append('course', course);
-    if (resolvedFacultyId) formData.append('facultyId', resolvedFacultyId);
+    if (facultyId) formData.append('facultyId', facultyId);
     if (term) formData.append('term', term);
     if (section) formData.append('section', section);
-    if (facultySectionId) formData.append('facultySectionId', String(facultySectionId));
+    if (academicSectionId) formData.append('academicSectionId', String(academicSectionId));
+    if (subjectCode) formData.append('subjectCode', subjectCode);
 
     return await fetchWithAuth(`/Grades/bulk-upload`, {
         method: 'POST',

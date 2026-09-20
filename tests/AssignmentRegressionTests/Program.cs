@@ -23,6 +23,20 @@ Check(sheet.Cell("A1").GetString()=="Student ID" && sheet.Cell("C1").GetString()
 var ids = sheet.RowsUsed().Skip(1).Select(r=>r.Cell(1).GetString()).Where(v=>v.Length>0).ToArray();
 Check(ids.SequenceEqual(canonical.Select(s=>s.StudentNo)), "Template roster differs."); Pass(26, "template/canonical roster equality");
 Check(!ids.Contains("26-0002"), "Removed student is present."); Pass(27, "removed student excluded from XLSX");
+Check(book.Worksheet("Assignment").Cell("B1").GetValue<int>() == assignment.Id,
+    "Workbook does not retain FacultySections.id."); Pass(38, "XLSX exact FacultySections identity");
+var distinctIdentityAssignment = assignment with { Id = 123, AcademicSectionId = 45 };
+Check(FacultyAssignmentRosterService.ValidateUploadContext(distinctIdentityAssignment, 45, "IT 101", "2026-2027", "FIRST", "BSIT 1-1") == null,
+    "Valid assignment context was rejected."); Pass(39, "bulk assignment context accepts FacultySections.id distinct from academic section");
+Check(FacultyAssignmentRosterService.ValidateUploadContext(distinctIdentityAssignment, 123, "IT 101", "2026-2027", "FIRST", "BSIT 1-1")?.Contains("Academic section") == true,
+    "FacultySections.id was accepted as academic_section_id."); Pass(40, "wrong academicSectionId cannot substitute for FacultySections.id");
+Check(FacultyAssignmentRosterService.IsOwnedBy(distinctIdentityAssignment, "profx@plv.edu.ph") &&
+      !FacultyAssignmentRosterService.IsOwnedBy(distinctIdentityAssignment, "profy@plv.edu.ph"),
+    "Faculty ownership check failed."); Pass(41, "faculty assignment ownership");
+var fullCoverage = FacultyAssignmentRosterService.CompareRosterCoverage(canonical, new[] { "26-0001", "26-0003" });
+var incompleteCoverage = FacultyAssignmentRosterService.CompareRosterCoverage(canonical, new[] { "26-0001", "26-9999" });
+Check(fullCoverage == (0, 0) && incompleteCoverage == (1, 1), "Roster coverage comparison failed.");
+Pass(42, "submit-to-Chairperson roster coverage");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
 if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
@@ -43,6 +57,7 @@ CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_n
 CREATE TEMP TABLE facultysections(id SERIAL PRIMARY KEY,user_id INT,department TEXT,section TEXT,year_level TEXT,subject TEXT,academic_section_id INT,school_year TEXT,semester TEXT,is_active BOOLEAN DEFAULT TRUE,deactivated_at TIMESTAMPTZ,deactivated_by TEXT);
 CREATE UNIQUE INDEX ux_test_facultysections_exact ON facultysections(user_id,academic_section_id,school_year,semester,LOWER(subject)) WHERE is_active=TRUE;
 CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT);
+CREATE UNIQUE INDEX ux_test_pending_assignment_student ON pending_grade_records(assignment_cycle_id,student_no);
 INSERT INTO academic_programs VALUES(1,'BSIT','BS Information Technology',TRUE); INSERT INTO curriculums VALUES(1,1,'PUBLISHED');
 INSERT INTO curriculum_subjects(curriculum_id,subject_code,year_level,semester) VALUES(1,'IT 101',1,'FIRST'),(1,'IT 102',1,'FIRST'),(1,'IT 101',1,'SECOND');
 INSERT INTO academicsections VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2);
@@ -93,5 +108,29 @@ var one=(await FacultyAssignmentRosterService.GetRosterAsync(db,exact)).Select(r
 await Exec("INSERT INTO facultysections VALUES(103,1,'BS Information Technology','BSIT 1-1','1','IT 101',NULL,NULL,NULL,TRUE,NULL,NULL)"); Check((await FacultyAssignmentRosterService.ResolveAsync(db,103)).Status==FacultyAssignmentRosterService.ResolutionStatus.AmbiguousLegacy,"Legacy chose latest."); Pass(16,"legacy ambiguity is explicit"); Check(!one.Contains("26-0002"),"Removed B visible."); Pass(17,"removed student excluded from all canonical consumers");
 await Exec("INSERT INTO pending_grade_records VALUES('old','102','26-0001','Forwarded to Registrar','{}'),('final','102','26-0002','Finalized','{}'); UPDATE facultysections SET is_active=FALSE WHERE id=102; INSERT INTO facultysections VALUES(104,3,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL)");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE assignment_cycle_id='104'")==0,"Status inherited."); Pass(18,"new cycle status isolation"); Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='final'")==1,"Final deleted."); Pass(19,"reset preserves finalized grades"); await Exec("UPDATE facultysections SET is_active=FALSE WHERE id=101"); Check(await Count("SELECT COUNT(*) FROM facultysections WHERE id=101 AND is_active=FALSE")==1,"Deactivate failed."); Pass(20,"safe deactivation"); Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='final'")==1,"Final history removed."); Pass(21,"deactivation preserves protected history");
+var activeCycle=(await FacultyAssignmentRosterService.ResolveAsync(db,104)).Value!;
+await Exec("UPDATE student_enrollments SET student_no='legacy-snapshot' WHERE student_user_id=2 AND school_year='2026-2027' AND semester='FIRST'");
+var officialRoster=await FacultyAssignmentRosterService.GetRosterAsync(db,activeCycle);
+Check(officialRoster.Any(student=>student.StudentUserId==2 && student.StudentNo=="26-0001" && student.EnrollmentStudentNo=="legacy-snapshot"),
+    "Roster did not resolve the Registrar master student number."); Pass(43,"manual save official student-number mapping");
+await Exec("UPDATE studentprofiles SET student_no=NULL WHERE user_id=2");
+var missingMappingDetected=false;
+try { await FacultyAssignmentRosterService.GetRosterAsync(db,activeCycle); }
+catch(FacultyAssignmentRosterService.RosterDataIntegrityException ex) {
+    missingMappingDetected=ex.StudentUserId==2 && ex.EnrollmentId>0 && ex.Message.Contains("Registrar student number is missing");
+}
+Check(missingMappingDetected,"Missing official number did not produce a specific diagnostic."); Pass(44,"missing Registrar mapping diagnostic");
+await Exec("UPDATE studentprofiles SET student_no='26-0001' WHERE user_id=2");
+await Exec("UPDATE student_enrollments SET status='PENDING' WHERE student_user_id=2 AND school_year='2026-2027' AND semester='FIRST'");
+Check(!(await FacultyAssignmentRosterService.GetRosterAsync(db,activeCycle)).Any(student=>student.StudentUserId==2),
+    "Pending student leaked into Faculty roster."); Pass(45,"pending student excluded");
+await Exec("UPDATE student_enrollments SET status='ENROLLED',student_no='26-0001' WHERE student_user_id=2 AND school_year='2026-2027' AND semester='FIRST'");
+var parityRoster=await FacultyAssignmentRosterService.GetRosterAsync(db,activeCycle);
+Check(parityRoster.Select(student=>student.StudentNo).SequenceEqual(
+      (await FacultyAssignmentRosterService.GetRosterAsync(db,activeCycle)).Select(student=>student.StudentNo)),
+    "Bulk and manual roster identities differ."); Pass(46,"bulk/manual identity parity");
+await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('draft-1','104','26-0001','Draft','{}') ON CONFLICT (assignment_cycle_id,student_no) DO UPDATE SET grade=EXCLUDED.grade; INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('draft-2','104','26-0001','Draft','{\"midterm\":\"90\"}') ON CONFLICT (assignment_cycle_id,student_no) DO UPDATE SET grade=EXCLUDED.grade;");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE assignment_cycle_id='104' AND student_no='26-0001'")==1,
+    "Repeated save created duplicate pending grades."); Pass(47,"no duplicate pending grades");
 Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped");
 } finally { await Exec("DROP TABLE IF EXISTS pending_grade_records,facultysections,facultyprofiles,student_enrollments,studentprofiles,curriculum_subjects,curriculums,academicsections,academic_programs,users CASCADE"); }

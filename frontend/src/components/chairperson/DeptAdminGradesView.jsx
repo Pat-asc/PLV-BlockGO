@@ -1111,7 +1111,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
         if (selectedMySection && mainTab === 'myClasses') {
             const initialGrades = {};
             const sectionStudents = myStudents.filter(s =>
-                String(s.facultySectionId) === String(selectedMySection.assignmentCycleId)
+                String(s.facultySectionId) === String(selectedMySection.facultySectionId || selectedMySection.id || selectedMySection.assignmentCycleId)
             );
             sectionStudents.forEach(student => {
                 const existing = grades.find(g => {
@@ -1292,9 +1292,20 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             const schoolYear = selectedMySection?.schoolYear || "2024";
             const course = selectedMySection?.department || selectedMySection?.subject || "Unknown";
             const facultyId = loggedInEmail;
-            const section = `${selectedMySection?.department || ''} ${selectedMySection?.sectionNum || selectedMySection?.section || ''}${selectedMySection?.subject ? ` (${selectedMySection.subject})` : ''}`.trim();
+            const section = selectedMySection?.canonicalSection ||
+                `${selectedMySection?.department || ''} ${selectedMySection?.sectionNum || selectedMySection?.section || ''}`.trim();
 
-            const res = await batchUploadGrades(uploadFile, semester, schoolYear, course, facultyId, activeEncodingTerm, section, selectedMySection?.assignmentCycleId);
+            const res = await batchUploadGrades(uploadFile, {
+                semester,
+                schoolYear,
+                course,
+                facultyId,
+                term: activeEncodingTerm,
+                section,
+                facultySectionId: selectedMySection?.facultySectionId || selectedMySection?.id || selectedMySection?.assignmentCycleId,
+                academicSectionId: selectedMySection?.academicSectionId,
+                subjectCode: selectedMySection?.subject,
+            });
             if (res.status === 'Success' || res.status === 'Partial Success') {
                 addNotification(`Uploaded successfully! Processed: ${res.totalProcessed}, Success: ${res.successful}`, 'success');
                 setUploadFile(null);
@@ -1328,11 +1339,13 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 if (!cg || (!cg.midterm && !cg.finals && !cg.finalAverage)) continue;
                 
                 const gradePayload = JSON.stringify({ midterm: cg.midterm, finals: cg.finals, finalAverage: cg.finalAverage });
-                const sectionName = `${selectedMySection.department || ''} ${selectedMySection.sectionNum || selectedMySection.section || ''}${selectedMySection.subject ? ` (${selectedMySection.subject})` : ''}`.trim();
+                const sectionName = selectedMySection.canonicalSection ||
+                    `${selectedMySection.department || ''} ${selectedMySection.sectionNum || selectedMySection.section || ''}`.trim();
+                const studentNumber = student.studentNumber || student.studentNo || student.studentno;
                 const payload = {
-                    student_id: student.studentno || student.email || student.id,
+                    student_id: studentNumber,
                     student_name: student.fullname || student.name || [student.lastName, student.firstName].filter(Boolean).join(', '),
-                    student_hash: student.email || student.studentno || student.id,
+                    student_hash: student.email || studentNumber,
                     section: sectionName,
                     year_level: selectedMySection.yearLevel || '',
                     faculty_id: loggedInEmail,
@@ -1346,6 +1359,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     semester: selectedMySection.semester || activeSemester || "2nd Semester",
                     school_year: selectedMySection.schoolYear || "2024",
                     grade: gradePayload,
+                    faculty_section_id: Number(selectedMySection.facultySectionId || selectedMySection.id || selectedMySection.assignmentCycleId),
                     status: "Issued",
                     date: new Date().toISOString().split('T')[0]
                 };
