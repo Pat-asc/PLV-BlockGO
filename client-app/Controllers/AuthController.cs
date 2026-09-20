@@ -1915,6 +1915,106 @@ namespace Client_app.Controllers
             }
         }
 
+        [HttpPost("faculty/assignments/bulk")]
+        [Authorize(Roles = "department_admin,registrar")]
+        public async Task<IActionResult> BulkAssignFacultyLoads(
+            [FromBody] BulkFacultyAssignmentsRequest request,
+            CancellationToken cancellationToken)
+        {
+            if (request?.Assignments is not { Count: > 0 })
+                return BadRequest(new { status = "Error", message = "At least one faculty assignment is required." });
+            if (request.Assignments.Count > 500)
+                return BadRequest(new { status = "Error", message = "A maximum of 500 faculty assignments can be processed at once." });
+
+            var results = new List<object>();
+            var created = 0;
+            var alreadyAssigned = 0;
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+
+            foreach (var item in request.Assignments)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var saved = await FacultyBulkAssignmentService.AssignAsync(
+                        connection,
+                        item,
+                        (program, token) => CanManageAcademicProgramAsync(connection, program, token),
+                        cancellationToken);
+                    if (saved.AlreadyAssigned) alreadyAssigned++;
+                    else created++;
+
+                    try
+                    {
+                        await _auditLog.LogAsync(
+                            User.Identity?.Name ?? "department_admin",
+                            User.IsInRole("registrar") ? "registrar" : "department_admin",
+                            saved.AlreadyAssigned ? "FACULTY_LOAD_ALREADY_ASSIGNED" : "FACULTY_LOAD_ASSIGNED",
+                            "faculty_assignment",
+                            saved.Id.ToString(),
+                            null,
+                            new { saved.FacultyUserId, saved.AcademicSectionId, saved.SubjectCode, saved.SchoolYear, saved.Semester },
+                            "Chairperson processed an exact faculty bulk-assignment row.",
+                            HttpContext.Connection.RemoteIpAddress?.ToString(),
+                            cancellationToken: cancellationToken);
+                    }
+                    catch (Exception auditError)
+                    {
+                        _logger.LogWarning(auditError, "Could not write the bulk faculty-assignment audit entry for {AssignmentId}.", saved.Id);
+                    }
+
+                    results.Add(new
+                    {
+                        clientId = item.ClientId,
+                        success = true,
+                        alreadyAssigned = saved.AlreadyAssigned,
+                        assignment = new
+                        {
+                            id = saved.Id,
+                            assignmentCycleId = saved.AssignmentCycleId,
+                            facultyUserId = saved.FacultyUserId,
+                            facultyEmail = saved.FacultyEmail,
+                            facultyName = saved.FacultyName,
+                            program = saved.Program,
+                            programCode = saved.ProgramCode,
+                            section = saved.Section,
+                            yearLevel = saved.YearLevel,
+                            subjectCode = saved.SubjectCode,
+                            academicSectionId = saved.AcademicSectionId,
+                            schoolYear = saved.SchoolYear,
+                            semester = saved.Semester
+                        }
+                    });
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or UnauthorizedAccessException or PostgresException)
+                {
+                    var error = ex is PostgresException postgres
+                        ? $"Database rejected the assignment: {postgres.MessageText}"
+                        : ex.Message;
+                    results.Add(new { clientId = item.ClientId, success = false, error });
+                }
+            }
+
+            var failed = results.Count - created - alreadyAssigned;
+            if (created + alreadyAssigned > 0)
+            {
+                _cache.Remove("approved_faculties");
+                await SafeNotifyAcademicDataChangedAsync("faculty_loads_bulk_assigned", null, User.Identity?.Name);
+            }
+
+            return Ok(new
+            {
+                status = failed == 0 ? "Success" : created + alreadyAssigned == 0 ? "Error" : "PartialSuccess",
+                transactionPolicy = "PartialSuccess",
+                totalProcessed = results.Count,
+                created,
+                alreadyAssigned,
+                failed,
+                results
+            });
+        }
+
         [HttpPost("faculty/assignments/bulk-upload")]
         [Authorize(Roles = "department_admin,chairperson")]
         [Consumes("multipart/form-data")]

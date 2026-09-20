@@ -536,6 +536,22 @@ export const assignFacultyLoadToBackend = async (assignmentData) => {
     });
 };
 
+export const bulkAssignFacultyLoads = async (assignments) => {
+    return await fetchWithAuth('/Auth/faculty/assignments/bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+            assignments: assignments.map((assignment) => ({
+                clientId: String(assignment.id || assignment.clientId || ''),
+                facultyUserId: Number(assignment.facultyUserId || assignment.facultyId),
+                subjectCode: assignment.subjectCode || assignment.subject || '',
+                academicSectionId: Number(assignment.academicSectionId),
+                schoolYear: assignment.schoolYear || '',
+                semester: assignment.semesterCode || assignment.semester || '',
+            })),
+        }),
+    });
+};
+
 export const fetchDepartmentPendingStudents = async (email) => {
     return await fetchWithAuth(`/Auth/department/${encodeURIComponent(email)}/students/pending`);
 };

@@ -14,8 +14,11 @@ jest.mock('./services/nginxFailover', () => ({
 
 jest.mock('./components/shared/Chat', () => () => null);
 
-jest.mock('./components/faculty/FacultyPortal', () => ({ facultyData }) => (
-  <main>Faculty Portal for {facultyData.email}</main>
+jest.mock('./components/faculty/FacultyPortal', () => ({ facultyData, onLogout }) => (
+  <main>
+    Faculty Portal for {facultyData.email}
+    <button type="button" onClick={onLogout}>Logout</button>
+  </main>
 ));
 
 const tokenFor = (role, username) => {
@@ -27,6 +30,7 @@ beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
   window.history.replaceState({}, '', '/');
+  window.confirm = jest.fn();
   jest.clearAllMocks();
 });
 
@@ -60,4 +64,52 @@ test('renders managed-account login at the stable login route without public reg
   expect(screen.getByText(/forgot password/i)).toBeInTheDocument();
   expect(screen.queryByText(/each browser tab keeps an independent account session/i)).not.toBeInTheDocument();
   expect(screen.queryByText(/sign up|register|create account/i)).not.toBeInTheDocument();
+});
+
+test('keeps every account session active when logout confirmation is cancelled', async () => {
+  const token = tokenFor('faculty', 'faculty@plv.edu.ph');
+  login.mockResolvedValue({ token });
+  fetchUserProfile.mockResolvedValue({
+    status: 'Success',
+    data: { id: 7, email: 'faculty@plv.edu.ph', fullName: 'Test Faculty', role: 'faculty', status: 'APPROVED' },
+  });
+  window.confirm.mockReturnValue(false);
+  window.history.replaceState({}, '', '/login');
+
+  render(<App />);
+  fireEvent.change(await screen.findByPlaceholderText(/example@plv.edu.ph/i), { target: { value: 'faculty@plv.edu.ph' } });
+  fireEvent.change(screen.getByPlaceholderText(/^password$/i), { target: { value: 'Password1!' } });
+  fireEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
+  await screen.findByText(/faculty portal for faculty@plv.edu.ph/i);
+
+  fireEvent.click(screen.getByRole('button', { name: /^logout$/i }));
+
+  expect(window.confirm).toHaveBeenCalledWith('Are you sure you want to log out?');
+  expect(sessionStorage.getItem('blockgo.auth.token')).toBe(token);
+  expect(window.location.pathname).toBe('/faculty');
+  expect(screen.getByText(/faculty portal for faculty@plv.edu.ph/i)).toBeInTheDocument();
+});
+
+test('clears the shared account session only after logout is confirmed', async () => {
+  const token = tokenFor('faculty', 'faculty@plv.edu.ph');
+  login.mockResolvedValue({ token });
+  fetchUserProfile.mockResolvedValue({
+    status: 'Success',
+    data: { id: 7, email: 'faculty@plv.edu.ph', fullName: 'Test Faculty', role: 'faculty', status: 'APPROVED' },
+  });
+  window.confirm.mockReturnValue(true);
+  window.history.replaceState({}, '', '/login');
+
+  render(<App />);
+  fireEvent.change(await screen.findByPlaceholderText(/example@plv.edu.ph/i), { target: { value: 'faculty@plv.edu.ph' } });
+  fireEvent.change(screen.getByPlaceholderText(/^password$/i), { target: { value: 'Password1!' } });
+  fireEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
+  await screen.findByText(/faculty portal for faculty@plv.edu.ph/i);
+
+  fireEvent.click(screen.getByRole('button', { name: /^logout$/i }));
+
+  await waitFor(() => expect(window.location.pathname).toBe('/login'));
+  expect(window.confirm).toHaveBeenCalledWith('Are you sure you want to log out?');
+  expect(sessionStorage.getItem('blockgo.auth.token')).toBeNull();
+  expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
 });

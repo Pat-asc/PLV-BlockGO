@@ -1,4 +1,5 @@
 using ClosedXML.Excel;
+using Client_app.Models;
 using Client_app.Services;
 using Npgsql;
 
@@ -24,7 +25,7 @@ Check(ids.SequenceEqual(canonical.Select(s=>s.StudentNo)), "Template roster diff
 Check(!ids.Contains("26-0002"), "Removed student is present."); Pass(27, "removed student excluded from XLSX");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -38,15 +39,42 @@ CREATE TEMP TABLE curriculum_subjects(id SERIAL,curriculum_id INT,subject_code T
 CREATE TEMP TABLE academicsections(id INT PRIMARY KEY,department TEXT,year_level INT,section_num INT);
 CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_name TEXT,department TEXT,section TEXT,assignment_status TEXT);
 CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,UNIQUE(student_user_id,school_year,semester));
-CREATE TEMP TABLE facultysections(id INT PRIMARY KEY,user_id INT,department TEXT,section TEXT,year_level TEXT,subject TEXT,academic_section_id INT,school_year TEXT,semester TEXT,is_active BOOLEAN DEFAULT TRUE,deactivated_at TIMESTAMPTZ,deactivated_by TEXT);
+CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_name TEXT,department TEXT);
+CREATE TEMP TABLE facultysections(id SERIAL PRIMARY KEY,user_id INT,department TEXT,section TEXT,year_level TEXT,subject TEXT,academic_section_id INT,school_year TEXT,semester TEXT,is_active BOOLEAN DEFAULT TRUE,deactivated_at TIMESTAMPTZ,deactivated_by TEXT);
+CREATE UNIQUE INDEX ux_test_facultysections_exact ON facultysections(user_id,academic_section_id,school_year,semester,LOWER(subject)) WHERE is_active=TRUE;
 CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT);
 INSERT INTO academic_programs VALUES(1,'BSIT','BS Information Technology',TRUE); INSERT INTO curriculums VALUES(1,1,'PUBLISHED');
-INSERT INTO curriculum_subjects(curriculum_id,subject_code,year_level,semester) VALUES(1,'IT 101',1,'FIRST');
+INSERT INTO curriculum_subjects(curriculum_id,subject_code,year_level,semester) VALUES(1,'IT 101',1,'FIRST'),(1,'IT 102',1,'FIRST'),(1,'IT 101',1,'SECOND');
 INSERT INTO academicsections VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2);
-INSERT INTO users VALUES(1,'x','profx@plv.edu.ph','faculty','APPROVED',TRUE),(3,'y','profy@plv.edu.ph','faculty','APPROVED',TRUE),(2,'a','a@plv.edu.ph','student','APPROVED',TRUE),(4,'b','b@plv.edu.ph','student','APPROVED',TRUE),(5,'c','c@plv.edu.ph','student','APPROVED',TRUE),(6,'stale','stale@plv.edu.ph','student','APPROVED',TRUE),(7,'old','old@plv.edu.ph','student','APPROVED',TRUE),(8,'second','second@plv.edu.ph','student','APPROVED',TRUE);
+INSERT INTO users VALUES(1,'x','profx@plv.edu.ph','faculty','APPROVED',TRUE),(3,'y','profy@plv.edu.ph','faculty','APPROVED',TRUE),(9,'z','profz@plv.edu.ph','faculty','APPROVED',TRUE),(2,'a','a@plv.edu.ph','student','APPROVED',TRUE),(4,'b','b@plv.edu.ph','student','APPROVED',TRUE),(5,'c','c@plv.edu.ph','student','APPROVED',TRUE),(6,'stale','stale@plv.edu.ph','student','APPROVED',TRUE),(7,'old','old@plv.edu.ph','student','APPROVED',TRUE),(8,'second','second@plv.edu.ph','student','APPROVED',TRUE);
+INSERT INTO facultyprofiles VALUES(1,'FAC-1','Professor X','BS Information Technology'),(3,'FAC-3','Professor Y','BS Information Technology'),(9,'FAC-9','Professor Z','BS Information Technology');
 INSERT INTO studentprofiles VALUES(2,'26-0001','Student A','Wrong','9-9','Dropped'),(4,'26-0002','Student B','BS Information Technology','BSIT 1-1','Enrolled'),(5,'26-0003','Student C','BS Information Technology','BSIT 1-1','Enrolled'),(6,'26-0004','Stale Profile','BS Information Technology','BSIT 1-1','Enrolled'),(7,'25-0001','Old Period','BS Information Technology','BSIT 1-1','Enrolled'),(8,'26-0005','Second Term','BS Information Technology','BSIT 1-1','Enrolled');
 INSERT INTO student_enrollments(student_user_id,student_no,program_id,curriculum_id,academic_section_id,school_year,semester,year_level,status) VALUES(2,'26-0001',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(4,'26-0002',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(5,'26-0003',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(7,'25-0001',1,1,1,'2025-2026','FIRST',1,'ENROLLED'),(8,'26-0005',1,1,1,'2026-2027','SECOND',1,'ENROLLED');");
 var enrollmentCount=await Count("SELECT COUNT(*) FROM student_enrollments"); var profileCount=await Count("SELECT COUNT(*) FROM studentprofiles");
+Task<bool> AllowProgram(string program, CancellationToken _) => Task.FromResult(program == "BSIT");
+var bulkOne = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
+    ClientId="one", FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=1, SchoolYear="2026-2027", Semester="FIRST"
+}, AllowProgram);
+Check(bulkOne.AcademicSectionId==1 && bulkOne.SchoolYear=="2026-2027" && bulkOne.Semester=="FIRST" && bulkOne.AssignmentCycleId==bulkOne.Id.ToString(),"Bulk exact identity missing."); Pass(28,"single exact bulk assignment and assignment cycle");
+var bulkDuplicate = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
+    ClientId="duplicate", FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=1, SchoolYear="2026-2027", Semester="1st Semester"
+}, AllowProgram);
+Check(bulkDuplicate.AlreadyAssigned && bulkDuplicate.Id==bulkOne.Id && await Count("SELECT COUNT(*) FROM facultysections WHERE user_id=1 AND academic_section_id=1 AND school_year='2026-2027' AND semester='FIRST' AND subject='IT 101' AND is_active")==1,"Duplicate assignment created."); Pass(29,"bulk assignment idempotency");
+var bulkTwo = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=3, SubjectCode="IT 102", AcademicSectionId=2, SchoolYear="2026-2027", Semester="FIRST" }, AllowProgram);
+var bulkThree = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=9, SubjectCode="IT 101", AcademicSectionId=2, SchoolYear="2026-2027", Semester="FIRST" }, AllowProgram);
+Check(bulkTwo.FacultyUserId==3 && bulkThree.FacultyUserId==9 && await Count("SELECT COUNT(*) FROM facultysections WHERE id IN ("+bulkTwo.Id+","+bulkThree.Id+")")==2,"Multiple faculty assignments failed."); Pass(30,"multiple faculty bulk assignment");
+var invalidFailed=false; try { await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=3, SubjectCode="BAD 999", AcademicSectionId=1, SchoolYear="2026-2027", Semester="FIRST" }, AllowProgram); } catch(ArgumentException ex) { invalidFailed=ex.Message.Contains("Subject not found"); }
+Check(invalidFailed && await Count("SELECT COUNT(*) FROM facultysections WHERE id="+bulkOne.Id)==1,"Invalid row affected successful rows."); Pass(31,"partial-success row isolation and explicit error");
+Check(await Count("SELECT COUNT(*) FROM student_enrollments")==enrollmentCount,"Faculty bulk assignment changed student enrollments."); Pass(32,"bulk faculty load preserves canonical student associations");
+Check((await FacultyAssignmentRosterService.GetRosterAsync(db,(await FacultyAssignmentRosterService.ResolveAsync(db,bulkTwo.Id)).Value!)).Count==0,"Empty section assignment gained students."); Pass(33,"empty section bulk assignment");
+var otherYear = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=1, SchoolYear="2027-2028", Semester="FIRST" }, AllowProgram);
+Check(otherYear.Id!=bulkOne.Id && otherYear.SchoolYear=="2027-2028","School-year identity collapsed."); Pass(34,"bulk academic-year isolation");
+var otherSemester = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=1, SchoolYear="2026-2027", Semester="SECOND" }, AllowProgram);
+Check(otherSemester.Id!=bulkOne.Id && otherSemester.Semester=="SECOND","Semester identity collapsed."); Pass(35,"bulk semester isolation");
+var unauthorized=false; try { await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=2, SchoolYear="2028-2029", Semester="FIRST" }, (_,_)=>Task.FromResult(false)); } catch(UnauthorizedAccessException ex) { unauthorized=ex.Message.Contains("Unauthorized"); }
+Check(unauthorized && await Count("SELECT COUNT(*) FROM facultysections WHERE school_year='2028-2029'")==0,"Unauthorized assignment persisted."); Pass(36,"bulk department authorization");
+Check(await Count("SELECT COUNT(*) FROM student_enrollments")==enrollmentCount && await Count("SELECT COUNT(*) FROM studentprofiles")==profileCount,"Bulk assignment mutated enrollment/profile records."); Pass(37,"bulk retry does not resurrect removed students");
+await Exec("UPDATE facultysections SET is_active=FALSE WHERE id < 100");
 await Exec("INSERT INTO facultysections VALUES(101,1,'BS Information Technology','BSIT 1-2','1','IT 101',2,'2026-2027','FIRST',TRUE,NULL,NULL)");
 var empty=(await FacultyAssignmentRosterService.ResolveAsync(db,101)).Value!; Check((await FacultyAssignmentRosterService.GetRosterAsync(db,empty)).Count==0 && await Count("SELECT COUNT(*) FROM student_enrollments")==enrollmentCount && await Count("SELECT COUNT(*) FROM studentprofiles")==profileCount,"Empty assignment mutated students."); Pass(1,"empty-section assignment is independent");
 await Exec("INSERT INTO facultysections VALUES(102,1,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL)");
@@ -66,4 +94,4 @@ await Exec("INSERT INTO facultysections VALUES(103,1,'BS Information Technology'
 await Exec("INSERT INTO pending_grade_records VALUES('old','102','26-0001','Forwarded to Registrar','{}'),('final','102','26-0002','Finalized','{}'); UPDATE facultysections SET is_active=FALSE WHERE id=102; INSERT INTO facultysections VALUES(104,3,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL)");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE assignment_cycle_id='104'")==0,"Status inherited."); Pass(18,"new cycle status isolation"); Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='final'")==1,"Final deleted."); Pass(19,"reset preserves finalized grades"); await Exec("UPDATE facultysections SET is_active=FALSE WHERE id=101"); Check(await Count("SELECT COUNT(*) FROM facultysections WHERE id=101 AND is_active=FALSE")==1,"Deactivate failed."); Pass(20,"safe deactivation"); Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='final'")==1,"Final history removed."); Pass(21,"deactivation preserves protected history");
 Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped");
-} finally { await Exec("DROP TABLE IF EXISTS pending_grade_records,facultysections,student_enrollments,studentprofiles,curriculum_subjects,curriculums,academicsections,academic_programs,users CASCADE"); }
+} finally { await Exec("DROP TABLE IF EXISTS pending_grade_records,facultysections,facultyprofiles,student_enrollments,studentprofiles,curriculum_subjects,curriculums,academicsections,academic_programs,users CASCADE"); }
