@@ -231,3 +231,34 @@ test("Clear Selection is a non-submit button and never invokes Save", async () =
   expect(assignFacultyLoadToBackend).not.toHaveBeenCalled();
 });
 
+test("filters manual assignment rows by exact academicSectionId and restores all sections", async () => {
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems", yearLevel: 3, semester: "SECOND", units: 3 }],
+    sections: [
+      { id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" },
+      { id: 32, department: "Bachelor of Science in Information Technology", programCode: "BECE", yearLevel: 3, section: "3-1" },
+    ],
+    schoolYears: ["2026-2027"], enrollmentPeriods: [],
+  });
+  assignFacultyLoadToBackend.mockResolvedValue({ status: "Success", assignment: { id: 88, academicSectionId: 32 } });
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await selectFaculty();
+  fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
+
+  expect(screen.getByLabelText("Schedule for BSIT 3-1")).toBeInTheDocument();
+  expect(screen.getByLabelText("Schedule for BECE 3-1")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Section Filter"), { target: { value: "32" } });
+  expect(screen.queryByLabelText("Schedule for BSIT 3-1")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Schedule for BECE 3-1")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /Assign$/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Save Assignments" }));
+  await waitFor(() => expect(assignFacultyLoadToBackend).toHaveBeenCalledWith(
+    expect.objectContaining({ academicSectionId: 32, sectionName: "BECE 3-1" })
+  ));
+
+  fireEvent.change(screen.getByLabelText("Section Filter"), { target: { value: "all" } });
+  expect(screen.getByLabelText("Schedule for BSIT 3-1")).toBeInTheDocument();
+  expect(screen.getByLabelText("Schedule for BECE 3-1")).toBeInTheDocument();
+});
+

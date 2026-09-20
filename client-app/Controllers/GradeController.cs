@@ -180,8 +180,11 @@ namespace BlockGo.Controllers
 
         private static string InferGradeTerm(string? term, string? gradePayload)
         {
-            if (string.Equals(term, "finals", StringComparison.OrdinalIgnoreCase)) return "finals";
-            if (string.Equals(term, "midterm", StringComparison.OrdinalIgnoreCase)) return "midterm";
+            var normalizedTerm = GradeAcademicTerm.Normalize(term, string.Empty);
+            if (normalizedTerm == GradeAcademicTerm.Finals ||
+                string.Equals(term?.Trim(), "midterm", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(term?.Trim(), "midterms", StringComparison.OrdinalIgnoreCase))
+                return normalizedTerm;
             if (!string.IsNullOrWhiteSpace(gradePayload) && gradePayload.TrimStart().StartsWith("{"))
             {
                 try
@@ -191,7 +194,7 @@ namespace BlockGo.Controllers
                 }
                 catch { }
             }
-            return "midterm";
+            return GradeAcademicTerm.Midterm;
         }
 
         private static async Task<string> ResolveFacultyDisplayNameAsync(NpgsqlConnection connection, string email)
@@ -280,7 +283,7 @@ namespace BlockGo.Controllers
                     var grade = gradeDocument.RootElement;
                     if (grade.ValueKind != JsonValueKind.Object)
                         return BadRequest(new { status = "Error", message = "Grade must contain the encoded academic terms." });
-                    var term = string.Equals(request.Term, "finals", StringComparison.OrdinalIgnoreCase) ? "finals" : "midterm";
+                    var term = GradeAcademicTerm.Normalize(request.Term);
                     var standing = grade.TryGetProperty("standing", out var standingValue) ? standingValue.ToString() : "active";
                     if (string.Equals(standing, "active", StringComparison.OrdinalIgnoreCase) &&
                         (!grade.TryGetProperty(term, out var termGrade) ||
@@ -716,7 +719,7 @@ namespace BlockGo.Controllers
             if (string.IsNullOrWhiteSpace(rawGrade) && string.IsNullOrWhiteSpace(rawMidterm) && string.IsNullOrWhiteSpace(rawFinals)) return "";
             if (!string.IsNullOrWhiteSpace(rawGrade) && rawGrade.TrimStart().StartsWith("{")) return rawGrade;
 
-            var activeTerm = string.Equals(term, "finals", StringComparison.OrdinalIgnoreCase) ? "finals" : "midterm";
+            var activeTerm = GradeAcademicTerm.Normalize(term);
             var midterm = double.TryParse(rawMidterm, out var parsedMidterm) ? parsedMidterm : 0;
             var finals = double.TryParse(rawFinals, out var parsedFinals) ? parsedFinals : 0;
 
@@ -758,11 +761,9 @@ namespace BlockGo.Controllers
 
             var midterm = ReadNumber(gradeObject, "midterm");
             var finals = ReadNumber(gradeObject, "finals");
-            var normalizedTerm = string.Equals(requestedTerm, "midterm", StringComparison.OrdinalIgnoreCase)
-                ? "midterm"
-                : string.Equals(requestedTerm, "finals", StringComparison.OrdinalIgnoreCase)
-                    ? "finals"
-                    : finals > 0 ? "finals" : "midterm";
+            var normalizedTerm = string.IsNullOrWhiteSpace(requestedTerm)
+                ? finals > 0 ? GradeAcademicTerm.Finals : GradeAcademicTerm.Midterm
+                : GradeAcademicTerm.Normalize(requestedTerm);
             var oldRawGrade = normalizedTerm == "finals" ? finals : midterm;
 
             if (normalizedTerm == "finals") finals = newRawGrade;
@@ -787,7 +788,7 @@ namespace BlockGo.Controllers
 
         private static string? GetUploadedTermGrade(GetValDelegate getVal, string? term)
         {
-            var activeTerm = string.Equals(term, "finals", StringComparison.OrdinalIgnoreCase) ? "finals" : "midterm";
+            var activeTerm = GradeAcademicTerm.Normalize(term);
             return activeTerm == "finals"
                 ? getVal("final_rating", "final_grade", "finals_grade", "grade", "rating")
                 : getVal("midterm_grade", "midterm_rating", "midterm");
@@ -795,7 +796,7 @@ namespace BlockGo.Controllers
 
         private static string? GetUploadedMidtermGrade(GetValDelegate getVal, string? term)
         {
-            if (string.Equals(term, "finals", StringComparison.OrdinalIgnoreCase))
+            if (GradeAcademicTerm.Normalize(term) == GradeAcademicTerm.Finals)
             {
                 return null;
             }
@@ -804,7 +805,7 @@ namespace BlockGo.Controllers
 
         private static string? GetUploadedFinalGrade(GetValDelegate getVal, string? term)
         {
-            if (!string.Equals(term, "finals", StringComparison.OrdinalIgnoreCase))
+            if (GradeAcademicTerm.Normalize(term) != GradeAcademicTerm.Finals)
             {
                 return null;
             }
@@ -823,7 +824,7 @@ namespace BlockGo.Controllers
             try
             {
                 using var doc = JsonDocument.Parse(rawPayload);
-                var activeTerm = string.Equals(term, "finals", StringComparison.OrdinalIgnoreCase) ? "finals" : "midterm";
+                var activeTerm = GradeAcademicTerm.Normalize(term);
                 var propertyName = activeTerm == "finals" ? "finals" : "midterm";
 
                 if (doc.RootElement.TryGetProperty(propertyName, out var gradeElement))
@@ -1040,6 +1041,8 @@ namespace BlockGo.Controllers
             [FromForm] string? term, [FromForm] string? section)
         {
             _logger.LogInformation("Bulk upload initiated by user: {User}", User.Identity?.Name);
+
+            term = GradeAcademicTerm.Normalize(term);
 
             if (file == null || file.Length == 0)
                 return BadRequest(new { status = "Error", message = "A .csv or .xlsx file is required." });

@@ -1,6 +1,4 @@
-import React, { useMemo, useState } from "react";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   buildAssignmentStorageKey,
   CHAIRPERSON_REVIEW_KEY,
@@ -12,7 +10,8 @@ import {
   STUDENT_PUBLISHED_GRADES_KEY,
   upsertPublishedStudentGrades,
 } from "../../utils/publishedGradesHelpers";
-import { isChairpersonForwardedGradeStatus } from "../../utils/gradeStatus";
+import { fetchAllGrades, finalizeGrade } from "../../services/api";
+import { isChairpersonForwardedGradeStatus, isDepartmentApprovedGradeStatus } from "../../utils/gradeStatus";
 import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from "../../utils/studentAcademicHelpers";
 
 const getStudentId = (student = {}) => student.studentId || student.id || "";
@@ -190,6 +189,71 @@ function GradeFinalization({ allGrades = {} }) {
     getPublishedSectionsFromStorage()
   );
   const [publishedAtByKey, setPublishedAtByKey] = useState({});
+  const [ledgerPendingGrades, setLedgerPendingGrades] = useState([]);
+  const [ledgerLoading, setLedgerLoading] = useState(true);
+  const [finalizingGroup, setFinalizingGroup] = useState("");
+  const [ledgerNotice, setLedgerNotice] = useState("");
+
+  const loadLedgerPendingGrades = useCallback(async () => {
+    setLedgerLoading(true);
+    try {
+      const response = await fetchAllGrades("registrar");
+      const records = Array.isArray(response) ? response : response?.data || [];
+      setLedgerPendingGrades(records.filter((record) =>
+        isDepartmentApprovedGradeStatus(record.status || record.Status || record.normalized_status)
+      ));
+    } catch (error) {
+      setLedgerNotice(error.message || "Unable to load grades awaiting ledger finalization.");
+    } finally {
+      setLedgerLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLedgerPendingGrades();
+    const refresh = () => loadLedgerPendingGrades();
+    window.addEventListener("blockgo:academic-data-changed", refresh);
+    return () => window.removeEventListener("blockgo:academic-data-changed", refresh);
+  }, [loadLedgerPendingGrades]);
+
+  const ledgerGroups = useMemo(() => {
+    const groups = new Map();
+    ledgerPendingGrades.forEach((record) => {
+      const key = [
+        record.assignment_cycle_id || record.assignmentCycleId || "",
+        record.course || record.Course || "",
+        record.section || record.Section || "",
+        record.subject_code || record.subjectCode || record.SubjectCode || "",
+      ].join("|");
+      const group = groups.get(key) || {
+        key,
+        course: record.course || record.Course || "Unassigned Program",
+        section: record.section || record.Section || "Unknown Section",
+        subjectCode: record.subject_code || record.subjectCode || record.SubjectCode || "Unknown Subject",
+        records: [],
+      };
+      group.records.push(record);
+      groups.set(key, group);
+    });
+    return Array.from(groups.values());
+  }, [ledgerPendingGrades]);
+
+  const handleFinalizeLedgerGroup = async (group) => {
+    if (!window.confirm(`Finalize ${group.records.length} approved grade(s) for ${group.subjectCode} to the ledger?`)) return;
+    setFinalizingGroup(group.key);
+    setLedgerNotice("");
+    try {
+      for (const record of group.records) {
+        await finalizeGrade(record.id || record.Id, "registrar");
+      }
+      setLedgerNotice("Approved grades were finalized and verified on the ledger.");
+    } catch (error) {
+      setLedgerNotice(`Finalization stopped: ${error.message}. The authoritative ledger state has been refreshed; retry only if the grade remains pending.`);
+    } finally {
+      await loadLedgerPendingGrades();
+      setFinalizingGroup("");
+    }
+  };
 
   const toggleSubjectGrades = (reviewKey) => {
     setExpandedSubjectKeys((current) => ({
@@ -425,7 +489,11 @@ function GradeFinalization({ allGrades = {} }) {
   };
 
   const handleExportFacultyPdf = (faculty) => {
-    const doc = new jsPDF({ orientation: "landscape" });
+    if (!window.jspdf?.jsPDF) {
+      alert("PDF export is unavailable. Refresh the page and try again.");
+      return;
+    }
+    const doc = new window.jspdf.jsPDF({ orientation: "landscape" });
     const firstSection = faculty.sections[0] || {};
 
     doc.setFont("helvetica", "bold");
@@ -469,7 +537,7 @@ function GradeFinalization({ allGrades = {} }) {
         ];
       });
 
-      autoTable(doc, {
+      doc.autoTable({
         startY: startY + 4,
         head: [[
           "No.",
@@ -500,6 +568,24 @@ function GradeFinalization({ allGrades = {} }) {
 
   return (
     <div className="space-y-6">
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" aria-label="Ledger Finalization">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h3 className="text-xl font-bold text-[#003366]">Grades Pending Ledger Entry</h3>
+            <p className="mt-1 text-sm text-slate-500">Only Chairperson-approved and forwarded staging records can be finalized.</p>
+          </div>
+          <button type="button" onClick={loadLedgerPendingGrades} disabled={ledgerLoading || !!finalizingGroup} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60">Refresh Staging</button>
+        </div>
+        {ledgerNotice ? <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700" role="status">{ledgerNotice}</p> : null}
+        {ledgerLoading ? <p className="mt-4 text-sm text-slate-500">Loading approved grades…</p> : ledgerGroups.length === 0 ? <p className="mt-4 rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No grades approved and forwarded for ledger finalization.</p> : (
+          <div className="mt-4 space-y-3">
+            {ledgerGroups.map((group) => <div key={group.key} className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 md:flex-row md:items-center md:justify-between">
+              <div><strong className="text-[#003366]">{group.subjectCode} — {group.section}</strong><p className="text-sm text-slate-500">{group.course} · {group.records.length} approved grade(s)</p></div>
+              <button type="button" onClick={() => handleFinalizeLedgerGroup(group)} disabled={!!finalizingGroup} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-400">{finalizingGroup === group.key ? "Finalizing…" : "Finalize to Ledger"}</button>
+            </div>)}
+          </div>
+        )}
+      </section>
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>

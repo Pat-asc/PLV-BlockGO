@@ -1,12 +1,18 @@
 using ClosedXML.Excel;
 using Client_app.Models;
 using Client_app.Services;
+using BlockGo.Services;
 using Npgsql;
 
 var passed = 0; var skipped = 0;
 void Pass(int n, string name) { passed++; Console.WriteLine($"PASS {n}: {name}"); }
 void Skip(int n) { skipped++; Console.WriteLine($"SKIP {n}: PostgreSQL integration (SECTIONING_TEST_CONNECTION is not configured)"); }
 static void Check(bool value, string message) { if (!value) throw new Exception(message); }
+
+Check(new[] { "final", "finals", "FINAL", "FINALS" }.All(term => GradeAcademicTerm.Normalize(term) == GradeAcademicTerm.Finals),
+    "Finals aliases did not normalize to the canonical term."); Pass(60, "finals aliases normalize to finals");
+Check(GradeAcademicTerm.Normalize("midterm") == GradeAcademicTerm.Midterm && GradeAcademicTerm.Normalize("MIDTERMS") == GradeAcademicTerm.Midterm,
+    "Midterm normalization regressed."); Pass(61, "midterm aliases normalize to midterm");
 
 var assignment = new FacultyAssignmentRosterService.Assignment(102, 1, "profx@plv.edu.ph", "BS Information Technology",
     "BSIT 1-1", "1", "IT 101", 1, "2026-2027", "FIRST", "BSIT 1-1", false);

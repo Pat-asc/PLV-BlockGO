@@ -80,7 +80,8 @@ const createDefaultSectionTermStatuses = () => ({
   midterm: "draft",
   finals: "draft",
 });
-const normalizeEncodingTerm = (term) => (term === "finals" ? "finals" : "midterm");
+const normalizeEncodingTerm = (term) =>
+  ["final", "finals"].includes(normalizeText(term)) ? "finals" : "midterm";
 const normalizeSectionStatusValue = (status) => {
   const normalized = normalizeText(status);
   if (normalized.includes("issued") || normalized.includes("submitted")) return "submitted";
@@ -233,7 +234,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       if (!value) return;
       const parsed = typeof value === 'string' ? JSON.parse(value) : value;
       setEncodingSemester(parsed.semester || "2nd Semester");
-      setEncodingTerm(parsed.term === "finals" ? "finals" : "midterm");
+      setEncodingTerm(normalizeEncodingTerm(parsed.term));
       setEncodingStart(parseLocalDate(parsed.startDate));
       setEncodingEnd(parseLocalDate(parsed.endDate, true));
     };

@@ -167,6 +167,22 @@ test('Bulk Upload sends FacultySections.id instead of academicSectionId', async 
   expect(batchUploadGrades.mock.calls[0][1].facultySectionId).not.toBe(45);
 });
 
+test.each(['final', 'finals', 'FINAL', 'FINALS'])('normalizes %s encoding season to the canonical finals upload term', async (term) => {
+  getSystemSetting.mockResolvedValue({
+    status: 'Success',
+    value: { startDate: '2020-01-01', endDate: '2099-12-31', semester: '1st Semester', term },
+  });
+  await openSection();
+  const file = new File(['workbook'], 'finals.xlsx', {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
+
+  await waitFor(() => expect(batchUploadGrades).toHaveBeenCalledWith(file, expect.objectContaining({
+    term: 'finals', facultySectionId: '77', academicSectionId: 1,
+  })));
+});
+
 test('a rejected Bulk Upload preserves manually entered grades and shows the backend error', async () => {
   batchUploadGrades.mockRejectedValue(new Error('The workbook belongs to a different Faculty assignment.'));
   await openSection();
