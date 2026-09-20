@@ -319,8 +319,8 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 3
         resources:
-          requests: { memory: 256Mi, cpu: 150m }
-          limits: { memory: 768Mi, cpu: 750m }
+          requests: { memory: 512Mi, cpu: 150m }
+          limits: { memory: 1536Mi, cpu: 1 }
       volumes:
       - name: fabric-gateway-tls-roots
         secret: { secretName: fabric-gateway-tls-roots }

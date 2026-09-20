@@ -281,9 +281,29 @@ function checkSocket(name, endpointUrl) {
             ? tls.connect({ ...options, ca: tlsRoot, servername: serverNames[name], rejectUnauthorized: true })
             : net.createConnection(options);
         const readyEvent = secure ? 'secureConnect' : 'connect';
-        const timeout = setTimeout(() => socket.destroy(new Error(`${name} connection timed out.`)), Number(process.env.FABRIC_READINESS_TIMEOUT_MS || 2000));
-        socket.once(readyEvent, () => { clearTimeout(timeout); socket.end(); resolve([name, secure ? 'tls-ready' : 'reachable']); });
-        socket.once('error', (error) => { clearTimeout(timeout); reject(new Error(`${name} is unreachable: ${error.message}`)); });
+        let settled = false;
+        const finish = (error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            socket.removeListener(readyEvent, onReady);
+            socket.removeListener('error', onError);
+            // A readiness probe needs only to establish the connection. Destroy it
+            // synchronously after that result so repeated probes cannot retain TLS
+            // sockets and their native OpenSSL allocations while awaiting a peer's
+            // close-notify response.
+            socket.destroy();
+            if (error) reject(new Error(`${name} is unreachable: ${error.message}`));
+            else resolve([name, secure ? 'tls-ready' : 'reachable']);
+        };
+        const onReady = () => finish();
+        const onError = (error) => finish(error);
+        const timeout = setTimeout(
+            () => finish(new Error('connection timed out.')),
+            Number(process.env.FABRIC_READINESS_TIMEOUT_MS || 2000)
+        );
+        socket.once(readyEvent, onReady);
+        socket.once('error', onError);
     });
 }
 
@@ -312,4 +332,4 @@ async function closeGateways() {
     for (const username of [...gatewayCache.keys()]) disconnect(username, 'shutdown');
 }
 
-module.exports = { cacheStats, checkFabricEndpoints, closeGateways, contractForUser, disconnect, fabricEndpointUrls, profileForIdentity };
+module.exports = { cacheStats, checkFabricEndpoints, checkSocket, closeGateways, contractForUser, disconnect, fabricEndpointUrls, profileForIdentity };

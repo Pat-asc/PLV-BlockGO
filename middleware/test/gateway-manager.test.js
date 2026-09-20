@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const net = require('node:net');
 
-const { fabricEndpointUrls } = require('../src/fabric/gateway-manager');
+const { checkSocket, fabricEndpointUrls } = require('../src/fabric/gateway-manager');
 
 function withEnvironment(values, action) {
     const original = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
@@ -42,4 +43,31 @@ test('HA orderer client endpoints remain enabled when the disable list is empty'
         assert.ok(endpoints.orderer5);
         assert.ok(endpoints.orderer6);
     });
+});
+
+test('repeated readiness checks destroy successful probe sockets', async (t) => {
+    const connections = new Set();
+    const server = net.createServer((socket) => {
+        connections.add(socket);
+        socket.once('close', () => connections.delete(socket));
+    });
+    t.after(() => {
+        for (const socket of connections) socket.destroy();
+        server.close();
+    });
+    await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', resolve);
+    });
+
+    const { port } = server.address();
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+        assert.deepEqual(await checkSocket('test', `tcp://127.0.0.1:${port}`), ['test', 'reachable']);
+    }
+    const deadline = Date.now() + 1000;
+    while (connections.size && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    assert.equal(connections.size, 0);
 });
