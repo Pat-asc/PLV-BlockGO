@@ -201,6 +201,7 @@ test("successful Save clears the temporary row and Clear cannot remove the persi
   expect(pendingTotal("Total Assignments")).toBe("0");
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toHaveLength(1);
   expect(assignFacultyLoadToBackend).toHaveBeenCalledTimes(1);
+  expect(assignFacultyLoadToBackend).toHaveBeenCalledWith(expect.objectContaining({ academicSectionId: 31 }));
 });
 
 test("failed Save keeps the pending selection available", async () => {

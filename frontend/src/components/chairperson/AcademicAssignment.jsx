@@ -86,7 +86,7 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   const add = (section, index) => {
     if (!subject || !selectedProfessor) return;
     const scheduleKey = scheduleKeyFor(section);
-    const item = { id: `subject-${Date.now()}-${index}`, facultyId: professor, facultyName: nameOf(selectedProfessor), program: programName, sectionName: section.section, yearLevel: year, schoolYear: section.schoolYear, semester: terms[term], semesterCode: term, subjectCode: subject.subjectCode, subjectTitle: subject.subjectTitle, units: String(subject.units || 0), schedule: schedules[scheduleKey] || "", scheduleKey, day: "", date: "", rosterStudents: section.students || [], rosterFileName: "Created section roster", loadMode: "Manual Section Distribution", uploadedAt: new Date().toISOString() };
+    const item = { id: `subject-${Date.now()}-${index}`, facultyId: professor, facultyName: nameOf(selectedProfessor), program: programName, academicSectionId: section.academicSectionId, sectionName: section.section, yearLevel: year, schoolYear: section.schoolYear, semester: terms[term], semesterCode: term, subjectCode: subject.subjectCode, subjectTitle: subject.subjectTitle, units: String(subject.units || 0), schedule: schedules[scheduleKey] || "", scheduleKey, day: "", date: "", rosterStudents: section.students || [], rosterFileName: "Created section roster", loadMode: "Manual Section Distribution", uploadedAt: new Date().toISOString() };
     if ([...saved, ...draft].some((other) => identity(other) === identity(item))) { setNotice("This subject and section already have an assignment for this term."); return; }
     setDraft((current) => [...current, item]); setNotice("");
   };

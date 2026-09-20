@@ -1765,149 +1765,56 @@ namespace Client_app.Controllers
         {
             try
             {
-                if (id <= 0 || string.IsNullOrWhiteSpace(request.Department) ||
-                    string.IsNullOrWhiteSpace(request.Section) || string.IsNullOrWhiteSpace(request.YearLevel) ||
-                    string.IsNullOrWhiteSpace(request.Subject) || string.IsNullOrWhiteSpace(request.SchoolYear) ||
-                    string.IsNullOrWhiteSpace(request.Semester))
-                    throw new ArgumentException("Faculty, academic program, year level, section, subject, school year, and semester are required.");
-                var yearMatch = System.Text.RegularExpressions.Regex.Match(request.YearLevel.Trim(), @"^([1-4])(?:st|nd|rd|th)?(?:\s+year)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                if (!yearMatch.Success) throw new ArgumentException("Year level must be from 1 to 4.");
-                var yearLevel = int.Parse(yearMatch.Groups[1].Value);
-                var sectionMatch = System.Text.RegularExpressions.Regex.Match(
-                    request.Section.Trim(),
-                    @"^(?:(?:.*\s)?([1-4])\s*-\s*)?(\d+)$");
-                if (!sectionMatch.Success || !int.TryParse(sectionMatch.Groups[2].Value, out var sectionNumber) || sectionNumber < 1)
-                    throw new ArgumentException("Section must be a positive section number or use a section name ending in year-section format, for example 2-1 or BSIT 2-1.");
-                if (sectionMatch.Groups[1].Success && int.Parse(sectionMatch.Groups[1].Value) != yearLevel)
-                    throw new ArgumentException("Section year must match the selected year level.");
-
-                using var conn = new NpgsqlConnection(_connectionString);
+                await using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
-                if (!await CanManageAcademicProgramAsync(conn, request.Department, HttpContext.RequestAborted))
-                    return Forbid();
-
-                var canonicalSchoolYear = NormalizeSchoolYear(request.SchoolYear);
-                var canonicalSemester = NormalizeEnrollmentSemester(request.Semester);
-                string canonicalDepartment;
-                string canonicalProgramCode;
-                int academicSectionId;
-                await using (var sectionCommand = new NpgsqlCommand(@"
-                    SELECT s.id, p.program_code, p.program_name
-                    FROM academicsections s
-                    JOIN academic_programs p
-                      ON LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name))
-                    WHERE s.year_level = @yearLevel AND s.section_num = @sectionNumber
-                      AND LOWER(@department) IN (LOWER(p.program_code), LOWER(p.program_name))
-                      AND p.is_active = TRUE
-                    LIMIT 1;", conn))
-                {
-                    sectionCommand.Parameters.AddWithValue("yearLevel", yearLevel);
-                    sectionCommand.Parameters.AddWithValue("sectionNumber", sectionNumber);
-                    sectionCommand.Parameters.AddWithValue("department", request.Department.Trim());
-                    await using var sectionReader = await sectionCommand.ExecuteReaderAsync();
-                    if (!await sectionReader.ReadAsync())
-                        throw new ArgumentException("The selected section does not exist in the academic program.");
-                    academicSectionId = sectionReader.GetInt32(0);
-                    canonicalProgramCode = sectionReader.GetString(1);
-                    canonicalDepartment = sectionReader.GetString(2);
-                }
-                var canonicalSubject = string.IsNullOrWhiteSpace(request.Subject) ? null : request.Subject.Trim();
-                // The Manual Assignment workflow deliberately omits the active enrollment check here
-                // to allow Chairpersons to assign professors to sections before students are enrolled.
-                if (canonicalSubject is not null)
-                {
-                    await using var subjectCommand = new NpgsqlCommand(@"
-                        SELECT 1
-                        FROM curriculum_subjects cs
-                        JOIN curriculums c ON c.curriculum_id = cs.curriculum_id AND c.status = 'PUBLISHED'
-                        JOIN academic_programs p ON p.program_id = c.program_id
-                        WHERE LOWER(p.program_name) = LOWER(@department)
-                          AND cs.year_level = @yearLevel AND LOWER(cs.subject_code) = LOWER(@subject)
-                        LIMIT 1;", conn);
-                    subjectCommand.Parameters.AddWithValue("department", canonicalDepartment);
-                    subjectCommand.Parameters.AddWithValue("yearLevel", yearLevel);
-                    subjectCommand.Parameters.AddWithValue("subject", canonicalSubject);
-                    if (await subjectCommand.ExecuteScalarAsync() is null)
-                        throw new ArgumentException("The selected subject is not part of the published curriculum for this program and year level.");
-                }
-
-                string userEmail = "", userName = "Faculty";
-                using (var cmdEmail = new NpgsqlCommand(@"
-                    SELECT u.email, COALESCE(fp.full_name, ap.full_name) 
-                    FROM Users u 
-                    LEFT JOIN FacultyProfiles fp ON u.id = fp.user_id 
-                    LEFT JOIN AdminProfiles ap ON u.id = ap.user_id 
-                    WHERE u.id = @id AND LOWER(u.role) = 'faculty' AND LOWER(u.status) = 'approved' AND u.is_active = TRUE", conn))
-                {
-                    cmdEmail.Parameters.AddWithValue("id", id); 
-                    using var reader = await cmdEmail.ExecuteReaderAsync();
-                    if (await reader.ReadAsync())
+                var saved = await FacultyBulkAssignmentService.AssignAsync(
+                    conn,
+                    new BulkFacultyAssignmentItemRequest
                     {
-                        userEmail = reader.GetString(0);
-                        userName = reader.GetString(1);
-                    }
-                }
+                        FacultyUserId = id,
+                        SubjectCode = request.Subject ?? string.Empty,
+                        AcademicSectionId = request.AcademicSectionId,
+                        SchoolYear = request.SchoolYear,
+                        Semester = request.Semester
+                    },
+                    (program, token) => CanManageAcademicProgramAsync(conn, program, token),
+                    HttpContext.RequestAborted);
 
-                if (string.IsNullOrWhiteSpace(userEmail))
-                    return NotFound(new { status = "Error", message = "Active faculty account not found." });
-
-                string updateProfileQuery = "UPDATE FacultyProfiles SET department = @dept WHERE user_id = @id AND (department IS NULL OR department = 'Unassigned')";
-                using var cmdProfile = new NpgsqlCommand(updateProfileQuery, conn);
-                cmdProfile.Parameters.AddWithValue("dept", canonicalDepartment);
-                cmdProfile.Parameters.AddWithValue("id", id);
-                await cmdProfile.ExecuteNonQueryAsync();
-
-                var canonicalSectionLabel = $"{canonicalProgramCode} {yearLevel}-{sectionNumber}";
-
-                string insertSectionQuery = @"
-                    INSERT INTO FacultySections
-                        (user_id, department, section, year_level, subject,
-                         academic_section_id, school_year, semester, is_active)
-                    VALUES (@id, @dept, @section, @year, @subj,
-                            @academicSectionId, @schoolYear, @semester, TRUE)
-                    ON CONFLICT DO NOTHING
-                    RETURNING id";
-                
-                using var cmdSection = new NpgsqlCommand(insertSectionQuery, conn);
-                cmdSection.Parameters.AddWithValue("id", id);
-                cmdSection.Parameters.AddWithValue("dept", canonicalDepartment);
-                cmdSection.Parameters.AddWithValue("section", canonicalSectionLabel);
-                cmdSection.Parameters.AddWithValue("year", yearLevel.ToString());
-                cmdSection.Parameters.AddWithValue("subj", (object?)canonicalSubject ?? DBNull.Value);
-                cmdSection.Parameters.AddWithValue("academicSectionId", academicSectionId);
-                cmdSection.Parameters.AddWithValue("schoolYear", canonicalSchoolYear);
-                cmdSection.Parameters.AddWithValue("semester", canonicalSemester);
-
-                var insertedId = await cmdSection.ExecuteScalarAsync();
-                
-                if (insertedId is null)
+                if (!saved.AlreadyAssigned)
                 {
-                    await using var existing = new NpgsqlCommand(@"
-                        SELECT id FROM facultysections
-                        WHERE user_id = @id AND academic_section_id = @academicSectionId
-                          AND school_year = @schoolYear AND semester = @semester
-                          AND LOWER(subject) = LOWER(@subject) AND is_active = TRUE
-                        LIMIT 1;", conn);
-                    existing.Parameters.AddWithValue("id", id);
-                    existing.Parameters.AddWithValue("academicSectionId", academicSectionId);
-                    existing.Parameters.AddWithValue("schoolYear", canonicalSchoolYear);
-                    existing.Parameters.AddWithValue("semester", canonicalSemester);
-                    existing.Parameters.AddWithValue("subject", canonicalSubject!);
-                    insertedId = await existing.ExecuteScalarAsync();
-                    return Ok(new { status = "Info", message = $"Faculty is already assigned to {canonicalDepartment} Section {yearLevel}-{sectionNumber} for {canonicalSchoolYear} {canonicalSemester}.", assignment = new { id = insertedId, facultyId = id, department = canonicalDepartment, section = canonicalSectionLabel, yearLevel, subject = canonicalSubject, academicSectionId, schoolYear = canonicalSchoolYear, semester = canonicalSemester } });
+                    var emailSubject = "PLV Faculty Assignment";
+                    var emailContent = $"<p>Hello {saved.FacultyName},</p><p>You have been officially assigned to handle Section <strong>{saved.Section}</strong> for the <strong>{saved.Program}</strong> program.</p>";
+                    _ = _emailService.SendEmailAsync(saved.FacultyEmail, emailSubject, CreateHtmlEmail(emailSubject, emailContent), true);
                 }
 
-                var emailSubject = "PLV Faculty Assignment";
-                var emailContent = $"<p>Hello {userName},</p><p>You have been officially assigned to handle Section <strong>{yearLevel}-{sectionNumber}</strong> for the <strong>{canonicalDepartment}</strong> program.</p>";
-                _ = _emailService.SendEmailAsync(userEmail, emailSubject, CreateHtmlEmail(emailSubject, emailContent), true);
-
-               _cache.Remove("approved_faculties");
-                await NotifyAcademicDataChangedAsync("faculty_assigned", canonicalDepartment, userEmail);
-                return Ok(new { status = "Success", message = "Faculty assigned successfully.", assignment = new { id = Convert.ToInt32(insertedId), facultyId = id, department = canonicalDepartment, section = canonicalSectionLabel, yearLevel, subject = canonicalSubject, academicSectionId, schoolYear = canonicalSchoolYear, semester = canonicalSemester } });
+                _cache.Remove("approved_faculties");
+                await NotifyAcademicDataChangedAsync("faculty_assigned", saved.Program, saved.FacultyEmail);
+                return Ok(new
+                {
+                    status = saved.AlreadyAssigned ? "Info" : "Success",
+                    message = saved.AlreadyAssigned ? "Faculty is already assigned to this exact section, subject, and period." : "Faculty assigned successfully.",
+                    assignment = new
+                    {
+                        id = saved.Id,
+                        assignmentCycleId = saved.AssignmentCycleId,
+                        facultyId = saved.FacultyUserId,
+                        department = saved.Program,
+                        section = saved.Section,
+                        yearLevel = saved.YearLevel,
+                        subject = saved.SubjectCode,
+                        academicSectionId = saved.AcademicSectionId,
+                        schoolYear = saved.SchoolYear,
+                        semester = saved.Semester
+                    }
+                });
             }
             catch (ArgumentException ex)
             {
                 return BadRequest(new { status = "Error", message = ex.Message });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
             }
             catch (Exception ex)
             {
@@ -2041,12 +1948,13 @@ namespace Client_app.Controllers
                 if (!HasAny(headers, "faculty_id", "staff_id", "faculty_email", "email") ||
                     !HasAny(headers, "academic_program", "program", "department") ||
                     !HasAny(headers, "subject_code", "subject") ||
-                    !headers.Contains("section") || !headers.Contains("school_year") || !headers.Contains("semester"))
+                    !HasAny(headers, "academic_section_id", "academic section id", "section_id") ||
+                    !headers.Contains("school_year") || !headers.Contains("semester"))
                 {
                     return BadRequest(new
                     {
                         status = "Error",
-                        message = "CSV headings must include Faculty ID or Email, Academic Program, Subject Code, Section, School Year, and Semester. Year Level may be supplied or inferred from Section."
+                        message = "CSV headings must include Faculty ID or Email, Academic Program, Subject Code, Academic Section ID, School Year, and Semester."
                     });
                 }
 
@@ -2072,8 +1980,7 @@ namespace Client_app.Controllers
                     var facultyIdentifier = Value("faculty_id", "staff_id", "faculty_email", "email");
                     var programInput = Value("academic_program", "program", "department");
                     var subject = Value("subject_code", "subject");
-                    var section = Value("section");
-                    var yearInput = Value("year_level", "year", "level");
+                    var academicSectionIdInput = Value("academic_section_id", "academic section id", "section_id");
                     var schoolYearInput = Value("school_year");
                     var semesterInput = Value("semester");
 
@@ -2082,20 +1989,10 @@ namespace Client_app.Controllers
                         var schoolYear = NormalizeSchoolYear(schoolYearInput);
                         var semester = NormalizeEnrollmentSemester(semesterInput);
                         if (string.IsNullOrWhiteSpace(facultyIdentifier) || string.IsNullOrWhiteSpace(programInput) ||
-                            string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(section))
-                            throw new ArgumentException("Faculty ID or Email, Academic Program, Subject Code, and Section are required.");
-
-                        var yearLevel = NormalizeYearLevel(yearInput, section);
-                        var sectionMatch = System.Text.RegularExpressions.Regex.Match(
-                            section,
-                            @"^(?:(?:.*\s)?([1-4])\s*-\s*)?(\d+)$");
-                        if (!sectionMatch.Success || !int.TryParse(sectionMatch.Groups[2].Value, out var sectionNumber) || sectionNumber < 1)
-                            throw new ArgumentException("Section must end in a year-section number such as 1-1 or BSIT 1-1.");
-                        if (sectionMatch.Groups[1].Success && short.Parse(sectionMatch.Groups[1].Value) != yearLevel)
-                            throw new ArgumentException("Section year must match Year Level.");
+                            string.IsNullOrWhiteSpace(subject) || !int.TryParse(academicSectionIdInput, out var academicSectionId) || academicSectionId <= 0)
+                            throw new ArgumentException("Faculty ID or Email, Academic Program, Subject Code, and a valid Academic Section ID are required.");
 
                         var program = await ResolveEnrollmentProgramAsync(connection, null, programInput, cancellationToken);
-                        section = $"{program.Code} {yearLevel}-{sectionNumber}";
                         if (!await CanManageAcademicProgramAsync(connection, program.Code, cancellationToken))
                         {
                             results.Add(new { row = rowNumber, faculty = facultyIdentifier, success = false, error = "The authenticated Chairperson cannot manage this academic program." });
@@ -2128,38 +2025,41 @@ namespace Client_app.Controllers
                         }
 
                         string canonicalProgram;
-                        int academicSectionId;
+                        string canonicalProgramCode;
+                        int yearLevel;
+                        int sectionNumber;
                         await using (var assignment = new NpgsqlCommand(@"
-                            SELECT section.id, p.program_name
+                            SELECT p.program_name, p.program_code, section.year_level, section.section_num
                             FROM academicsections section
                             JOIN academic_programs p
                               ON LOWER(section.department) IN (LOWER(p.program_code), LOWER(p.program_name))
-                            WHERE p.program_id = @programId
-                              AND section.year_level = @yearLevel
-                              AND section.section_num = @sectionNumber
+                            WHERE section.id = @academicSectionId
+                              AND p.program_id = @programId
                               AND EXISTS (
                                   SELECT 1
                                   FROM curriculums curriculum
                                   JOIN curriculum_subjects subject ON subject.curriculum_id = curriculum.curriculum_id
                                   WHERE curriculum.program_id = p.program_id
                                     AND curriculum.status = 'PUBLISHED'
-                                    AND subject.year_level = @yearLevel
+                                    AND subject.year_level = section.year_level
                                     AND subject.semester = @semester
                                     AND LOWER(subject.subject_code) = LOWER(@subject)
                               )
                             LIMIT 1;", connection, transaction))
                         {
+                            assignment.Parameters.AddWithValue("academicSectionId", academicSectionId);
                             assignment.Parameters.AddWithValue("programId", program.Id);
-                            assignment.Parameters.AddWithValue("yearLevel", (int)yearLevel);
-                            assignment.Parameters.AddWithValue("sectionNumber", sectionNumber);
                             assignment.Parameters.AddWithValue("subject", subject);
                             assignment.Parameters.AddWithValue("semester", semester);
                             await using var assignmentReader = await assignment.ExecuteReaderAsync(cancellationToken);
                             if (!await assignmentReader.ReadAsync(cancellationToken))
                                 throw new ArgumentException("The section does not exist, or the subject is not in the published curriculum for that program, year level, and semester.");
-                            academicSectionId = assignmentReader.GetInt32(0);
-                            canonicalProgram = assignmentReader.GetString(1);
+                            canonicalProgram = assignmentReader.GetString(0);
+                            canonicalProgramCode = assignmentReader.GetString(1);
+                            yearLevel = assignmentReader.GetInt32(2);
+                            sectionNumber = assignmentReader.GetInt32(3);
                         }
+                        var section = $"{canonicalProgramCode} {yearLevel}-{sectionNumber}";
 
                         await using (var profile = new NpgsqlCommand(@"
                             UPDATE facultyprofiles

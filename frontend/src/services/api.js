@@ -534,9 +534,7 @@ export const assignFacultyLoadToBackend = async (assignmentData) => {
     }
 
     return await assignFaculty(facultyId, {
-        Department: assignmentData.program || assignmentData.department || '',
-        Section: assignmentData.sectionName || assignmentData.section || '',
-        YearLevel: assignmentData.yearLevel || '',
+        AcademicSectionId: Number(assignmentData.academicSectionId),
         Subject: assignmentData.subjectCode || assignmentData.subject || '',
         SchoolYear: assignmentData.schoolYear || '',
         Semester: assignmentData.semesterCode || assignmentData.semester || '',

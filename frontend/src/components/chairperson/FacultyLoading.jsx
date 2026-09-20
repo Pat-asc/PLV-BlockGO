@@ -57,6 +57,10 @@ const getCsvRowValue = (row = {}, acceptedHeaders = []) => {
 
   return "";
 };
+export const FACULTY_LOADING_CSV_TEMPLATE =
+  "Faculty Name,Subject Title,Subject Code,Academic Section ID,Section,School Year,Semester,Units,Day,Time\n" +
+  "Juan Dela Cruz,Introduction to Computing,IT 101,42,BSIT 1-1,2026-2027,1st Semester,3,Monday,7:00 AM - 9:00 AM\n" +
+  "Maria Santos,Computer Programming 1,IT 102,43,BSIT 1-2,2026-2027,1st Semester,3,Tuesday,10:00 AM - 12:00 PM";
 const mapFacultyLoadingRows = (csvText = "") => {
   const rows = parseCsvRows(csvText);
 
@@ -387,12 +391,10 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     reader.readAsText(selectedFile);
   };
 
-  const findBulkSectionByName = (sectionName = "") => {
-    const requested = normalizeText(sectionName);
-    return assignmentOptions.sections.find((section) => {
-      const canonicalName = `${section.programCode} ${section.section}`;
-      return normalizeText(section.section) === requested || normalizeText(canonicalName) === requested;
-    });
+  const findBulkSectionById = (academicSectionId = "") => {
+    const requestedId = Number(academicSectionId);
+    if (!Number.isInteger(requestedId) || requestedId <= 0) return null;
+    return assignmentOptions.sections.find((section) => Number(section.id) === requestedId) || null;
   };
 
   const normalizeSemesterCode = (value = "") => {
@@ -453,21 +455,21 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       .sort();
     const hasFacultyIdentifierColumn = headers.some(h => ["faculty id", "id", "faculty email", "email", "prof email", "faculty name", "faculty", "name", "full name", "professor", "instructor", "teacher", "prof name", "prof"].includes(h));
     const hasSubjectCodeColumn = headers.some(h => ["subject code", "course code", "code", "course", "subj code", "subj"].includes(h));
-    const hasSectionColumn = headers.some(h => ["section", "section name", "class section", "sec", "section num"].includes(h));
+    const hasAcademicSectionIdColumn = headers.some(h => ["academic section id", "academic_section_id", "section id"].includes(h));
     const hasSchoolYearColumn = headers.some(h => ["school year", "academic year", "schoolyear"].includes(h));
     const hasSemesterColumn = headers.some(h => ["semester", "term"].includes(h));
 
     if (
       !hasFacultyIdentifierColumn ||
       !hasSubjectCodeColumn ||
-      !hasSectionColumn ||
+      !hasAcademicSectionIdColumn ||
       !hasSchoolYearColumn ||
       !hasSemesterColumn
     ) {
       return {
         previewRows,
         errors: [
-          "Missing required CSV headers. Please ensure columns exist for: Faculty (ID, Email, or Name), Subject Code, Section, School Year, and Semester.",
+          "Missing required CSV headers. Please ensure columns exist for: Faculty (ID, Email, or Name), Subject Code, Academic Section ID, School Year, and Semester.",
         ],
         summary: {
           totalRows: rows.length,
@@ -493,7 +495,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       const facultyId = getCsvRowValue(row, ["faculty id", "id", "faculty email", "email", "prof email"]);
       const rowSubjectCode = getCsvRowValue(row, ["subject code", "course code", "code", "course", "subj code", "subj"]);
       const rowSubjectTitle = getCsvRowValue(row, ["subject title", "subject name", "subject", "descriptive title", "description"]) || rowSubjectCode;
-      const sectionName = getCsvRowValue(row, ["section", "section name", "class section", "sec", "section num"]);
+      const academicSectionId = getCsvRowValue(row, ["academic section id", "academic_section_id", "section id"]);
       const rowSchoolYear = getCsvRowValue(row, ["school year", "academic year", "schoolyear"]);
       const rowSemester = getCsvRowValue(row, ["semester", "term"]);
       const rowUnits = getCsvRowValue(row, ["units", "credit", "credits"]) || "3";
@@ -503,7 +505,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       if (
         !(facultyId || facultyName) ||
         !rowSubjectCode ||
-        !sectionName ||
+        !academicSectionId ||
         !rowSchoolYear ||
         !rowSemester
       ) {
@@ -512,7 +514,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       }
 
       const faculty = findFacultyForLoadingRow(row);
-      const section = findBulkSectionByName(sectionName);
+      const section = findBulkSectionById(academicSectionId);
 
       if (!faculty) {
         const facultyLabel = facultyId || facultyName;
@@ -529,7 +531,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
             }.`
           : " No sections are currently available in this academic program.";
         errors.push(
-          `Row ${rowNumber}: section "${sectionName}" does not exist in the system.${availableSectionText}`
+          `Row ${rowNumber}: academic section ID "${academicSectionId}" does not exist in the selected program.${availableSectionText}`
         );
         return;
       }
@@ -613,11 +615,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
   };
 
   const handleDownloadFacultyLoadingTemplate = () => {
-    const template =
-      "Faculty Name,Subject Title,Subject Code,Section,School Year,Semester,Units,Day,Time\n" +
-      "Juan Dela Cruz,Introduction to Computing,IT 101,BSIT 1-1,2026-2027,1st Semester,3,Monday,7:00 AM - 9:00 AM\n" +
-      "Maria Santos,Computer Programming 1,IT 102,BSIT 1-2,2026-2027,1st Semester,3,Tuesday,10:00 AM - 12:00 PM";
-    const blob = new Blob([template], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob([FACULTY_LOADING_CSV_TEMPLATE], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
 
@@ -834,7 +832,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
             <p className="mt-2 text-sm text-slate-500">
               {facultyLoadingFile
                 ? `Selected file: ${facultyLoadingFile.name}`
-                : "Required columns: Faculty ID, Email, or Name; Subject Code; Section; School Year; and Semester. Optional: Subject Title, Units, Day, and Time."}
+                : "Required columns: Faculty ID, Email, or Name; Subject Code; Academic Section ID; School Year; and Semester. Section is display-only. Optional: Subject Title, Units, Day, and Time."}
             </p>
           </div>
 
