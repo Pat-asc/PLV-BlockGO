@@ -253,3 +253,19 @@ test('only explicit submission locks a bulk-imported Draft, while Returned remai
   await waitFor(() => expect(screen.getAllByPlaceholderText('60-100')[0]).toBeEnabled());
   expect(screen.getByRole('button', { name: 'Save Draft' })).toBeEnabled();
 });
+
+test('an old grade row cannot add a student who is absent from the current roster', async () => {
+  fetchAllGrades.mockResolvedValue({ data: [
+    { id: 'current', assignment_cycle_id: 77, student_no: '26-0001', record_section: 'BSIT 1-1',
+      subject_code: 'IT 101', status: 'Draft', grade: JSON.stringify({ midterm: 85 }) },
+    { id: 'historical-outsider', assignment_cycle_id: 77, student_no: '26-9999', record_section: 'BSIT 1-1',
+      subject_code: 'IT 101', status: 'Finalized', grade: JSON.stringify({ midterm: 90 }) },
+  ] });
+
+  render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'View Grades' }));
+
+  expect(screen.getByText('26-0001')).toBeInTheDocument();
+  expect(screen.queryByText('26-9999')).not.toBeInTheDocument();
+  expect(screen.queryByText('historical-outsider')).not.toBeInTheDocument();
+});

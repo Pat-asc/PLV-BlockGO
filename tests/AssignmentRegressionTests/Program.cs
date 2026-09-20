@@ -151,5 +151,17 @@ Check(parityRoster.Select(student=>student.StudentNo).SequenceEqual(
 await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('draft-1','104','26-0001','Draft','{}') ON CONFLICT (assignment_cycle_id,student_no) DO UPDATE SET grade=EXCLUDED.grade; INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('draft-2','104','26-0001','Draft','{\"midterm\":\"90\"}') ON CONFLICT (assignment_cycle_id,student_no) DO UPDATE SET grade=EXCLUDED.grade;");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE assignment_cycle_id='104' AND student_no='26-0001'")==1,
     "Repeated save created duplicate pending grades."); Pass(47,"no duplicate pending grades");
+await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('old-review','102','26-0998','SubmittedToChairperson','{}'),('current-review','104','26-0999','SubmittedToChairperson','{}')");
+var currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db);
+Check(currentReviewIds.SetEquals(new[]{"current-review"}),"For Review mixed inactive assignment cycles."); Pass(54,"For Review contains only active-cycle submissions");
+await Exec("UPDATE facultysections SET is_active=FALSE WHERE is_active=TRUE");
+currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db);
+Check(currentReviewIds.Count==0,"Reset left old submissions in current For Review."); Pass(55,"reset empties current For Review");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review','final')")==3,
+    "Reset deleted historical or finalized grades."); Pass(56,"reset preserves submitted and finalized history");
+await Exec("INSERT INTO facultysections VALUES(106,1,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL); INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('new-review','106','26-0001','SubmittedToChairperson','{}')");
+currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db);
+Check(currentReviewIds.SetEquals(new[]{"new-review"}) && await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review')")==2,
+    "New cycle did not isolate its submission from preserved old cycles."); Pass(57,"new-cycle submission is the only current review record");
 Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped");
 } finally { await Exec("DROP TABLE IF EXISTS pending_grade_records,facultysections,facultyprofiles,student_enrollments,studentprofiles,curriculum_subjects,curriculums,academicsections,academic_programs,users CASCADE"); }

@@ -964,6 +964,28 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
 
     useEffect(() => { loadGrades(); }, [loadGrades]);
 
+    useEffect(() => {
+        const handleEncodingSeasonReset = (event) => {
+            const key = event.detail?.key || event.detail?.Key;
+            if (key !== 'encoding_period') return;
+
+            let value = event.detail?.value || event.detail?.Value;
+            try {
+                value = typeof value === 'string' ? JSON.parse(value) : value;
+            } catch {
+                return;
+            }
+            if (value?.startDate || value?.endDate) return;
+
+            setGrades([]);
+            setSelectedReviewSection(null);
+            loadGrades();
+        };
+
+        window.addEventListener('blockgo:system-setting-changed', handleEncodingSeasonReset);
+        return () => window.removeEventListener('blockgo:system-setting-changed', handleEncodingSeasonReset);
+    }, [loadGrades]);
+
     const loadMyClasses = useCallback(async () => {
         try {
             const secRes = await fetchFacultySections(loggedInEmail);
@@ -1495,7 +1517,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                         <div className="flex flex-col gap-6">
                             <FacultyStatusTable 
                                 rows={facultyRows.filter(r => {
-                                    if (activeChairTab === 'forReview') return r.reviewStatus === 'submitted' || r.reviewStatus === 'pending';
+                                    if (activeChairTab === 'forReview') return r.reviewStatus === 'submitted';
                                     if (activeChairTab === 'returned') return r.reviewStatus === 'returned';
                                     if (activeChairTab === 'approved') return r.reviewStatus === 'approved';
                                     if (activeChairTab === 'forwarded') return r.reviewStatus === 'forwarded';

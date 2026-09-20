@@ -146,6 +146,13 @@ namespace Client_app.Controllers
                     Value = resetEncodingPeriod,
                     UpdatedAt = DateTime.UtcNow
                 });
+                await _chatHubContext.Clients.All.SendAsync("AcademicDataChanged", new
+                {
+                    Reason = "encoding_season_reset",
+                    Department = string.Empty,
+                    Actor = User.Identity?.Name ?? "unknown",
+                    OccurredAt = DateTimeOffset.UtcNow
+                });
 
                 return Ok(new
                 {

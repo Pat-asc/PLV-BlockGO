@@ -2135,6 +2135,15 @@ namespace BlockGo.Controllers
                 foreach (var grade in allGrades)
                     if (assignmentCycles.TryGetValue(grade.Id ?? "", out var cycleId)) grade.AssignmentCycleId = cycleId;
 
+                if (jwtRole == "department_admin")
+                {
+                    var currentSubmittedRecordIds = await ChairpersonReviewScopeService
+                        .GetCurrentSubmittedRecordIdsAsync(conn, HttpContext.RequestAborted);
+                    allGrades = allGrades.Where(grade =>
+                        !ChairpersonReviewScopeService.IsSubmittedToChairperson(grade.Status) ||
+                        currentSubmittedRecordIds.Contains(grade.Id ?? string.Empty)).ToList();
+                }
+
                 // Deduplicate records that might temporarily exist in both staging and the ledger.
                 // Prefer the richer local staged copy when it contains student number/name metadata.
                 allGrades = allGrades
