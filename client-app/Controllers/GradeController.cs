@@ -1101,56 +1101,8 @@ namespace BlockGo.Controllers
                     using (var fileStream = new FileStream(tempFile, FileMode.Create))
                         await file.CopyToAsync(fileStream);
 
-                    // Keep midterm uploads staged only. Distribution happens once finals are being processed.
-                    if (string.Equals(term, "finals", StringComparison.OrdinalIgnoreCase))
-                    {
-                        try
-                        {
-                            using var client = _httpClientFactory.CreateClient();
-                            using var content = new MultipartFormDataContent();
-                            
-                            // Encrypt before upload
-                            byte[] encryptedData;
-                            using (var fsEncrypt = new FileStream(tempFile, FileMode.Open, FileAccess.Read))
-                            {
-                                encryptedData = EncryptStream(fsEncrypt);
-                            }
-                            
-                            content.Add(new ByteArrayContent(encryptedData), "file", file.FileName + ".enc");
-                            
-                            var ipfsHost = Environment.GetEnvironmentVariable("IPFS_HOST") ?? "ipfs0";
-                            var ipfsUrl = _configuration["IpfsApiUrl"] ?? $"http://{ipfsHost}:5001/api/v0/add?cid-version=1&wrap-with-directory=false";
-                            var ipfsRes = await client.PostAsync(ipfsUrl, content);
-                            if (ipfsRes.IsSuccessStatusCode)
-                            {
-                                var ipfsJson = await ipfsRes.Content.ReadAsStringAsync();
-                                var lines = ipfsJson.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                                foreach (var line in lines)
-                                {
-                                    try {
-                                        using var doc = JsonDocument.Parse(line);
-                                        var root = doc.RootElement;
-                                        if (root.TryGetProperty("Hash", out var hashProp)) {
-                                            var currentHash = hashProp.GetString();
-                                            // If wrap-with-directory=true, we get 2+ hashes. 
-                                            // The file hash has a 'Name' property. The directory hash has an empty 'Name'.
-                                            // We want the file hash so we can 'cat' it later.
-                                            if (root.TryGetProperty("Name", out var nameProp) && !string.IsNullOrEmpty(nameProp.GetString())) {
-                                                ipfsCid = currentHash ?? ipfsCid;
-                                            } else if (string.IsNullOrEmpty(ipfsCid)) {
-                                                ipfsCid = currentHash ?? ipfsCid; // Fallback to whatever we find first
-                                            }
-                                        }
-                                    } catch { }
-                                }
-                                _logger.LogInformation("Encrypted finals file distributed to IPFS. CID: {CID}", ipfsCid);
-                                
-                                // Do not report storage success until every campus has pinned the CID.
-                                await DistributePinAsync(ipfsCid);
-                            }
-                        }
-                        catch (Exception ex) { _logger.LogWarning("IPFS upload skipped (daemon may be offline): {Message}", ex.Message); }
-                    }
+                    // A bulk import is only a Draft. It must not wait on IPFS or any
+                    // ledger dependency before the workbook has been validated and staged.
 
                     if (ext == ".xlsx")
                     {
@@ -2626,6 +2578,26 @@ namespace BlockGo.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Registrar finalization failed for {RecordId}; approved staging was not removed before ledger verification", recordId);
+                return StatusCode(500, new { status = "Error", message = ex.Message });
+            }
+        }
+
+        [HttpGet("finalization-queue")]
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> GetFinalizationQueue()
+        {
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(HttpContext.RequestAborted);
+                await EnsurePendingGradeSchemaAsync(connection);
+                var records = await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(
+                    connection, HttpContext.RequestAborted);
+                return Ok(new { status = "Success", data = records });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load the current Registrar finalization queue");
                 return StatusCode(500, new { status = "Error", message = ex.Message });
             }
         }

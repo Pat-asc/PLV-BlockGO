@@ -614,6 +614,11 @@ export const fetchUnassignedEnrolledStudents = async (filters = {}) => {
     return await fetchWithAuth(`/Auth/students/unassigned-enrolled?${query}`);
 };
 
+export const fetchSectionedEnrolledStudents = async (filters = {}) => {
+    const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== '' && value != null));
+    return await fetchWithAuth(`/Auth/students/sectioned-enrolled?${query}`);
+};
+
 export const assignStudentsToSection = async (sectionId, studentIds, period) => {
     return await fetchWithAuth(`/Auth/sections/${encodeURIComponent(sectionId)}/assign-students`, {
         method: 'POST',
@@ -806,6 +811,10 @@ export const resetEncodingSeason = async () => {
 
 export const fetchStagedGrades = async (status = '') => {
     return await fetchWithAuth(`/BulkUpload/staged?status=${encodeURIComponent(status)}`);
+};
+
+export const fetchRegistrarFinalizationQueue = async () => {
+    return await fetchWithAuth('/Grades/finalization-queue');
 };
 
 export const approveStagedGrades = async (stagingIds) => {

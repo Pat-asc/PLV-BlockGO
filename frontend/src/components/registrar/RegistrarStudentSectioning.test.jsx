@@ -1,11 +1,23 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import RegistrarStudentSectioning from './RegistrarStudentSectioning';
-import { fetchNextStudentId, fetchUnassignedEnrolledStudents, getSystemSetting } from '../../services/api';
+import {
+  fetchDepartmentSections,
+  fetchNextStudentId,
+  fetchSectionedEnrolledStudents,
+  fetchUnassignedEnrolledStudents,
+  getSystemSetting,
+} from '../../services/api';
 import { syncSectioningBatchToBackend } from '../../utils/registrarSectioningBackendSync';
 import { STUDENT_BATCHES_KEY } from '../../utils/studentSectioningHelpers';
 
-jest.mock('../../services/api', () => ({ fetchNextStudentId: jest.fn(), fetchUnassignedEnrolledStudents: jest.fn(), getSystemSetting: jest.fn() }));
+jest.mock('../../services/api', () => ({
+  fetchDepartmentSections: jest.fn(),
+  fetchNextStudentId: jest.fn(),
+  fetchSectionedEnrolledStudents: jest.fn(),
+  fetchUnassignedEnrolledStudents: jest.fn(),
+  getSystemSetting: jest.fn(),
+}));
 jest.mock('../../utils/registrarSectioningBackendSync', () => ({ syncSectioningBatchToBackend: jest.fn() }));
 jest.mock('../../utils/sharedClientState', () => ({ pushSectioningSharedState: jest.fn() }));
 
@@ -19,6 +31,11 @@ beforeEach(() => {
   fetchNextStudentId.mockResolvedValue({ highestSequence: 42 });
   getSystemSetting.mockResolvedValue({ status: 'Success', value: { schoolYear: '2026-2027', semester: 'FIRST' } });
   fetchUnassignedEnrolledStudents.mockImplementation(async (period) => ({ data: [{ ...student, ...period }] }));
+  fetchSectionedEnrolledStudents.mockResolvedValue({ data: [] });
+  fetchDepartmentSections.mockImplementation(async (department) => ({ data: department === 'BSIT' ? [
+    { id: 1, department: 'BS Information Technology', yearLevel: 1, sectionNum: 1 },
+    { id: 2, department: 'BS Information Technology', yearLevel: 1, sectionNum: 2 },
+  ] : [] }));
   syncSectioningBatchToBackend.mockResolvedValue({ sectionsSynced: 1, studentsSynced: 1 });
 });
 
@@ -78,10 +95,55 @@ test('failed assignment does not publish a sectioned roster', async () => {
   syncSectioningBatchToBackend.mockRejectedValue(new Error('Student already assigned'));
   render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
   await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled/ })).toBeEnabled());
+  const sectionPlansBeforeAttempt = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0].sectionPlans;
   fireEvent.click(screen.getByRole('button', { name: 'Generate Sections' }));
   await waitFor(() => expect(window.alert).toHaveBeenCalledWith('Section assignment failed: Student already assigned'));
   const workspace = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0];
-  expect(workspace.sectionPlans).toEqual([]);
+  expect(workspace.sectionPlans).toEqual(sectionPlansBeforeAttempt);
   expect(workspace.students[0].sectionCode).toBe('');
-  expect(localStorage.getItem('studentSections')).toBeNull();
+  expect(JSON.parse(localStorage.getItem('studentSections'))
+    .every((section) => section.students.length === 0)).toBe(true);
+});
+
+test('rehydrates the Section List from the exact persisted academic section ID', async () => {
+  fetchUnassignedEnrolledStudents.mockResolvedValue({ data: [] });
+  fetchSectionedEnrolledStudents.mockResolvedValue({ data: [{
+    ...student,
+    academicSectionId: 2,
+    section: '1-2',
+  }] });
+
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+
+  await waitFor(() => {
+    const workspace = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0];
+    expect(workspace.students).toEqual([
+      expect.objectContaining({ studentId: '26-0042', academicSectionId: 2, sectionCode: '1-2' }),
+    ]);
+    expect(workspace.sectionPlans).toEqual(expect.arrayContaining([
+      expect.objectContaining({ academicSectionId: 1, sectionCode: '1-1' }),
+      expect.objectContaining({ academicSectionId: 2, sectionCode: '1-2' }),
+    ]));
+  });
+});
+
+test('refetches authoritative enrollment membership immediately after assignment', async () => {
+  fetchUnassignedEnrolledStudents
+    .mockResolvedValueOnce({ data: [student] })
+    .mockResolvedValue({ data: [] });
+  fetchSectionedEnrolledStudents
+    .mockResolvedValueOnce({ data: [] })
+    .mockResolvedValue({ data: [{ ...student, academicSectionId: 1, section: '1-1' }] });
+
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled \(1\)/ })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Generate Sections' }));
+
+  await waitFor(() => expect(fetchSectionedEnrolledStudents).toHaveBeenCalledTimes(2));
+  await waitFor(() => {
+    const workspace = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0];
+    expect(workspace.students).toEqual([
+      expect.objectContaining({ studentId: '26-0042', academicSectionId: 1, sectionCode: '1-1' }),
+    ]);
+  });
 });

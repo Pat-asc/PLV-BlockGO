@@ -14,7 +14,7 @@ import {
   syncSectionedStudentsToStorage,
 } from "../../utils/studentSectioningHelpers";
 import { downloadTemplateButtonClass } from "../shared/downloadButtonStyles";
-import { fetchNextStudentId, fetchUnassignedEnrolledStudents, getSystemSetting } from "../../services/api";
+import { fetchDepartmentSections, fetchNextStudentId, fetchSectionedEnrolledStudents, fetchUnassignedEnrolledStudents, getSystemSetting } from "../../services/api";
 import { syncSectioningBatchToBackend } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
 
@@ -596,29 +596,57 @@ function RegistrarStudentSectioning({
       setEnrolledLoading(false);
       return;
     }
-    fetchUnassignedEnrolledStudents({ department: chairpersonDepartment, schoolYear,
-      semester: sectioningSemester, yearLevel: YEAR_LEVEL_PREFIXES[selectedYearLevel] })
-      .then((response) => {
+    const filters = { department: chairpersonDepartment, schoolYear,
+      semester: sectioningSemester, yearLevel: YEAR_LEVEL_PREFIXES[selectedYearLevel] };
+    Promise.all([
+      fetchUnassignedEnrolledStudents(filters),
+      fetchSectionedEnrolledStudents(filters),
+      fetchDepartmentSections(chairpersonDepartment),
+    ])
+      .then(([unassignedResponse, sectionedResponse, sectionsResponse]) => {
         if (cancelled) return;
-        const enrolled = response.data || [];
-        setEnrolledCount(enrolled.length);
+        const unassigned = unassignedResponse.data || [];
+        const sectioned = sectionedResponse.data || [];
+        const backendSections = (sectionsResponse.data || sectionsResponse.sections || [])
+          .filter((section) => String(section.yearLevel) === String(YEAR_LEVEL_PREFIXES[selectedYearLevel]));
+        setEnrolledCount(unassigned.length);
         const key = [chairpersonDepartment, schoolYear, sectioningSemester, "sectioning"].join("|");
         setBatches((current) => {
           const existing = current.find((batch) => batch.key === key);
-          if (!existing && !enrolled.length) return current;
-          const retained = (existing?.students || []).filter((student) =>
-            student.sectionCode || student.yearLevel !== selectedYearLevel);
-          const retainedIds = new Set(retained.map((student) => student.studentId));
-          const nextStudents = enrolled.filter((student) => !retainedIds.has(student.studentNo)).map((student) => ({
-            ...student, studentId: student.studentNo,
+          if (!existing && !unassigned.length && !sectioned.length && !backendSections.length) return current;
+          const retained = (existing?.students || []).filter((student) => student.yearLevel !== selectedYearLevel);
+          const authoritativeStudents = [...sectioned, ...unassigned].map((student) => ({
+            ...student,
+            studentId: student.studentNo,
             // Preserve the official full name; do not guess its component parts.
             firstName: student.fullName, lastName: "", middleName: "",
-            yearLevel: AVAILABLE_YEAR_LEVELS[Number(student.yearLevel) - 1], sectionCode: "",
+            yearLevel: AVAILABLE_YEAR_LEVELS[Number(student.yearLevel) - 1],
+            sectionCode: student.section || "",
+            sectionName: student.section
+              ? getDefaultSectionName(chairpersonDepartment, student.section)
+              : "",
           }));
-          const workspace = { id: Date.now(), status: "Sectioning", sectionPlans: [], removedStudents: [],
+          const authoritativePlans = backendSections.map((section) => {
+            const sectionCode = `${section.yearLevel}-${section.sectionNum}`;
+            return {
+              id: Number(section.id),
+              academicSectionId: Number(section.id),
+              sectionCode,
+              sectionName: getDefaultSectionName(chairpersonDepartment, sectionCode),
+              yearLevel: selectedYearLevel,
+            };
+          });
+          const retainedPlans = (existing?.sectionPlans || [])
+            .filter((section) => !sectionMatchesYearLevel(section, selectedYearLevel));
+          const workspace = { id: Date.now(), status: "Sectioning", removedStudents: [],
             ...existing, key, program: chairpersonDepartment, batchYear: sectioningBatchYear,
-            schoolYear, semester: sectioningSemester, students: [...retained, ...nextStudents] };
-          return [...current.filter((batch) => batch.key !== key), workspace];
+            schoolYear, semester: sectioningSemester,
+            sectionPlans: [...retainedPlans, ...authoritativePlans],
+            students: [...retained, ...authoritativeStudents] };
+          const next = [...current.filter((batch) => batch.key !== key), workspace];
+          localStorage.setItem(STUDENT_BATCHES_KEY, JSON.stringify(next));
+          syncSectionedStudentsToStorage(next);
+          return next;
         });
         setSelectedBatchKey(key);
       })
@@ -867,6 +895,7 @@ function RegistrarStudentSectioning({
     }
     setSavingSections(false);
     persistBatches(nextBatches);
+    setEnrollmentRefresh((current) => current + 1);
     setEnrolledCount((count) => Math.max(0, count - studentsNeedingSection.length));
     setSelectedBatchKey(workspaceKey);
     setSectioningBatchYear(workspace.batchYear || sectioningBatchYear);
@@ -1245,7 +1274,9 @@ function RegistrarStudentSectioning({
 
         persistBatches(nextBatches);
         const updatedBatch = nextBatches.find((batch) => batch.key === selectedBatch.key);
-        syncBatchToBackend(updatedBatch);
+        syncBatchToBackend(updatedBatch).then((synced) => {
+          if (synced) setEnrollmentRefresh((current) => current + 1);
+        });
         setSelectedSectionCode(section.sectionCode);
         alert(
           `${importedStudents.length} student${importedStudents.length === 1 ? "" : "s"} imported into ${sectionName}.`
@@ -1275,6 +1306,7 @@ function RegistrarStudentSectioning({
     setSavingSections(false);
     if (synced) {
       persistBatches(nextBatches);
+      setEnrollmentRefresh((current) => current + 1);
       alert("Sections saved and synced successfully.");
     }
   };

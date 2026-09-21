@@ -1822,6 +1822,30 @@ namespace Client_app.Controllers
             }
         }
 
+        [HttpGet("students/sectioned-enrolled")]
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> GetSectionedEnrolledStudents(
+            [FromQuery] string? department, [FromQuery] string? yearLevel,
+            [FromQuery] string? schoolYear, [FromQuery] string? semester)
+        {
+            try
+            {
+                short? year = string.IsNullOrWhiteSpace(yearLevel) ? null : NormalizeYearLevel(yearLevel);
+                var periodYear = string.IsNullOrWhiteSpace(schoolYear) ? null : NormalizeSchoolYear(schoolYear);
+                var periodSemester = string.IsNullOrWhiteSpace(semester) ? null : NormalizeEnrollmentSemester(semester);
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(HttpContext.RequestAborted);
+                var students = await EnrollmentSectioningService.GetSectionedAsync(connection,
+                    string.IsNullOrWhiteSpace(department) ? null : department.Trim(), year,
+                    periodYear, periodSemester, null);
+                return Ok(new { status = "Success", data = students });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { status = "Error", message = ex.Message });
+            }
+        }
+
         [HttpPost("faculty/assignments/bulk")]
         [Authorize(Roles = "department_admin,registrar")]
         public async Task<IActionResult> BulkAssignFacultyLoads(

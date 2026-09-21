@@ -45,7 +45,7 @@ Check(fullCoverage == (0, 0) && incompleteCoverage == (1, 1), "Roster coverage c
 Pass(42, "submit-to-Chairperson roster coverage");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -57,19 +57,19 @@ CREATE TEMP TABLE academic_programs(program_id INT PRIMARY KEY,program_code TEXT
 CREATE TEMP TABLE curriculums(curriculum_id INT PRIMARY KEY,program_id INT,status TEXT);
 CREATE TEMP TABLE curriculum_subjects(id SERIAL,curriculum_id INT,subject_code TEXT,year_level INT,semester TEXT);
 CREATE TEMP TABLE academicsections(id INT PRIMARY KEY,department TEXT,year_level INT,section_num INT);
-CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_name TEXT,department TEXT,section TEXT,assignment_status TEXT);
-CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,UNIQUE(student_user_id,school_year,semester));
+CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_name TEXT,department TEXT,section TEXT,assignment_status TEXT,student_email TEXT,sex TEXT,curriculum_id BIGINT,batch_year INT,year_level TEXT);
+CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,updated_at TIMESTAMPTZ,UNIQUE(student_user_id,school_year,semester));
 CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_name TEXT,department TEXT);
 CREATE TEMP TABLE facultysections(id SERIAL PRIMARY KEY,user_id INT,department TEXT,section TEXT,year_level TEXT,subject TEXT,academic_section_id INT,school_year TEXT,semester TEXT,is_active BOOLEAN DEFAULT TRUE,deactivated_at TIMESTAMPTZ,deactivated_by TEXT);
 CREATE UNIQUE INDEX ux_test_facultysections_exact ON facultysections(user_id,academic_section_id,school_year,semester,LOWER(subject)) WHERE is_active=TRUE;
-CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT);
+CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT,student_hash TEXT,student_name TEXT,section TEXT,course TEXT,subject_code TEXT,semester TEXT,school_year TEXT,faculty_id TEXT,date TEXT,ipfs_cid TEXT,term TEXT);
 CREATE UNIQUE INDEX ux_test_pending_assignment_student ON pending_grade_records(assignment_cycle_id,student_no);
 INSERT INTO academic_programs VALUES(1,'BSIT','BS Information Technology',TRUE),(2,'BSCS','BS Computer Science',TRUE); INSERT INTO curriculums VALUES(1,1,'PUBLISHED'),(2,2,'PUBLISHED');
 INSERT INTO curriculum_subjects(curriculum_id,subject_code,year_level,semester) VALUES(1,'IT 101',1,'FIRST'),(1,'IT 102',1,'FIRST'),(1,'IT 101',1,'SECOND'),(2,'CS 101',1,'FIRST');
 INSERT INTO academicsections VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2),(3,'BS Computer Science',1,1);
 INSERT INTO users VALUES(1,'x','profx@plv.edu.ph','faculty','APPROVED',TRUE),(3,'y','profy@plv.edu.ph','faculty','APPROVED',TRUE),(9,'z','profz@plv.edu.ph','faculty','APPROVED',TRUE),(2,'a','a@plv.edu.ph','student','APPROVED',TRUE),(4,'b','b@plv.edu.ph','student','APPROVED',TRUE),(5,'c','c@plv.edu.ph','student','APPROVED',TRUE),(6,'stale','stale@plv.edu.ph','student','APPROVED',TRUE),(7,'old','old@plv.edu.ph','student','APPROVED',TRUE),(8,'second','second@plv.edu.ph','student','APPROVED',TRUE),(12,'csc','csc@plv.edu.ph','student','APPROVED',TRUE);
 INSERT INTO facultyprofiles VALUES(1,'FAC-1','Professor X','BS Information Technology'),(3,'FAC-3','Professor Y','BS Information Technology'),(9,'FAC-9','Professor Z','BS Information Technology');
-INSERT INTO studentprofiles VALUES(2,'26-0001','Student A','Wrong','9-9','Dropped'),(4,'26-0002','Student B','BS Information Technology','BSIT 1-1','Enrolled'),(5,'26-0003','Student C','BS Information Technology','BSIT 1-1','Enrolled'),(6,'26-0004','Stale Profile','BS Information Technology','BSIT 1-1','Enrolled'),(7,'25-0001','Old Period','BS Information Technology','BSIT 1-1','Enrolled'),(8,'26-0005','Second Term','BS Information Technology','BSIT 1-1','Enrolled'),(12,'26-0100','Computer Science Student','BS Computer Science','BSCS 1-1','Enrolled');
+INSERT INTO studentprofiles(user_id,student_no,full_name,department,section,assignment_status) VALUES(2,'26-0001','Student A','Wrong','9-9','Dropped'),(4,'26-0002','Student B','BS Information Technology','BSIT 1-1','Enrolled'),(5,'26-0003','Student C','BS Information Technology','BSIT 1-1','Enrolled'),(6,'26-0004','Stale Profile','BS Information Technology','BSIT 1-1','Enrolled'),(7,'25-0001','Old Period','BS Information Technology','BSIT 1-1','Enrolled'),(8,'26-0005','Second Term','BS Information Technology','BSIT 1-1','Enrolled'),(12,'26-0100','Computer Science Student','BS Computer Science','BSCS 1-1','Enrolled');
 INSERT INTO student_enrollments(student_user_id,student_no,program_id,curriculum_id,academic_section_id,school_year,semester,year_level,status) VALUES(2,'26-0001',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(4,'26-0002',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(5,'26-0003',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(7,'25-0001',1,1,1,'2025-2026','FIRST',1,'ENROLLED'),(8,'26-0005',1,1,1,'2026-2027','SECOND',1,'ENROLLED'),(12,'26-0100',2,2,3,'2026-2027','FIRST',1,'ENROLLED');");
 var enrollmentCount=await Count("SELECT COUNT(*) FROM student_enrollments"); var profileCount=await Count("SELECT COUNT(*) FROM studentprofiles");
 Task<bool> AllowProgram(string program, CancellationToken _) => Task.FromResult(program == "BSIT");
@@ -119,10 +119,10 @@ Check(!roster.Any(r=>r.StudentNo=="26-0004"),"Stale profile leaked."); Pass(9,"s
 await Exec("UPDATE student_enrollments SET academic_section_id=2 WHERE student_user_id=8 AND semester='SECOND'"); Check((await FacultyAssignmentRosterService.GetRosterAsync(db,exact)).Any(r=>r.StudentNo=="26-0001"),"Newer row overrode assignment."); Pass(13,"newer enrollment cannot override exact assignment");
 var one=(await FacultyAssignmentRosterService.GetRosterAsync(db,exact)).Select(r=>r.StudentNo); var two=(await FacultyAssignmentRosterService.GetRosterAsync(db,exact)).Select(r=>r.StudentNo); Check(one.SequenceEqual(two),"Roster consumers differ."); Pass(14,"encoding/template canonical parity"); Check(exact.FacultyUserId!=1,"Ownership fixture invalid."); Pass(15,"unauthorized owner mismatch detected");
 await Exec("INSERT INTO facultysections VALUES(103,1,'BS Information Technology','BSIT 1-1','1','IT 101',NULL,NULL,NULL,TRUE,NULL,NULL)"); Check((await FacultyAssignmentRosterService.ResolveAsync(db,103)).Status==FacultyAssignmentRosterService.ResolutionStatus.UnresolvedLegacy,"Legacy assignment inferred a roster from display text."); Pass(16,"legacy assignment cannot infer grading identity"); Check(!one.Contains("26-0002"),"Removed B visible."); Pass(17,"removed student excluded from all canonical consumers");
-await Exec("INSERT INTO pending_grade_records VALUES('old','102','26-0001','Forwarded to Registrar','{}'),('final','102','26-0002','Finalized','{}'); UPDATE facultysections SET is_active=FALSE WHERE id=102; INSERT INTO facultysections VALUES(104,3,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL)");
+await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('old','102','26-0001','Forwarded to Registrar','{}'),('final','102','26-0002','Finalized','{}'); UPDATE facultysections SET is_active=FALSE WHERE id=102; INSERT INTO facultysections VALUES(104,3,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL)");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE assignment_cycle_id='104'")==0,"Status inherited."); Pass(18,"new cycle status isolation"); Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='final'")==1,"Final deleted."); Pass(19,"reset preserves finalized grades"); await Exec("UPDATE facultysections SET is_active=FALSE WHERE id=101"); Check(await Count("SELECT COUNT(*) FROM facultysections WHERE id=101 AND is_active=FALSE")==1,"Deactivate failed."); Pass(20,"safe deactivation"); Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='final'")==1,"Final history removed."); Pass(21,"deactivation preserves protected history");
 var activeCycle=(await FacultyAssignmentRosterService.ResolveAsync(db,104)).Value!;
-await Exec("INSERT INTO users VALUES(10,'section-b-one','b1@plv.edu.ph','student','APPROVED',TRUE),(11,'section-b-two','b2@plv.edu.ph','student','APPROVED',TRUE); INSERT INTO studentprofiles VALUES(10,'26-0010','Section B One','BS Information Technology','BSIT 1-2','Enrolled'),(11,'26-0011','Section B Two','BS Information Technology','BSIT 1-2','Enrolled'); INSERT INTO student_enrollments(student_user_id,student_no,program_id,curriculum_id,academic_section_id,school_year,semester,year_level,status) VALUES(10,'26-0010',1,1,2,'2026-2027','FIRST',1,'ENROLLED'),(11,'26-0011',1,1,2,'2026-2027','FIRST',1,'ENROLLED'); INSERT INTO facultysections VALUES(105,1,'BS Information Technology','BSIT 1-2','1','IT 101',2,'2026-2027','FIRST',TRUE,NULL,NULL)");
+await Exec("INSERT INTO users VALUES(10,'section-b-one','b1@plv.edu.ph','student','APPROVED',TRUE),(11,'section-b-two','b2@plv.edu.ph','student','APPROVED',TRUE); INSERT INTO studentprofiles(user_id,student_no,full_name,department,section,assignment_status) VALUES(10,'26-0010','Section B One','BS Information Technology','BSIT 1-2','Enrolled'),(11,'26-0011','Section B Two','BS Information Technology','BSIT 1-2','Enrolled'); INSERT INTO student_enrollments(student_user_id,student_no,program_id,curriculum_id,academic_section_id,school_year,semester,year_level,status) VALUES(10,'26-0010',1,1,2,'2026-2027','FIRST',1,'ENROLLED'),(11,'26-0011',1,1,2,'2026-2027','FIRST',1,'ENROLLED'); INSERT INTO facultysections VALUES(105,1,'BS Information Technology','BSIT 1-2','1','IT 101',2,'2026-2027','FIRST',TRUE,NULL,NULL)");
 var sectionB=(await FacultyAssignmentRosterService.ResolveAsync(db,105)).Value!;
 var sectionARoster=await FacultyAssignmentRosterService.GetRosterAsync(db,activeCycle);
 var sectionBRoster=await FacultyAssignmentRosterService.GetRosterAsync(db,sectionB);
@@ -161,15 +161,47 @@ var parityRoster=await FacultyAssignmentRosterService.GetRosterAsync(db,activeCy
 Check(parityRoster.Select(student=>student.StudentNo).SequenceEqual(
       (await FacultyAssignmentRosterService.GetRosterAsync(db,activeCycle)).Select(student=>student.StudentNo)),
     "Bulk and manual roster identities differ."); Pass(46,"bulk/manual identity parity");
+await Exec("UPDATE student_enrollments SET status='ENROLLED',academic_section_id=NULL,section=NULL WHERE student_user_id=6 AND school_year='2026-2027' AND semester='FIRST'");
+var unassignedForSectioning=await EnrollmentSectioningService.GetUnassignedAsync(db,"BSIT",1,"2026-2027","FIRST",null);
+Check(unassignedForSectioning.Any(student=>student.StudentNo=="26-0004"),"Unassigned ENROLLED student was missing from Registrar sectioning."); Pass(62,"Registrar sectioning reads current unassigned enrollment");
+await EnrollmentSectioningService.AssignAsync(db,1,new[]{"26-0004"},"2026-2027","FIRST",null);
+var sectionedAfterAssign=await EnrollmentSectioningService.GetSectionedAsync(db,"BSIT",1,"2026-2027","FIRST",null);
+Check(sectionedAfterAssign.Any(student=>student.StudentNo=="26-0004" && student.AcademicSectionId==1 && student.Section=="1-1"),
+    "Successful assignment was not visible from authoritative student_enrollments."); Pass(63,"Registrar Section List reflects assignment immediately");
+await EnrollmentSectioningService.AssignAsync(db,2,new[]{"26-0004"},"2026-2027","FIRST",null,
+    new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase){{"26-0004",1}});
+var sectionedAfterMove=await EnrollmentSectioningService.GetSectionedAsync(db,"BSIT",1,"2026-2027","FIRST",null);
+Check(sectionedAfterMove.Any(student=>student.StudentNo=="26-0004" && student.AcademicSectionId==2 && student.Section=="1-2") &&
+      !sectionedAfterMove.Any(student=>student.StudentNo=="26-0004" && student.AcademicSectionId==1),
+    "Moved student remained in the old section or did not appear in the new section."); Pass(64,"Registrar Section List reflects exact section move");
+var computerScienceSectioned=await EnrollmentSectioningService.GetSectionedAsync(db,"BSCS",1,"2026-2027","FIRST",null);
+Check(computerScienceSectioned.Select(student=>student.StudentNo).SequenceEqual(new[]{"26-0100"}) &&
+      computerScienceSectioned.All(student=>student.AcademicSectionId==3),
+    "Same-label section membership mixed programs."); Pass(65,"Registrar duplicate section labels remain isolated by ID");
 await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('draft-1','104','26-0001','Draft','{}') ON CONFLICT (assignment_cycle_id,student_no) DO UPDATE SET grade=EXCLUDED.grade; INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('draft-2','104','26-0001','Draft','{\"midterm\":\"90\"}') ON CONFLICT (assignment_cycle_id,student_no) DO UPDATE SET grade=EXCLUDED.grade;");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE assignment_cycle_id='104' AND student_no='26-0001'")==1,
     "Repeated save created duplicate pending grades."); Pass(47,"no duplicate pending grades");
+await Exec(@"INSERT INTO pending_grade_records
+    (id,assignment_cycle_id,student_no,status,grade,student_hash,student_name,section,course,subject_code,semester,school_year,faculty_id,date,ipfs_cid,term)
+    VALUES
+    ('old-approved','102','26-0901','DepartmentApproved','90','old@example.edu','Old Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-1','2026-09-01','','finals'),
+    ('current-approved','104','26-0902','DepartmentApproved','91','current@example.edu','Current Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-3','2026-09-21','','finals'),
+    ('current-finalized','104','26-0903','Finalized','92','final@example.edu','Final Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-3','2026-09-21','','finals');");
+var approvedHistoryCount=await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-approved','current-finalized')");
+var finalizationQueue=await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db);
+Check(finalizationQueue.Select(record=>record.Id).SequenceEqual(new[]{"current-approved"}),
+    "Registrar finalization queue included inactive, historical, or non-DepartmentApproved records."); Pass(66,"Registrar finalization queue is current-cycle DepartmentApproved only");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='current-finalized'")==1,
+    "Finalized history was removed while selecting the active queue."); Pass(67,"finalized history remains stored outside active queue");
 await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('old-review','102','26-0998','SubmittedToChairperson','{}'),('current-review','104','26-0999','SubmittedToChairperson','{}')");
 var currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db);
 Check(currentReviewIds.SetEquals(new[]{"current-review"}),"For Review mixed inactive assignment cycles."); Pass(54,"For Review contains only active-cycle submissions");
 await Exec("UPDATE facultysections SET is_active=FALSE WHERE is_active=TRUE");
 currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db);
 Check(currentReviewIds.Count==0,"Reset left old submissions in current For Review."); Pass(55,"reset empties current For Review");
+Check((await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db)).Count==0 &&
+      await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-approved','current-finalized')")==approvedHistoryCount,
+    "Reset left an actionable finalization row or deleted grade history."); Pass(68,"reset empties finalization queue and preserves history");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review','final')")==3,
     "Reset deleted historical or finalized grades."); Pass(56,"reset preserves submitted and finalized history");
 await Exec("INSERT INTO facultysections VALUES(106,1,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL); INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('new-review','106','26-0001','SubmittedToChairperson','{}')");

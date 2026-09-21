@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { fetchAllGrades, finalizeGrade, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason } from '../../services/api';
+import { fetchAllGrades, fetchRegistrarFinalizationQueue, finalizeGrade, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason } from '../../services/api';
 import RegistrarHeader from './RegistrarHeader';
 import RegistrarSidebar from './RegistrarSidebar';
 import RegistrarDashboard from './RegistrarDashboard';
@@ -52,6 +52,7 @@ const RegistrarGradesView = ({
 
     const [stagedGrades, setStagedGrades] = useState([]);
     const [stagedLoading, setStagedLoading] = useState(false);
+    const [finalizingBatchKey, setFinalizingBatchKey] = useState('');
     const [activeSemester, setActiveSemester] = useState('2nd Semester');
 
     const [filterDept, setFilterDept] = useState('All');
@@ -250,7 +251,7 @@ const RegistrarGradesView = ({
     const loadStagedGrades = useCallback(async () => {
         setStagedLoading(true);
         try {
-            const response = await fetchAllGrades(loggedInEmail);
+            const response = await fetchRegistrarFinalizationQueue();
             const allData = Array.isArray(response) ? response : (response.data || []);
             const approvedGrades = allData.filter(g =>
                 isDepartmentApprovedGradeStatus(g.status || g.Status || g.normalized_status)
@@ -268,7 +269,7 @@ const RegistrarGradesView = ({
             setStagedGrades(formattedStaged);
         } catch (error) { console.error('Error loading staged grades:', error); }
         setStagedLoading(false);
-    }, [loggedInEmail]);
+    }, []);
 
     const loadRequests = useCallback(async () => {
         try {
@@ -456,19 +457,34 @@ const RegistrarGradesView = ({
         );
     }, [stagedGrades]);
 
-    const handleFinalizeBatch = async (records) => {
-        if (!window.confirm(`Are you sure you want to commit all ${records.length} grades in this section to the blockchain ledger?`)) return;
-        
+    const finalizeBatch = async (records) => {
+        const batchKey = records.map((record) => record.stagingId).sort().join('|');
+        setFinalizingBatchKey(batchKey);
         try {
             for (const g of records) {
                 await finalizeGrade(g.stagingId, loggedInEmail);
             }
             alert("Section grades officially committed to the ledger!");
-            loadStagedGrades();
-            loadGrades();
+            await Promise.all([loadStagedGrades(), loadGrades()]);
         } catch (err) {
             alert(`Finalization failed: ${err.message}`);
+            await loadStagedGrades();
+        } finally {
+            setFinalizingBatchKey('');
         }
+    };
+
+    const handleFinalizeBatch = (records) => {
+        setConfirmModal({
+            isOpen: true,
+            title: 'Confirm Ledger Finalization',
+            message: `Finalize ${records.length} approved grade${records.length === 1 ? '' : 's'} to the immutable blockchain ledger?`,
+            isDestructive: false,
+            onConfirm: async () => {
+                setConfirmModal((current) => ({ ...current, isOpen: false }));
+                await finalizeBatch(records);
+            },
+        });
     };
 
     const handleViewIpfs = (cid) => {
@@ -1157,8 +1173,11 @@ const RegistrarGradesView = ({
                                             No grades approved by departments waiting for finalization.
                                         </div>
                                     ) : (
-                                        groupedStagedGrades.map((group, index) => (
-                                            <div key={index} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                                                groupedStagedGrades.map((group, index) => {
+                                                    const batchKey = group.records.map((record) => record.stagingId).sort().join('|');
+                                                    const isFinalizing = finalizingBatchKey === batchKey;
+                                                    return (
+                                                    <div key={index} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
                                                 <div className="flex flex-col md:flex-row md:items-center justify-between bg-slate-50 p-5 border-b border-slate-200">
                                                     <div>
                                                         <h4 className="font-bold text-[#003366] text-lg">
@@ -1170,12 +1189,13 @@ const RegistrarGradesView = ({
                                                             {group.records.length} pending grade(s)
                                                         </p>
                                                     </div>
-                                                    <button 
-                                                        onClick={() => handleFinalizeBatch(group.records)}
-                                                        className="mt-3 md:mt-0 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 shadow-sm"
-                                                    >
-                                                        Finalize All to Ledger
-                                                    </button>
+                                                        <button
+                                                            onClick={() => handleFinalizeBatch(group.records)}
+                                                            disabled={!!finalizingBatchKey}
+                                                            className="mt-3 md:mt-0 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 shadow-sm disabled:cursor-not-allowed disabled:bg-slate-400"
+                                                        >
+                                                            {isFinalizing ? 'Finalizing...' : 'Finalize All to Ledger'}
+                                                        </button>
                                                 </div>
                                                 <div className="overflow-x-auto">
                                                     <table className="w-full text-left text-sm">
@@ -1201,8 +1221,9 @@ const RegistrarGradesView = ({
                                                         </tbody>
                                                     </table>
                                                 </div>
-                                            </div>
-                                        ))
+                                                    </div>
+                                                    );
+                                                })
                                     )}
                                 </div>
                             )}
