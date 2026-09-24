@@ -29,7 +29,7 @@ defaults:
 jobs:
   workflow-security:
     name: Workflow and Repository Hygiene
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout complete history
@@ -38,6 +38,7 @@ jobs:
           ref: ${{ inputs.checkout_ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+          submodules: false
 
       - name: Install actionlint with checksum verification
         env:
@@ -123,7 +124,7 @@ jobs:
   dependency-review:
     name: Pull Request Dependency Review
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -133,6 +134,7 @@ jobs:
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
           persist-credentials: false
+          submodules: false
 
       - name: Block vulnerable dependency changes
         uses: actions/dependency-review-action@v5
@@ -144,7 +146,7 @@ jobs:
   codeql:
     name: CodeQL (${{ matrix.language }})
     if: vars.CODEQL_ADVANCED_SETUP == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       actions: read
@@ -166,6 +168,7 @@ jobs:
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
           persist-credentials: false
+          submodules: false
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
@@ -173,6 +176,7 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           queries: security-and-quality
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Analyze source
         uses: github/codeql-action/analyze@v4
@@ -181,7 +185,7 @@ jobs:
 
   repository-scan:
     name: Secrets, Dependencies and IaC
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       actions: read
@@ -194,6 +198,7 @@ jobs:
           ref: ${{ inputs.checkout_ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+          submodules: false
 
       - name: Prepare changed files for blocking security checks
         id: changed-files
@@ -276,20 +281,20 @@ jobs:
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
+          skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tests/AssignmentRegressionTests/bin,tests/AssignmentRegressionTests/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
           exit-code: "0"
           format: table
 
       - name: Generate dependency vulnerability JSON
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          skip-setup-trivy: true
+          version: v0.74.0
           scan-type: fs
           scan-ref: .
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
+          skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tests/AssignmentRegressionTests/bin,tests/AssignmentRegressionTests/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
           exit-code: "0"
           format: json
           output: security-results/trivy-dependencies.json
@@ -297,13 +302,13 @@ jobs:
       - name: Generate dependency SARIF
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          skip-setup-trivy: true
+          version: v0.74.0
           scan-type: fs
           scan-ref: .
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
+          skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tests/AssignmentRegressionTests/bin,tests/AssignmentRegressionTests/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
           exit-code: "0"
           format: sarif
           limit-severities-for-sarif: true
@@ -446,7 +451,7 @@ jobs:
         if: always() && steps.changed-files.outputs.secret_diff == '1'
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          skip-setup-trivy: true
+          version: v0.74.0
           scan-type: fs
           scan-ref: .security-secret-changes
           scanners: secret
@@ -568,12 +573,12 @@ jobs:
         if: always()
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          skip-setup-trivy: true
+          version: v0.74.0
           scan-type: fs
           scan-ref: .
           scanners: secret,misconfig
           severity: HIGH,CRITICAL
-          skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tmp
+          skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tests/AssignmentRegressionTests/bin,tests/AssignmentRegressionTests/obj,tmp
           exit-code: "0"
           format: sarif
           limit-severities-for-sarif: true
@@ -604,16 +609,16 @@ jobs:
         if: always()
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          skip-setup-trivy: true
+          version: v0.74.0
           scan-type: fs
           scan-ref: .
-          skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
+          skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tests/AssignmentRegressionTests/bin,tests/AssignmentRegressionTests/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
           format: cyclonedx
           output: security-results/blockgo-repository.cdx.json
           exit-code: "0"
 
       - name: Upload security evidence
-        if: always()
+        if: always() && hashFiles('security-results/**') != ''
         uses: actions/upload-artifact@v7
         with:
           name: repository-security-${{ github.sha }}
@@ -624,7 +629,7 @@ jobs:
   security-gate:
     name: Required Security Gate
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs:
       - workflow-security
