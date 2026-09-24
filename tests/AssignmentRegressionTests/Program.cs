@@ -14,6 +14,35 @@ Check(new[] { "final", "finals", "FINAL", "FINALS" }.All(term => GradeAcademicTe
 Check(GradeAcademicTerm.Normalize("midterm") == GradeAcademicTerm.Midterm && GradeAcademicTerm.Normalize("MIDTERMS") == GradeAcademicTerm.Midterm,
     "Midterm normalization regressed."); Pass(61, "midterm aliases normalize to midterm");
 
+var openMidterm = GradeEncodingPeriodService.ParseOpen(
+    "{\"semester\":\"First Semester\",\"startDate\":\"2026-09-01\",\"endDate\":\"2026-09-30\",\"term\":\"MIDTERM\"}",
+    new DateOnly(2026, 9, 22));
+Check(openMidterm.Term == "midterm" && openMidterm.Semester == "FIRST", "Authoritative Midterm period did not normalize.");
+Pass(69, "authoritative encoding period normalizes Midterm casing");
+var midtermOnly = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+    "{\"midterm\":\"85\",\"finals\":\"90\",\"finalAverage\":\"87.5\"}", null, openMidterm.Term);
+Check(GradeEncodingPeriodService.HasGradeForTerm(midtermOnly, "midterm") && !midtermOnly.Contains("finals", StringComparison.OrdinalIgnoreCase),
+    "Closed Finals data survived Midterm projection."); Pass(70, "Midterm upload strips Finals data");
+var finalOnlyDuringMidterm = GradeEncodingPeriodService.ProjectIncomingGradePayload("{\"final\":\"90\"}", null, "midterm");
+Check(!GradeEncodingPeriodService.HasGradeForTerm(finalOnlyDuringMidterm, "midterm"), "Final-only upload became Midterm workflow data.");
+Pass(71, "Final-only Midterm upload is rejected");
+var finalsPayload = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+    "{\"midterm\":\"99\",\"FINAL\":\"90\"}", "{\"midterm\":\"85\"}", "FINALS");
+Check(finalsPayload.Contains("\"midterm\":\"85\"") && finalsPayload.Contains("\"finals\":\"90\"") && !finalsPayload.Contains("99"),
+    "Finals projection trusted the workbook Midterm or lost stored history."); Pass(72, "Finals accepts Finals and preserves stored Midterm");
+Check(new[] { "final", "finals", "FINAL", "FINALS" }.All(term =>
+        GradeEncodingPeriodService.ParseOpen($"{{\"semester\":\"FIRST\",\"startDate\":\"2026-09-01\",\"endDate\":\"2026-09-30\",\"term\":\"{term}\"}}", new DateOnly(2026, 9, 22)).Term == "finals"),
+    "Authoritative Finals aliases did not normalize."); Pass(73, "authoritative Finals casing normalization");
+Check(new[] { "SubmittedToChairperson", "ChairpersonApproved", "DepartmentApproved", "Finalized" }
+        .All(RegistrarGradeLedgerMetadataService.IsBrowsableStatus) &&
+      !new[] { "Draft", "Returned" }.Any(RegistrarGradeLedgerMetadataService.IsBrowsableStatus),
+    "Registrar ledger browsing statuses included editable rows or omitted submitted history.");
+Pass(82, "Registrar ledger status scope is historical and read-only");
+var closedRejected = false;
+try { GradeEncodingPeriodService.ParseOpen("{\"semester\":\"FIRST\",\"startDate\":\"2026-10-01\",\"endDate\":\"2026-10-31\",\"term\":\"midterm\"}", new DateOnly(2026, 9, 22)); }
+catch (GradeEncodingPeriodException) { closedRejected = true; }
+Check(closedRejected, "Closed encoding period was accepted."); Pass(74, "closed encoding period fails closed");
+
 var assignment = new FacultyAssignmentRosterService.Assignment(102, 1, "profx@plv.edu.ph", "BS Information Technology",
     "BSIT 1-1", "1", "IT 101", 1, "2026-2027", "FIRST", "BSIT 1-1", false);
 var canonical = new List<FacultyAssignmentRosterService.RosterStudent> {
@@ -45,7 +74,7 @@ Check(fullCoverage == (0, 0) && incompleteCoverage == (1, 1), "Roster coverage c
 Pass(42, "submit-to-Chairperson roster coverage");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -60,6 +89,7 @@ CREATE TEMP TABLE academicsections(id INT PRIMARY KEY,department TEXT,year_level
 CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_name TEXT,department TEXT,section TEXT,assignment_status TEXT,student_email TEXT,sex TEXT,curriculum_id BIGINT,batch_year INT,year_level TEXT);
 CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,updated_at TIMESTAMPTZ,UNIQUE(student_user_id,school_year,semester));
 CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_name TEXT,department TEXT);
+CREATE TEMP TABLE systemsettings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TEMP TABLE facultysections(id SERIAL PRIMARY KEY,user_id INT,department TEXT,section TEXT,year_level TEXT,subject TEXT,academic_section_id INT,school_year TEXT,semester TEXT,is_active BOOLEAN DEFAULT TRUE,deactivated_at TIMESTAMPTZ,deactivated_by TEXT);
 CREATE UNIQUE INDEX ux_test_facultysections_exact ON facultysections(user_id,academic_section_id,school_year,semester,LOWER(subject)) WHERE is_active=TRUE;
 CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT,student_hash TEXT,student_name TEXT,section TEXT,course TEXT,subject_code TEXT,semester TEXT,school_year TEXT,faculty_id TEXT,date TEXT,ipfs_cid TEXT,term TEXT);
@@ -107,6 +137,18 @@ await Exec("INSERT INTO facultysections VALUES(101,1,'BS Information Technology'
 var empty=(await FacultyAssignmentRosterService.ResolveAsync(db,101)).Value!; Check((await FacultyAssignmentRosterService.GetRosterAsync(db,empty)).Count==0 && await Count("SELECT COUNT(*) FROM student_enrollments")==enrollmentCount && await Count("SELECT COUNT(*) FROM studentprofiles")==profileCount,"Empty assignment mutated students."); Pass(1,"empty-section assignment is independent");
 await Exec("INSERT INTO facultysections VALUES(102,1,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL)");
 var exact=(await FacultyAssignmentRosterService.ResolveAsync(db,102)).Value!; var roster=await FacultyAssignmentRosterService.GetRosterAsync(db,exact);
+var ledgerAssignments=await RegistrarGradeLedgerMetadataService.LoadAssignmentsAsync(db);
+Check(ledgerAssignments.TryGetValue("102",out var ledgerAssignment) && ledgerAssignment.FacultyUserId==1 &&
+      ledgerAssignment.AcademicSectionId==1 && ledgerAssignment.ProgramId==1 && ledgerAssignment.ProgramCode=="BSIT" &&
+      ledgerAssignment.SubjectCode=="IT 101" && ledgerAssignments.TryGetValue("101",out var noRosterAssignment) &&
+      noRosterAssignment.ProgramId==1 && noRosterAssignment.ProgramCode=="BSIT",
+    "Registrar ledger assignment metadata did not resolve exact database identities.");
+Pass(83,"Registrar ledger resolves canonical program ID through enrollment or exact academic section");
+var ledgerStudents=await RegistrarGradeLedgerMetadataService.LoadStudentIdentitiesAsync(db);
+Check(ledgerStudents.TryGetValue("26-0001",out var ledgerStudent) && ledgerStudent.UserId==2 &&
+      ledgerStudents.TryGetValue("a@plv.edu.ph",out var ledgerStudentByEmail) && ledgerStudentByEmail.UserId==ledgerStudent.UserId,
+    "Registrar ledger student identity did not resolve the official Registrar profile.");
+Pass(84,"Registrar ledger resolves official student identity by number and account");
 Check(roster.Select(r=>r.StudentNo).SequenceEqual(new[]{"26-0001","26-0002","26-0003"}),"Roster is not A/B/C."); Pass(2,"existing roster A/B/C");
 await Exec("UPDATE student_enrollments SET status='DROPPED' WHERE student_user_id=4 AND school_year='2026-2027' AND semester='FIRST'"); roster=await FacultyAssignmentRosterService.GetRosterAsync(db,exact); Check(!roster.Any(r=>r.StudentNo=="26-0002"),"B restored."); Pass(3,"removed student not recreated");
 await Exec("UPDATE facultysections SET user_id=3 WHERE id=102"); exact=(await FacultyAssignmentRosterService.ResolveAsync(db,102)).Value!; Check(exact.FacultyUserId==3 && await Count("SELECT COUNT(*) FROM student_enrollments")==enrollmentCount,"Reassignment changed students."); Pass(4,"professor reassignment only");
@@ -193,20 +235,46 @@ Check(finalizationQueue.Select(record=>record.Id).SequenceEqual(new[]{"current-a
     "Registrar finalization queue included inactive, historical, or non-DepartmentApproved records."); Pass(66,"Registrar finalization queue is current-cycle DepartmentApproved only");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='current-finalized'")==1,
     "Finalized history was removed while selecting the active queue."); Pass(67,"finalized history remains stored outside active queue");
-await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('old-review','102','26-0998','SubmittedToChairperson','{}'),('current-review','104','26-0999','SubmittedToChairperson','{}')");
-var currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db);
+await Exec(@"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term)
+VALUES('old-review','102','26-0998','SubmittedToChairperson','{}','IT 101','2026-2027','FIRST','finals'),
+      ('current-review','104','26-0999','SubmittedToChairperson','{}','IT 101','2026-2027','FIRST','finals')");
+var currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
 Check(currentReviewIds.SetEquals(new[]{"current-review"}),"For Review mixed inactive assignment cycles."); Pass(54,"For Review contains only active-cycle submissions");
 await Exec("UPDATE facultysections SET is_active=FALSE WHERE is_active=TRUE");
-currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db);
+currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
 Check(currentReviewIds.Count==0,"Reset left old submissions in current For Review."); Pass(55,"reset empties current For Review");
 Check((await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db)).Count==0 &&
       await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-approved','current-finalized')")==approvedHistoryCount,
     "Reset left an actionable finalization row or deleted grade history."); Pass(68,"reset empties finalization queue and preserves history");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review','final')")==3,
     "Reset deleted historical or finalized grades."); Pass(56,"reset preserves submitted and finalized history");
-await Exec("INSERT INTO facultysections VALUES(106,1,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL); INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('new-review','106','26-0001','SubmittedToChairperson','{}')");
-currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db);
+await Exec("INSERT INTO facultysections VALUES(106,1,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL); INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term) VALUES('new-review','106','26-0001','SubmittedToChairperson','{}','IT 101','2026-2027','FIRST','finals')");
+currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
 Check(currentReviewIds.SetEquals(new[]{"new-review"}) && await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review')")==2,
     "New cycle did not isolate its submission from preserved old cycles."); Pass(57,"new-cycle submission is the only current review record");
+await Exec("INSERT INTO systemsettings(key,value) VALUES('encoding_period','{\"semester\":\"FIRST\",\"startDate\":\"2026-01-01\",\"endDate\":\"2026-12-31\",\"term\":\"MIDTERM\"}')");
+var dbPeriod=await GradeEncodingPeriodService.GetOpenAsync(db,new DateOnly(2026,9,22));
+Check(dbPeriod.Term=="midterm" && dbPeriod.Semester=="FIRST","Database encoding period was not authoritative."); Pass(75,"PostgreSQL authoritative Midterm period");
+var dbMidtermPayload=GradeEncodingPeriodService.ProjectIncomingGradePayload("{\"midterm\":\"85\",\"finals\":\"90\"}",null,dbPeriod.Term);
+await Exec($"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term) VALUES('qa-midterm','106','26-0701','SubmittedToChairperson','{dbMidtermPayload.Replace("'", "''")}','IT 101','2026-2027','FIRST','midterm')");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='qa-midterm' AND grade::jsonb ? 'midterm' AND NOT (grade::jsonb ? 'finals')")==1,
+    "PostgreSQL Draft retained closed Finals data."); Pass(76,"Midterm persistence contains no Finals field");
+await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term) VALUES('qa-future','106','26-0702','SubmittedToChairperson','{\"finals\":\"90\"}','IT 101','2026-2027','FIRST','finals')");
+var midtermReviewIds=await ChairpersonReviewScopeService.GetCurrentVisibleRecordIdsAsync(db,"midterm","FIRST");
+Check(midtermReviewIds.Contains("qa-midterm") && !midtermReviewIds.Contains("qa-future"),"Chairperson scope exposed a closed-term row.");
+Pass(77,"Chairperson API scope excludes closed Finals row");
+await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term) VALUES('qa-submit-mid','106','26-0703','Draft','{\"midterm\":\"86\"}','IT 101','2026-2027','FIRST','midterm'),('qa-submit-final','106','26-0704','Draft','{\"finals\":\"91\"}','IT 101','2026-2027','FIRST','finals'); UPDATE pending_grade_records SET status='SubmittedToChairperson' WHERE assignment_cycle_id='106' AND LOWER(term)='midterm' AND LOWER(status)='draft'");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='qa-submit-mid' AND status='SubmittedToChairperson'")==1 && await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='qa-submit-final' AND status='Draft'")==1,
+    "Submit-to-Chairperson crossed encoding terms."); Pass(78,"submission transitions only active Midterm rows");
+var switchedFinals=GradeEncodingPeriodService.ProjectIncomingGradePayload("{\"midterm\":\"99\",\"finals\":\"90\"}",dbMidtermPayload,"finals");
+Check(switchedFinals.Contains("\"midterm\":\"85\"") && switchedFinals.Contains("\"finals\":\"90\"") && !switchedFinals.Contains("99"),
+    "Switching to Finals reused the newly uploaded workbook Midterm."); Pass(79,"Finals switch preserves DB Midterm only");
+var historicalBefore=await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('current-finalized','final')");
+await Exec("UPDATE systemsettings SET value='{\"semester\":\"FIRST\",\"startDate\":\"2026-01-01\",\"endDate\":\"2026-12-31\",\"term\":\"FINALS\"}' WHERE key='encoding_period'");
+var finalsPeriod=await GradeEncodingPeriodService.GetOpenAsync(db,new DateOnly(2026,9,22));
+Check(finalsPeriod.Term=="finals" && await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('current-finalized','final')")==historicalBefore,
+    "Opening Finals altered historical grades."); Pass(80,"opening Finals preserves historical grades");
+Check(!GradeEncodingPeriodService.ProjectIncomingGradePayload("{\"final\":\"90\"}",null,"midterm").Contains("finals",StringComparison.OrdinalIgnoreCase),
+    "API projection leaked a Finals alias during Midterm."); Pass(81,"current API projection removes Finals aliases");
 Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped");
-} finally { await Exec("DROP TABLE IF EXISTS pending_grade_records,facultysections,facultyprofiles,student_enrollments,studentprofiles,curriculum_subjects,curriculums,academicsections,academic_programs,users CASCADE"); }
+} finally { await Exec("DROP TABLE IF EXISTS pending_grade_records,facultysections,facultyprofiles,student_enrollments,studentprofiles,curriculum_subjects,curriculums,academicsections,academic_programs,systemsettings,users CASCADE"); }

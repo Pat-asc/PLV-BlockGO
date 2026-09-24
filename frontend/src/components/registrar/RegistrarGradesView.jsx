@@ -17,6 +17,8 @@ import { programOptions, programs } from '../../data/registrarData';
 import RegistrarSupportTickets from './RegistrarSupportTickets';
 import StudentEnrollmentManagement from './StudentEnrollmentManagement';
 import PasswordManagement from './PasswordManagement';
+import RegistrarGradesLedger from './RegistrarGradesLedger';
+import { exportRegistrarGradesLedgerPdf } from '../../utils/registrarGradesLedgerPdf';
 
 const RegistrarGradesView = ({
     loggedInEmail = '',
@@ -390,7 +392,6 @@ const RegistrarGradesView = ({
             loadApprovedAdmins();
             loadApprovedFaculties();
         }
-        if (mainTab === 'grades') loadApprovedFaculties();
         if (mainTab === 'revokeAccounts') {
             loadApprovedAdmins();
             loadApprovedFaculties();
@@ -770,40 +771,10 @@ const RegistrarGradesView = ({
         }));
     };
 
-    const handleDownloadLedgerPDF = () => {
+    const handleDownloadLedgerPDF = (ledgerRecords = filteredGrades, ledgerFilters = {}, scope = { type: 'all' }) => {
         try {
-            const { jsPDF } = window.jspdf;
-            const doc = new jsPDF('l', 'mm', 'a4');
-            doc.setTextColor(0, 51, 102);
-            doc.setFontSize(22);
-            doc.text("PLV OFFICIAL GRADES LEDGER", 14, 20);
-            doc.setFontSize(10);
-            doc.setTextColor(100);
-            doc.text(`Academic Audit Report - Blockchain Verified`, 14, 27);
-            doc.text(`Filter - Dept: ${filterDept} | Year: ${filterYear} | Section: ${filterSection}`, 14, 32);
-            doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 37);
-
-            const tableColumn = ["Record ID", "Student Hash", "Subject", "Grade", "Faculty", "Year", "Section", "Status"];
-            const tableRows = filteredGrades.map(g => [
-                g.id,
-                g.student_hash || g.studentId || "N/A",
-                g.subject_code,
-                g.grade,
-                g.facultyId || g.faculty_id || "N/A",
-                g.year_level || "N/A",
-                g.section || "N/A",
-                g.status
-            ]);
-
-            doc.autoTable({
-                head: [tableColumn],
-                body: tableRows,
-                startY: 42,
-                theme: 'grid',
-                headStyles: { fillColor: [0, 51, 102], fontSize: 8 },
-                bodyStyles: { fontSize: 7 },
-            });
-            doc.save(`Grades_Ledger_Audit_${new Date().toISOString().split('T')[0]}.pdf`);
+            const result = exportRegistrarGradesLedgerPdf({ records: ledgerRecords, filters: ledgerFilters, scope });
+            if (!result.exported) alert('No grade records available for this export.');
         } catch (error) { alert("Failed to export PDF."); }
     };
 
@@ -967,6 +938,13 @@ const RegistrarGradesView = ({
                         </div>
                     )}
                     {mainTab === 'grades' && (
+                        <RegistrarGradesLedger
+                            loggedInEmail={loggedInEmail}
+                            onViewIpfs={handleViewIpfs}
+                            onExport={handleDownloadLedgerPDF}
+                        />
+                    )}
+                    {mainTab === 'legacy-grades-monitoring' && (
                         <>
                             <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                                 <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
@@ -985,7 +963,7 @@ const RegistrarGradesView = ({
                                         </select>
                                     </div>
                                     <div className="flex gap-3">
-                                        <button onClick={handleDownloadLedgerPDF} className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-emerald-700">Export PDF</button>
+                                        <button onClick={() => handleDownloadLedgerPDF()} className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-emerald-700">Export PDF</button>
                                         <button onClick={loadGrades} className="rounded-xl bg-[#003366] px-5 py-2 text-sm font-bold text-white transition hover:bg-[#00264d]">Refresh</button>
                                     </div>
                                 </div>

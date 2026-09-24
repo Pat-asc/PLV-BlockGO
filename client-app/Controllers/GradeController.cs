@@ -254,6 +254,13 @@ namespace BlockGo.Controllers
                 using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
 
+                var activeEncodingPeriod = await GradeEncodingPeriodService.GetOpenAsync(
+                    conn, cancellationToken: HttpContext.RequestAborted);
+                var incomingGradePayload = request.Grade;
+                request.Term = activeEncodingPeriod.Term;
+                request.Grade = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+                    incomingGradePayload, null, activeEncodingPeriod.Term);
+
                 var jwtUser = AuthenticatedEmail();
 
                 var resolvedFaculty = await ResolveApprovedAcademicIdentityAsync(
@@ -283,7 +290,7 @@ namespace BlockGo.Controllers
                     var grade = gradeDocument.RootElement;
                     if (grade.ValueKind != JsonValueKind.Object)
                         return BadRequest(new { status = "Error", message = "Grade must contain the encoded academic terms." });
-                    var term = GradeAcademicTerm.Normalize(request.Term);
+                    var term = activeEncodingPeriod.Term;
                     var standing = grade.TryGetProperty("standing", out var standingValue) ? standingValue.ToString() : "active";
                     if (string.Equals(standing, "active", StringComparison.OrdinalIgnoreCase) &&
                         (!grade.TryGetProperty(term, out var termGrade) ||
@@ -348,6 +355,25 @@ namespace BlockGo.Controllers
                 enrollmentSemester = facultyAssignment.Semester;
                 request.Section = facultyAssignment.CanonicalSection;
                 var assignmentCycleId = facultyAssignment.Id.ToString();
+                if (!string.Equals(facultyAssignment.Semester, activeEncodingPeriod.Semester, StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { status = "Error", message = "The selected faculty assignment is outside the active encoding semester." });
+
+                string? existingGradePayload = null;
+                using (var existingCommand = new NpgsqlCommand(@"
+                    SELECT grade
+                    FROM pending_grade_records
+                    WHERE assignment_cycle_id = @assignmentCycleId
+                      AND LOWER(TRIM(student_hash)) = LOWER(TRIM(@studentHash))
+                      AND LOWER(TRIM(subject_code)) = LOWER(TRIM(@subjectCode))
+                    LIMIT 1;", conn))
+                {
+                    existingCommand.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
+                    existingCommand.Parameters.AddWithValue("studentHash", stuEmail);
+                    existingCommand.Parameters.AddWithValue("subjectCode", facultyAssignment.Subject);
+                    existingGradePayload = (await existingCommand.ExecuteScalarAsync())?.ToString();
+                }
+                request.Grade = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+                    incomingGradePayload, existingGradePayload, activeEncodingPeriod.Term);
 
                 request.StudentId = stuNumber;
                 request.SchoolYear = canonicalSchoolYear;
@@ -357,7 +383,7 @@ namespace BlockGo.Controllers
 
                 request.FacultyId = effectiveFacultyId ?? jwtUser;
                 request.ProfessorName = await ResolveFacultyDisplayNameAsync(conn, request.FacultyId);
-                request.Term = InferGradeTerm(request.Term, request.Grade);
+                request.Term = activeEncodingPeriod.Term;
                 if (request.Units <= 0) request.Units = 3;
                 var blockchainRecord = request.ToBlockchainRecord("PLV");
                 blockchainRecord.FacultyId = effectiveFacultyId ?? request.FacultyId ?? "";
@@ -476,6 +502,10 @@ namespace BlockGo.Controllers
                     return StatusCode(500, new { status = "Error", message = ex.Message });
                 }
             }
+            catch (GradeEncodingPeriodException ex)
+            {
+                return BadRequest(new { status = "EncodingPeriodClosed", message = ex.Message });
+            }
             catch (FacultyAssignmentRosterService.RosterDataIntegrityException ex)
             {
                 return Conflict(new {
@@ -517,6 +547,9 @@ namespace BlockGo.Controllers
                 using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
 
+                var activeEncodingPeriod = await GradeEncodingPeriodService.GetOpenAsync(
+                    conn, cancellationToken: HttpContext.RequestAborted);
+
                 var assignmentResolution = await FacultyAssignmentRosterService.ResolveAsync(
                     conn, facultySectionId, false, HttpContext.RequestAborted);
                 if (assignmentResolution.Value is null)
@@ -529,6 +562,8 @@ namespace BlockGo.Controllers
                 if (!string.Equals(facultyAssignment.SchoolYear, canonicalSchoolYear, StringComparison.OrdinalIgnoreCase) ||
                     !string.Equals(facultyAssignment.Semester, canonicalSemester, StringComparison.OrdinalIgnoreCase))
                     return BadRequest(new { status = "Error", message = "Submitted period does not match the selected faculty assignment." });
+                if (!string.Equals(facultyAssignment.Semester, activeEncodingPeriod.Semester, StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { status = "Error", message = "The selected faculty assignment is outside the active encoding semester." });
                 var roster = await FacultyAssignmentRosterService.GetRosterAsync(
                     conn, facultyAssignment, HttpContext.RequestAborted);
                 if (roster.Count == 0)
@@ -562,25 +597,35 @@ namespace BlockGo.Controllers
                 await EnsurePendingGradeSchemaAsync(conn);
 
                 var stagedStudentNumbers = new List<string>();
+                var hasInvalidActiveTermGrade = false;
                 using (var coverageCommand = new NpgsqlCommand(@"
-                    SELECT COALESCE(student_no, '')
+                    SELECT COALESCE(student_no, ''), grade
                     FROM pending_grade_records
                     WHERE LOWER(TRIM(faculty_id)) = LOWER(TRIM(@faculty))
                       AND assignment_cycle_id = @assignmentCycleId
                       AND LOWER(status) IN ('draft', 'returned')
                       AND LOWER(TRIM(subject_code)) = LOWER(TRIM(@subjectCode))
                       AND LOWER(TRIM(school_year)) = LOWER(TRIM(@schoolYear))
-                      AND LOWER(TRIM(semester)) = LOWER(TRIM(@semester));", conn))
+                      AND LOWER(TRIM(semester)) = LOWER(TRIM(@semester))
+                      AND LOWER(TRIM(term)) = LOWER(TRIM(@term));", conn))
                 {
                     coverageCommand.Parameters.AddWithValue("faculty", effectiveFacultyId);
                     coverageCommand.Parameters.AddWithValue("assignmentCycleId", facultyAssignment.Id.ToString());
                     coverageCommand.Parameters.AddWithValue("subjectCode", facultyAssignment.Subject);
                     coverageCommand.Parameters.AddWithValue("schoolYear", facultyAssignment.SchoolYear);
                     coverageCommand.Parameters.AddWithValue("semester", facultyAssignment.Semester);
+                    coverageCommand.Parameters.AddWithValue("term", activeEncodingPeriod.Term);
                     using var coverageReader = await coverageCommand.ExecuteReaderAsync();
                     while (await coverageReader.ReadAsync())
+                    {
                         stagedStudentNumbers.Add(coverageReader.GetString(0));
+                        if (!GradeEncodingPeriodService.HasGradeForTerm(
+                                coverageReader.IsDBNull(1) ? null : coverageReader.GetString(1), activeEncodingPeriod.Term))
+                            hasInvalidActiveTermGrade = true;
+                    }
                 }
+                if (hasInvalidActiveTermGrade)
+                    return BadRequest(new { status = "Error", message = $"A staged row is missing its {activeEncodingPeriod.Term} grade." });
                 var coverage = FacultyAssignmentRosterService.CompareRosterCoverage(roster, stagedStudentNumbers);
                 if (coverage.Missing > 0 || coverage.Unexpected > 0)
                     return BadRequest(new {
@@ -631,6 +676,7 @@ namespace BlockGo.Controllers
                       AND LOWER(TRIM(semester)) = ANY(@semesterAliases)
                       AND LOWER(TRIM(course)) IN (LOWER(TRIM(@department)), LOWER(TRIM(@departmentCode)))
                       AND LOWER(TRIM(COALESCE(subject_code, ''))) = LOWER(TRIM(@subjectCode))
+                      AND LOWER(TRIM(term)) = LOWER(TRIM(@term))
                       AND (LOWER(TRIM(COALESCE(section, ''))) = LOWER(TRIM(@section))
                            OR LOWER(TRIM(COALESCE(section, ''))) = LOWER(TRIM(@compactSection)))", conn);
                 cmd.Parameters.AddWithValue("faculty", effectiveFacultyId);
@@ -645,6 +691,7 @@ namespace BlockGo.Controllers
                 cmd.Parameters.AddWithValue("semester", canonicalSemester);
                 cmd.Parameters.AddWithValue("semesterAliases", GradeAcademicPeriod.SemesterAliases(canonicalSemester));
                 cmd.Parameters.AddWithValue("date", DateTime.UtcNow.ToString("o"));
+                cmd.Parameters.AddWithValue("term", activeEncodingPeriod.Term);
 
                 var updated = await cmd.ExecuteNonQueryAsync();
                 if (updated == 0)
@@ -664,6 +711,10 @@ namespace BlockGo.Controllers
 
                 await NotifyAcademicDataChangedAsync("section_submitted", department, facultyId);
                 return Ok(new { status = "Success", message = "Section submitted to Chairperson.", updated });
+            }
+            catch (GradeEncodingPeriodException ex)
+            {
+                return BadRequest(new { status = "EncodingPeriodClosed", message = ex.Message });
             }
             catch (FacultyAssignmentRosterService.RosterDataIntegrityException ex)
             {
@@ -1042,8 +1093,6 @@ namespace BlockGo.Controllers
         {
             _logger.LogInformation("Bulk upload initiated by user: {User}", User.Identity?.Name);
 
-            term = GradeAcademicTerm.Normalize(term);
-
             if (file == null || file.Length == 0)
                 return BadRequest(new { status = "Error", message = "A .csv or .xlsx file is required." });
             if (facultySectionId <= 0)
@@ -1064,9 +1113,12 @@ namespace BlockGo.Controllers
 
             try
             {
+                ActiveGradeEncodingPeriod activeEncodingPeriod;
                 await using (var preflightConnection = new NpgsqlConnection(_connectionString))
                 {
                     await preflightConnection.OpenAsync(HttpContext.RequestAborted);
+                    activeEncodingPeriod = await GradeEncodingPeriodService.GetOpenAsync(
+                        preflightConnection, cancellationToken: HttpContext.RequestAborted);
                     var preflightResolution = await FacultyAssignmentRosterService.ResolveAsync(
                         preflightConnection, facultySectionId, false, HttpContext.RequestAborted);
                     if (preflightResolution.Value is null)
@@ -1079,7 +1131,10 @@ namespace BlockGo.Controllers
                         preflightResolution.Value, academicSectionId, subjectCode, schoolYear, semester, section);
                     if (preflightContextError != null)
                         return BadRequest(new { status = "Error", message = preflightContextError });
+                    if (!string.Equals(preflightResolution.Value.Semester, activeEncodingPeriod.Semester, StringComparison.OrdinalIgnoreCase))
+                        return BadRequest(new { status = "Error", message = "The selected faculty assignment is outside the active encoding semester." });
                 }
+                term = activeEncodingPeriod.Term;
 
                 var successCount = 0;
                 var failureCount = 0;
@@ -1171,11 +1226,12 @@ namespace BlockGo.Controllers
                                 StudentId = sId ?? "",
                                 StudentName = GetVal("student_name", "student", "full_name", "name") ?? "",
                                 Section = !string.IsNullOrWhiteSpace(section) ? section : (GetVal("section", "class_section", "sec") ?? ""),
-                                Grade = BuildUploadedGradePayload(
-                                    GetUploadedTermGrade(GetVal, term),
-                                    computedMidterm ?? GetUploadedMidtermGrade(GetVal, term),
-                                    computedFinals ?? GetUploadedFinalGrade(GetVal, term),
-                                    term),
+                                Grade = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+                                    BuildUploadedGradePayload(
+                                        GetUploadedTermGrade(GetVal, term),
+                                        computedMidterm ?? GetUploadedMidtermGrade(GetVal, term),
+                                        computedFinals ?? GetUploadedFinalGrade(GetVal, term),
+                                        term), null, term),
                                 SubjectCode = GetVal("subject_code", "course_code", "code", "subject") ?? course ?? "Unknown",
                                 SubjectName = GetVal("subject_name", "descriptive_title", "course") ?? course ?? "Unknown",
                                 Course = GetVal("course", "department", "program") ?? course ?? "Unknown",
@@ -1239,11 +1295,12 @@ namespace BlockGo.Controllers
                                     StudentId = sId ?? "",
                                     StudentName = GetVal("student_name", "student", "full_name", "name") ?? "",
                                     Section = !string.IsNullOrWhiteSpace(section) ? section : (GetVal("section", "class_section", "sec") ?? ""),
-                                    Grade = BuildUploadedGradePayload(
+                                Grade = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+                                    BuildUploadedGradePayload(
                                         GetUploadedTermGrade(GetVal, term),
                                         GetUploadedMidtermGrade(GetVal, term),
                                         GetUploadedFinalGrade(GetVal, term),
-                                        term),
+                                        term), null, term),
                                     SubjectCode = GetVal("subject_code", "course_code", "code", "subject") ?? course ?? "Unknown",
                                     SubjectName = GetVal("subject_name", "descriptive_title", "course") ?? course ?? "Unknown",
                                     Course = GetVal("course", "department", "program") ?? course ?? "Unknown",
@@ -1328,10 +1385,14 @@ namespace BlockGo.Controllers
                     {
                         try
                         {
-                            if (string.IsNullOrEmpty(record.StudentId) || string.IsNullOrEmpty(record.Grade))
+                            if (string.IsNullOrEmpty(record.StudentId) ||
+                                !GradeEncodingPeriodService.HasGradeForTerm(record.Grade, term))
                             {
                                 failureCount++;
-                                errors.Add(new BulkUploadError { StudentId = record.StudentId ?? "UNKNOWN", Reason = "Missing student identifier or grade" });
+                                errors.Add(new BulkUploadError {
+                                    StudentId = record.StudentId ?? "UNKNOWN",
+                                    Reason = $"Missing {term} grade. Closed-term values were ignored."
+                                });
                                 continue;
                             }
 
@@ -1393,7 +1454,7 @@ namespace BlockGo.Controllers
                             blockchainRecord.FacultyId = effectiveFacultyId ?? facultyId ?? "";
                             blockchainRecord.ProfessorName = professorName;
                             blockchainRecord.SubmittedBy = blockchainRecord.FacultyId;
-                            blockchainRecord.Term = InferGradeTerm(term, blockchainRecord.Grade);
+                            blockchainRecord.Term = term;
                             blockchainRecord.Course = facDept;
                             blockchainRecord.Program = facDept;
                             if (blockchainRecord.Units <= 0) blockchainRecord.Units = 3;
@@ -1444,26 +1505,8 @@ namespace BlockGo.Controllers
 
                             blockchainRecord.Id = existingId ?? Guid.NewGuid().ToString();
 
-                            string uploadedMidterm = "", uploadedFinals = "";
-                            if (!string.IsNullOrEmpty(record.Grade) && record.Grade.TrimStart().StartsWith("{")) {
-                                using var doc = JsonDocument.Parse(record.Grade);
-                                if (doc.RootElement.TryGetProperty("midterm", out var m)) uploadedMidterm = m.GetString() ?? "";
-                                if (doc.RootElement.TryGetProperty("finals", out var f)) uploadedFinals = f.GetString() ?? "";
-                            } else {
-                                if (string.Equals(term, "finals", StringComparison.OrdinalIgnoreCase)) uploadedFinals = record.Grade ?? "";
-                                else uploadedMidterm = record.Grade ?? "";
-                            }
-
-                            string mergedMidterm = uploadedMidterm, mergedFinals = uploadedFinals;
-                            if (!string.IsNullOrEmpty(existingGradeJson) && existingGradeJson.TrimStart().StartsWith("{")) {
-                                using var doc = JsonDocument.Parse(existingGradeJson);
-                                if (string.IsNullOrEmpty(mergedMidterm) && doc.RootElement.TryGetProperty("midterm", out var m)) mergedMidterm = m.GetString() ?? "";
-                                if (string.IsNullOrEmpty(mergedFinals) && doc.RootElement.TryGetProperty("finals", out var f)) mergedFinals = f.GetString() ?? "";
-                            } else if (!string.IsNullOrEmpty(existingGradeJson)) {
-                                if (string.Equals(term, "finals", StringComparison.OrdinalIgnoreCase) && string.IsNullOrEmpty(mergedMidterm)) mergedMidterm = existingGradeJson;
-                            }
-
-                            blockchainRecord.Grade = BuildUploadedGradePayload(null, mergedMidterm, mergedFinals, term);
+                            blockchainRecord.Grade = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+                                record.Grade, existingGradeJson, term);
                                 
                             using var transaction = await conn.BeginTransactionAsync();
                             try
@@ -1574,6 +1617,10 @@ namespace BlockGo.Controllers
                     errors = errors.Any() ? errors : null,
                     timestamp = DateTime.UtcNow
                 });
+            }
+            catch (GradeEncodingPeriodException ex)
+            {
+                return BadRequest(new { status = "EncodingPeriodClosed", message = ex.Message });
             }
             catch (FacultyAssignmentRosterService.RosterDataIntegrityException ex)
             {
@@ -2092,11 +2139,42 @@ namespace BlockGo.Controllers
 
                 if (jwtRole == "department_admin")
                 {
-                    var currentSubmittedRecordIds = await ChairpersonReviewScopeService
-                        .GetCurrentSubmittedRecordIdsAsync(conn, HttpContext.RequestAborted);
+                    HashSet<string> currentVisibleRecordIds;
+                    ActiveGradeEncodingPeriod? activeEncodingPeriod = null;
+                    try
+                    {
+                        activeEncodingPeriod = await GradeEncodingPeriodService.GetOpenAsync(
+                            conn, cancellationToken: HttpContext.RequestAborted);
+                        currentVisibleRecordIds = await ChairpersonReviewScopeService
+                            .GetCurrentVisibleRecordIdsAsync(conn, activeEncodingPeriod.Term,
+                                activeEncodingPeriod.Semester, HttpContext.RequestAborted);
+                    }
+                    catch (GradeEncodingPeriodException)
+                    {
+                        currentVisibleRecordIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    }
+
+                    static bool IsCurrentWorkflowStatus(string? status)
+                    {
+                        var normalized = status?.Trim().ToLowerInvariant();
+                        return normalized is "draft" or "returned" or "submitted" or "submittedtochairperson" or
+                            "chairpersonapproved" or "departmentapproved";
+                    }
+
                     allGrades = allGrades.Where(grade =>
-                        !ChairpersonReviewScopeService.IsSubmittedToChairperson(grade.Status) ||
-                        currentSubmittedRecordIds.Contains(grade.Id ?? string.Empty)).ToList();
+                        !IsCurrentWorkflowStatus(grade.Status) ||
+                        currentVisibleRecordIds.Contains(grade.Id ?? string.Empty)).ToList();
+
+                    if (activeEncodingPeriod != null)
+                    {
+                        foreach (var grade in allGrades.Where(grade =>
+                                     currentVisibleRecordIds.Contains(grade.Id ?? string.Empty)))
+                        {
+                            grade.Grade = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+                                grade.Grade, grade.Grade, activeEncodingPeriod.Term);
+                            grade.Term = activeEncodingPeriod.Term;
+                        }
+                    }
                 }
 
                 // Deduplicate records that might temporarily exist in both staging and the ledger.
@@ -2125,6 +2203,13 @@ namespace BlockGo.Controllers
                 }
                 await profReader.CloseAsync();
 
+                var registrarAssignments = jwtRole == "registrar"
+                    ? await RegistrarGradeLedgerMetadataService.LoadAssignmentsAsync(conn, HttpContext.RequestAborted)
+                    : new Dictionary<string, RegistrarGradeLedgerMetadataService.AssignmentMetadata>(StringComparer.OrdinalIgnoreCase);
+                var registrarStudents = jwtRole == "registrar"
+                    ? await RegistrarGradeLedgerMetadataService.LoadStudentIdentitiesAsync(conn, HttpContext.RequestAborted)
+                    : new Dictionary<string, RegistrarGradeLedgerMetadataService.StudentIdentity>(StringComparer.OrdinalIgnoreCase);
+
                 if (isStudent)
                 {
                     allGrades = allGrades.Where(grade =>
@@ -2137,9 +2222,9 @@ namespace BlockGo.Controllers
                 }
                 else if (jwtRole == "registrar")
                 {
-                    allGrades = allGrades.Where(grade =>
-                        string.Equals(grade.Status, "DepartmentApproved", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(grade.Status, "Finalized", StringComparison.OrdinalIgnoreCase)).ToList();
+                    allGrades = allGrades
+                        .Where(grade => RegistrarGradeLedgerMetadataService.IsBrowsableStatus(grade.Status))
+                        .ToList();
                 }
                 else if (jwtRole == "department_admin")
                 {
@@ -2168,6 +2253,12 @@ namespace BlockGo.Controllers
 
                 foreach(var g in allGrades) 
                 {
+                    registrarAssignments.TryGetValue(g.AssignmentCycleId ?? string.Empty, out var assignmentMetadata);
+                    RegistrarGradeLedgerMetadataService.StudentIdentity? officialStudent = null;
+                    if (!string.IsNullOrWhiteSpace(g.StudentNo)) registrarStudents.TryGetValue(g.StudentNo, out officialStudent);
+                    if (officialStudent == null && !string.IsNullOrWhiteSpace(g.StudentHash))
+                        registrarStudents.TryGetValue(g.StudentHash, out officialStudent);
+
                     string dept = "Unknown";
                     string profileSection = "Unknown";
                     string sec = ResolveDisplaySection(g.Section, null);
@@ -2186,6 +2277,27 @@ namespace BlockGo.Controllers
                             studentName = ResolvePreferredStudentName(studentName, prof.fullName, studentNo);
                         }
                         year = ResolveYearLevelFromSection(sec, prof.sec);
+                    }
+
+                    if (officialStudent != null)
+                    {
+                        dept = officialStudent.Department;
+                        profileSection = officialStudent.Section;
+                        studentNo = officialStudent.StudentNumber;
+                        studentName = officialStudent.FullName;
+                    }
+
+                    if (assignmentMetadata != null)
+                    {
+                        if (assignmentMetadata.YearLevel.HasValue && assignmentMetadata.SectionNumber.HasValue)
+                        {
+                            var sectionPrefix = !string.IsNullOrWhiteSpace(assignmentMetadata.ProgramCode)
+                                ? assignmentMetadata.ProgramCode
+                                : assignmentMetadata.ProgramName;
+                            sec = $"{sectionPrefix} {assignmentMetadata.YearLevel}-{assignmentMetadata.SectionNumber}".Trim();
+                            year = assignmentMetadata.YearLevel.Value.ToString(CultureInfo.InvariantCulture);
+                        }
+                        if (!string.IsNullOrWhiteSpace(assignmentMetadata.ProgramName)) dept = assignmentMetadata.ProgramName;
                     }
 
                     string safeStudentHash = g.StudentHash ?? "";
@@ -2211,22 +2323,32 @@ namespace BlockGo.Controllers
                         { "student_no", studentNo },
                         { "studentNo", studentNo },
                         { "student_name", studentName },
+                        { "student_user_id", officialStudent?.UserId ?? 0 },
                         { "section", sec },
                         { "record_section", g.Section ?? "" },
                         { "student_section", profileSection },
-                        { "course", g.Course ?? "" },
-                        { "subject_code", g.SubjectCode ?? "" },
+                        { "course", FirstNonBlank(assignmentMetadata?.ProgramName, g.Course) },
+                        { "subject_code", FirstNonBlank(assignmentMetadata?.SubjectCode, g.SubjectCode) },
                         { "subject_title", g.SubjectTitle ?? "" },
                         { "subject_name", g.SubjectTitle ?? "" },
-                        { "program", g.Program ?? g.Course ?? "" },
+                        { "program", FirstNonBlank(assignmentMetadata?.ProgramCode, g.Program, g.Course) },
+                        { "program_id", assignmentMetadata?.ProgramId ?? 0 },
+                        { "program_code", assignmentMetadata?.ProgramCode ?? "" },
+                        { "program_name", assignmentMetadata?.ProgramName ?? "" },
+                        { "programId", assignmentMetadata?.ProgramId ?? 0 },
+                        { "programCode", assignmentMetadata?.ProgramCode ?? "" },
+                        { "programName", assignmentMetadata?.ProgramName ?? "" },
                         { "term", g.Term ?? "" },
                         { "units", g.Units },
                         { "grade", g.Grade ?? "" },
-                        { "semester", g.Semester ?? "" },
-                        { "school_year", g.SchoolYear ?? "" },
-                        { "schoolYear", g.SchoolYear ?? "" },
+                        { "semester", FirstNonBlank(assignmentMetadata?.Semester, g.Semester) },
+                        { "school_year", FirstNonBlank(assignmentMetadata?.SchoolYear, g.SchoolYear) },
+                        { "schoolYear", FirstNonBlank(assignmentMetadata?.SchoolYear, g.SchoolYear) },
                         { "faculty_id", safeFacultyId },
-                        { "professor_name", g.ProfessorName ?? "" },
+                        { "faculty_user_id", assignmentMetadata?.FacultyUserId ?? 0 },
+                        { "faculty_email", FirstNonBlank(assignmentMetadata?.FacultyEmail, safeFacultyId) },
+                        { "faculty_number", assignmentMetadata?.FacultyId ?? "" },
+                        { "professor_name", FirstNonBlank(assignmentMetadata?.FacultyName, g.ProfessorName) },
                         { "submitted_by", g.SubmittedBy ?? "" },
                         { "timestamp", g.Timestamp ?? "" },
                         { "transaction_id", g.TransactionId ?? "" },
@@ -2238,6 +2360,8 @@ namespace BlockGo.Controllers
                         { "university", g.University ?? "" },
                         { "version", g.Version },
                         { "assignment_cycle_id", g.AssignmentCycleId ?? "" },
+                        { "faculty_section_id", g.AssignmentCycleId ?? "" },
+                        { "academic_section_id", assignmentMetadata?.AcademicSectionId ?? 0 },
                         { "department", dept },
                         { "year_level", year }
                     });
@@ -2313,6 +2437,29 @@ namespace BlockGo.Controllers
                         
                         await reader.CloseAsync();
                         if (!await CanAccessGradeRecordAsync(conn, recordId, invokerId, jwtRole)) return Forbid();
+
+                        if (jwtRole == "department_admin" &&
+                            !string.Equals(localGrade.Status, "Finalized", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ActiveGradeEncodingPeriod activeEncodingPeriod;
+                            try
+                            {
+                                activeEncodingPeriod = await GradeEncodingPeriodService.GetOpenAsync(
+                                    conn, cancellationToken: HttpContext.RequestAborted);
+                            }
+                            catch (GradeEncodingPeriodException)
+                            {
+                                return NotFound(new { status = "Error", message = "No current grade workflow is open." });
+                            }
+
+                            var visibleIds = await ChairpersonReviewScopeService.GetCurrentVisibleRecordIdsAsync(
+                                conn, activeEncodingPeriod.Term, activeEncodingPeriod.Semester,
+                                HttpContext.RequestAborted);
+                            if (!visibleIds.Contains(recordId)) return NotFound();
+                            localGrade.Grade = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+                                localGrade.Grade, localGrade.Grade, activeEncodingPeriod.Term);
+                            localGrade.Term = activeEncodingPeriod.Term;
+                        }
 
                         return Ok(new { status = "Success", data = localGrade });
                     }

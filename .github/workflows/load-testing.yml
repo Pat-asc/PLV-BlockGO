@@ -45,7 +45,9 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
-
+        with:
+          persist-credentials: false
+          submodules: false
 
       - name: Show load test configuration
         shell: bash

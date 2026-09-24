@@ -230,9 +230,13 @@ function SectionReviewPanel({
                 <th className="px-4 py-3 text-left text-sm">Student ID</th>
                 <th className="px-4 py-3 text-left text-sm">Student Name</th>
                 <th className="px-4 py-3 text-left text-sm">Midterm</th>
-                <th className="px-4 py-3 text-left text-sm">Finals</th>
-                <th className="px-4 py-3 text-left text-sm">Final Grade</th>
-                <th className="px-4 py-3 text-left text-sm">Equivalent</th>
+                {activeTerm === "finals" && (
+                  <>
+                    <th className="px-4 py-3 text-left text-sm">Finals</th>
+                    <th className="px-4 py-3 text-left text-sm">Final Grade</th>
+                    <th className="px-4 py-3 text-left text-sm">Equivalent</th>
+                  </>
+                )}
                 <th className="px-4 py-3 text-left text-sm">Standing</th>
                 <th className="px-4 py-3 text-left text-sm">Status</th>
                 <th className="px-4 py-3 text-left text-sm">Remarks</th>
@@ -244,9 +248,13 @@ function SectionReviewPanel({
                   <td className="px-4 py-3">{row.id}</td>
                   <td className="px-4 py-3 font-medium text-slate-800">{row.name}</td>
                   <td className="px-4 py-3">{row.midterm}</td>
-                  <td className="px-4 py-3">{row.finals}</td>
-                  <td className="px-4 py-3 font-semibold text-slate-800">{row.finalAverage}</td>
-                  <td className="px-4 py-3">{row.gradeEquivalent}</td>
+                  {activeTerm === "finals" && (
+                    <>
+                      <td className="px-4 py-3">{row.finals}</td>
+                      <td className="px-4 py-3 font-semibold text-slate-800">{row.finalAverage}</td>
+                      <td className="px-4 py-3">{row.gradeEquivalent}</td>
+                    </>
+                  )}
                   <td className="px-4 py-3 capitalize">
                     {String(row.standing).replaceAll("_", " ")}
                   </td>

@@ -47,7 +47,7 @@ defaults:
 jobs:
   heavy-tests:
     name: Heavy Integration, Container & Route Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     services:
       postgres:
@@ -75,6 +75,7 @@ jobs:
           ref: ${{ inputs.checkout_ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+          submodules: false
 
       - name: Checkout Feature/API branch for manual/scheduled run
         if: inputs.checkout_ref == '' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
@@ -83,6 +84,7 @@ jobs:
           ref: feature/api-endpoints-Testing
           fetch-depth: 0
           persist-credentials: false
+          submodules: false
 
       - name: Resolve exact tested commit
         id: resolve-sha
@@ -148,10 +150,12 @@ jobs:
             frontend/package-lock.json
             middleware/package-lock.json
 
-      - name: Set up .NET 8
+      - name: Set up .NET 8 and 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -431,7 +435,8 @@ jobs:
 
           for PROJECT in \
             tests/EnrollmentImportChecks/EnrollmentImportChecks.csproj \
-            tests/EnrollmentSectioningChecks/EnrollmentSectioningChecks.csproj
+            tests/EnrollmentSectioningChecks/EnrollmentSectioningChecks.csproj \
+            tests/AssignmentRegressionTests/AssignmentRegressionTests.csproj
           do
             if [ ! -f "$PROJECT" ]; then
               echo "::error::Required check project is missing: $PROJECT"
@@ -882,7 +887,7 @@ jobs:
 
   free-api-security:
     name: Free API Security — Schemathesis / ZAP / Nuclei
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       - heavy-tests
     timeout-minutes: 120
@@ -897,6 +902,7 @@ jobs:
           ref: ${{ needs.heavy-tests.outputs.tested_sha }}
           fetch-depth: 0
           persist-credentials: false
+          submodules: false
 
       - name: Prepare OpenAPI schema for CI security tests
         id: schema
@@ -1550,7 +1556,7 @@ jobs:
 
   feature-api-gate:
     name: Required Feature/API Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: always()
     needs:
       - heavy-tests
