@@ -17,6 +17,10 @@ jest.mock('./services/nginxFailover', () => ({
 
 jest.mock('./components/shared/Chat', () => () => null);
 
+jest.mock('./components/student/StudentPortal', () => ({ studentData }) => (
+  <main>Student Portal for {studentData.email}</main>
+));
+
 jest.mock('./components/faculty/FacultyPortal', () => ({ facultyData, onLogout }) => (
   <main>
     Faculty Portal for {facultyData.email}
@@ -154,4 +158,40 @@ test('clears the shared account session only after logout is confirmed', async (
   expect(window.confirm).toHaveBeenCalledWith('Are you sure you want to log out?');
   expect(sessionStorage.getItem('blockgo.auth.token')).toBeNull();
   expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
+});
+
+test('shows the student a real-time finalized-grade notification', async () => {
+  const token = tokenFor('student', 'student@plv.edu.ph');
+  sessionStorage.setItem('blockgo.auth.token', token);
+  sessionStorage.setItem('blockgo.auth.role', 'student');
+  fetchUserProfile.mockResolvedValue({
+    status: 'Success',
+    data: { id: 21, email: 'student@plv.edu.ph', fullName: 'Test Student', role: 'student', status: 'APPROVED' },
+  });
+
+  render(<App />);
+  await screen.findByText(/student portal for student@plv.edu.ph/i);
+  fireEvent(window, new CustomEvent('blockgo:grade-finalized', {
+    detail: { Message: 'Your grade for IT 101 has been finalized and recorded on the ledger.' },
+  }));
+
+  expect(await screen.findByText(/grade for IT 101 has been finalized/i)).toBeInTheDocument();
+});
+
+test('shows Faculty the real-time correction note when a grade is returned', async () => {
+  const token = tokenFor('faculty', 'faculty@plv.edu.ph');
+  sessionStorage.setItem('blockgo.auth.token', token);
+  sessionStorage.setItem('blockgo.auth.role', 'faculty');
+  fetchUserProfile.mockResolvedValue({
+    status: 'Success',
+    data: { id: 7, email: 'faculty@plv.edu.ph', fullName: 'Test Faculty', role: 'faculty', status: 'APPROVED' },
+  });
+
+  render(<App />);
+  await screen.findByText(/faculty portal for faculty@plv.edu.ph/i);
+  fireEvent(window, new CustomEvent('blockgo:grade-returned', {
+    detail: { Note: 'Please verify the final examination score.' },
+  }));
+
+  expect(await screen.findByText(/please verify the final examination score/i)).toBeInTheDocument();
 });

@@ -200,6 +200,27 @@ function AppContent() {
     if (message) addNotification(message, 'notice');
   }, [addNotification]);
 
+  useEffect(() => {
+    const handleGradeFinalized = (event) => {
+      if (normalizeAppRole(user?.role) !== 'student') return;
+      const payload = event.detail || {};
+      addNotification(payload.Message || payload.message || 'A grade has been finalized and recorded on the ledger.', 'notice');
+    };
+    const handleGradeReturned = (event) => {
+      if (normalizeAppRole(user?.role) !== 'faculty') return;
+      const payload = event.detail || {};
+      const note = payload.Note || payload.note;
+      addNotification(note ? `A grade was returned for correction: ${note}` : 'A grade was returned for correction.', 'notice');
+    };
+
+    window.addEventListener('blockgo:grade-finalized', handleGradeFinalized);
+    window.addEventListener('blockgo:grade-returned', handleGradeReturned);
+    return () => {
+      window.removeEventListener('blockgo:grade-finalized', handleGradeFinalized);
+      window.removeEventListener('blockgo:grade-returned', handleGradeReturned);
+    };
+  }, [addNotification, user?.role]);
+
   const currentUserRole = normalizeAppRole(user?.role);
   const canUseChat = ['student', 'faculty', 'department_admin', 'registrar', 'system_admin'].includes(currentUserRole);
 

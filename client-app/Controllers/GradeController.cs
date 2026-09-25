@@ -792,49 +792,6 @@ namespace BlockGo.Controllers
             });
         }
 
-        private static (string Payload, string OldRawGrade, string Equivalent, string Term) BuildRegistrarCorrectionPayload(
-            string? existingPayload,
-            string? requestedTerm,
-            double newRawGrade)
-        {
-            var gradeObject = new System.Text.Json.Nodes.JsonObject();
-            if (!string.IsNullOrWhiteSpace(existingPayload) && existingPayload.TrimStart().StartsWith("{"))
-            {
-                try { gradeObject = System.Text.Json.Nodes.JsonNode.Parse(existingPayload)?.AsObject() ?? gradeObject; }
-                catch { }
-            }
-
-            static double ReadNumber(System.Text.Json.Nodes.JsonObject source, string property)
-            {
-                var value = source[property]?.ToString();
-                return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
-            }
-
-            var midterm = ReadNumber(gradeObject, "midterm");
-            var finals = ReadNumber(gradeObject, "finals");
-            var normalizedTerm = string.IsNullOrWhiteSpace(requestedTerm)
-                ? finals > 0 ? GradeAcademicTerm.Finals : GradeAcademicTerm.Midterm
-                : GradeAcademicTerm.Normalize(requestedTerm);
-            var oldRawGrade = normalizedTerm == "finals" ? finals : midterm;
-
-            if (normalizedTerm == "finals") finals = newRawGrade;
-            else midterm = newRawGrade;
-
-            var rawAverage = normalizedTerm == "finals"
-                ? (midterm > 0 ? (midterm + finals) / 2 : finals)
-                : midterm;
-            var equivalent = ToUniversityGrade(rawAverage).ToString("0.00", CultureInfo.InvariantCulture);
-            gradeObject["midterm"] = midterm > 0 ? midterm.ToString("0.##", CultureInfo.InvariantCulture) : "";
-            gradeObject["finals"] = finals > 0 ? finals.ToString("0.##", CultureInfo.InvariantCulture) : "";
-            gradeObject["finalAverage"] = equivalent;
-
-            return (
-                gradeObject.ToJsonString(),
-                oldRawGrade > 0 ? oldRawGrade.ToString("0.##", CultureInfo.InvariantCulture) : existingPayload ?? "",
-                equivalent,
-                normalizedTerm);
-        }
-
         private delegate string? GetValDelegate(params string[] cols);
 
         private static string? GetUploadedTermGrade(GetValDelegate getVal, string? term)
@@ -1717,87 +1674,6 @@ namespace BlockGo.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { status = "Error", message = ex.Message });
-            }
-        }
-
-        public sealed class RegistrarGradeCorrectionRequest
-        {
-            public double NewGrade { get; set; }
-            public string? Term { get; set; }
-            public string Reason { get; set; } = string.Empty;
-        }
-
-        [HttpPost("registrar-correct/{recordId}")]
-        [Authorize(Roles = "registrar")]
-        public async Task<IActionResult> CorrectFinalizedGradeAsRegistrar(string recordId, [FromBody] RegistrarGradeCorrectionRequest request)
-        {
-            if (string.IsNullOrWhiteSpace(recordId))
-                return BadRequest(new { status = "Error", message = "A ledger record is required." });
-            if (request.NewGrade < 0 || request.NewGrade > 100)
-                return BadRequest(new { status = "Error", message = "The grade must be between 0 and 100." });
-            if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length < 5)
-                return BadRequest(new { status = "Error", message = "Enter a correction reason of at least 5 characters." });
-
-            var actorEmail = AuthenticatedEmail();
-            try
-            {
-                await using var connection = new NpgsqlConnection(_connectionString);
-                await connection.OpenAsync();
-                if (!await CanAccessGradeRecordAsync(connection, recordId, actorEmail, "registrar")) return Forbid();
-
-                var ledgerJson = await _blockchainService.GetGradeAsync(recordId, actorEmail);
-                var record = JsonSerializer.Deserialize<AcademicRecord>(ledgerJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (record == null) return NotFound(new { status = "Error", message = "The selected grade was not found on the ledger." });
-                if (!string.Equals(record.Status, "Finalized", StringComparison.OrdinalIgnoreCase))
-                    return Conflict(new { status = "Error", message = "Registrar corrections are limited to finalized ledger grades." });
-
-                var correction = BuildRegistrarCorrectionPayload(record.Grade, request.Term ?? record.Term, request.NewGrade);
-                record.Grade = correction.Payload;
-                record.Term = correction.Term;
-                record.Status = "Returned";
-                record.Note = request.Reason.Trim();
-                record.Date = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-
-                await _blockchainService.ReturnGradeAsync(recordId, request.Reason.Trim(), actorEmail);
-                await _blockchainService.UpdateGradeAsync(record, actorEmail);
-                await _blockchainService.ApproveGradeAsync(recordId, actorEmail);
-                await _blockchainService.FinalizeGradeAsync(recordId, actorEmail);
-
-                await using (var log = new NpgsqlCommand(@"
-                    INSERT INTO gradecorrectionlogs (recordid, oldgrade, newgrade, reasontext, approvedby, timestamp)
-                    VALUES (@recordId, @oldGrade, @newGrade, @reason, @actor, CURRENT_TIMESTAMP);", connection))
-                {
-                    log.Parameters.AddWithValue("recordId", recordId);
-                    log.Parameters.AddWithValue("oldGrade", correction.OldRawGrade);
-                    log.Parameters.AddWithValue("newGrade", request.NewGrade.ToString("0.##", CultureInfo.InvariantCulture));
-                    log.Parameters.AddWithValue("reason", request.Reason.Trim());
-                    log.Parameters.AddWithValue("actor", actorEmail);
-                    await log.ExecuteNonQueryAsync();
-                }
-
-                await NotifyAcademicDataChangedAsync("registrar_grade_corrected", record.Course, actorEmail);
-                return Ok(new
-                {
-                    status = "Success",
-                    message = $"{record.SubjectCode} was corrected and finalized on the ledger.",
-                    data = new
-                    {
-                        recordId,
-                        subjectCode = record.SubjectCode,
-                        subjectTitle = record.SubjectTitle,
-                        oldGrade = correction.OldRawGrade,
-                        newGrade = request.NewGrade.ToString("0.##", CultureInfo.InvariantCulture),
-                        equivalent = correction.Equivalent,
-                        term = correction.Term,
-                        ledgerCommitted = true,
-                        ledgerStatus = "Finalized"
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Registrar correction failed for ledger record {RecordId}", recordId);
                 return StatusCode(500, new { status = "Error", message = ex.Message });
             }
         }

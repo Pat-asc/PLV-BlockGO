@@ -1,6 +1,8 @@
 using System.Data;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.SignalR;
+using Client_app.Controllers;
 using Npgsql;
 
 namespace Client_app.Services
@@ -8,12 +10,16 @@ namespace Client_app.Services
     public sealed class AuditLogService : IAuditLogService
     {
         private readonly string _connectionString;
+        private readonly IHubContext<ChatHub> _chatHubContext;
+        private readonly ILogger<AuditLogService> _logger;
 
-        public AuditLogService(IConfiguration configuration)
+        public AuditLogService(IConfiguration configuration, IHubContext<ChatHub> chatHubContext, ILogger<AuditLogService> logger)
         {
             _connectionString = configuration.GetConnectionString("MasterConnection")
                 ?? configuration.GetConnectionString("PostgresConnection")
                 ?? throw new InvalidOperationException("A PostgreSQL write connection is required.");
+            _chatHubContext = chatHubContext;
+            _logger = logger;
         }
 
         public async Task LogAsync(
@@ -45,7 +51,8 @@ namespace Client_app.Services
                     VALUES
                         ((SELECT id FROM users WHERE LOWER(email) = LOWER(@actorEmail) LIMIT 1),
                          @actorRole, @action, @entityType, @entityId, @oldValues, @newValues,
-                         @description, @ipAddress, CURRENT_TIMESTAMP);", connection, transaction);
+                         @description, @ipAddress, CURRENT_TIMESTAMP)
+                    RETURNING audit_id, timestamp;", connection, transaction);
                 command.Parameters.AddWithValue("actorEmail", actorEmail);
                 command.Parameters.AddWithValue("actorRole", actorRole);
                 command.Parameters.AddWithValue("action", action);
@@ -55,7 +62,30 @@ namespace Client_app.Services
                 command.Parameters.AddWithValue("newValues", newValues is null ? DBNull.Value : JsonSerializer.Serialize(newValues));
                 command.Parameters.AddWithValue("description", (object?)description ?? DBNull.Value);
                 command.Parameters.AddWithValue("ipAddress", (object?)ipAddress ?? DBNull.Value);
-                await command.ExecuteNonQueryAsync(cancellationToken);
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                await reader.ReadAsync(cancellationToken);
+                var auditId = reader.GetInt64(0);
+                var occurredAt = reader.GetFieldValue<DateTimeOffset>(1);
+                await reader.DisposeAsync();
+
+                try
+                {
+                    await _chatHubContext.Clients.Group("role_system_admin").SendAsync("TransactionRecorded", new
+                    {
+                        auditId,
+                        action,
+                        entityType,
+                        entityId,
+                        actorRole,
+                        actor = actorEmail,
+                        description,
+                        occurredAt
+                    }, cancellationToken);
+                }
+                catch (Exception exception)
+                {
+                    _logger.LogWarning(exception, "Audit transaction {AuditId} was stored but its live update could not be broadcast.", auditId);
+                }
             }
             finally
             {

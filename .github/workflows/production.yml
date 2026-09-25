@@ -12,12 +12,6 @@ on:
         required: true
         type: string
 
-      fabric_bootstrap:
-        description: Run the idempotent Fabric channel/chaincode bootstrap
-        required: true
-        default: true
-        type: boolean
-
 permissions:
   contents: read
 
@@ -77,10 +71,6 @@ jobs:
       PRODUCTION_BASE_URL: ${{ vars.PRODUCTION_BASE_URL }}
 
       BLOCKGO_PRODUCTION_ENV_B64: ${{ secrets.BLOCKGO_PRODUCTION_ENV_B64 }}
-
-      FABRIC_BOOTSTRAP: >-
-        ${{ github.event_name != 'workflow_dispatch'
-            || inputs.fabric_bootstrap }}
 
     defaults:
       run:
@@ -240,6 +230,16 @@ jobs:
             fi
           done
 
+          smtp_host="$(sed -n -e 's/^SMTP_HOST=//p' -e 's/^EMAIL_HOST=//p' network/.env | tail -n 1)"
+          smtp_user="$(sed -n -e 's/^SMTP_USER=//p' -e 's/^EMAIL_USER=//p' network/.env | tail -n 1)"
+          smtp_pass="$(sed -n -e 's/^SMTP_PASS=//p' -e 's/^EMAIL_PASS=//p' network/.env | tail -n 1)"
+          email_from="$(sed -n 's/^EMAIL_FROM=//p' network/.env | tail -n 1)"
+          if [ -z "$smtp_host" ] || [ -z "$smtp_user" ] || [ -z "$smtp_pass" ] || [ -z "$email_from" ]; then
+            echo "::error::SMTP host, user, password, and sender must be configured for production password recovery."
+            exit 1
+          fi
+          unset smtp_host smtp_user smtp_pass email_from
+
           echo "Production runtime configuration validated."
 
       - name: Verify production deployment inputs
@@ -251,12 +251,12 @@ jobs:
 
           ./k8s/deploy-k8s.sh production verify
 
-      - name: Deploy through repository production profile
+      - name: Deploy affected application services
         working-directory: network
         run: |
           set -euo pipefail
 
-          ./k8s/deploy-k8s.sh production apply
+          ./k8s/deploy-k8s.sh production apply-application
 
       - name: Post-deployment smoke checks
         run: |
@@ -380,6 +380,7 @@ jobs:
             echo "- Region: \`$GKE_REGION\`"
             echo "- Zones: \`$GKE_ZONE_A / $GKE_ZONE_B / $GKE_ZONE_C\`"
             echo "- Trigger: \`$GITHUB_EVENT_NAME\`"
+            echo "- Scope: middleware, ASP.NET services, frontend, and migration 018 only when absent"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Collect failure diagnostics

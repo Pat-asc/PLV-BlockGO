@@ -4,6 +4,7 @@
 # Usage:
 #   ./k8s/deploy-k8s.sh local apply
 #   ./k8s/deploy-k8s.sh production apply
+#   ./k8s/deploy-k8s.sh production apply-application
 #   ./k8s/deploy-k8s.sh local verify
 #   ./k8s/deploy-k8s.sh production status
 #   ./k8s/deploy-k8s.sh production gke-setup
@@ -85,9 +86,9 @@ if [[ "${1:-}" == "local" || "${1:-}" == "production" ]]; then
     ACTION="${2:-apply}"
 elif [[ "${2:-}" == "local" || "${2:-}" == "production" ]]; then
     PROFILE="$2"
-elif [[ "${1:-}" == "apply" || "${1:-}" == "delete" || "${1:-}" == "status" || "${1:-}" == "verify" || "${1:-}" == "gke-setup" || "${1:-}" == "repair-fabric" || "${1:-}" == "diagnose" || "${1:-}" == "rebootstrap-peers" ]]; then
+elif [[ "${1:-}" == "apply" || "${1:-}" == "apply-application" || "${1:-}" == "delete" || "${1:-}" == "status" || "${1:-}" == "verify" || "${1:-}" == "gke-setup" || "${1:-}" == "repair-fabric" || "${1:-}" == "diagnose" || "${1:-}" == "rebootstrap-peers" ]]; then
     ACTION="$1"
-elif [[ "${2:-}" == "apply" || "${2:-}" == "delete" || "${2:-}" == "status" || "${2:-}" == "verify" || "${2:-}" == "gke-setup" || "${2:-}" == "repair-fabric" || "${2:-}" == "diagnose" || "${2:-}" == "rebootstrap-peers" ]]; then
+elif [[ "${2:-}" == "apply" || "${2:-}" == "apply-application" || "${2:-}" == "delete" || "${2:-}" == "status" || "${2:-}" == "verify" || "${2:-}" == "gke-setup" || "${2:-}" == "repair-fabric" || "${2:-}" == "diagnose" || "${2:-}" == "rebootstrap-peers" ]]; then
     ACTION="$2"
 fi
 
@@ -2335,6 +2336,21 @@ EOF
     echo "Generated ConfigMaps and Secrets are ready."
 }
 
+publish_runtime_migrations_configmap() {
+    local migration_config_args=()
+    local migration_file
+    for migration_file in ../migrations/[0-9][0-9][0-9]_*.sql; do
+        migration_config_args+=("--from-file=$(basename "$migration_file")=$migration_file")
+    done
+    if (( ${#migration_config_args[@]} == 0 )); then
+        echo "ERROR: No numbered PostgreSQL migrations were found in ../migrations."
+        return 1
+    fi
+    kubectl create configmap postgres-runtime-migrations \
+        "${migration_config_args[@]}" \
+        -n plv-main-campus --dry-run=client -o yaml | kubectl apply -f -
+}
+
 remove_local_memory_limits_from_generated_manifests() {
     if [[ "$PROFILE" != "local" ]]; then
         return
@@ -2849,10 +2865,10 @@ verify_required_application_fixes() {
         echo "ERROR: The System Administrator password-reset role boundary is missing."
         return 1
     }
-    grep -q 'HttpPost("registrar-correct/{recordId}")' ../client-app/Controllers/GradeController.cs || {
-        echo "ERROR: The Registrar finalized-grade correction endpoint is missing."
+    if grep -q 'HttpPost("registrar-correct/{recordId}")' ../client-app/Controllers/GradeController.cs; then
+        echo "ERROR: The prohibited Registrar direct grade-correction endpoint is present."
         return 1
-    }
+    fi
     if grep -q 'Commit Corrected Grade' ../frontend/src/components/registrar/RegistrarGradesView.jsx; then
         echo "ERROR: The Registrar grade-correction frontend control must remain disabled."
         return 1
@@ -2923,12 +2939,12 @@ verify_required_application_fixes() {
         echo "ERROR: The 45-second backend keepalive interval is missing."
         return 1
     }
-    grep -q 'MaximumRegistrarAccounts = 2' ../client-app/Services/AccountProvisioningService.cs || {
-        echo "ERROR: The two-Registrar backend limit is missing."
+    grep -q 'MaximumRegistrarAccounts = 5' ../client-app/Services/AccountProvisioningService.cs || {
+        echo "ERROR: The five-Registrar backend limit is missing."
         return 1
     }
-    grep -q 'two-Registrar limit has been reached' ../frontend/src/components/system-admin/RegistrarAccountManagement.jsx || {
-        echo "ERROR: The two-Registrar frontend limit state is missing."
+    grep -q 'five-Registrar limit has been reached' ../frontend/src/components/system-admin/RegistrarAccountManagement.jsx || {
+        echo "ERROR: The five-Registrar frontend limit state is missing."
         return 1
     }
     grep -q 'Network and Docker Issues' ../client-app/Controllers/SupportTicketsController.cs || {
@@ -3044,23 +3060,21 @@ prepare_production_source_images() {
     local tag="$PRODUCTION_IMAGE_TAG"
     echo "Building production application images from the current workspace at ${repository}/*:${tag}..."
 
+    local images=(fabric-middleware client-app frontend)
     docker build -t "${repository}/fabric-middleware:${tag}" -f ../middleware/Dockerfile ../middleware
     docker build -t "${repository}/client-app:${tag}" -f ../client-app/Dockerfile ../client-app
     docker build -t "${repository}/frontend:${tag}" -f ../frontend/Dockerfile ../frontend
-    docker build -t "${repository}/registrar-chaincode:${tag}" -f ../chaincode/Dockerfile ../chaincode
-    docker build -t "${repository}/postgres-backup:${tag}" -f ./k8s/postgres-backup/Dockerfile ./k8s/postgres-backup
-    docker image tag "${repository}/registrar-chaincode:${tag}" "${repository}/faculty-chaincode:${tag}"
-    docker image tag "${repository}/registrar-chaincode:${tag}" "${repository}/department-chaincode:${tag}"
+
+    if [[ "$ACTION" != "apply-application" ]]; then
+        docker build -t "${repository}/registrar-chaincode:${tag}" -f ../chaincode/Dockerfile ../chaincode
+        docker build -t "${repository}/postgres-backup:${tag}" -f ./k8s/postgres-backup/Dockerfile ./k8s/postgres-backup
+        docker image tag "${repository}/registrar-chaincode:${tag}" "${repository}/faculty-chaincode:${tag}"
+        docker image tag "${repository}/registrar-chaincode:${tag}" "${repository}/department-chaincode:${tag}"
+        images+=(registrar-chaincode faculty-chaincode department-chaincode postgres-backup)
+    fi
 
     local image_name
-    for image_name in \
-        fabric-middleware \
-        client-app \
-        frontend \
-        registrar-chaincode \
-        faculty-chaincode \
-        department-chaincode \
-        postgres-backup; do
+    for image_name in "${images[@]}"; do
         echo "Publishing ${repository}/${image_name}:${tag}..."
         docker push "${repository}/${image_name}:${tag}"
     done
@@ -3106,6 +3120,7 @@ verify_deployment_inputs() {
         ../migrations/006_chat_conversation_states.sql \
         ../migrations/007_group_chats.sql \
         ../migrations/008_support_ticket_specialist_assignments.sql \
+        ../migrations/018_password_reset_tokens.sql \
         ./k8s/backup_postgres.sh \
         ./k8s/15-postgres-backup.yaml \
         ./k8s/postgres-backup/Dockerfile \
@@ -3653,6 +3668,10 @@ verify_deployed_application_revision() {
         echo "ERROR: Migration 008 is absent from the deployed migration ConfigMap."
         return 1
     }
+    grep -q '018_password_reset_tokens.sql' <<< "$migration_config" || {
+        echo "ERROR: Migration 018 is absent from the deployed migration ConfigMap."
+        return 1
+    }
 
     local migration_logs
     migration_logs="$(kubectl logs job/postgres-schema-migrations -n plv-main-campus --all-containers=true)"
@@ -3666,6 +3685,10 @@ verify_deployed_application_revision() {
     }
     grep -q 'Applying 008_support_ticket_specialist_assignments.sql' <<< "$migration_logs" || {
         echo "ERROR: Migration 008 was not observed in the completed migration Job."
+        return 1
+    }
+    grep -q 'Applying 018_password_reset_tokens.sql' <<< "$migration_logs" || {
+        echo "ERROR: Migration 018 was not observed in the completed migration Job."
         return 1
     }
 
@@ -3719,7 +3742,7 @@ verify_deployed_application_revision() {
     kubectl exec "$frontend_pod" -n plv-fabric -- sh -ec \
         "grep -R -q 'Group invitations' /usr/share/nginx/html/static/js && \
          grep -R -q 'Permanently delete every message' /usr/share/nginx/html/static/js && \
-         grep -R -q 'two-Registrar limit has been reached' /usr/share/nginx/html/static/js && \
+         grep -R -q 'five-Registrar limit has been reached' /usr/share/nginx/html/static/js && \
          grep -R -q 'Delete Registrar' /usr/share/nginx/html/static/js && \
          grep -R -q 'kiosk&theme=light' /usr/share/nginx/html/static/js && \
          grep -R -q 'blockgo.auth.token' /usr/share/nginx/html/static/js && \
@@ -4715,6 +4738,87 @@ show_status() {
     kubectl get svc -A
 }
 
+deploy_application_only() {
+    if [[ "$PROFILE" != "production" ]]; then
+        echo "ERROR: apply-application is reserved for the production application rollout."
+        return 1
+    fi
+
+    echo "Deploying only the affected application services (middleware, ASP.NET services, and frontend)."
+    verify_required_application_fixes
+    validate_production_image_settings
+
+    local migration_018_missing=false
+    local migration_018_table=""
+    migration_018_table="$(kubectl exec statefulset/postgres-primary -n plv-main-campus -- bash -ec \
+        'PGPASSWORD="$POSTGRESQL_PASSWORD" psql -U "$POSTGRESQL_USERNAME" -d "$POSTGRESQL_DATABASE" -tAc "SELECT COALESCE(to_regclass('"'"'public.password_reset_tokens'"'"')::text, '"'"''"'"');"' \
+        2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$migration_018_table" != "password_reset_tokens" ]]; then
+        migration_018_missing=true
+    fi
+
+    publish_runtime_migrations_configmap
+    prepare_production_source_images
+    prepare_manifests
+
+    if is_true "$migration_018_missing"; then
+        echo "Migration 018 is absent in production; applying the idempotent numbered migration set."
+        FORCE_BOOTSTRAP_JOBS=true ensure_job_from_manifest postgres-schema-migrations plv-main-campus \
+            "$TMP_K8S_DIR/04a-postgres-configmap.yaml" 660
+        kubectl logs job/postgres-schema-migrations -n plv-main-campus --all-containers=true |
+            grep -q 'Applying 018_password_reset_tokens.sql' || {
+                echo "ERROR: Migration 018 was not observed in the completed migration Job."
+                return 1
+            }
+    else
+        echo "Migration 018 is already present; no production migration Job will be rerun."
+    fi
+
+    apply_manifest "$TMP_K8S_DIR/08-middleware-api.yaml"
+    apply_manifest "$TMP_K8S_DIR/14-client-app.yaml"
+    apply_manifest "$TMP_K8S_DIR/12-frontend-ha.yaml"
+
+    local deployment
+    for deployment in auth-service fabric-identity-service ledger-service grade-upload-service settings-service middleware-api \
+        dotnet-api-gateway dotnet-auth-service dotnet-academic-service dotnet-grade-service dotnet-operations-service dotnet-realtime-service frontend; do
+        wait_rollout "deployment/${deployment}" plv-fabric
+    done
+
+    local repository="${PRODUCTION_IMAGE_REPOSITORY%/}"
+    local expected_tag="$PRODUCTION_IMAGE_TAG"
+    local entry image_name deployed_image
+    for entry in \
+        "middleware-api|fabric-middleware" \
+        "auth-service|fabric-middleware" \
+        "fabric-identity-service|fabric-middleware" \
+        "ledger-service|fabric-middleware" \
+        "grade-upload-service|fabric-middleware" \
+        "settings-service|fabric-middleware" \
+        "dotnet-api-gateway|client-app" \
+        "dotnet-auth-service|client-app" \
+        "dotnet-academic-service|client-app" \
+        "dotnet-grade-service|client-app" \
+        "dotnet-operations-service|client-app" \
+        "dotnet-realtime-service|client-app" \
+        "frontend|frontend"; do
+        IFS='|' read -r deployment image_name <<< "$entry"
+        deployed_image="$(kubectl get deployment "$deployment" -n plv-fabric -o jsonpath='{.spec.template.spec.containers[0].image}')"
+        if [[ "$deployed_image" != "${repository}/${image_name}:${expected_tag}" ]]; then
+            echo "ERROR: plv-fabric/${deployment} uses ${deployed_image}; expected ${repository}/${image_name}:${expected_tag}."
+            return 1
+        fi
+    done
+
+    echo "Verifying SMTP transport authentication without sending an email."
+    kubectl exec deployment/auth-service -n plv-fabric -- node -e '
+      fetch("http://127.0.0.1:4001/internal/smtp-health", { headers: { "x-api-key": process.env.INTERNAL_API_KEY } })
+        .then(async response => { if (!response.ok) throw new Error(`SMTP health returned HTTP ${response.status}`); console.log("SMTP transport verified."); })
+        .catch(error => { console.error(error.message); process.exit(1); });
+    '
+
+    echo "Affected application services deployed successfully; Fabric, chaincode, peers, orderers, and backup workloads were not applied or restarted."
+}
+
 main() {
     validate_script_integrity
     case "$ACTION" in
@@ -4768,6 +4872,13 @@ main() {
             fi
             bootstrap_fabric
             echo "Deployment complete."
+            ;;
+        apply-application)
+            check_kubectl
+            check_cluster
+            cluster_preflight
+            validate_production_zone_nodes
+            deploy_application_only
             ;;
         delete)
             check_kubectl

@@ -9,7 +9,7 @@ namespace Client_app.Services
 {
     public sealed class AccountProvisioningService : IAccountProvisioningService
     {
-        private const int MaximumRegistrarAccounts = 2;
+        private const int MaximumRegistrarAccounts = 5;
         private const long RegistrarCapacityLockId = 2026082802;
         private readonly string _connectionString;
         private readonly string _middlewareBaseUrl;
@@ -640,7 +640,7 @@ namespace Client_app.Services
             var count = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
             if (count >= MaximumRegistrarAccounts)
             {
-                throw new InvalidOperationException($"Only {MaximumRegistrarAccounts} Registrar accounts are allowed. Delete an existing Registrar before creating another one.");
+                throw new InvalidOperationException($"Maximum of {MaximumRegistrarAccounts} Registrar accounts has been reached. Delete an existing Registrar before creating another one.");
             }
         }
 

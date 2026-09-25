@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
@@ -18,11 +19,27 @@ namespace Client_app.Controllers
         private readonly string _connectionString;
         private readonly string _middlewareUrl;
         private readonly string _frontendUrl;
+        private readonly string _ipfsUrl;
+        private readonly string _ledgerUrl;
         private readonly string? _prometheusUrl;
         private readonly string _grafanaUrl;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IMemoryCache _cache;
+        private readonly string? _couchDbUser;
+        private readonly string? _couchDbPassword;
         private const string GrafanaSessionCookie = "blockgo_grafana_session";
+        private static readonly IReadOnlyDictionary<string, string> CouchDbTargets =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["registrar"] = "http://couchdb-registrar.plv-main-campus.svc.cluster.local:5984",
+                ["faculty"] = "http://couchdb-faculty.plv-annex-campus.svc.cluster.local:5984",
+                ["department"] = "http://couchdb-department.plv-pubad-campus.svc.cluster.local:5984"
+            };
+        private static readonly string[] SensitiveDocumentTerms =
+        {
+            "password", "secret", "privatekey", "private_key", "enrollmentsecret",
+            "smtp_pass", "tls_key", "wallet", "credential"
+        };
 
         public SystemMonitoringController(IConfiguration configuration, IHttpClientFactory httpClientFactory, IMemoryCache cache)
         {
@@ -34,12 +51,19 @@ namespace Client_app.Controllers
                 ?? configuration["Frontend:Url"]
                 ?? Environment.GetEnvironmentVariable("FRONTEND_URL")
                 ?? "http://frontend-service";
+            _ipfsUrl = configuration["IpfsUrl"]
+                ?? configuration["Monitoring:IpfsUrl"]
+                ?? "http://ipfs-ha-api.plv-fabric.svc.cluster.local:5001";
+            _ledgerUrl = configuration["Monitoring:LedgerUrl"]
+                ?? "http://ledger-service.plv-fabric.svc.cluster.local:4003";
             _prometheusUrl = configuration["Monitoring:PrometheusUrl"] ?? Environment.GetEnvironmentVariable("PROMETHEUS_URL");
             _grafanaUrl = configuration["Monitoring:GrafanaUrl"]
                 ?? Environment.GetEnvironmentVariable("GRAFANA_URL")
                 ?? "http://grafana.plv-fabric.svc.cluster.local:3000";
             _httpClientFactory = httpClientFactory;
             _cache = cache;
+            _couchDbUser = configuration["COUCHDB_USER"] ?? Environment.GetEnvironmentVariable("COUCHDB_USER");
+            _couchDbPassword = configuration["COUCHDB_PASS"] ?? Environment.GetEnvironmentVariable("COUCHDB_PASS");
         }
 
         [HttpPost("grafana/session")]
@@ -202,6 +226,9 @@ namespace Client_app.Controllers
             {
                 services.Add(Service("middleware", "Fabric Middleware", "Application", "down", middlewareStopwatch.ElapsedMilliseconds, SafeMessage(exception), _middlewareUrl));
             }
+
+            await AddIpfsHealthAsync(services, cancellationToken);
+            await AddFabricHealthAsync(services, cancellationToken);
 
             services.Insert(0, Service("backend", "ASP.NET Core API", "Application", "healthy", 0, "Monitoring endpoint is responsive.", HttpContext.Request.Host.Value));
             var alerts = await LoadSecurityAlertsAsync(cancellationToken);
@@ -379,6 +406,172 @@ namespace Client_app.Controllers
                 });
             }
             return Ok(new { status = "Success", generatedAt = DateTimeOffset.UtcNow, count = records.Count, data = records });
+        }
+
+        [HttpGet("couchdb/{target}/databases")]
+        public async Task<IActionResult> CouchDbDatabases(string target, CancellationToken cancellationToken)
+        {
+            if (!TryGetCouchDbTarget(target, out var targetUrl, out var failure)) return failure!;
+            using var response = await SendCouchDbRequestAsync(targetUrl, "/_all_dbs", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { status = "Error", message = "The selected CouchDB target is unavailable." });
+
+            var databases = JsonSerializer.Deserialize<string[]>(await response.Content.ReadAsStringAsync(cancellationToken))
+                ?.Where(IsBrowsableDatabase)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToArray() ?? Array.Empty<string>();
+            return Ok(new { status = "Success", target = target.ToLowerInvariant(), data = databases });
+        }
+
+        [HttpGet("couchdb/{target}/documents")]
+        public async Task<IActionResult> CouchDbDocuments(
+            string target,
+            [FromQuery] string database,
+            [FromQuery] int page = 1,
+            CancellationToken cancellationToken = default)
+        {
+            if (!TryGetCouchDbTarget(target, out var targetUrl, out var failure)) return failure!;
+            if (!IsBrowsableDatabase(database))
+                return BadRequest(new { status = "Error", message = "A valid application state database is required." });
+            page = Math.Clamp(page, 1, 10000);
+
+            using var databasesResponse = await SendCouchDbRequestAsync(targetUrl, "/_all_dbs", cancellationToken);
+            if (!databasesResponse.IsSuccessStatusCode)
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { status = "Error", message = "The selected CouchDB target is unavailable." });
+            var databases = JsonSerializer.Deserialize<string[]>(await databasesResponse.Content.ReadAsStringAsync(cancellationToken)) ?? Array.Empty<string>();
+            if (!databases.Any(value => string.Equals(value, database, StringComparison.Ordinal)))
+                return NotFound(new { status = "Error", message = "The selected application state database was not found." });
+
+            var path = $"/{Uri.EscapeDataString(database)}/_all_docs?include_docs=true&limit=11&skip={(page - 1) * 10}";
+            using var response = await SendCouchDbRequestAsync(targetUrl, path, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { status = "Error", message = "CouchDB documents could not be read." });
+
+            var root = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))?.AsObject();
+            var rows = root?["rows"]?.AsArray() ?? new JsonArray();
+            var hasNextPage = rows.Count > 10;
+            var documents = rows.Take(10).Select(row => new
+            {
+                id = row?["id"]?.GetValue<string>() ?? string.Empty,
+                document = SanitizeDocument(row?["doc"])
+            }).ToArray();
+            return Ok(new
+            {
+                status = "Success",
+                target = target.ToLowerInvariant(),
+                database,
+                page,
+                pageSize = 10,
+                hasNextPage,
+                totalRows = root?["total_rows"]?.GetValue<int?>(),
+                data = documents
+            });
+        }
+
+        private async Task AddIpfsHealthAsync(List<object> services, CancellationToken cancellationToken)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            try
+            {
+                using var client = _httpClientFactory.CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(4);
+                using var response = await client.PostAsync($"{_ipfsUrl.TrimEnd('/')}/api/v0/version", null, cancellationToken);
+                services.Add(Service("ipfs", "IPFS Cluster Gateway", "Storage", response.IsSuccessStatusCode ? "healthy" : "down",
+                    stopwatch.ElapsedMilliseconds, $"HTTP {(int)response.StatusCode}", "Internal IPFS API"));
+            }
+            catch (Exception exception)
+            {
+                services.Add(Service("ipfs", "IPFS Cluster Gateway", "Storage", "down", stopwatch.ElapsedMilliseconds, SafeMessage(exception), "Internal IPFS API"));
+            }
+        }
+
+        private async Task AddFabricHealthAsync(List<object> services, CancellationToken cancellationToken)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            try
+            {
+                using var client = _httpClientFactory.CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(6);
+                using var response = await client.GetAsync($"{_ledgerUrl.TrimEnd('/')}/api/ready", cancellationToken);
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                if (!response.IsSuccessStatusCode || !document.RootElement.TryGetProperty("fabric", out var fabric) || fabric.ValueKind != JsonValueKind.Object)
+                {
+                    services.Add(Service("fabric-network", "Fabric Peers and Orderers", "Blockchain", "down", stopwatch.ElapsedMilliseconds,
+                        $"HTTP {(int)response.StatusCode}", "Internal Fabric readiness"));
+                    return;
+                }
+
+                foreach (var endpoint in fabric.EnumerateObject())
+                {
+                    var isOrderer = endpoint.Name.StartsWith("orderer", StringComparison.OrdinalIgnoreCase);
+                    services.Add(Service($"fabric-{endpoint.Name.ToLowerInvariant()}", FabricEndpointName(endpoint.Name, isOrderer), "Blockchain", "healthy",
+                        stopwatch.ElapsedMilliseconds, endpoint.Value.ToString(), isOrderer ? "Fabric orderer" : "Fabric peer"));
+                }
+            }
+            catch (Exception exception)
+            {
+                services.Add(Service("fabric-network", "Fabric Peers and Orderers", "Blockchain", "down", stopwatch.ElapsedMilliseconds,
+                    SafeMessage(exception), "Internal Fabric readiness"));
+            }
+        }
+
+        private bool TryGetCouchDbTarget(string target, out string targetUrl, out IActionResult? failure)
+        {
+            targetUrl = string.Empty;
+            failure = null;
+            if (!CouchDbTargets.TryGetValue(target ?? string.Empty, out targetUrl!))
+            {
+                failure = BadRequest(new { status = "Error", message = "Unknown CouchDB target." });
+                return false;
+            }
+            if (string.IsNullOrWhiteSpace(_couchDbUser) || string.IsNullOrWhiteSpace(_couchDbPassword))
+            {
+                failure = StatusCode(StatusCodes.Status503ServiceUnavailable, new { status = "Error", message = "The protected CouchDB browser is not configured." });
+                return false;
+            }
+            return true;
+        }
+
+        private async Task<HttpResponseMessage> SendCouchDbRequestAsync(string targetUrl, string path, CancellationToken cancellationToken)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{targetUrl.TrimEnd('/')}{path}");
+            var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_couchDbUser}:{_couchDbPassword}"));
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", credentials);
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(8);
+            return await client.SendAsync(request, cancellationToken);
+        }
+
+        private static bool IsBrowsableDatabase(string? database) =>
+            !string.IsNullOrWhiteSpace(database)
+            && database.Length <= 238
+            && !database.StartsWith('_')
+            && !database.Contains("wallet", StringComparison.OrdinalIgnoreCase)
+            && database.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '$' or '(' or ')' or '+' or '-');
+
+        private static JsonNode? SanitizeDocument(JsonNode? node)
+        {
+            if (node is JsonObject source)
+            {
+                var copy = new JsonObject();
+                foreach (var property in source)
+                {
+                    var normalized = property.Key.Replace("-", string.Empty).ToLowerInvariant();
+                    copy[property.Key] = SensitiveDocumentTerms.Any(term => normalized.Contains(term.Replace("_", string.Empty), StringComparison.Ordinal))
+                        ? JsonValue.Create("[REDACTED]")
+                        : SanitizeDocument(property.Value);
+                }
+                return copy;
+            }
+            if (node is JsonArray array)
+                return new JsonArray(array.Select(SanitizeDocument).ToArray());
+            return node?.DeepClone();
+        }
+
+        private static string FabricEndpointName(string name, bool isOrderer)
+        {
+            var words = System.Text.RegularExpressions.Regex.Replace(name, "([a-z])([A-Z])", "$1 $2");
+            return $"Fabric {(isOrderer ? "Orderer" : "Peer")} - {words}";
         }
 
         private async Task<List<object>> LoadSecurityAlertsAsync(CancellationToken cancellationToken)

@@ -34,6 +34,7 @@ const SupportTicketManagement = () => {
 
   const editFor = (ticket) => edits[ticket.ticketId] || {
     status: ticket.status,
+    severity: ticket.severity || 'NORMAL',
     adminResponse: ticket.adminResponse || '',
     assignment: assignmentValueForTicket(ticket),
   };
@@ -52,7 +53,7 @@ const SupportTicketManagement = () => {
     }
     setSavingTicketId(ticket.ticketId);
     try {
-      await updateSupportTicket(ticket.ticketId, { status: edit.status, adminResponse: edit.adminResponse, ...assignment });
+      await updateSupportTicket(ticket.ticketId, { status: edit.status, severity: edit.severity, adminResponse: edit.adminResponse, ...assignment });
       setNotice({ type: 'success', message: `Ticket #${ticket.ticketId} was saved.` });
       setEdits((current) => { const next = { ...current }; delete next[ticket.ticketId]; return next; });
       await load();
@@ -99,10 +100,11 @@ const SupportTicketManagement = () => {
       {tickets.map((ticket) => {
         const edit = editFor(ticket);
         return <article key={ticket.ticketId} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-bold text-slate-800">#{ticket.ticketId} - {ticket.title}</h3><p className="text-xs text-slate-500">{ticket.registrarName} - {ticket.registrarEmail}</p><p className="mt-1 text-xs font-semibold text-indigo-700">Assigned to: {ticket.assignedSpecialistLabel || 'Unassigned'}</p></div><span className="h-fit rounded-full bg-blue-100 px-2 py-1 text-xs font-bold text-blue-800">{ticket.status}</span></div>
+          <div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-bold text-slate-800">#{ticket.ticketId} - {ticket.title}</h3><p className="text-xs text-slate-500">{ticket.registrarName} - {ticket.registrarEmail}</p><p className="mt-1 text-xs font-semibold text-indigo-700">Assigned to: {ticket.assignedSpecialistLabel || 'Unassigned'}</p></div><div className="flex h-fit gap-2"><span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-800">{ticket.severity}</span><span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-bold text-blue-800">{ticket.status}</span></div></div>
           <p className="my-3 whitespace-pre-wrap text-sm text-slate-700">{ticket.description}</p>
-          <div className="grid gap-3 lg:grid-cols-[190px_minmax(260px,1fr)_minmax(260px,2fr)_auto]">
+          <div className="grid gap-3 lg:grid-cols-[150px_150px_minmax(240px,1fr)_minmax(240px,2fr)_auto]">
             <select value={edit.status} onChange={(event) => changeEdit(ticket, 'status', event.target.value)} className="rounded-lg border border-slate-300 px-3 py-2"><option value="OPEN">Open</option><option value="IN_PROGRESS">In Progress</option><option value="RESOLVED">Resolved</option><option value="CLOSED">Closed</option></select>
+            <select aria-label={`Severity for ticket ${ticket.ticketId}`} value={edit.severity} onChange={(event) => changeEdit(ticket, 'severity', event.target.value)} className="rounded-lg border border-slate-300 px-3 py-2"><option value="NORMAL">Normal</option><option value="HIGH">High</option><option value="CRITICAL">Critical</option></select>
             <SupportAssignmentSelect value={edit.assignment} onChange={(assignment) => changeEdit(ticket, 'assignment', assignment)} specialists={specialists} className="rounded-lg border border-slate-300 px-3 py-2" ariaLabel={`Support assignment for ticket ${ticket.ticketId}`} />
             <textarea rows="2" placeholder="Administrator response" value={edit.adminResponse} onChange={(event) => changeEdit(ticket, 'adminResponse', event.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
             <button type="button" onClick={() => save(ticket)} disabled={savingTicketId === ticket.ticketId} className="rounded-lg bg-[#003366] px-4 py-2 font-bold text-white disabled:opacity-50">{savingTicketId === ticket.ticketId ? 'Saving...' : 'Save'}</button>

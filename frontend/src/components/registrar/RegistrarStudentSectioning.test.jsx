@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import RegistrarStudentSectioning from './RegistrarStudentSectioning';
+import RegistrarStudentSectioning, { buildSectionTemplateDownload } from './RegistrarStudentSectioning';
 import {
   fetchDepartmentSections,
   fetchNextStudentId,
@@ -147,4 +147,46 @@ test('refetches authoritative enrollment membership immediately after assignment
       expect.objectContaining({ studentId: '26-0042', academicSectionId: 1, sectionCode: '1-1' }),
     ]);
   });
+});
+
+test('Section Creator removes the global template button and exposes one accessible action per exact section', async () => {
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+
+  const actions = await screen.findAllByRole('button', { name: /Download template for .*1-/i });
+  expect(actions).toHaveLength(2);
+  expect(screen.queryByRole('button', { name: 'Download Template' })).not.toBeInTheDocument();
+  actions.forEach((action) => expect(action).toHaveClass('min-h-8'));
+});
+
+test('section template uses exact academic_section_id when display labels are duplicated', () => {
+  const sections = [
+    { academicSectionId: 11, sectionCode: '1-1', sectionName: '1-1', program: 'BSIT' },
+    { academicSectionId: 22, sectionCode: '1-1', sectionName: '1-1', program: 'BSCS' },
+  ];
+  const students = [
+    { studentId: '26-0011', firstName: 'Information', lastName: 'Student', middleName: 'A', sex: 'F', yearLevel: '1st Year', academicSectionId: 11 },
+    { studentId: '26-0022', firstName: 'Computer', lastName: 'Student', middleName: 'B', sex: 'M', yearLevel: '1st Year', academicSectionId: 22 },
+  ];
+
+  const download = buildSectionTemplateDownload({
+    sections, students, academicSectionId: 22, program: 'BSCS', schoolYear: '2026-2027', semester: 'FIRST',
+  });
+
+  expect(download.academicSectionId).toBe(22);
+  expect(download.students.map((item) => item.studentId)).toEqual(['26-0022']);
+  expect(download.content).toContain('26-0022');
+  expect(download.content).not.toContain('26-0011');
+  expect(download.content.split('\n')[0]).toBe('Student ID,Sex,Last Name,First Name,Middle Name,Year Level');
+  expect(download.fileName).toContain('bscs-1-1-2026-2027-first-template.csv');
+});
+
+test('section template fails closed when an exact academic section ID is absent', () => {
+  expect(buildSectionTemplateDownload({
+    sections: [{ academicSectionId: 11, sectionCode: '1-1' }],
+    students: [],
+    academicSectionId: 99,
+    program: 'BSIT',
+    schoolYear: '2026-2027',
+    semester: 'FIRST',
+  })).toBeNull();
 });

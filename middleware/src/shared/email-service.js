@@ -26,18 +26,32 @@ function createEmailService(environment = process.env, mailer = nodemailer) {
         return Boolean(host && Number.isInteger(port) && port > 0 && user && pass && from);
     }
 
+    function transport() {
+        transporter ||= mailer.createTransport({
+            host,
+            port,
+            secure,
+            requireTLS: !secure,
+            auth: { user, pass },
+            tls: { minVersion: 'TLSv1.2' }
+        });
+        return transporter;
+    }
+
+    async function verifyConnection() {
+        if (!configured()) throw new PasswordResetEmailError('Password reset email is temporarily unavailable.');
+        try {
+            await transport().verify();
+            return true;
+        } catch {
+            throw new PasswordResetEmailError();
+        }
+    }
+
     async function sendPasswordResetCode({ to, code, expiresInMinutes }) {
         if (!configured()) throw new PasswordResetEmailError('Password reset email is temporarily unavailable.');
         try {
-            transporter ||= mailer.createTransport({
-                host,
-                port,
-                secure,
-                requireTLS: !secure,
-                auth: { user, pass },
-                tls: { minVersion: 'TLSv1.2' }
-            });
-            await transporter.sendMail({
+            await transport().sendMail({
                 from,
                 to,
                 subject: 'PLV BlockGO Password Reset',
@@ -58,7 +72,7 @@ function createEmailService(environment = process.env, mailer = nodemailer) {
         }
     }
 
-    return { configured, sendPasswordResetCode };
+    return { configured, verifyConnection, sendPasswordResetCode };
 }
 
 module.exports = { PasswordResetEmailError, createEmailService };

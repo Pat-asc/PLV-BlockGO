@@ -5,6 +5,8 @@ import SystemMonitoring from './SystemMonitoring';
 import RegistrarAccountManagement from './RegistrarAccountManagement';
 import SupportTicketManagement from './SupportTicketManagement';
 import GrafanaObservability from './GrafanaObservability';
+import SystemAdminTransactions from './SystemAdminTransactions';
+import CouchDbBrowser from './CouchDbBrowser';
 
 const navigationItems = [
   { id: 'overview', label: 'Overview' },
@@ -12,6 +14,8 @@ const navigationItems = [
   { id: 'tickets', label: 'Error Reports' },
   { id: 'infrastructure', label: 'Infrastructure & Data' },
   { id: 'alerts', label: 'Alerts' },
+  { id: 'transactions', label: 'Transactions' },
+  { id: 'data-browser', label: 'CouchDB Browser' },
   { id: 'observability', label: 'Grafana Observability' },
 ];
 
@@ -97,6 +101,10 @@ function SystemAdminPortal({ adminData, onLogout }) {
               <SupportTicketManagement />
             ) : activeView === 'observability' ? (
               <GrafanaObservability />
+            ) : activeView === 'transactions' ? (
+              <SystemAdminTransactions />
+            ) : activeView === 'data-browser' ? (
+              <CouchDbBrowser />
             ) : (
               <>
                 <SystemMonitoring activeView={activeView} />

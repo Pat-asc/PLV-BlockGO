@@ -148,6 +148,7 @@ function SystemMonitoring({ activeView = 'overview' }) {
   }, [refresh]);
 
   const alerts = summary?.alerts || [];
+  const services = summary?.services || [];
   const runtime = summary?.runtime || {};
   const database = summary?.database || {};
   const infrastructure = summary?.infrastructure || {};
@@ -171,6 +172,21 @@ function SystemMonitoring({ activeView = 'overview' }) {
           <h3 className="text-base font-bold text-[#003366]">Current Alerts</h3>
         </div>
         <AlertsTable alerts={alerts.slice(0, 5)} metricsAvailable={metricsAvailable} onResolve={resolveEvent} />
+      </section>
+
+      <section className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h3 className="text-base font-bold text-[#003366]">Service Availability</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-500"><tr><th className="px-4 py-3">Service</th><th className="px-4 py-3">Layer</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Latency</th><th className="px-4 py-3">Detail</th></tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {services.map((service) => <tr key={service.id}><td className="px-4 py-3 font-semibold text-slate-900">{service.name}</td><td className="px-4 py-3 text-slate-600">{service.layer}</td><td className="px-4 py-3"><StatusBadge status={service.status} /></td><td className="px-4 py-3 text-slate-600">{formatMetric(service.latencyMs)} ms</td><td className="max-w-md px-4 py-3 text-slate-600">{service.message || '--'}</td></tr>)}
+              {!services.length ? <tr><td colSpan="5" className="px-4 py-6 text-center text-slate-500">No service-health results are available.</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   );

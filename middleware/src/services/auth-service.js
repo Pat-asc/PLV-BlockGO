@@ -220,6 +220,16 @@ app.post('/api/forgot-password', forgotPasswordLimiter, async (req, res) => {
     }
 });
 
+app.get('/internal/smtp-health', requireInternalKey, async (req, res) => {
+    try {
+        await emailService.verifyConnection();
+        res.json({ status: 'ready', smtp: 'authenticated' });
+    } catch (error) {
+        logger.warn({ error: error.name }, 'SMTP transport verification failed');
+        res.status(503).json({ status: 'not_ready', smtp: 'unavailable' });
+    }
+});
+
 app.post('/api/reset-password', verifyPasswordResetLimiter, async (req, res) => {
     const unexpectedFields = Object.keys(req.body || {}).filter((key) => !['email', 'code', 'newPassword'].includes(key));
     if (unexpectedFields.length) return res.status(400).json({ error: 'Unexpected request fields are not allowed.' });

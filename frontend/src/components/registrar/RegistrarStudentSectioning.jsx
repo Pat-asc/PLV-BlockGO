@@ -13,7 +13,6 @@ import {
   parseStudentIdSpreadsheet,
   syncSectionedStudentsToStorage,
 } from "../../utils/studentSectioningHelpers";
-import { downloadTemplateButtonClass } from "../shared/downloadButtonStyles";
 import { fetchDepartmentSections, fetchNextStudentId, fetchSectionedEnrolledStudents, fetchUnassignedEnrolledStudents, getSystemSetting } from "../../services/api";
 import { syncSectioningBatchToBackend } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
@@ -49,6 +48,39 @@ const compareStudentsByName = (left, right) => {
     .toLowerCase();
 
   return leftName.localeCompare(rightName);
+};
+
+export const buildSectionTemplateDownload = ({
+  sections = [],
+  students = [],
+  academicSectionId,
+  program = "student",
+  schoolYear = "",
+  semester = "",
+}) => {
+  const exactId = Number(academicSectionId);
+  const section = sections.find((item) => Number(item.academicSectionId || item.id) === exactId);
+  if (!Number.isInteger(exactId) || exactId <= 0 || !section) return null;
+
+  const exactStudents = students
+    .filter((student) => Number(student.academicSectionId) === exactId)
+    .sort(compareStudentsByName);
+  const safePart = (value, fallback) => String(value || fallback)
+    .trim()
+    .replace(/[^a-z0-9-]+/gi, "-")
+    .replace(/^-+|-+$/g, "");
+  const sectionLabel = section.sectionName || section.sectionCode || `section-${exactId}`;
+  const fileName = [program, sectionLabel, schoolYear, semester, "template"]
+    .map((value, index) => safePart(value, index === 0 ? "student" : "section"))
+    .join("-")
+    .toLowerCase() + ".csv";
+
+  return {
+    academicSectionId: exactId,
+    content: buildStudentCsvContent(exactStudents),
+    fileName,
+    students: exactStudents,
+  };
 };
 
 const buildGeneratedSections = ({
@@ -1163,21 +1195,20 @@ function RegistrarStudentSectioning({
     );
   };
 
-  const handleDownloadSectionTemplate = () => {
-    const templateRows = [
-      {
-        studentId: "26-0001",
-        sex: "Male",
-        lastName: "Dela Cruz",
-        firstName: "Juan",
-        middleName: "Santos",
-        middleInitial: "Santos",
-        yearLevel: selectedYearLevel,
-      },
-    ];
-    const fileName = `${chairpersonDepartment || "student"}-${selectedYearLevel.replace(/\s+/g, "-").toLowerCase()}-section-template.csv`;
-
-    downloadCsvFile(buildStudentCsvContent(templateRows), fileName);
+  const handleDownloadSectionTemplate = (academicSectionId) => {
+    const download = buildSectionTemplateDownload({
+      sections: sectionPlans,
+      students,
+      academicSectionId,
+      program: selectedBatch?.program || chairpersonDepartment,
+      schoolYear: selectedBatch?.schoolYear || selectedBatch?.batchYear || schoolYear,
+      semester: selectedBatch?.semester || sectioningSemester,
+    });
+    if (!download) {
+      alert("The selected academic section could not be resolved by its exact ID.");
+      return;
+    }
+    downloadCsvFile(download.content, download.fileName);
   };
 
   const handleImportSectionCsv = (sectionCode) => {
@@ -2717,13 +2748,6 @@ function RegistrarStudentSectioning({
                 </button>
                 <button
                   type="button"
-                  onClick={handleDownloadSectionTemplate}
-                  className={downloadTemplateButtonClass}
-                >
-                  Download Template
-                </button>
-                <button
-                  type="button"
                   onClick={handleSaveSectioning}
                   disabled={!selectedBatch || !sectionPlans.length || savingSections}
                   className="h-8 whitespace-nowrap rounded-md border border-[#003366] px-3 text-[11px] font-semibold text-[#003366] transition hover:bg-[#003366] hover:text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
@@ -2849,6 +2873,16 @@ function RegistrarStudentSectioning({
                         >
                           Export CSV
                         </button>
+                        {Number(section.academicSectionId || section.id) > 0 ? (
+                          <button
+                            type="button"
+                            aria-label={`Download template for ${section.sectionName}`}
+                            onClick={() => handleDownloadSectionTemplate(section.academicSectionId || section.id)}
+                            className="min-h-8 rounded-md border border-blue-200 px-3 py-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                          >
+                            Download Template
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => handleImportSectionCsv(section.sectionCode)}

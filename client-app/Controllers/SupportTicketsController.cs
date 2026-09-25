@@ -16,6 +16,7 @@ namespace Client_app.Controllers
     public sealed class SupportTicketsController : ControllerBase
     {
         private static readonly HashSet<string> Statuses = new(StringComparer.OrdinalIgnoreCase) { "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED" };
+        private static readonly HashSet<string> Severities = new(StringComparer.OrdinalIgnoreCase) { "NORMAL", "HIGH", "CRITICAL" };
         private static readonly IReadOnlyDictionary<string, (string Label, string Scope)> Specialists =
             new Dictionary<string, (string Label, string Scope)>(StringComparer.OrdinalIgnoreCase)
             {
@@ -145,6 +146,9 @@ namespace Client_app.Controllers
             var requestedStatus = request.Status.Trim().ToUpperInvariant();
             var status = requestedStatus == "ASSIGNED" ? "IN_PROGRESS" : requestedStatus;
             if (!Statuses.Contains(status)) return BadRequest(new { status = "Error", message = "Invalid ticket status." });
+            var severity = string.IsNullOrWhiteSpace(request.Severity) ? null : request.Severity.Trim().ToUpperInvariant();
+            if (severity is not null && !Severities.Contains(severity))
+                return BadRequest(new { status = "Error", message = "Invalid ticket severity." });
             var assignedSpecialist = NormalizeSpecialist(request.AssignedSpecialist);
             if (assignedSpecialist is not null && !Specialists.ContainsKey(assignedSpecialist))
                 return BadRequest(new { status = "Error", message = "Select a valid support specialist." });
@@ -158,20 +162,21 @@ namespace Client_app.Controllers
 
             await using var command = new NpgsqlCommand(@"
                 UPDATE support_tickets
-                SET status = @status, admin_response = @response,
+                SET status = @status, severity = COALESCE(@severity, severity), admin_response = @response,
                     assigned_specialist = COALESCE(@assignedSpecialist, assigned_specialist),
                     updated_at = CURRENT_TIMESTAMP,
                     resolved_at = CASE WHEN @status IN ('RESOLVED', 'CLOSED') THEN CURRENT_TIMESTAMP ELSE NULL END
                 WHERE ticket_id = @ticketId
                 RETURNING (SELECT email FROM users WHERE id = support_tickets.registrar_id);", connection, transaction);
             command.Parameters.AddWithValue("status", status);
+            command.Parameters.Add("severity", NpgsqlDbType.Varchar).Value = (object?)severity ?? DBNull.Value;
             command.Parameters.AddWithValue("response", (object?)request.AdminResponse?.Trim() ?? DBNull.Value);
             command.Parameters.Add("assignedSpecialist", NpgsqlDbType.Varchar).Value = (object?)assignedSpecialist ?? DBNull.Value;
             command.Parameters.AddWithValue("ticketId", ticketId);
             var registrarEmail = (string?)await command.ExecuteScalarAsync(cancellationToken);
             if (registrarEmail is null) return NotFound(new { status = "Error", message = "Ticket not found." });
             await _auditLog.LogAsync(ActorEmail(), "system_admin", "SUPPORT_TICKET_UPDATED", "support_ticket", ticketId.ToString(), null,
-                new { status, hasResponse = !string.IsNullOrWhiteSpace(request.AdminResponse), assignedSpecialist },
+                new { status, severity, hasResponse = !string.IsNullOrWhiteSpace(request.AdminResponse), assignedSpecialist },
                 "System Administrator updated and assigned a Registrar support ticket.",
                 HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -179,6 +184,7 @@ namespace Client_app.Controllers
             {
                 ticketId,
                 status,
+                severity,
                 assignedSpecialist,
                 assignedSpecialistLabel = assignedSpecialist is not null ? Specialists[assignedSpecialist].Label : null,
                 adminResponse = request.AdminResponse?.Trim(),

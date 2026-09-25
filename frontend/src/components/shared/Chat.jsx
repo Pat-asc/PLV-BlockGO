@@ -557,6 +557,20 @@ const Chat = ({
         });
     });
 
+    conn.on('GradeFinalized', (payload) => {
+      console.log('[Chat] GradeFinalized:', payload);
+      window.dispatchEvent(new CustomEvent('blockgo:grade-finalized', { detail: payload }));
+    });
+
+    conn.on('GradeReturned', (payload) => {
+      console.log('[Chat] GradeReturned:', payload);
+      window.dispatchEvent(new CustomEvent('blockgo:grade-returned', { detail: payload }));
+    });
+
+    conn.on('TransactionRecorded', (payload) => {
+      window.dispatchEvent(new CustomEvent('blockgo:transaction-recorded', { detail: payload }));
+    });
+
     conn.on('ChatContacts', (contacts) => {
       if (!Array.isArray(contacts)) return;
       const normalizedContacts = contacts.map(normalizeUser).filter((u) => u.email);

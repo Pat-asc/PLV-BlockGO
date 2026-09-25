@@ -16,6 +16,8 @@ namespace Client_app.Models
         [Required]
         public string Status { get; set; } = string.Empty;
 
+        public string? Severity { get; set; }
+
         [StringLength(5000)]
         public string? AdminResponse { get; set; }
 

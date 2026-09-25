@@ -431,6 +431,28 @@ export const submitFacultySectionToChairperson = async ({ department, section, s
     return await submitSectionGrades(department, section, schoolYear, semester, facultySectionId);
 };
 
+export const fetchApplicationTransactions = async ({ action = '', limit = 500, signal } = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (action.trim()) params.set('action', action.trim());
+    return await fetchWithAuth(`/SystemMonitoring/live-transactions?${params}`, { method: 'GET', cache: 'no-store', signal });
+};
+
+export const fetchLedgerTransactions = async ({ search = '', source = '', limit = 500, signal } = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (search.trim()) params.set('search', search.trim());
+    if (source.trim()) params.set('source', source.trim());
+    return await fetchWithAuth(`/SystemMonitoring/finalized-ledger?${params}`, { method: 'GET', cache: 'no-store', signal });
+};
+
+export const fetchCouchDbDatabases = async (target, { signal } = {}) => (
+    fetchWithAuth(`/SystemMonitoring/couchdb/${encodeURIComponent(target)}/databases`, { method: 'GET', cache: 'no-store', signal })
+);
+
+export const fetchCouchDbDocuments = async (target, database, page = 1, { signal } = {}) => {
+    const params = new URLSearchParams({ database, page: String(page) });
+    return await fetchWithAuth(`/SystemMonitoring/couchdb/${encodeURIComponent(target)}/documents?${params}`, { method: 'GET', cache: 'no-store', signal });
+};
+
 export const fetchChairpersonGradeRecords = async (invokerId = 'chairperson') => {
     return await fetchAllGrades(invokerId);
 };
@@ -760,11 +782,6 @@ export const correctGrade = async (payload) => {
         body: JSON.stringify(payload)
     });
 };
-
-export const correctFinalizedGradeAsRegistrar = async (recordId, payload) => fetchWithAuth(`/Grades/registrar-correct/${encodeURIComponent(recordId)}`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-});
 
 export const flagGrade = async (recordId, payload = {}) => {
     return await fetchWithAuth(`/Grades/flag/${encodeURIComponent(recordId)}`, {
