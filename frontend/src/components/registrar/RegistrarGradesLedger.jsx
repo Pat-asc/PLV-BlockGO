@@ -213,7 +213,7 @@ const RegistrarGradesLedger = ({ loggedInEmail, onViewIpfs, onExport }) => {
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <h2 className="text-2xl font-bold text-[#003366]">Grades Ledger</h2>
-            <p className="mt-1 text-sm text-slate-500">Browse submitted, approved, and finalized records by exact academic assignment.</p>
+            <p className="mt-1 text-sm text-slate-500">Browse submitted, approved, and finalized records by exact academic section and subject.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             {onExport ? <ExportButton label="Export all filtered grade records PDF" onClick={() => requestExport({ type: 'all' })} /> : null}

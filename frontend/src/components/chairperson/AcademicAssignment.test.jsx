@@ -25,7 +25,11 @@ const stageAssignment = (subjectCode = "IT 321") => {
   fireEvent.click(screen.getByRole("radio", { name: `Select ${subjectCode}` }));
   fireEvent.click(screen.getByRole("button", { name: /Assign$/ }));
 };
-const pendingTotal = (label) => screen.getByText(label).querySelector("strong")?.textContent;
+const pendingTotal = (label) => screen.getByText(/^\d+$/, {
+  selector: label === "Total Assignments"
+    ? ".sa-totals > div:first-child strong"
+    : ".sa-totals > div:last-child strong",
+});
 const savedAssignment = (overrides = {}) => ({
   id: 70, facultyId: "1", facultyName: "Carlos Reyes",
   program: "Bachelor of Science in Information Technology", sectionName: "BSIT 3-1",
@@ -102,13 +106,13 @@ test("Clear Selection removes four pending rows and resets pending totals withou
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   await selectFaculty();
   subjects.forEach(({ subjectCode }) => stageAssignment(subjectCode));
-  expect(pendingTotal("Total Assignments")).toBe("4");
-  expect(pendingTotal("Total Units")).toBe("12");
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("4");
+  expect(pendingTotal("Total Units")).toHaveTextContent("12");
 
   fireEvent.click(screen.getByRole("button", { name: /Clear Selection/ }));
 
-  expect(pendingTotal("Total Assignments")).toBe("0");
-  expect(pendingTotal("Total Units")).toBe("0");
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("0");
+  expect(pendingTotal("Total Units")).toHaveTextContent("0");
   expect(screen.getByRole("button", { name: "Save Assignments" })).toBeDisabled();
   expect(screen.getByText("No assignments yet.")).toBeInTheDocument();
   expect(assignFacultyLoadToBackend).not.toHaveBeenCalled();
@@ -123,7 +127,7 @@ test("Clear Selection is disabled when the selected faculty has only saved assig
 
   expect(screen.getAllByText("Saved")).toHaveLength(2);
   expect(screen.getByRole("button", { name: /Clear Selection/ })).toBeDisabled();
-  expect(pendingTotal("Total Assignments")).toBe("0");
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("0");
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toHaveLength(2);
   expect(assignFacultyLoadToBackend).not.toHaveBeenCalled();
 });
@@ -135,12 +139,12 @@ test("Clear Selection removes pending rows but preserves mixed saved rows", asyn
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   await selectFaculty();
   stageAssignment();
-  expect(pendingTotal("Total Assignments")).toBe("1");
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("1");
 
   fireEvent.click(screen.getByRole("button", { name: /Clear Selection/ }));
 
   expect(screen.getAllByText("Saved")).toHaveLength(2);
-  expect(pendingTotal("Total Assignments")).toBe("0");
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("0");
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toHaveLength(2);
   expect(assignFacultyLoadToBackend).not.toHaveBeenCalled();
 });
@@ -198,7 +202,7 @@ test("successful Save clears the temporary row and Clear cannot remove the persi
   expect(screen.getAllByText("Saved")).toHaveLength(1);
   expect(screen.queryByLabelText("Remove IT 321 BSIT 3-1")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Clear Selection/ })).toBeDisabled();
-  expect(pendingTotal("Total Assignments")).toBe("0");
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("0");
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toHaveLength(1);
   expect(assignFacultyLoadToBackend).toHaveBeenCalledTimes(1);
   expect(assignFacultyLoadToBackend).toHaveBeenCalledWith(expect.objectContaining({ academicSectionId: 31 }));

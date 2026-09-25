@@ -1331,6 +1331,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                     <div className="relative overflow-hidden">
                       <input
                         type="file"
+                        aria-label="Bulk upload grades workbook"
                         accept=".xlsx"
                         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                         onChange={(e) => handleFileUpload(activeSection, e)}

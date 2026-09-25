@@ -37,7 +37,7 @@ const faculty = [
 ];
 
 const uploadCsv = async (content) => {
-  const input = document.querySelector('input[type="file"]');
+  const input = screen.getByLabelText("Faculty loading CSV");
   fireEvent.change(input, { target: { files: [new File([content], "loads.csv", { type: "text/csv" })] } });
   fireEvent.click(screen.getByRole("button", { name: "Preview Faculty Loading" }));
   await screen.findByText("Faculty Loading Preview");

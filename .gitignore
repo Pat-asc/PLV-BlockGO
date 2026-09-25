@@ -30,6 +30,10 @@ temp/
 !/tests/AssignmentRegressionTests/Program.cs
 /tests/AssignmentRegressionTests/bin/
 /tests/AssignmentRegressionTests/obj/
+!/tests/StudentSubjectGradeChecks/
+!/tests/StudentSubjectGradeChecks/Program.cs
+/tests/StudentSubjectGradeChecks/bin/
+/tests/StudentSubjectGradeChecks/obj/
 !/tests/LoadTests/
 !/tests/LoadTests/k6-grade-submission.js
 /test-results/

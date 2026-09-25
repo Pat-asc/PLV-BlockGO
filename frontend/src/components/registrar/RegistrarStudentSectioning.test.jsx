@@ -120,11 +120,12 @@ test('rehydrates the Section List from the exact persisted academic section ID',
     expect(workspace.students).toEqual([
       expect.objectContaining({ studentId: '26-0042', academicSectionId: 2, sectionCode: '1-2' }),
     ]);
-    expect(workspace.sectionPlans).toEqual(expect.arrayContaining([
-      expect.objectContaining({ academicSectionId: 1, sectionCode: '1-1' }),
-      expect.objectContaining({ academicSectionId: 2, sectionCode: '1-2' }),
-    ]));
   });
+  const workspace = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0];
+  expect(workspace.sectionPlans).toEqual(expect.arrayContaining([
+    expect.objectContaining({ academicSectionId: 1, sectionCode: '1-1' }),
+    expect.objectContaining({ academicSectionId: 2, sectionCode: '1-2' }),
+  ]));
 });
 
 test('refetches authoritative enrollment membership immediately after assignment', async () => {

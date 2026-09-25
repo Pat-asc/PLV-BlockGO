@@ -156,7 +156,7 @@ test('Bulk Upload sends FacultySections.id instead of academicSectionId', async 
   const file = new File(['workbook'], 'grades.xlsx', {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
-  fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
   await waitFor(() => expect(batchUploadGrades).toHaveBeenCalledWith(file, expect.objectContaining({
     facultySectionId: '123',
@@ -176,7 +176,7 @@ test.each(['final', 'finals', 'FINAL', 'FINALS'])('normalizes %s encoding season
   const file = new File(['workbook'], 'finals.xlsx', {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
-  fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
   await waitFor(() => expect(batchUploadGrades).toHaveBeenCalledWith(file, expect.objectContaining({
     term: 'finals', facultySectionId: '77', academicSectionId: 1,
@@ -189,7 +189,7 @@ test('a rejected Bulk Upload preserves manually entered grades and shows the bac
   const gradeInput = screen.getAllByPlaceholderText('60-100')[0];
   fireEvent.change(gradeInput, { target: { value: '88' } });
   const file = new File(['workbook'], 'wrong-assignment.xlsx');
-  fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
   expect(await screen.findByText('The workbook belongs to a different Faculty assignment.')).toBeInTheDocument();
   expect(gradeInput).toHaveValue(88);
@@ -238,7 +238,7 @@ test('bulk-uploaded Draft values remain editable and a manual correction can be 
   const file = new File(['workbook'], 'grades.xlsx', {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
-  fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
   const gradeInput = screen.getAllByPlaceholderText('60-100')[0];
   await waitFor(() => expect(gradeInput).toHaveValue(80));

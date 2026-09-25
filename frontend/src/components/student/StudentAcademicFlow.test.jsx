@@ -62,7 +62,8 @@ test('checklist covers all years, stored prerequisites, and enrollment progress 
   for (const [year, code] of [[2, 'IT 201'], [3, 'IT 301'], [4, 'IT 401']]) {
     fireEvent.click(screen.getByRole('button', { name: new RegExp(`${year}(?:nd|rd|th) Year`) }));
     expect(screen.getByText(code)).toBeInTheDocument();
-    expect(screen.getByText(code).closest('tr')).toHaveAttribute('data-progress-status', 'Not Yet Taken');
+    expect(screen.getByRole('row', { name: new RegExp(`${code}.*Not Yet Taken`) }))
+      .toHaveAttribute('data-progress-status', 'Not Yet Taken');
   }
 });
 

@@ -819,6 +819,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
               </label>
               <input
                 type="file"
+                aria-label="Faculty loading CSV"
                 accept=".csv"
                 onChange={(event) => {
                   setFacultyLoadingFile(event.target.files?.[0] || null);
