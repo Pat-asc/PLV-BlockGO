@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import * as signalR from '@microsoft/signalr';
 import { getChatHubUrl } from '../../services/api';
 import { getAuthToken } from '../../services/authSession';
@@ -1784,12 +1785,12 @@ const Chat = ({
         style={{ background: 'transparent' }}
       />
 
-      {imagePreview && (
+      {imagePreview && createPortal(
         <div
           className="fixed inset-0 z-[2100] flex items-center justify-center bg-black/80 p-4"
           onClick={() => setImagePreview(null)}
         >
-          <div className="relative max-h-full max-w-5xl" onClick={(e) => e.stopPropagation()}>
+          <div className="relative flex max-h-full max-w-5xl flex-col items-center" onClick={(e) => e.stopPropagation()}>
             <button
               type="button"
               onClick={() => setImagePreview(null)}
@@ -1801,7 +1802,7 @@ const Chat = ({
             <img
               src={imagePreview.src}
               alt={imagePreview.name || 'Image preview'}
-              className="max-h-[86vh] max-w-[92vw] rounded-xl object-contain shadow-2xl"
+              className="mx-auto block max-h-[86vh] max-w-[92vw] rounded-xl object-contain shadow-2xl"
             />
             {imagePreview.name && (
               <div className="mt-3 max-w-[92vw] truncate text-center text-sm font-semibold text-white">
@@ -1809,7 +1810,8 @@ const Chat = ({
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
     {secondaryChatUsers.map((email, index) => {

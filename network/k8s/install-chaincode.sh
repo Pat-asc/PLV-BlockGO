@@ -64,7 +64,8 @@ declare -A ORG_CHAINCODE_DEPLOYMENT=(
 declare -A PACKAGE_FILES
 declare -A PACKAGE_IDS
 
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/blockgo-ccpkg.XXXXXX")"
+mkdir -p "./.tmp"
+WORK_DIR="$(mktemp -d "./.tmp/blockgo-ccpkg.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 require_file() {

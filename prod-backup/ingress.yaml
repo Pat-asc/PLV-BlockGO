@@ -1,0 +1,215 @@
+apiVersion: v1
+items:
+- apiVersion: networking.k8s.io/v1
+  kind: Ingress
+  metadata:
+    annotations:
+      ingress.kubernetes.io/backends: '{"k8s1-05b21db7-kube-system-default-http-backend-80-05b13779":"HEALTHY","k8s1-05b21db7-plv-fabric-ipfs-ha-gateway-8080-1f803e82":"UNHEALTHY"}'
+      ingress.kubernetes.io/forwarding-rule: k8s2-fr-ptll11hd-plv-fabric-ipfs-ingress-vuj1op3o
+      ingress.kubernetes.io/target-proxy: k8s2-tp-ptll11hd-plv-fabric-ipfs-ingress-vuj1op3o
+      ingress.kubernetes.io/url-map: k8s2-um-ptll11hd-plv-fabric-ipfs-ingress-vuj1op3o
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"annotations":{"kubernetes.io/ingress.class":"gce"},"name":"ipfs-ingress","namespace":"plv-fabric"},"spec":{"rules":[{"http":{"paths":[{"backend":{"service":{"name":"ipfs-ha-gateway","port":{"number":8080}}},"path":"/ipfs","pathType":"Prefix"}]}}]}}
+      kubernetes.io/ingress.class: gce
+    creationTimestamp: "2026-09-14T15:59:07Z"
+    finalizers:
+    - networking.gke.io/ingress-finalizer-V2
+    generation: 1
+    name: ipfs-ingress
+    namespace: plv-fabric
+    resourceVersion: "1789402425102799002"
+    uid: 799163ce-8142-4580-b052-e41fd992da6b
+  spec:
+    rules:
+    - http:
+        paths:
+        - backend:
+            service:
+              name: ipfs-ha-gateway
+              port:
+                number: 8080
+          path: /ipfs
+          pathType: Prefix
+  status:
+    loadBalancer:
+      ingress:
+      - ip: 34.54.107.88
+- apiVersion: networking.k8s.io/v1
+  kind: Ingress
+  metadata:
+    annotations:
+      ingress.gcp.kubernetes.io/pre-shared-cert: mcrt-a032d3db-c8ea-4d77-83f0-67ecf5e221a2
+      ingress.kubernetes.io/backends: '{"k8s1-05b21db7-kube-system-default-http-backend-80-05b13779":"HEALTHY","k8s1-05b21db7-plv-fabric-client-app-service-5000-491219d9":"HEALTHY","k8s1-05b21db7-plv-fabric-frontend-service-80-e1a9675b":"HEALTHY","k8s1-05b21db7-plv-fabric-ipfs-ha-gateway-8080-1f803e82":"UNHEALTHY","k8s1-05b21db7-plv-fabric-middleware-api-4000-ddc7491f":"HEALTHY"}'
+      ingress.kubernetes.io/forwarding-rule: k8s2-fr-ptll11hd-plv-fabric-main-ingress-0ytrygfv
+      ingress.kubernetes.io/https-forwarding-rule: k8s2-fs-ptll11hd-plv-fabric-main-ingress-0ytrygfv
+      ingress.kubernetes.io/https-target-proxy: k8s2-ts-ptll11hd-plv-fabric-main-ingress-0ytrygfv
+      ingress.kubernetes.io/redirect-url-map: k8s2-rm-ptll11hd-plv-fabric-main-ingress-0ytrygfv
+      ingress.kubernetes.io/ssl-cert: mcrt-a032d3db-c8ea-4d77-83f0-67ecf5e221a2
+      ingress.kubernetes.io/target-proxy: k8s2-tp-ptll11hd-plv-fabric-main-ingress-0ytrygfv
+      ingress.kubernetes.io/url-map: k8s2-um-ptll11hd-plv-fabric-main-ingress-0ytrygfv
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"annotations":{"kubernetes.io/ingress.class":"gce","kubernetes.io/ingress.global-static-ip-name":"blockgo-prod-ip","networking.gke.io/managed-certificates":"blockgo-managed-cert","networking.gke.io/v1beta1.FrontendConfig":"blockgo-frontend-config"},"name":"main-ingress","namespace":"plv-fabric"},"spec":{"rules":[{"host":"plv-blockgo.com","http":{"paths":[{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/Auth","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/Grades","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/Student","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/student","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/GradeTemplate","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/SystemSettings","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/SystemMonitoring","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/BulkUpload","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/RegistrarDashboard","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/Sectioning","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/AccountManagement","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/Curriculums","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/SupportTickets","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/registrar","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/backend/health","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/chatHub","pathType":"Prefix"},{"backend":{"service":{"name":"client-app-service","port":{"number":5000}}},"path":"/api/chatHub","pathType":"Prefix"},{"backend":{"service":{"name":"ipfs-ha-gateway","port":{"number":8080}}},"path":"/ipfs","pathType":"Prefix"},{"backend":{"service":{"name":"middleware-api","port":{"number":4000}}},"path":"/api","pathType":"Prefix"},{"backend":{"service":{"name":"frontend-service","port":{"number":80}}},"path":"/","pathType":"Prefix"}]}}]}}
+      kubernetes.io/ingress.class: gce
+      kubernetes.io/ingress.global-static-ip-name: blockgo-prod-ip
+      networking.gke.io/managed-certificates: blockgo-managed-cert
+      networking.gke.io/v1beta1.FrontendConfig: blockgo-frontend-config
+    creationTimestamp: "2026-09-14T16:02:16Z"
+    finalizers:
+    - networking.gke.io/ingress-finalizer-V2
+    generation: 1
+    name: main-ingress
+    namespace: plv-fabric
+    resourceVersion: "1789422758296959011"
+    uid: e938f1cf-72cb-4ed5-ba48-4ffe6166fdbb
+  spec:
+    rules:
+    - host: plv-blockgo.com
+      http:
+        paths:
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/Auth
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/Grades
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/Student
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/student
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/GradeTemplate
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/SystemSettings
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/SystemMonitoring
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/BulkUpload
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/RegistrarDashboard
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/Sectioning
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/AccountManagement
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/Curriculums
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/SupportTickets
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/registrar
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/backend/health
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /chatHub
+          pathType: Prefix
+        - backend:
+            service:
+              name: client-app-service
+              port:
+                number: 5000
+          path: /api/chatHub
+          pathType: Prefix
+        - backend:
+            service:
+              name: ipfs-ha-gateway
+              port:
+                number: 8080
+          path: /ipfs
+          pathType: Prefix
+        - backend:
+            service:
+              name: middleware-api
+              port:
+                number: 4000
+          path: /api
+          pathType: Prefix
+        - backend:
+            service:
+              name: frontend-service
+              port:
+                number: 80
+          path: /
+          pathType: Prefix
+  status:
+    loadBalancer:
+      ingress:
+      - ip: 136.68.72.100
+kind: List
+metadata:
+  resourceVersion: ""

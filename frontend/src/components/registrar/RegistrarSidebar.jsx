@@ -46,7 +46,7 @@ function RegistrarSidebar({
   const enrollmentTabs = ["bulkEnroll", "sectioning", "sectionsCreated", "curriculum"];
   const enrollmentMenuItems = [
     { id: "bulkEnroll", label: "Student Enrollment" },
-    { id: "sectioning", label: "Department Sections" },
+    { id: "sectioning", label: "Section Creator" },
     { id: "sectionsCreated", label: "Sections Created" },
     { id: "curriculum", label: "Curriculum Management" },
   ];

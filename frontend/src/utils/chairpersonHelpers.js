@@ -1,3 +1,5 @@
+import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from './studentAcademicHelpers';
+
 export const CHAIRPERSON_REVIEW_KEY = "chairpersonSectionReviews";
 
 export const normalizeText = (value = "") =>
@@ -79,11 +81,11 @@ export const getSectionStudents = ({ students = [], assignment }) => {
 
   return students.filter((student) => {
     const sameProgram = normalizeText(student.program) === normalizeText(assignment.program);
-    const sameSchoolYear = normalizeText(student.schoolYear) === normalizeText(assignment.schoolYear);
+    const sameSchoolYear = canonicalAcademicSchoolYear(student.schoolYear) === canonicalAcademicSchoolYear(assignment.schoolYear);
     const sameSemester =
       !normalizeText(student.semester) ||
       !normalizeText(assignment.semester) ||
-      normalizeText(student.semester) === normalizeText(assignment.semester);
+      canonicalAcademicSemester(student.semester) === canonicalAcademicSemester(assignment.semester);
 
     const sectionOptions = [
       assignment.sectionName,

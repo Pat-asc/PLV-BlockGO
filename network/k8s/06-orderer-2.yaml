@@ -43,8 +43,8 @@ spec:
         ports:
         - containerPort: 7050
           name: orderer
-        - containerPort: 7051
-          name: metrics
+        - containerPort: 7053
+          name: admin
         - containerPort: 9443
           name: operations
         env:
@@ -178,9 +178,6 @@ spec:
   - port: 7050
     targetPort: 7050
     name: orderer
-  - port: 7051
-    targetPort: 7051
-    name: cluster
   - port: 7053
     targetPort: 7053
     name: admin

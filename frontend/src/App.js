@@ -139,6 +139,7 @@ function AppContent() {
   }, [isRestoringSession, location.pathname, navigate, user]);
 
   const handleLogout = () => {
+    if (!window.confirm('Are you sure you want to log out?')) return;
     clearAuthSession();
     setUser(null);
     setChatUnreadTotal(0);

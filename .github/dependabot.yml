@@ -23,6 +23,11 @@ updates:
     groups:
       frontend-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: react
+        update-types: [version-update:semver-major]
+      - dependency-name: react-dom
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: npm
     directory: /middleware
@@ -35,6 +40,10 @@ updates:
     groups:
       middleware-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: fabric-network
+      - dependency-name: fabric-ca-client
+      - dependency-name: fabric-common
 
   - package-ecosystem: nuget
     directory: /client-app
@@ -47,6 +56,10 @@ updates:
     groups:
       dotnet-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: Npgsql
+      - dependency-name: Npgsql.EntityFrameworkCore.PostgreSQL
+      - dependency-name: ClosedXML
 
   - package-ecosystem: gomod
     directory: /chaincode
@@ -59,6 +72,9 @@ updates:
     groups:
       go-modules:
         patterns: ["*"]
+    ignore:
+      - dependency-name: github.com/hyperledger/fabric-chaincode-go/v2
+      - dependency-name: github.com/hyperledger/fabric-protos-go-apiv2
 
   - package-ecosystem: pip
     directory: /middleware
@@ -75,15 +91,34 @@ updates:
   - package-ecosystem: docker
     directory: /frontend
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: node
+      - dependency-name: nginx
   - package-ecosystem: docker
     directory: /middleware
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: node
   - package-ecosystem: docker
     directory: /client-app
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: mcr.microsoft.com/dotnet/sdk
+      - dependency-name: mcr.microsoft.com/dotnet/aspnet
   - package-ecosystem: docker
     directory: /chaincode
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: golang
   - package-ecosystem: docker
     directory: /network
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: hyperledger/fabric-peer
+      - dependency-name: hyperledger/fabric-orderer
+      - dependency-name: hyperledger/fabric-tools
+      - dependency-name: hyperledger/fabric-ca
+      - dependency-name: couchdb
+      - dependency-name: redis
+      - dependency-name: ipfs/kubo
+      - dependency-name: bitnami/postgresql

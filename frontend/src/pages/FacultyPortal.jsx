@@ -316,9 +316,13 @@ const FacultyPortal = ({ onLogout, allGrades, setAllGrades }) => {
       await submitFacultySectionToChairperson({
         department: sectionData.sectionCourse,
         section: sectionData.sectionName,
+        schoolYear: sectionData.schoolYear,
+        semester: sectionData.semester,
+        facultySectionId: sectionData.facultySectionId || sectionData.assignmentCycleId,
       });
     } catch (error) {
-      console.warn("Backend section submission failed; keeping local review queue in sync.", error);
+      console.warn("Backend section submission failed.", error);
+      throw error;
     }
 
     setReviewData((prev) => {

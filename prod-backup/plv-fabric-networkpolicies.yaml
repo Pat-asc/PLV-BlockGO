@@ -1,0 +1,92 @@
+apiVersion: v1
+items:
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"annotations":{},"name":"allow-fabric-internal","namespace":"plv-fabric"},"spec":{"ingress":[{"from":[{"podSelector":{}}]}],"podSelector":{},"policyTypes":["Ingress"]}}
+    creationTimestamp: "2026-09-14T16:01:42Z"
+    generation: 1
+    name: allow-fabric-internal
+    namespace: plv-fabric
+    resourceVersion: "1789401702787983016"
+    uid: d59cf080-624d-4da6-90fb-1d8be85b1204
+  spec:
+    ingress:
+    - from:
+      - podSelector: {}
+    podSelector: {}
+    policyTypes:
+    - Ingress
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"annotations":{},"name":"allow-frontend-ingress","namespace":"plv-fabric"},"spec":{"ingress":[{"ports":[{"port":80,"protocol":"TCP"}]}],"podSelector":{"matchLabels":{"app":"frontend"}},"policyTypes":["Ingress"]}}
+    creationTimestamp: "2026-09-14T16:02:21Z"
+    generation: 1
+    name: allow-frontend-ingress
+    namespace: plv-fabric
+    resourceVersion: "1789401741410463002"
+    uid: 342d5327-f305-4ba3-a971-9717c924232b
+  spec:
+    ingress:
+    - ports:
+      - port: 80
+        protocol: TCP
+    podSelector:
+      matchLabels:
+        app: frontend
+    policyTypes:
+    - Ingress
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"annotations":{},"name":"allow-public-ingress","namespace":"plv-fabric"},"spec":{"ingress":[{"from":[{"ipBlock":{"cidr":"35.191.0.0/16"}},{"ipBlock":{"cidr":"130.211.0.0/22"}}]}],"podSelector":{"matchExpressions":[{"key":"app","operator":"In","values":["middleware-api","dotnet-api-gateway","frontend","ipfs-node"]}]},"policyTypes":["Ingress"]}}
+    creationTimestamp: "2026-09-14T16:01:42Z"
+    generation: 1
+    name: allow-public-ingress
+    namespace: plv-fabric
+    resourceVersion: "1789401702353423019"
+    uid: 314bd2b7-57da-4ecf-b8f8-0e0186f95a12
+  spec:
+    ingress:
+    - from:
+      - ipBlock:
+          cidr: 35.191.0.0/16
+      - ipBlock:
+          cidr: 130.211.0.0/22
+    podSelector:
+      matchExpressions:
+      - key: app
+        operator: In
+        values:
+        - middleware-api
+        - dotnet-api-gateway
+        - frontend
+        - ipfs-node
+    policyTypes:
+    - Ingress
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"annotations":{},"name":"deny-all-ingress","namespace":"plv-fabric"},"spec":{"podSelector":{},"policyTypes":["Ingress"]}}
+    creationTimestamp: "2026-09-14T16:01:42Z"
+    generation: 1
+    name: deny-all-ingress
+    namespace: plv-fabric
+    resourceVersion: "1789401702026943012"
+    uid: 1b169b8f-c68d-443c-b534-1d2dd88f4ea2
+  spec:
+    podSelector: {}
+    policyTypes:
+    - Ingress
+kind: List
+metadata:
+  resourceVersion: ""

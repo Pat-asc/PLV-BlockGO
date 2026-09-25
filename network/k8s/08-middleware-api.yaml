@@ -34,6 +34,7 @@ data:
   FABRIC_GATEWAY_TLS_ROOTS: /etc/hyperledger/fabric-gateway-tls
   FABRIC_DISCOVERY_ENABLED: "true"
   FABRIC_HA_ENABLED: "true"
+  FABRIC_DISABLED_ORDERERS: "orderer5,orderer6"
   FABRIC_PEER_REGISTRAR_2_URL: grpcs://peer-registrar-2.plv-main-campus.svc.cluster.local:7051
   FABRIC_PEER_FACULTY_2_URL: grpcs://peer-faculty-2.plv-annex-campus.svc.cluster.local:7051
   FABRIC_PEER_DEPARTMENT_2_URL: grpcs://peer-department-2.plv-pubad-campus.svc.cluster.local:7051
@@ -296,7 +297,7 @@ spec:
         - configMapRef: { name: middleware-service-config }
         env:
         - { name: PORT, value: "4003" }
-        - { name: NODE_OPTIONS, value: "--max-old-space-size=384" }
+        - { name: NODE_OPTIONS, value: "--max-old-space-size=512" }
         - name: INTERNAL_API_KEY
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: INTERNAL_API_KEY } }
         - name: COUCHDB_USER
@@ -318,8 +319,8 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 3
         resources:
-          requests: { memory: 256Mi, cpu: 150m }
-          limits: { memory: 512Mi, cpu: 750m }
+          requests: { memory: 512Mi, cpu: 150m }
+          limits: { memory: 1536Mi, cpu: 1 }
       volumes:
       - name: fabric-gateway-tls-roots
         secret: { secretName: fabric-gateway-tls-roots }

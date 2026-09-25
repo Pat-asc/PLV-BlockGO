@@ -151,6 +151,7 @@ export const updateStudentProfile = async (profileData) => {
 };
 
 export const fetchStudentHistoricalGrades = async () => fetchWithAuth('/Student/grades');
+export const fetchStudentCurrentSubjects = async () => fetchWithAuth('/Student/subjects');
 export const fetchStudentBlockchainTransactions = async () => fetchWithAuth('/Student/blockchain-transactions');
 
 // ==================== MANAGED ACCOUNTS ====================
@@ -189,6 +190,7 @@ export const approveCurriculum = async (id) => fetchWithAuth(`/Curriculums/${enc
 export const returnCurriculum = async (id, reason) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/return`, { method: 'POST', body: JSON.stringify({ reason }) });
 export const publishCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/publish`, { method: 'POST' });
 export const archiveCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+export const assignProgramCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/program-assignment`, { method: 'PUT' });
 export const assignStudentCurriculum = async (id, studentEmail) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/students`, { method: 'PUT', body: JSON.stringify({ studentEmail }) });
 export const fetchStudentCurriculum = async () => fetchWithAuth('/Curriculums/student');
 export const fetchFacultyCurriculums = async () => fetchWithAuth('/Curriculums/faculty');
@@ -311,19 +313,27 @@ export const batchIssueGradeToBlockchain = async (grades = []) => {
     });
 };
 
-export const batchUploadGrades = async (file, semester = '', schoolYear = '', course = '', facultyId = '', term = '', section = '') => {
+export const batchUploadGrades = async (file, context = {}) => {
+    const {
+        semester = '', schoolYear = '', course = '', facultyId = '', term = '', section = '',
+        facultySectionId, academicSectionId, subjectCode = '',
+    } = context;
+    if (!facultySectionId) {
+        throw new Error('The exact Faculty assignment is missing. Refresh the assigned sections and try again.');
+    }
+
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('facultySectionId', String(facultySectionId));
 
-    const legacyFacultyId = !schoolYear && !course && !facultyId ? semester : '';
-    const resolvedFacultyId = facultyId || legacyFacultyId;
-
-    if (!legacyFacultyId && semester) formData.append('semester', semester);
+    if (semester) formData.append('semester', semester);
     if (schoolYear) formData.append('schoolYear', schoolYear);
     if (course) formData.append('course', course);
-    if (resolvedFacultyId) formData.append('facultyId', resolvedFacultyId);
+    if (facultyId) formData.append('facultyId', facultyId);
     if (term) formData.append('term', term);
     if (section) formData.append('section', section);
+    if (academicSectionId) formData.append('academicSectionId', String(academicSectionId));
+    if (subjectCode) formData.append('subjectCode', subjectCode);
 
     return await fetchWithAuth(`/Grades/bulk-upload`, {
         method: 'POST',
@@ -397,14 +407,14 @@ export const issueGrade = async (gradeData) => {
     });
 };
 
-export const submitSectionGrades = async (department, section) => {
-    return await fetchWithAuth(`/Grades/submit-section?department=${encodeURIComponent(department)}&section=${encodeURIComponent(section)}`, {
+export const submitSectionGrades = async (department, section, schoolYear, semester, facultySectionId) => {
+    return await fetchWithAuth(`/Grades/submit-section?department=${encodeURIComponent(department)}&section=${encodeURIComponent(section)}&schoolYear=${encodeURIComponent(schoolYear || '')}&semester=${encodeURIComponent(semester || '')}&facultySectionId=${encodeURIComponent(facultySectionId || '')}`, {
         method: 'POST'
     });
 };
 
-export const submitFacultySectionToChairperson = async ({ department, section }) => {
-    return await submitSectionGrades(department, section);
+export const submitFacultySectionToChairperson = async ({ department, section, schoolYear, semester, facultySectionId }) => {
+    return await submitSectionGrades(department, section, schoolYear, semester, facultySectionId);
 };
 
 export const fetchChairpersonGradeRecords = async (invokerId = 'chairperson') => {
@@ -493,6 +503,9 @@ export const fetchApprovedFaculties = async () => {
     return await fetchWithAuth(`/Auth/faculty/approved`);
 };
 
+export const fetchFacultyAssignmentOptions = async (department) =>
+    fetchWithAuth(`/Auth/faculty/assignment-options?department=${encodeURIComponent(department)}`);
+
 export const assignFaculty = async (id, assignmentData) => {
     return await fetchWithAuth(`/Auth/faculty/${encodeURIComponent(id)}/assign`, {
         method: 'PUT',
@@ -514,10 +527,26 @@ export const assignFacultyLoadToBackend = async (assignmentData) => {
     }
 
     return await assignFaculty(facultyId, {
-        Department: assignmentData.program || assignmentData.department || '',
-        Section: assignmentData.sectionName || assignmentData.section || '',
-        YearLevel: assignmentData.yearLevel || '',
+        AcademicSectionId: Number(assignmentData.academicSectionId),
         Subject: assignmentData.subjectCode || assignmentData.subject || '',
+        SchoolYear: assignmentData.schoolYear || '',
+        Semester: assignmentData.semesterCode || assignmentData.semester || '',
+    });
+};
+
+export const bulkAssignFacultyLoads = async (assignments) => {
+    return await fetchWithAuth('/Auth/faculty/assignments/bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+            assignments: assignments.map((assignment) => ({
+                clientId: String(assignment.id || assignment.clientId || ''),
+                facultyUserId: Number(assignment.facultyUserId || assignment.facultyId),
+                subjectCode: assignment.subjectCode || assignment.subject || '',
+                academicSectionId: Number(assignment.academicSectionId),
+                schoolYear: assignment.schoolYear || '',
+                semester: assignment.semesterCode || assignment.semester || '',
+            })),
+        }),
     });
 };
 
@@ -537,8 +566,8 @@ export const dropStudent = async (id) => {
     });
 };
 
-export const unassignFacultySection = async (email, department, yearLevel, section, subject) => {
-    return await fetchWithAuth(`/Auth/faculty/${encodeURIComponent(email)}/assigned-sections?department=${encodeURIComponent(department)}&yearLevel=${encodeURIComponent(yearLevel)}&section=${encodeURIComponent(section)}&subject=${encodeURIComponent(subject || '')}`, {
+export const unassignFacultySection = async (email, facultySectionId) => {
+    return await fetchWithAuth(`/Auth/faculty/${encodeURIComponent(email)}/assigned-sections?facultySectionId=${encodeURIComponent(facultySectionId)}`, {
         method: 'DELETE'
     });
 };
@@ -558,8 +587,8 @@ export const saveSharedClientState = async (key, value) => {
     });
 };
 
-export const fetchFacultyStudents = async (email) => {
-    return await fetchWithAuth(`/Auth/faculty/${encodeURIComponent(email)}/students`);
+export const fetchFacultyStudents = async (email, facultySectionId) => {
+    return await fetchWithAuth(`/Auth/faculty/${encodeURIComponent(email)}/students?facultySectionId=${encodeURIComponent(facultySectionId)}`);
 };
 
 export const createSection = async (sectionData) => {
@@ -576,6 +605,11 @@ export const fetchDepartmentSections = async (department) => {
 export const fetchUnassignedEnrolledStudents = async (filters = {}) => {
     const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== '' && value != null));
     return await fetchWithAuth(`/Auth/students/unassigned-enrolled?${query}`);
+};
+
+export const fetchSectionedEnrolledStudents = async (filters = {}) => {
+    const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== '' && value != null));
+    return await fetchWithAuth(`/Auth/students/sectioned-enrolled?${query}`);
 };
 
 export const assignStudentsToSection = async (sectionId, studentIds, period) => {
@@ -779,6 +813,10 @@ export const fetchStagedGrades = async (status = '') => {
     return await fetchWithAuth(`/BulkUpload/staged?status=${encodeURIComponent(status)}`);
 };
 
+export const fetchRegistrarFinalizationQueue = async () => {
+    return await fetchWithAuth('/Grades/finalization-queue');
+};
+
 export const approveStagedGrades = async (stagingIds) => {
     return await fetchWithAuth(`/BulkUpload/approve-grades`, {
         method: 'POST',
@@ -821,10 +859,10 @@ export const searchRegistrarRecords = async (params = {}) => {
     return await fetchWithAuth(`/registrar/Search${query ? `?${query}` : ''}`);
 };
 
-export const downloadGradingSheet = async (department, section) => {
+export const downloadGradingSheet = async (facultySectionId, suggestedName = 'Faculty_Grade_Template') => {
     const baseUrl = getBaseUrl('/GradeTemplate');
     const token = getAuthToken();
-    const endpoint = `/GradeTemplate/department/${encodeURIComponent(department)}/section/${encodeURIComponent(section)}/download`;
+    const endpoint = `/GradeTemplate/faculty-section/${encodeURIComponent(facultySectionId)}/download`;
     
     const response = await fetch(`${baseUrl}${endpoint}`, {
         method: 'GET',
@@ -842,7 +880,7 @@ export const downloadGradingSheet = async (department, section) => {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `GradingSheet_${department}_${section}.xlsx`;
+    a.download = `${suggestedName}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();

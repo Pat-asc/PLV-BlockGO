@@ -208,7 +208,7 @@ try
             {
                 try
                 {
-                    using var response = await client.GetAsync($"{destination.Value.TrimEnd('/')}/health", cancellationToken);
+                    using var response = await client.GetAsync($"{destination.Value.TrimEnd('/')}/api/ready", cancellationToken);
                     var healthy = response.IsSuccessStatusCode;
                     checks[destination.Key] = new { ready = healthy, statusCode = (int)response.StatusCode };
                     isReady &= healthy;
@@ -289,6 +289,10 @@ try
                 var tokenRole = context.Principal?.Claims.FirstOrDefault(claim => claim.Type == "dbRole")?.Value;
                 if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(tokenRole))
                 {
+                    Log.Warning(
+                        "JWT rejected: missing identity claims. Email={Email}, Role={Role}",
+                        email,
+                        tokenRole);
                     context.Fail("The access token is missing its account identity.");
                     return;
                 }
@@ -297,6 +301,7 @@ try
                     ?? builder.Configuration.GetConnectionString("PostgresConnection");
                 if (string.IsNullOrWhiteSpace(validationConnection))
                 {
+                    Log.Warning("JWT rejected: PostgreSQL validation connection string is unavailable.");
                     context.Fail("Account validation is unavailable.");
                     return;
                 }
@@ -327,7 +332,19 @@ try
                     }
                     if (string.IsNullOrWhiteSpace(databaseRole) || NormalizeRole(databaseRole) != NormalizeRole(tokenRole))
                     {
+                        Log.Warning(
+                            "JWT rejected for {Email}. TokenRole={TokenRole}, DatabaseRole={DatabaseRole}",
+                            email,
+                            tokenRole,
+                            databaseRole);
                         context.Fail("This account is inactive, changed, or no longer authorized.");
+                    }
+                    else
+                    {
+                        Log.Information(
+                            "JWT validated successfully for {Email} with role {Role}.",
+                            email,
+                            databaseRole);
                     }
                 }
                 catch (Exception exception)
@@ -335,6 +352,22 @@ try
                     Log.Warning(exception, "Could not validate active access for {Email}.", email);
                     context.Fail("Account validation failed.");
                 }
+            },
+            OnAuthenticationFailed = context =>
+            {
+                Log.Error(
+                    context.Exception,
+                    "JWT authentication failed: {Message}",
+                    context.Exception.Message);
+                return Task.CompletedTask;
+            },
+            OnChallenge = context =>
+            {
+                Log.Warning(
+                    "JWT challenge issued. Error={Error}, Description={Description}",
+                    context.Error,
+                    context.ErrorDescription);
+                return Task.CompletedTask;
             },
             OnMessageReceived = context =>
             {
@@ -464,11 +497,50 @@ try
         service = $"dotnet-{dotnetServiceName}-service",
         architecture = dotnetServiceName == DotnetServiceTopology.Monolith ? "monolith" : "microservices"
     }));
-    app.MapGet("/api/ready", () => Results.Ok(new
+    app.MapGet("/api/ready", async (CancellationToken cancellationToken) =>
     {
-        status = "ready",
-        service = $"dotnet-{dotnetServiceName}-service"
-    }));
+        var readinessConnection = builder.Configuration.GetConnectionString("MasterConnection")
+            ?? builder.Configuration.GetConnectionString("PostgresConnection");
+        if (string.IsNullOrWhiteSpace(readinessConnection))
+        {
+            return Results.Json(new
+            {
+                status = "not_ready",
+                service = $"dotnet-{dotnetServiceName}-service",
+                database = "not_configured"
+            }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        try
+        {
+            var readinessBuilder = new NpgsqlConnectionStringBuilder(readinessConnection)
+            {
+                Timeout = 3,
+                CommandTimeout = 3,
+                Pooling = false
+            };
+            await using var connection = new NpgsqlConnection(readinessBuilder.ConnectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new NpgsqlCommand("SELECT 1", connection);
+            await command.ExecuteScalarAsync(cancellationToken);
+            return Results.Ok(new
+            {
+                status = "ready",
+                service = $"dotnet-{dotnetServiceName}-service",
+                database = "connected"
+            });
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(exception, "Readiness check failed for {ServiceName}.", dotnetServiceName);
+            return Results.Json(new
+            {
+                status = "not_ready",
+                service = $"dotnet-{dotnetServiceName}-service",
+                database = "unavailable"
+            }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+    });
     app.MapGet("/api/backend/health", () => Results.Ok(new
     {
         status = "healthy",

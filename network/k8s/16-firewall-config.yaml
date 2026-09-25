@@ -34,6 +34,35 @@ spec:
       port: 5984
     - protocol: TCP
       port: 5432
+  # Every ASP.NET workload validates authenticated users against the primary
+  # database. Keep this separate from the CouchDB rule above so these services
+  # receive PostgreSQL access only.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: plv-fabric
+      podSelector:
+        matchExpressions:
+          - key: app
+            operator: In
+            values:
+              - dotnet-api-gateway
+              - dotnet-auth-service
+              - dotnet-academic-service
+              - dotnet-grade-service
+              - dotnet-operations-service
+              - dotnet-realtime-service
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow the schema migration Job to update the primary PostgreSQL database.
+  - from:
+    - podSelector:
+        matchLabels:
+          app: postgres-schema-migrations
+    ports:
+    - protocol: TCP
+      port: 5432
   - from:
     - podSelector:
         matchLabels:
@@ -145,3 +174,31 @@ spec:
   - ports:
     - protocol: TCP
       port: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dotnet-auth-to-postgres
+  namespace: plv-main-campus
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres-primary
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: plv-fabric
+          podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - dotnet-auth-service
+                  - dotnet-api-gateway
+      ports:
+        - protocol: TCP
+          port: 5432

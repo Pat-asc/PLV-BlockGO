@@ -34,8 +34,16 @@ spec:
         org: orderer
     spec:
       serviceAccountName: orderer-sa
-      nodeSelector:
-        topology.kubernetes.io/zone: "__GKE_ZONE_C__"
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: topology.kubernetes.io/zone
+                operator: In
+                values:
+                - "__GKE_ZONE_C__"
       containers:
       - name: orderer
         image: hyperledger/fabric-orderer:2.5.4
@@ -43,8 +51,8 @@ spec:
         ports:
         - containerPort: 7050
           name: orderer
-        - containerPort: 7051
-          name: metrics
+        - containerPort: 7053
+          name: admin
         - containerPort: 9443
           name: operations
         env:
@@ -176,9 +184,6 @@ spec:
   - port: 7050
     targetPort: 7050
     name: orderer
-  - port: 7051
-    targetPort: 7051
-    name: cluster
   - port: 7053
     targetPort: 7053
     name: admin

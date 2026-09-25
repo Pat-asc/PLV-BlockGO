@@ -293,7 +293,13 @@ CREATE TABLE IF NOT EXISTS facultysections (
     section VARCHAR(50) NOT NULL,
     year_level VARCHAR(50),
     subject VARCHAR(100),
-    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    academic_section_id INTEGER REFERENCES academicsections(id) ON DELETE RESTRICT,
+    school_year VARCHAR(20),
+    semester VARCHAR(20),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    deactivated_at TIMESTAMP WITH TIME ZONE,
+    deactivated_by VARCHAR(255)
 );
 
 CREATE TABLE IF NOT EXISTS shared_client_state (
@@ -332,6 +338,12 @@ CREATE TABLE IF NOT EXISTS student_id_sequences (
 );
 
 CREATE UNIQUE INDEX idx_unique_faculty_section ON FacultySections(user_id, department, section, subject);
+COMMENT ON TABLE facultysections IS 'Each row is a distinct active faculty-assignment workflow cycle.';
+CREATE TABLE IF NOT EXISTS grade_assignment_cycles (
+    record_id VARCHAR(255) PRIMARY KEY,
+    assignment_cycle_id VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX idx_gradetemplates_department ON GradeTemplates(department);
 
 

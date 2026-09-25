@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { fetchAllGrades, finalizeGrade, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason } from '../../services/api';
+import { fetchAllGrades, fetchRegistrarFinalizationQueue, finalizeGrade, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason } from '../../services/api';
 import RegistrarHeader from './RegistrarHeader';
 import RegistrarSidebar from './RegistrarSidebar';
 import RegistrarDashboard from './RegistrarDashboard';
@@ -17,6 +17,8 @@ import { programOptions, programs } from '../../data/registrarData';
 import RegistrarSupportTickets from './RegistrarSupportTickets';
 import StudentEnrollmentManagement from './StudentEnrollmentManagement';
 import PasswordManagement from './PasswordManagement';
+import RegistrarGradesLedger from './RegistrarGradesLedger';
+import { exportRegistrarGradesLedgerPdf } from '../../utils/registrarGradesLedgerPdf';
 
 const RegistrarGradesView = ({
     loggedInEmail = '',
@@ -52,6 +54,7 @@ const RegistrarGradesView = ({
 
     const [stagedGrades, setStagedGrades] = useState([]);
     const [stagedLoading, setStagedLoading] = useState(false);
+    const [finalizingBatchKey, setFinalizingBatchKey] = useState('');
     const [activeSemester, setActiveSemester] = useState('2nd Semester');
 
     const [filterDept, setFilterDept] = useState('All');
@@ -250,7 +253,7 @@ const RegistrarGradesView = ({
     const loadStagedGrades = useCallback(async () => {
         setStagedLoading(true);
         try {
-            const response = await fetchAllGrades(loggedInEmail);
+            const response = await fetchRegistrarFinalizationQueue();
             const allData = Array.isArray(response) ? response : (response.data || []);
             const approvedGrades = allData.filter(g =>
                 isDepartmentApprovedGradeStatus(g.status || g.Status || g.normalized_status)
@@ -268,7 +271,7 @@ const RegistrarGradesView = ({
             setStagedGrades(formattedStaged);
         } catch (error) { console.error('Error loading staged grades:', error); }
         setStagedLoading(false);
-    }, [loggedInEmail]);
+    }, []);
 
     const loadRequests = useCallback(async () => {
         try {
@@ -389,7 +392,6 @@ const RegistrarGradesView = ({
             loadApprovedAdmins();
             loadApprovedFaculties();
         }
-        if (mainTab === 'grades') loadApprovedFaculties();
         if (mainTab === 'revokeAccounts') {
             loadApprovedAdmins();
             loadApprovedFaculties();
@@ -456,19 +458,34 @@ const RegistrarGradesView = ({
         );
     }, [stagedGrades]);
 
-    const handleFinalizeBatch = async (records) => {
-        if (!window.confirm(`Are you sure you want to commit all ${records.length} grades in this section to the blockchain ledger?`)) return;
-        
+    const finalizeBatch = async (records) => {
+        const batchKey = records.map((record) => record.stagingId).sort().join('|');
+        setFinalizingBatchKey(batchKey);
         try {
             for (const g of records) {
                 await finalizeGrade(g.stagingId, loggedInEmail);
             }
             alert("Section grades officially committed to the ledger!");
-            loadStagedGrades();
-            loadGrades();
+            await Promise.all([loadStagedGrades(), loadGrades()]);
         } catch (err) {
             alert(`Finalization failed: ${err.message}`);
+            await loadStagedGrades();
+        } finally {
+            setFinalizingBatchKey('');
         }
+    };
+
+    const handleFinalizeBatch = (records) => {
+        setConfirmModal({
+            isOpen: true,
+            title: 'Confirm Ledger Finalization',
+            message: `Finalize ${records.length} approved grade${records.length === 1 ? '' : 's'} to the immutable blockchain ledger?`,
+            isDestructive: false,
+            onConfirm: async () => {
+                setConfirmModal((current) => ({ ...current, isOpen: false }));
+                await finalizeBatch(records);
+            },
+        });
     };
 
     const handleViewIpfs = (cid) => {
@@ -754,40 +771,10 @@ const RegistrarGradesView = ({
         }));
     };
 
-    const handleDownloadLedgerPDF = () => {
+    const handleDownloadLedgerPDF = (ledgerRecords = filteredGrades, ledgerFilters = {}, scope = { type: 'all' }) => {
         try {
-            const { jsPDF } = window.jspdf;
-            const doc = new jsPDF('l', 'mm', 'a4');
-            doc.setTextColor(0, 51, 102);
-            doc.setFontSize(22);
-            doc.text("PLV OFFICIAL GRADES LEDGER", 14, 20);
-            doc.setFontSize(10);
-            doc.setTextColor(100);
-            doc.text(`Academic Audit Report - Blockchain Verified`, 14, 27);
-            doc.text(`Filter - Dept: ${filterDept} | Year: ${filterYear} | Section: ${filterSection}`, 14, 32);
-            doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 37);
-
-            const tableColumn = ["Record ID", "Student Hash", "Subject", "Grade", "Faculty", "Year", "Section", "Status"];
-            const tableRows = filteredGrades.map(g => [
-                g.id,
-                g.student_hash || g.studentId || "N/A",
-                g.subject_code,
-                g.grade,
-                g.facultyId || g.faculty_id || "N/A",
-                g.year_level || "N/A",
-                g.section || "N/A",
-                g.status
-            ]);
-
-            doc.autoTable({
-                head: [tableColumn],
-                body: tableRows,
-                startY: 42,
-                theme: 'grid',
-                headStyles: { fillColor: [0, 51, 102], fontSize: 8 },
-                bodyStyles: { fontSize: 7 },
-            });
-            doc.save(`Grades_Ledger_Audit_${new Date().toISOString().split('T')[0]}.pdf`);
+            const result = exportRegistrarGradesLedgerPdf({ records: ledgerRecords, filters: ledgerFilters, scope });
+            if (!result.exported) alert('No grade records available for this export.');
         } catch (error) { alert("Failed to export PDF."); }
     };
 
@@ -905,7 +892,7 @@ const RegistrarGradesView = ({
                     {mainTab === 'sectioning' && (
                         <div className="space-y-3">
                             <div>
-                                <h2 className="text-xl font-bold text-slate-900">Department Sections</h2>
+                                <h2 className="text-xl font-bold text-slate-900">Section Creator</h2>
                                 
                             </div>
                             <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm lg:grid-cols-[1fr_250px] lg:items-end">
@@ -951,6 +938,13 @@ const RegistrarGradesView = ({
                         </div>
                     )}
                     {mainTab === 'grades' && (
+                        <RegistrarGradesLedger
+                            loggedInEmail={loggedInEmail}
+                            onViewIpfs={handleViewIpfs}
+                            onExport={handleDownloadLedgerPDF}
+                        />
+                    )}
+                    {mainTab === 'legacy-grades-monitoring' && (
                         <>
                             <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                                 <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
@@ -969,7 +963,7 @@ const RegistrarGradesView = ({
                                         </select>
                                     </div>
                                     <div className="flex gap-3">
-                                        <button onClick={handleDownloadLedgerPDF} className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-emerald-700">Export PDF</button>
+                                        <button onClick={() => handleDownloadLedgerPDF()} className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-emerald-700">Export PDF</button>
                                         <button onClick={loadGrades} className="rounded-xl bg-[#003366] px-5 py-2 text-sm font-bold text-white transition hover:bg-[#00264d]">Refresh</button>
                                     </div>
                                 </div>
@@ -1157,8 +1151,11 @@ const RegistrarGradesView = ({
                                             No grades approved by departments waiting for finalization.
                                         </div>
                                     ) : (
-                                        groupedStagedGrades.map((group, index) => (
-                                            <div key={index} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                                                groupedStagedGrades.map((group, index) => {
+                                                    const batchKey = group.records.map((record) => record.stagingId).sort().join('|');
+                                                    const isFinalizing = finalizingBatchKey === batchKey;
+                                                    return (
+                                                    <div key={index} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
                                                 <div className="flex flex-col md:flex-row md:items-center justify-between bg-slate-50 p-5 border-b border-slate-200">
                                                     <div>
                                                         <h4 className="font-bold text-[#003366] text-lg">
@@ -1170,12 +1167,13 @@ const RegistrarGradesView = ({
                                                             {group.records.length} pending grade(s)
                                                         </p>
                                                     </div>
-                                                    <button 
-                                                        onClick={() => handleFinalizeBatch(group.records)}
-                                                        className="mt-3 md:mt-0 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 shadow-sm"
-                                                    >
-                                                        Finalize All to Ledger
-                                                    </button>
+                                                        <button
+                                                            onClick={() => handleFinalizeBatch(group.records)}
+                                                            disabled={!!finalizingBatchKey}
+                                                            className="mt-3 md:mt-0 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 shadow-sm disabled:cursor-not-allowed disabled:bg-slate-400"
+                                                        >
+                                                            {isFinalizing ? 'Finalizing...' : 'Finalize All to Ledger'}
+                                                        </button>
                                                 </div>
                                                 <div className="overflow-x-auto">
                                                     <table className="w-full text-left text-sm">
@@ -1201,8 +1199,9 @@ const RegistrarGradesView = ({
                                                         </tbody>
                                                     </table>
                                                 </div>
-                                            </div>
-                                        ))
+                                                    </div>
+                                                    );
+                                                })
                                     )}
                                 </div>
                             )}

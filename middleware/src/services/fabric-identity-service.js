@@ -7,6 +7,7 @@ const { normalizeAuthRole } = require('../shared/roles');
 const { createServiceApp, installErrorHandler, listen } = require('../shared/service-app');
 const { adminUser, cacheStats, enrollIdentity, ensureAdminEnrolled, registerIdentity, registrationPayload } = require('../fabric/ca-manager');
 const { checkWallets, getWallet } = require('../fabric/wallet-manager');
+const { REGISTRAR_SERVICE_LABEL, REGISTRAR_MSP_ID, ensureRegistrarServiceIdentity } = require('../fabric/registrar-service-identity');
 
 const serviceName = 'fabric-identity-service';
 const logger = createLogger(serviceName);
@@ -68,7 +69,8 @@ app.post('/internal/identities/bootstrap-registrar', requireInternalKey, async (
     const { username, password } = req.body || {};
     if (!username || !password) return res.status(400).json({ error: 'username and password are required.' });
     const result = await ensureIdentity(username, password, 'registrar');
-    res.json({ status: 'success', ...result });
+    const serviceIdentity = await ensureRegistrarServiceIdentity(process.env.BOOTSTRAP_REGISTRAR_PASS);
+    res.json({ status: 'success', ...result, serviceIdentity });
 });
 
 app.post('/api/fabric/register-user', authenticate, requireRegistrarOrInternal, async (req, res) => {
@@ -128,8 +130,12 @@ app.delete('/api/wallet/:username', authenticate, requireRegistrarOrInternal, as
 app.get('/api/ready', async (req, res) => {
     try {
         const wallets = await checkWallets();
+        const registrarWallet = await getWallet('registrar');
+        const registrarServiceIdentity = await registrarWallet.get(REGISTRAR_SERVICE_LABEL);
+        if (!registrarServiceIdentity || registrarServiceIdentity.mspId !== REGISTRAR_MSP_ID)
+            throw new Error(`Registrar Fabric service identity '${REGISTRAR_SERVICE_LABEL}' is unavailable in the Registrar wallet.`);
         metrics.setGauge('blockgo_ca_config_cache_entries', cacheStats().entries, 'Fabric CA configuration cache entries.');
-        res.json({ status: 'ready', wallets });
+        res.json({ status: 'ready', wallets, registrarServiceIdentity: 'present' });
     } catch (error) {
         res.status(503).json({ status: 'not_ready', error: error.message });
     }
@@ -137,3 +143,20 @@ app.get('/api/ready', async (req, res) => {
 
 installErrorHandler(app, logger);
 listen(app, serviceName, 4002, logger);
+
+async function bootstrapRegistrarServiceIdentityAtStartup() {
+    try {
+        const result = await ensureRegistrarServiceIdentity(process.env.BOOTSTRAP_REGISTRAR_PASS);
+        logger.info({ identity: REGISTRAR_SERVICE_LABEL, mspId: result.mspId, created: result.created }, 'Registrar Fabric service identity is available');
+    } catch (error) {
+        logger.error({ identity: REGISTRAR_SERVICE_LABEL, reason: error.message }, 'Registrar Fabric service identity bootstrap failed; readiness will remain unavailable until repaired');
+        const transportReason = `${error.message} ${error.cause?.message || ''}`;
+        if (/ECONN|EAI_AGAIN|ENET|unavailable|refused|timed out/i.test(transportReason)) {
+            // Startup repair retries only transport failures; a stale CA secret or
+            // wrong MSP requires operator attention and is never reset here.
+            const timer = setTimeout(bootstrapRegistrarServiceIdentityAtStartup, 30000);
+            timer.unref();
+        }
+    }
+}
+bootstrapRegistrarServiceIdentityAtStartup();

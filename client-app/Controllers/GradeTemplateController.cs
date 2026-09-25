@@ -10,6 +10,7 @@ using System.IO;
 using ClosedXML.Excel;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Client_app.Services;
 
 namespace Client_app.Controllers
 {
@@ -116,100 +117,42 @@ namespace Client_app.Controllers
             }
         }
 
-        [HttpGet("department/{department}/section/{section}/download")]
-        public async Task<IActionResult> DownloadGradingSheet(string department, string section)
+        [HttpGet("faculty-section/{facultySectionId:int}/download")]
+        public async Task<IActionResult> DownloadGradingSheet(int facultySectionId)
         {
             try
             {
                 using var conn = new NpgsqlConnection(_readConnectionString);
                 await conn.OpenAsync();
+                var resolution = await FacultyAssignmentRosterService.ResolveAsync(
+                    conn, facultySectionId, false, HttpContext.RequestAborted);
+                if (resolution.Status == FacultyAssignmentRosterService.ResolutionStatus.NotFound)
+                    return NotFound(new { status = "Error", message = resolution.Message });
+                if (resolution.Status == FacultyAssignmentRosterService.ResolutionStatus.AmbiguousLegacy)
+                    return Conflict(new { status = "Ambiguous", message = resolution.Message });
+                if (resolution.Value is null)
+                    return BadRequest(new { status = "Error", message = resolution.Message });
+                var assignment = resolution.Value;
+                if (User.IsInRole("faculty") &&
+                    !string.Equals(User.Identity?.Name, assignment.FacultyEmail, StringComparison.OrdinalIgnoreCase))
+                    return Forbid();
 
-                // 1. Dynamically resolve the true department of this section to support cross-department teaching
-                using var cmdResolveDept = new NpgsqlCommand("SELECT department FROM StudentProfiles WHERE section = @section AND department IS NOT NULL LIMIT 1", conn);
-                cmdResolveDept.Parameters.AddWithValue("section", section);
-                var resolvedDept = await cmdResolveDept.ExecuteScalarAsync() as string;
-                
-                string targetDepartment = !string.IsNullOrEmpty(resolvedDept) ? resolvedDept : department;
+                var students = await FacultyAssignmentRosterService.GetRosterAsync(
+                    conn, assignment, HttpContext.RequestAborted);
 
-                // 2. Fetch the latest Approved Template for the resolved target department
-                using var cmdTemplate = new NpgsqlCommand(@"
-                    SELECT formula_config FROM GradeTemplates 
-                    WHERE department = @dept AND status = 'Approved' 
-                    ORDER BY created_at DESC LIMIT 1", conn);
-                cmdTemplate.Parameters.AddWithValue("dept", targetDepartment);
-
-                var configJson = (string?)await cmdTemplate.ExecuteScalarAsync();
-                if (string.IsNullOrEmpty(configJson))
-                    return NotFound(new { status = "Error", message = $"No approved grading template found for the {targetDepartment} department." });
-
-                var config = JsonSerializer.Deserialize<FormulaConfig>(configJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (config == null || config.Columns == null)
-                    return StatusCode(500, new { status = "Error", message = "Invalid template configuration format." });
-
-                // 3. Fetch Enrolled Students for this section
-                var students = new List<StudentRow>();
-                using var cmdStudents = new NpgsqlCommand(@"
-                    SELECT full_name, student_no FROM StudentProfiles 
-                    WHERE department = @dept AND section = @section AND assignment_status = 'Enrolled'
-                    ORDER BY full_name ASC", conn);
-                cmdStudents.Parameters.AddWithValue("dept", targetDepartment);
-                cmdStudents.Parameters.AddWithValue("section", section);
-
-                using var reader = await cmdStudents.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    students.Add(new StudentRow {
-                        FullName = reader.GetString(0),
-                        StudentNo = reader.IsDBNull(1) ? "N/A" : reader.GetString(1)
-                    });
-                }
-                await reader.CloseAsync();
-
-                // 4. Build the Excel File dynamically using ClosedXML
-                using var workbook = new XLWorkbook();
-                var ws = workbook.Worksheets.Add($"Section {section}");
-
-                // Set Headers
-                ws.Cell(1, 1).Value = "Full Name";
-                ws.Cell(1, 2).Value = "Student No";
-                
-                for (int i = 0; i < config.Columns.Count; i++)
-                {
-                    ws.Cell(1, i + 3).Value = config.Columns[i].Header;
-                }
-
-                // Populate Data and Formulas
-                for (int r = 0; r < students.Count; r++)
-                {
-                    int rowNum = r + 2; // Excel rows are 1-indexed, Row 1 is header
-                    ws.Cell(rowNum, 1).Value = students[r].FullName;
-                    ws.Cell(rowNum, 2).Value = students[r].StudentNo;
-
-                    for (int c = 0; c < config.Columns.Count; c++)
-                    {
-                        int colNum = c + 3;
-                        var columnDef = config.Columns[c];
-                        
-                        if (columnDef.Type?.ToLower() == "formula" && !string.IsNullOrEmpty(columnDef.Value))
-                        {
-                            // Replace the {row} placeholder with the actual Excel row number (e.g. "=(C{row} * 0.5)" -> "=(C2 * 0.5)")
-                            string excelFormula = columnDef.Value.Replace("{row}", rowNum.ToString());
-                            ws.Cell(rowNum, colNum).FormulaA1 = excelFormula;
-                        }
-                    }
-                }
-
-                // Format the sheet slightly
-                ws.Columns().AdjustToContents();
-                ws.Range(1, 1, 1, config.Columns.Count + 2).Style.Font.Bold = true;
-
-                // 4. Return as File Download
-                using var stream = new MemoryStream();
-                workbook.SaveAs(stream);
-                var content = stream.ToArray();
-                
-                string safeSection = string.Join("_", section.Split(Path.GetInvalidFileNameChars()));
-                return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"{targetDepartment}_Sec_{safeSection}_Grades.xlsx");
+                var content = FacultyGradeWorkbookService.Build(assignment, students);
+                string safeSection = string.Join("_", assignment.CanonicalSection.Split(Path.GetInvalidFileNameChars()));
+                return File(content, FacultyGradeWorkbookService.ContentType,
+                    $"{assignment.Subject}_{safeSection}_{assignment.SchoolYear}_{assignment.Semester}.xlsx");
+            }
+            catch (FacultyAssignmentRosterService.RosterDataIntegrityException ex)
+            {
+                return Conflict(new {
+                    status = "DataIntegrityError",
+                    message = ex.Message,
+                    enrollmentId = ex.EnrollmentId,
+                    internalStudentId = ex.StudentUserId
+                });
             }
             catch (Exception ex)
             {

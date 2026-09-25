@@ -11,6 +11,7 @@ import Modal from '../../services/Modal';
 import StudentSectioning from './StudentSectioning';
 import AcademicAssignment from './AcademicAssignment';
 import { getGradeEquivalent } from '../../utils/gradingHelpers';
+import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from '../../utils/studentAcademicHelpers';
 
 const getRecordGrade = (record) => record?.grade || record?.Grade || '';
 
@@ -90,8 +91,8 @@ const resolveAssignmentForGradeRecord = (record, assignments = [], facultyIdenti
     const normalizedFacultyId = normalizeFacultyIdentity(getRecordFacultyKey(record));
     const normalizedStudentKey = normalizeText(getRecordStudentKey(record));
     const normalizedSubjectCode = normalizeText(getRecordSubjectKey(record));
-    const normalizedSemester = normalizeText(record?.semester || record?.Semester || '');
-    const normalizedSchoolYear = normalizeText(record?.schoolYear || record?.SchoolYear || '');
+    const normalizedSemester = canonicalAcademicSemester(record?.semester || record?.Semester || '');
+    const normalizedSchoolYear = canonicalAcademicSchoolYear(record?.schoolYear || record?.SchoolYear || '');
 
     const matchingAssignments = assignments.filter((assignment) => {
         const assignmentFacultyKey = normalizeFacultyIdentity(
@@ -102,8 +103,8 @@ const resolveAssignmentForGradeRecord = (record, assignments = [], facultyIdenti
             return false;
         }
 
-        const assignmentSemester = normalizeText(assignment?.semester);
-        const assignmentSchoolYear = normalizeText(assignment?.schoolYear);
+        const assignmentSemester = canonicalAcademicSemester(assignment?.semester);
+        const assignmentSchoolYear = canonicalAcademicSchoolYear(assignment?.schoolYear);
         const assignmentSubjectCode = normalizeText(assignment?.subjectCode);
 
         if (normalizedSemester && assignmentSemester && assignmentSemester !== normalizedSemester) {
@@ -321,13 +322,13 @@ const findSavedSectionRoster = ({
         const sameSchoolYear =
             !normalizeText(section?.schoolYear) ||
             !normalizeText(assignment?.schoolYear || schoolYear) ||
-            normalizeText(section?.schoolYear) ===
-                normalizeText(assignment?.schoolYear || schoolYear);
+            canonicalAcademicSchoolYear(section?.schoolYear) ===
+                canonicalAcademicSchoolYear(assignment?.schoolYear || schoolYear);
         const sameSemester =
             !normalizeText(section?.semester) ||
             !normalizeText(assignment?.semester || semester) ||
-            normalizeText(section?.semester) ===
-                normalizeText(assignment?.semester || semester);
+            canonicalAcademicSemester(section?.semester) ===
+                canonicalAcademicSemester(assignment?.semester || semester);
 
         return sameProgram && sameSection && sameSchoolYear && sameSemester;
     });
@@ -350,11 +351,11 @@ const resolveAssignmentForSectionGroup = (group, assignments = [], facultyIdenti
         const sameSchoolYear =
             !normalizeText(assignment?.schoolYear) ||
             !normalizeText(group?.schoolYear) ||
-            normalizeText(assignment?.schoolYear) === normalizeText(group?.schoolYear);
+            canonicalAcademicSchoolYear(assignment?.schoolYear) === canonicalAcademicSchoolYear(group?.schoolYear);
         const sameSemester =
             !normalizeText(assignment?.semester) ||
             !normalizeText(group?.semester) ||
-            normalizeText(assignment?.semester) === normalizeText(group?.semester);
+            canonicalAcademicSemester(assignment?.semester) === canonicalAcademicSemester(group?.semester);
 
         return sameFaculty && sameProgram && sameSection && sameSubject && sameSchoolYear && sameSemester;
     }) || null;
@@ -963,13 +964,37 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
 
     useEffect(() => { loadGrades(); }, [loadGrades]);
 
+    useEffect(() => {
+        const handleEncodingSeasonReset = (event) => {
+            const key = event.detail?.key || event.detail?.Key;
+            if (key !== 'encoding_period') return;
+
+            let value = event.detail?.value || event.detail?.Value;
+            try {
+                value = typeof value === 'string' ? JSON.parse(value) : value;
+            } catch {
+                return;
+            }
+            if (value?.startDate || value?.endDate) return;
+
+            setGrades([]);
+            setSelectedReviewSection(null);
+            loadGrades();
+        };
+
+        window.addEventListener('blockgo:system-setting-changed', handleEncodingSeasonReset);
+        return () => window.removeEventListener('blockgo:system-setting-changed', handleEncodingSeasonReset);
+    }, [loadGrades]);
+
     const loadMyClasses = useCallback(async () => {
         try {
             const secRes = await fetchFacultySections(loggedInEmail);
-            if (secRes.status === 'Success' || secRes.sections) setMySections(secRes.sections || secRes.data || []);
-            
-            const stuRes = await fetchFacultyStudents(loggedInEmail);
-            if (stuRes.status === 'Success' || stuRes.students) setMyStudents(stuRes.students || stuRes.data || []);
+            const assignments = secRes.sections || secRes.data || [];
+            if (secRes.status === 'Success' || secRes.sections) setMySections(assignments);
+            const rosterResponses = await Promise.all(
+                assignments.map((assignment) => fetchFacultyStudents(loggedInEmail, assignment.assignmentCycleId))
+            );
+            setMyStudents(rosterResponses.flatMap((response) => response.students || response.data || []));
         } catch (e) { console.error("Failed to load classes:", e); }
     }, [loggedInEmail]);
 
@@ -1107,10 +1132,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     useEffect(() => {
         if (selectedMySection && mainTab === 'myClasses') {
             const initialGrades = {};
-            const sectionStudents = myStudents.filter(s => 
-                s.department === selectedMySection.department && 
-                String(s.yearLevel) === String(selectedMySection.yearLevel) && 
-                String(s.sectionNum || s.section) === String(selectedMySection.sectionNum || selectedMySection.section)
+            const sectionStudents = myStudents.filter(s =>
+                String(s.facultySectionId) === String(selectedMySection.facultySectionId || selectedMySection.id || selectedMySection.assignmentCycleId)
             );
             sectionStudents.forEach(student => {
                 const existing = grades.find(g => {
@@ -1291,9 +1314,20 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             const schoolYear = selectedMySection?.schoolYear || "2024";
             const course = selectedMySection?.department || selectedMySection?.subject || "Unknown";
             const facultyId = loggedInEmail;
-            const section = `${selectedMySection?.department || ''} ${selectedMySection?.sectionNum || selectedMySection?.section || ''}${selectedMySection?.subject ? ` (${selectedMySection.subject})` : ''}`.trim();
+            const section = selectedMySection?.canonicalSection ||
+                `${selectedMySection?.department || ''} ${selectedMySection?.sectionNum || selectedMySection?.section || ''}`.trim();
 
-            const res = await batchUploadGrades(uploadFile, semester, schoolYear, course, facultyId, activeEncodingTerm, section);
+            const res = await batchUploadGrades(uploadFile, {
+                semester,
+                schoolYear,
+                course,
+                facultyId,
+                term: activeEncodingTerm,
+                section,
+                facultySectionId: selectedMySection?.facultySectionId || selectedMySection?.id || selectedMySection?.assignmentCycleId,
+                academicSectionId: selectedMySection?.academicSectionId,
+                subjectCode: selectedMySection?.subject,
+            });
             if (res.status === 'Success' || res.status === 'Partial Success') {
                 addNotification(`Uploaded successfully! Processed: ${res.totalProcessed}, Success: ${res.successful}`, 'success');
                 setUploadFile(null);
@@ -1318,10 +1352,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
 
         setIsSavingGrades(true);
         try {
-            const sectionStudents = myStudents.filter(s => 
-                s.department === selectedMySection.department && 
-                String(s.yearLevel) === String(selectedMySection.yearLevel) && 
-                String(s.sectionNum || s.section) === String(selectedMySection.sectionNum || selectedMySection.section)
+            const sectionStudents = myStudents.filter(s =>
+                String(s.facultySectionId) === String(selectedMySection.assignmentCycleId)
             );
 
             for (const student of sectionStudents) {
@@ -1329,11 +1361,13 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 if (!cg || (!cg.midterm && !cg.finals && !cg.finalAverage)) continue;
                 
                 const gradePayload = JSON.stringify({ midterm: cg.midterm, finals: cg.finals, finalAverage: cg.finalAverage });
-                const sectionName = `${selectedMySection.department || ''} ${selectedMySection.sectionNum || selectedMySection.section || ''}${selectedMySection.subject ? ` (${selectedMySection.subject})` : ''}`.trim();
+                const sectionName = selectedMySection.canonicalSection ||
+                    `${selectedMySection.department || ''} ${selectedMySection.sectionNum || selectedMySection.section || ''}`.trim();
+                const studentNumber = student.studentNumber || student.studentNo || student.studentno;
                 const payload = {
-                    student_id: student.studentno || student.email || student.id,
+                    student_id: studentNumber,
                     student_name: student.fullname || student.name || [student.lastName, student.firstName].filter(Boolean).join(', '),
-                    student_hash: student.email || student.studentno || student.id,
+                    student_hash: student.email || studentNumber,
                     section: sectionName,
                     year_level: selectedMySection.yearLevel || '',
                     faculty_id: loggedInEmail,
@@ -1347,6 +1381,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     semester: selectedMySection.semester || activeSemester || "2nd Semester",
                     school_year: selectedMySection.schoolYear || "2024",
                     grade: gradePayload,
+                    faculty_section_id: Number(selectedMySection.facultySectionId || selectedMySection.id || selectedMySection.assignmentCycleId),
                     status: "Issued",
                     date: new Date().toISOString().split('T')[0]
                 };
@@ -1360,10 +1395,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
 
     const handleExportClassGrades = () => {
         if (!selectedMySection) return;
-        const sectionStudents = myStudents.filter(s => 
-            s.department === selectedMySection.department && 
-            String(s.yearLevel) === String(selectedMySection.yearLevel) && 
-            String(s.sectionNum || s.section) === String(selectedMySection.sectionNum || selectedMySection.section)
+        const sectionStudents = myStudents.filter(s =>
+            String(s.facultySectionId) === String(selectedMySection.assignmentCycleId)
         );
         
         const headers = ["Student ID", "Student Name", "Midterm", "Finals", "Final Grade"];
@@ -1419,7 +1452,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             message: `Are you sure you want to unassign ${selectedMySection.department} ${selectedMySection.yearLevel}-${selectedMySection.sectionNum || selectedMySection.section} from your classes?`,
             onConfirm: async () => {
                 try {
-                    await unassignFacultySection(loggedInEmail, selectedMySection.department, selectedMySection.yearLevel, selectedMySection.sectionNum || selectedMySection.section);
+                    await unassignFacultySection(loggedInEmail, selectedMySection.assignmentCycleId);
                     addNotification("Class unassigned successfully.", "success");
                     setSelectedMySection(null);
                     loadMyClasses();
@@ -1484,7 +1517,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                         <div className="flex flex-col gap-6">
                             <FacultyStatusTable 
                                 rows={facultyRows.filter(r => {
-                                    if (activeChairTab === 'forReview') return r.reviewStatus === 'submitted' || r.reviewStatus === 'pending';
+                                    if (activeChairTab === 'forReview') return r.reviewStatus === 'submitted';
                                     if (activeChairTab === 'returned') return r.reviewStatus === 'returned';
                                     if (activeChairTab === 'approved') return r.reviewStatus === 'approved';
                                     if (activeChairTab === 'forwarded') return r.reviewStatus === 'forwarded';
@@ -1649,7 +1682,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {myStudents.filter(s => s.department === selectedMySection.department && String(s.yearLevel) === String(selectedMySection.yearLevel) && String(s.sectionNum || s.section) === String(selectedMySection.sectionNum || selectedMySection.section))
+                                                    {myStudents.filter(s => String(s.facultySectionId) === String(selectedMySection.assignmentCycleId))
                                                     .filter(s => {
                                                         const standing = (classGrades[s.id] || {}).standing || 'Enrolled';
                                                         return statusFilter === "All" || standing === statusFilter;
@@ -1699,7 +1732,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                                             </tr>
                                                         );
                                                     })}
-                                                    {myStudents.filter(s => s.department === selectedMySection.department && String(s.yearLevel) === String(selectedMySection.yearLevel) && String(s.sectionNum || s.section) === String(selectedMySection.sectionNum || selectedMySection.section)).length === 0 && (
+                                                    {myStudents.filter(s => String(s.facultySectionId) === String(selectedMySection.assignmentCycleId)).length === 0 && (
                                                         <tr><td colSpan="9" className="p-8 text-center text-slate-500 bg-slate-50 rounded-b-xl text-base">No students are currently assigned to this section.</td></tr>
                                                     )}
                                                 </tbody>

@@ -34,13 +34,14 @@ defaults:
 jobs:
   frontend-tests:
     name: Frontend — Unit, Audit & Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          submodules: false
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v7
@@ -88,13 +89,14 @@ jobs:
 
   middleware-tests:
     name: Middleware — Unit, Audit & Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          submodules: false
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v7
@@ -163,6 +165,7 @@ jobs:
 
           const allowedPackages = new Set([
             'fabric-network',
+            'fabric-ca-client',
             'fabric-common',
             'elliptic',
             'jsrsasign'
@@ -251,15 +254,18 @@ jobs:
           console.log('\nPASS: No unapproved high/critical production vulnerabilities found.');
           NODE
 
+          node ../.github/scripts/verify-frozen-fabric-audit.js npm-audit.json
+
   chaincode-tests:
     name: Chaincode — Vet, Unit & Race Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          submodules: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -293,7 +299,7 @@ jobs:
 
   dotnet-tests:
     name: .NET — Build, Checks & Dependency Audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     services:
@@ -316,11 +322,14 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          submodules: false
 
-      - name: Set up .NET 8
+      - name: Set up .NET 8 and 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Restore ASP.NET service dependencies
         run: |
@@ -340,6 +349,7 @@ jobs:
           set -euo pipefail
           dotnet restore tests/EnrollmentImportChecks/EnrollmentImportChecks.csproj
           dotnet restore tests/EnrollmentSectioningChecks/EnrollmentSectioningChecks.csproj
+          dotnet restore tests/AssignmentRegressionTests/AssignmentRegressionTests.csproj
 
       - name: Build Enrollment Import Checks
         run: |
@@ -355,6 +365,13 @@ jobs:
             --configuration Release \
             --no-restore
 
+      - name: Build Assignment Regression Tests
+        run: |
+          set -euo pipefail
+          dotnet build tests/AssignmentRegressionTests/AssignmentRegressionTests.csproj \
+            --configuration Release \
+            --no-restore
+
       - name: Run repository .NET checks
         env:
           SECTIONING_TEST_CONNECTION: Host=localhost;Port=5432;Database=sectioning_tests;Username=postgres;Password=ci-only-postgres-password
@@ -364,6 +381,7 @@ jobs:
           projects=(
             tests/EnrollmentImportChecks/EnrollmentImportChecks.csproj
             tests/EnrollmentSectioningChecks/EnrollmentSectioningChecks.csproj
+            tests/AssignmentRegressionTests/AssignmentRegressionTests.csproj
           )
 
           for project in "${projects[@]}"; do
@@ -409,7 +427,7 @@ jobs:
 
   infra-preflight:
     name: Infrastructure — K8s Failsafe Preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs:
       - frontend-tests
@@ -421,6 +439,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          submodules: false
 
       - name: Install validation tools
         run: |
@@ -781,7 +800,7 @@ jobs:
 
   ci-gate:
     name: Required CI Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: always()
     needs:
@@ -834,7 +853,7 @@ jobs:
 
   validate-promotion-token:
     name: Validate Promotion Token
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs:
       - ci-gate

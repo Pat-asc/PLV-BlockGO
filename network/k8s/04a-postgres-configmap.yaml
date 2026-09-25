@@ -19,7 +19,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: migrate
-        image: bitnami/postgresql:latest
+        image: bitnami/postgresql@sha256:bb51e14bc63942fe575e353b0844a2c8d2baa78bb04836e8798f1663952957e7
         imagePullPolicy: IfNotPresent
         resources:
           requests:

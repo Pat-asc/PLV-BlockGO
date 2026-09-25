@@ -50,6 +50,47 @@ public static class EnrollmentSectioningService
         return result;
     }
 
+    public static async Task<List<EnrolledStudent>> GetSectionedAsync(NpgsqlConnection connection,
+        string? department, short? yearLevel, string? schoolYear, string? semester, string? departmentScope)
+    {
+        await using var command = new NpgsqlCommand(@"
+            SELECT e.enrollment_id, u.id, e.student_no, COALESCE(sp.full_name, ''), u.email,
+                   sp.student_email, p.program_name, e.year_level::text, e.status,
+                   e.academic_section_id,
+                   CONCAT(section.year_level, '-', section.section_num),
+                   sp.sex, e.curriculum_id, e.batch_year, e.school_year, e.semester
+            FROM student_enrollments e
+            JOIN users u ON u.id = e.student_user_id
+            JOIN studentprofiles sp ON sp.user_id = u.id
+            JOIN academic_programs p ON p.program_id = e.program_id
+            JOIN academicsections section ON section.id = e.academic_section_id
+            WHERE e.status = 'ENROLLED'
+              AND LOWER(u.role) = 'student' AND LOWER(u.status) = 'approved' AND u.is_active
+              AND (@department IS NULL OR LOWER(p.program_code) = LOWER(@department)
+                   OR LOWER(p.program_name) = LOWER(@department))
+              AND (@scope IS NULL OR LOWER(p.program_code) = LOWER(@scope)
+                   OR LOWER(p.program_name) = LOWER(@scope))
+              AND (@yearLevel IS NULL OR e.year_level = @yearLevel)
+              AND (@schoolYear IS NULL OR e.school_year = @schoolYear)
+              AND (@semester IS NULL OR e.semester = @semester)
+            ORDER BY section.year_level, section.section_num, e.student_no;", connection);
+        command.Parameters.Add("department", NpgsqlDbType.Text).Value = (object?)department ?? DBNull.Value;
+        command.Parameters.Add("scope", NpgsqlDbType.Text).Value = (object?)departmentScope ?? DBNull.Value;
+        command.Parameters.Add("yearLevel", NpgsqlDbType.Smallint).Value = (object?)yearLevel ?? DBNull.Value;
+        command.Parameters.Add("schoolYear", NpgsqlDbType.Text).Value = (object?)schoolYear ?? DBNull.Value;
+        command.Parameters.Add("semester", NpgsqlDbType.Text).Value = (object?)semester ?? DBNull.Value;
+        var result = new List<EnrolledStudent>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            result.Add(new(reader.GetInt64(0), reader.GetInt32(1), reader.GetString(2),
+                reader.GetString(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.GetString(6), reader.GetString(7), reader.GetString(8), reader.GetInt32(9),
+                reader.GetString(10), reader.IsDBNull(11) ? null : reader.GetString(11),
+                reader.IsDBNull(12) ? null : reader.GetInt64(12), reader.IsDBNull(13) ? null : reader.GetInt32(13),
+                reader.GetString(14), reader.GetString(15)));
+        return result;
+    }
+
     public static async Task<(int Count, string Department)> AssignAsync(NpgsqlConnection connection,
         int sectionId, IEnumerable<string> studentIds, string schoolYear, string semester, string? departmentScope,
         IReadOnlyDictionary<string, int>? expectedSectionIds = null)
