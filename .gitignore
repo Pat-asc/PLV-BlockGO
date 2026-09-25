@@ -24,7 +24,18 @@ temp/
 .cache/
 *.cache
 *.cache.json
-/tests/
+/tests/*
+!/tests/AssignmentRegressionTests/
+!/tests/AssignmentRegressionTests/AssignmentRegressionTests.csproj
+!/tests/AssignmentRegressionTests/Program.cs
+/tests/AssignmentRegressionTests/bin/
+/tests/AssignmentRegressionTests/obj/
+!/tests/StudentSubjectGradeChecks/
+!/tests/StudentSubjectGradeChecks/Program.cs
+/tests/StudentSubjectGradeChecks/bin/
+/tests/StudentSubjectGradeChecks/obj/
+!/tests/LoadTests/
+!/tests/LoadTests/k6-grade-submission.js
 /test-results/
 
 # =========================
@@ -75,6 +86,7 @@ network/.local-couchdb-*-port-forward*.pid
 docker-compose.override.yml
 network/.tmp-k8s/
 network/k8s/.tmp-k8s/
+.production-release/
 # =========================
 # BLOCKCHAIN NETWORK SPECIFIC
 # =========================

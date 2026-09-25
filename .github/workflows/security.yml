@@ -272,6 +272,20 @@ jobs:
           echo "iac_count=$iac_count" >> "$GITHUB_OUTPUT"
           echo "Prepared $changed_count changed file(s), including $iac_count IaC file(s), for regression security scanning."
 
+      - name: Set up frozen middleware runtime
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: middleware/package-lock.json
+
+      - name: Verify frozen Fabric SDK audit exceptions
+        working-directory: middleware
+        run: |
+          set -euo pipefail
+          npm audit --omit=dev --json > npm-audit.json || true
+          node ../.github/scripts/verify-frozen-fabric-audit.js npm-audit.json
+
       - name: Report dependency findings
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -350,10 +364,6 @@ jobs:
           # through the deprecated fabric-network@2.2.20 dependency chain.
           # Any other HIGH/CRITICAL finding remains blocking.
           approved = {
-              "elliptic": {
-                  "GHSA-848j-6mx2-7j84",
-                  "CVE-2025-14505",
-              },
               "jsrsasign": {
                   "GHSA-rh63-9qcf-83gf",
                   "CVE-2024-21484",
@@ -399,8 +409,12 @@ jobs:
                       "middleware/package-lock.json"
                   )
                   is_approved_id = vuln_id in approved.get(package, set())
+                  is_approved_version = (
+                      package == "jsrsasign"
+                      and item["installed"] == "10.9.0"
+                  )
 
-                  if is_middleware_lock and is_approved_id:
+                  if is_middleware_lock and is_approved_id and is_approved_version:
                       excepted.append(item)
                   else:
                       blocking.append(item)
