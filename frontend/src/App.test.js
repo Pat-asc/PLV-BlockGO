@@ -1,11 +1,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from './App';
-import { fetchUserProfile, login } from './services/api';
+import { fetchUserProfile, forgotPassword, login, requestPasswordResetAssistance, resetPassword } from './services/api';
 
 jest.mock('./services/api', () => ({
   ...jest.requireActual('./services/api'),
   fetchUserProfile: jest.fn(),
+  forgotPassword: jest.fn(),
   login: jest.fn(),
+  requestPasswordResetAssistance: jest.fn(),
+  resetPassword: jest.fn(),
 }));
 
 jest.mock('./services/nginxFailover', () => ({
@@ -64,6 +67,45 @@ test('renders managed-account login at the stable login route without public reg
   expect(screen.getByText(/forgot password/i)).toBeInTheDocument();
   expect(screen.queryByText(/each browser tab keeps an independent account session/i)).not.toBeInTheDocument();
   expect(screen.queryByText(/sign up|register|create account/i)).not.toBeInTheDocument();
+});
+
+test('requests a self-service email code and resets the password', async () => {
+  forgotPassword.mockResolvedValue({
+    message: 'If the account is eligible, password reset instructions have been sent to the registered email.',
+  });
+  resetPassword.mockResolvedValue({ message: 'Password updated successfully. You can now sign in.' });
+  render(<App />);
+  fireEvent.click(await screen.findByText(/forgot password/i));
+  fireEvent.change(screen.getByPlaceholderText(/registered email/i), {
+    target: { value: 'maria.santos@plv.edu.ph' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /send reset code/i }));
+  await waitFor(() => expect(forgotPassword).toHaveBeenCalledWith('maria.santos@plv.edu.ph'));
+  expect(await screen.findByPlaceholderText(/6-digit verification code/i)).toBeInTheDocument();
+  fireEvent.change(screen.getByPlaceholderText(/6-digit verification code/i), { target: { value: '123456' } });
+  fireEvent.change(screen.getByPlaceholderText(/^new password$/i), { target: { value: 'NewPassword1!' } });
+  fireEvent.change(screen.getByPlaceholderText(/confirm new password/i), { target: { value: 'NewPassword1!' } });
+  fireEvent.click(screen.getByRole('button', { name: /^reset password$/i }));
+  await waitFor(() => expect(resetPassword).toHaveBeenCalledWith({
+    email: 'maria.santos@plv.edu.ph', code: '123456', newPassword: 'NewPassword1!',
+  }));
+  expect(await screen.findByText(/password updated successfully/i)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^sign in$/i })).toBeInTheDocument();
+});
+
+test('submits manual assistance only when the user explicitly selects the fallback', async () => {
+  requestPasswordResetAssistance.mockResolvedValue({
+    message: 'If the account is eligible, a manual password recovery request is now pending with the Registrar.',
+  });
+  render(<App />);
+  fireEvent.click(await screen.findByText(/forgot password/i));
+  fireEvent.change(screen.getByPlaceholderText(/registered email/i), {
+    target: { value: 'student@plv.edu.ph' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /request manual assistance/i }));
+  await waitFor(() => expect(requestPasswordResetAssistance).toHaveBeenCalledWith('student@plv.edu.ph'));
+  expect(await screen.findByText(/pending with the Registrar/i)).toBeInTheDocument();
+  expect(forgotPassword).not.toHaveBeenCalled();
 });
 
 test('keeps every account session active when logout confirmation is cancelled', async () => {

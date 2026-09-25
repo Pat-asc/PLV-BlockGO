@@ -125,10 +125,17 @@ export const forgotPassword = (email) => {
     });
 };
 
-export const resetPassword = ({ email, otp, newPassword }) => {
-    return fetchPublic('/reset-password', { 
-        method: 'POST', 
-        body: JSON.stringify({ email, otp, newPassword })
+export const resetPassword = ({ email, code, newPassword }) => {
+    return fetchPublic('/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ email, code, newPassword })
+    });
+};
+
+export const requestPasswordResetAssistance = (email) => {
+    return fetchPublic('/password-reset-assistance', {
+        method: 'POST',
+        body: JSON.stringify({ email })
     });
 };
 

@@ -1004,8 +1004,20 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       if (res.status === 'Success' || res.status === 'Partial Success') {
         setUploadResult({ 
           type: 'success', 
-          title: 'Upload Successful', 
-          message: `Processed: ${res.totalProcessed}, Success: ${res.successful}`, 
+          title: res.status === 'Partial Success' ? 'Upload Partially Completed' : 'Upload Successful',
+          message: `${res.successful} of ${res.totalProcessed} grade rows were saved as Draft.`,
+          context: {
+            section: canonicalSection,
+            subjectCode: sectionData.subjectCode,
+            term: encodingTerm,
+            schoolYear,
+            semester,
+          },
+          counts: {
+            processed: res.totalProcessed,
+            successful: res.successful,
+            failed: res.failed || 0,
+          },
           details: Array.isArray(res.errors) && res.errors.length > 0
             ? res.errors
             : 'All records processed successfully.'
@@ -1013,11 +1025,21 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         updateSectionTermStatus(sectionName, encodingTerm, 'draft');
         loadFacultyData();
       } else {
-        setUploadResult({ type: 'error', title: 'Upload Failed', message: res.message });
+        setUploadResult({
+          type: 'error',
+          title: 'Upload Failed',
+          message: res.message,
+          context: { section: canonicalSection, subjectCode: sectionData.subjectCode, term: encodingTerm, schoolYear, semester },
+        });
       }
     } catch (err) {
       console.error(err);
-      setUploadResult({ type: 'error', title: 'Batch Upload Failed', message: err.message });
+      setUploadResult({
+        type: 'error',
+        title: 'Batch Upload Failed',
+        message: err.message,
+        context: { section: canonicalSection, subjectCode: sectionData.subjectCode, term: encodingTerm, schoolYear, semester },
+      });
     } finally {
       setUploadingSection(null);
       e.target.value = null; 
@@ -1551,12 +1573,31 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       </Modal>
 
       {uploadResult && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div role="dialog" aria-modal="true" aria-labelledby="bulk-upload-result-title" className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl bg-white p-6 shadow-2xl">
-            <h2 className={`mb-2 text-2xl font-bold ${uploadResult.type === 'error' ? 'text-red-600' : 'text-green-600'}`}>
+            <h2 id="bulk-upload-result-title" className={`mb-2 text-2xl font-bold ${uploadResult.type === 'error' ? 'text-red-600' : 'text-green-600'}`}>
               {uploadResult.title}
             </h2>
-            <p className="mb-4 font-semibold text-slate-700">{uploadResult.message}</p>
+            {uploadResult.context && (
+              <dl className="mb-4 grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl bg-slate-50 p-4 text-sm">
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Section</dt><dd className="font-semibold text-slate-800">{uploadResult.context.section}</dd></div>
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Subject</dt><dd className="font-semibold text-slate-800">{uploadResult.context.subjectCode}</dd></div>
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Term</dt><dd className="font-semibold capitalize text-slate-800">{uploadResult.context.term}</dd></div>
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Academic period</dt><dd className="font-semibold text-slate-800">{uploadResult.context.schoolYear} / {uploadResult.context.semester}</dd></div>
+              </dl>
+            )}
+            <p className="mb-3 font-semibold text-slate-700">{uploadResult.message}</p>
+            {uploadResult.type === 'success' ? (
+              <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                <p className="font-bold">Status: Draft - grades remain editable.</p>
+                <p className="mt-1">Nothing was submitted to the Chairperson or finalized. No IPFS upload or Fabric write occurs during Draft import; ledger processing happens only during Registrar finalization.</p>
+                {uploadResult.counts && <p className="mt-2 text-xs">Processed: {uploadResult.counts.processed} | Saved: {uploadResult.counts.successful} | Failed: {uploadResult.counts.failed}</p>}
+              </div>
+            ) : (
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                Nothing was submitted or finalized. Existing on-screen grades were preserved.
+              </div>
+            )}
             {Array.isArray(uploadResult.details) ? (
               <div className="mb-5 flex-grow overflow-x-auto rounded-xl border border-slate-200">
                 <table className="w-full border-collapse text-left text-sm">

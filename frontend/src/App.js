@@ -120,7 +120,7 @@ function AppContent() {
     const token = migrateLegacyAuthSession();
     if (!token) {
       setIsRestoringSession(false);
-      const isPublicAuthRoute = location.pathname === '/login' || location.pathname.startsWith('/reset-password');
+      const isPublicAuthRoute = location.pathname === '/login';
       if (!isPublicAuthRoute) navigate('/login', { replace: true });
       return () => { active = false; };
     }

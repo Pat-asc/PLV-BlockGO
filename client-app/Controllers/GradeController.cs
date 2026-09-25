@@ -1149,8 +1149,6 @@ namespace BlockGo.Controllers
                     return BadRequest(new { status = "Error", message = "Only .csv and .xlsx files are supported." });
 
                 var tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ext);
-                string ipfsCid = "";
-                
                 try
                 {
                     using (var fileStream = new FileStream(tempFile, FileMode.Create))
@@ -1318,20 +1316,6 @@ namespace BlockGo.Controllers
                     if (parsedRecords.Count == 0)
                         return BadRequest(new { status = "Error", message = "The upload contains no grade rows with Registrar student numbers." });
 
-                    var allLedgerGrades = new List<AcademicRecord>();
-                    try {
-                        var jsonResult = await _blockchainService.GetAllGradesAsync(facultyId);
-                        using var doc = JsonDocument.Parse(jsonResult);
-                        if (doc.RootElement.TryGetProperty("data", out var dataElement))
-                        {
-                            var blockchainGrades = JsonSerializer.Deserialize<List<AcademicRecord>>(
-                                dataElement.GetRawText(), 
-                                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
-                            );
-                            if (blockchainGrades != null) allLedgerGrades.AddRange(blockchainGrades);
-                        }
-                    } catch (Exception ex) { _logger.LogWarning("Could not pre-fetch ledger grades for bulk upload: {Msg}", ex.Message); }
-
                     using var conn = new NpgsqlConnection(_connectionString);
                     await conn.OpenAsync();
                     await EnsurePendingGradeSchemaAsync(conn);
@@ -1369,16 +1353,6 @@ namespace BlockGo.Controllers
                     var rosterStudentNumbers = canonicalRoster
                         .Select(student => student.StudentNo)
                         .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    static string LedgerLookupKey(AcademicRecord grade) => string.Join("\u001f",
-                        grade.StudentHash?.Trim().ToLowerInvariant() ?? string.Empty,
-                        grade.SubjectCode?.Trim().ToLowerInvariant() ?? string.Empty,
-                        grade.SchoolYear?.Trim().ToLowerInvariant() ?? string.Empty,
-                        grade.Semester?.Trim().ToLowerInvariant() ?? string.Empty,
-                        grade.Section?.Trim().ToLowerInvariant() ?? string.Empty);
-                    var ledgerGradesByKey = allLedgerGrades
-                        .GroupBy(LedgerLookupKey)
-                        .ToDictionary(group => group.Key, group => group.First());
-
                     // Process all extracted records uniformly
                     var processedCombos = new HashSet<string>();
                     foreach (var record in parsedRecords)
@@ -1458,7 +1432,7 @@ namespace BlockGo.Controllers
                             blockchainRecord.Course = facDept;
                             blockchainRecord.Program = facDept;
                             if (blockchainRecord.Units <= 0) blockchainRecord.Units = 3;
-                            blockchainRecord.IpfsCid = ipfsCid;
+                            blockchainRecord.IpfsCid = string.Empty;
 
                             var assignmentCycleId = facultyAssignment.Id.ToString();
                             blockchainRecord.SchoolYear = facultyAssignment.SchoolYear;

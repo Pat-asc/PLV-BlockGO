@@ -5,7 +5,7 @@ const { normalizeAuthRole } = require('../src/shared/roles');
 const { isRetryableCouchDbError } = require('../src/fabric/wallet-manager');
 
 const expected = {
-    '/api/login': 'auth', '/api/crypto/hash-password': 'auth', '/api/forgot-password': 'auth', '/api/reset-password': 'auth', '/api/bootstrap': 'auth',
+    '/api/login': 'auth', '/api/crypto/hash-password': 'auth', '/api/forgot-password': 'auth', '/api/reset-password': 'auth', '/api/password-reset-assistance': 'auth', '/api/bootstrap': 'auth',
     '/api/fabric/register-user': 'identity', '/api/enroll': 'identity', '/api/register': 'identity', '/api/revoke': 'identity', '/api/wallet/person@example.edu': 'identity',
     '/api/all-grades': 'ledger', '/api/student-transactions': 'ledger', '/api/admin/ledger-transactions': 'ledger', '/api/grade-history/GRADE-1': 'ledger',
     '/api/fabric/audit-event': 'ledger', '/api/issue-grade': 'ledger', '/api/get-grade/GRADE-1': 'ledger',
@@ -29,6 +29,7 @@ test('documented compatibility routes expose their intended HTTP methods', () =>
     assert.deepEqual(allowedMethods('/api/bootstrap'), ['GET']);
     assert.deepEqual(allowedMethods('/api/admin/ledger-transactions'), ['GET']);
     assert.deepEqual(allowedMethods('/api/crypto/hash-password'), ['POST']);
+    assert.deepEqual(allowedMethods('/api/password-reset-assistance'), ['POST']);
     assert.deepEqual(allowedMethods('/api/SystemSettings/EncodingPeriod'), ['GET']);
     assert.deepEqual(allowedMethods('/api/SystemSettings/reset-season'), ['POST']);
 });

@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import FacultyPortal from './FacultyPortal';
 import { batchUploadGrades, fetchFacultySections, fetchFacultyStudents, fetchAllGrades, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
 
@@ -167,6 +167,24 @@ test('Bulk Upload sends FacultySections.id instead of academicSectionId', async 
   expect(batchUploadGrades.mock.calls[0][1].facultySectionId).not.toBe(45);
 });
 
+test('successful Bulk Upload reports exact context and an editable Draft without claiming an IPFS commit', async () => {
+  await openSection();
+  const file = new File(['workbook'], 'grades.xlsx', {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
+
+  const dialog = await screen.findByRole('dialog', { name: 'Upload Successful' });
+  expect(dialog).toHaveTextContent('BSIT 1-1');
+  expect(dialog).toHaveTextContent('IT 101');
+  expect(dialog).toHaveTextContent('midterm');
+  expect(dialog).toHaveTextContent('Status: Draft - grades remain editable.');
+  expect(dialog).toHaveTextContent('No IPFS upload or Fabric write occurs during Draft import');
+  expect(dialog).not.toHaveTextContent(/uploaded to IPFS|archived successfully/i);
+  expect(submitSectionGrades).not.toHaveBeenCalled();
+});
+
 test.each(['final', 'finals', 'FINAL', 'FINALS'])('normalizes %s encoding season to the canonical finals upload term', async (term) => {
   getSystemSetting.mockResolvedValue({
     status: 'Success',
@@ -191,8 +209,35 @@ test('a rejected Bulk Upload preserves manually entered grades and shows the bac
   const file = new File(['workbook'], 'wrong-assignment.xlsx');
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
-  expect(await screen.findByText('The workbook belongs to a different Faculty assignment.')).toBeInTheDocument();
+  const dialog = await screen.findByRole('dialog', { name: 'Batch Upload Failed' });
+  expect(dialog).toHaveTextContent('The workbook belongs to a different Faculty assignment.');
+  expect(dialog).toHaveTextContent('Nothing was submitted or finalized.');
   expect(gradeInput).toHaveValue(88);
+});
+
+test('a backend-closed encoding period uses the failure modal and saves no upload', async () => {
+  batchUploadGrades.mockRejectedValue(new Error('The grade encoding period is closed.'));
+  await openSection();
+  const file = new File(['workbook'], 'grades.xlsx');
+
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
+
+  const dialog = await screen.findByRole('dialog', { name: 'Batch Upload Failed' });
+  expect(dialog).toHaveTextContent('The grade encoding period is closed.');
+  expect(dialog).toHaveTextContent('Nothing was submitted or finalized.');
+  expect(submitSectionGrades).not.toHaveBeenCalled();
+});
+
+test('a Midterm upload modal reports only the active term as accepted workflow data', async () => {
+  await openSection();
+  const file = new File(['midterm-and-finals'], 'mixed-terms.xlsx');
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
+
+  const dialog = await screen.findByRole('dialog', { name: 'Upload Successful' });
+  expect(dialog).toHaveTextContent('Term');
+  expect(within(dialog).getByText(/^midterm$/i)).toBeInTheDocument();
+  expect(within(dialog).queryByText(/^finals$/i)).not.toBeInTheDocument();
+  expect(batchUploadGrades).toHaveBeenCalledWith(file, expect.objectContaining({ term: 'midterm' }));
 });
 
 test('switching exact FacultySections replaces the visible roster instead of merging students', async () => {

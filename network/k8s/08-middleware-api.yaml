@@ -167,6 +167,18 @@ spec:
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: EMAIL_USER, optional: true } }
         - name: EMAIL_PASS
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: EMAIL_PASS, optional: true } }
+        - name: SMTP_HOST
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: SMTP_HOST, optional: true } }
+        - name: SMTP_PORT
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: SMTP_PORT, optional: true } }
+        - name: SMTP_USER
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: SMTP_USER, optional: true } }
+        - name: SMTP_PASS
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: SMTP_PASS, optional: true } }
+        - name: SMTP_SECURE
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: SMTP_SECURE, optional: true } }
+        - name: EMAIL_FROM
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: EMAIL_FROM, optional: true } }
         startupProbe: &auth-health
           httpGet: { path: /api/health, port: 4001 }
           periodSeconds: 5

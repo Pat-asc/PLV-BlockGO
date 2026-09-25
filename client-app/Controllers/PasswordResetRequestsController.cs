@@ -20,35 +20,32 @@ public sealed class PasswordResetRequestsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> List(
-        CancellationToken cancellationToken)
+    public async Task<IActionResult> List(CancellationToken cancellationToken)
     {
-        await using var connection =
-            new NpgsqlConnection(_connectionString);
-
+        await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
         await using var command = new NpgsqlCommand(@"
-            SELECT
-                request_id,
-                user_id,
-                email,
-                created_at,
-                request_status,
-                request_reason,
-                reviewed_by,
-                reviewed_at,
-                review_note,
-                completed_at
-            FROM password_reset_requests
-            WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
-            ORDER BY created_at DESC;
-        ", connection);
+            SELECT pr.request_id, pr.user_id, pr.email, pr.request_status,
+                   pr.request_reason, pr.reviewed_at, pr.review_note,
+                   pr.completed_at, pr.created_at,
+                   COALESCE(sp.full_name, fp.full_name, ap.full_name, pr.email) AS full_name,
+                   u.role
+            FROM password_reset_requests pr
+            JOIN users u ON u.id = pr.user_id
+            LEFT JOIN studentprofiles sp ON sp.user_id = u.id
+            LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
+            LEFT JOIN adminprofiles ap ON ap.user_id = u.id
+            WHERE pr.request_status IN ('PENDING', 'APPROVED')
+               OR pr.created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+            ORDER BY CASE pr.request_status
+                         WHEN 'PENDING' THEN 0 WHEN 'APPROVED' THEN 1 ELSE 2
+                     END,
+                     pr.created_at DESC;", connection);
 
         var requests = new List<object>();
 
-        await using var reader =
-            await command.ExecuteReaderAsync(cancellationToken);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -57,30 +54,17 @@ public sealed class PasswordResetRequestsController : ControllerBase
                 requestId = reader.GetInt64(0),
                 userId = reader.GetInt32(1),
                 email = reader.GetString(2),
-                createdAt = reader.GetFieldValue<DateTimeOffset>(3),
-                status = reader.GetString(4),
-                requestReason = reader.IsDBNull(5)
-                    ? null
-                    : reader.GetString(5),
-                reviewedBy = reader.IsDBNull(6)
-                    ? (int?)null
-                    : reader.GetInt32(6),
-                reviewedAt = reader.IsDBNull(7)
-                    ? (DateTimeOffset?)null
-                    : reader.GetFieldValue<DateTimeOffset>(7),
-                reviewNote = reader.IsDBNull(8)
-                    ? null
-                    : reader.GetString(8),
-                completedAt = reader.IsDBNull(9)
-                    ? (DateTimeOffset?)null
-                    : reader.GetFieldValue<DateTimeOffset>(9)
+                status = reader.GetString(3),
+                reason = reader.IsDBNull(4) ? null : reader.GetString(4),
+                reviewedAt = reader.IsDBNull(5) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(5),
+                reviewNote = reader.IsDBNull(6) ? null : reader.GetString(6),
+                completedAt = reader.IsDBNull(7) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(7),
+                createdAt = reader.GetFieldValue<DateTimeOffset>(8),
+                fullName = reader.GetString(9),
+                role = reader.GetString(10)
             });
         }
 
-        return Ok(new
-        {
-            status = "Success",
-            data = requests
-        });
+        return Ok(new { status = "Success", data = requests });
     }
 }

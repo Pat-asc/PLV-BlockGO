@@ -1,9 +1,9 @@
 // src/Login.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import '../../assets/App.css';
 import plvbg from '../../assets/plvbg.png';
 import plvlogo from '../../assets/plvlogo.png';
-import { login, forgotPassword, resetPassword } from '../../services/api';
+import { forgotPassword, login, requestPasswordResetAssistance, resetPassword } from '../../services/api';
 import { createLocalDevToken, createLocalDevTokenForRole } from '../../utils/localDevAuth';
 
 const Login = ({ onLogin }) => {
@@ -15,22 +15,11 @@ const Login = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const [resetOtp, setResetOtp] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
-  useEffect(() => {
-    if (window.location.pathname.includes('/reset-password')) setCurrentView('resetPassword');
-  }, []);
-
-  const validatePassword = (pwd) => {
-    if (pwd.length < 8) return "Password must be at least 8 characters long.";
-    if (!/[A-Z]/.test(pwd)) return "Password must contain at least one uppercase letter.";
-    if (!/[a-z]/.test(pwd)) return "Password must contain at least one lowercase letter.";
-    if (!/\d/.test(pwd)) return "Password must contain at least one number.";
-    if (!/[!@#$%^&*(),.?":{}|<>]/.test(pwd)) return "Password must contain at least one special character.";
-    return "";
-  };
 
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
@@ -74,7 +63,7 @@ const Login = ({ onLogin }) => {
     setMessage('');
     try {
       const data = await forgotPassword(email);
-      setMessage(data.message || 'Reset OTP sent.');
+      setMessage(data.message || 'Check your registered email for the password reset code.');
       setCurrentView('resetPassword');
     } catch (error) {
       setError(error.message);
@@ -82,35 +71,54 @@ const Login = ({ onLogin }) => {
     setIsLoading(false);
   };
 
-  const handleResetSubmit = async (e) => {
+  const handleResetPassword = async (e) => {
     e.preventDefault();
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.');
+    if (!/^\d{6}$/.test(verificationCode)) {
+      setError('Enter the six-digit verification code from your email.');
       return;
     }
-
-    const passwordError = validatePassword(password);
-    if (passwordError) {
-      setError(passwordError);
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      setError('Password must be between 8 and 128 characters.');
       return;
     }
-
+    if (newPassword !== confirmPassword) {
+      setError('The password confirmation does not match.');
+      return;
+    }
     setIsLoading(true);
     setError('');
     setMessage('');
     try {
-      const data = await resetPassword({ email, otp: resetOtp, newPassword: password });
-      setMessage(data.message || 'Password updated successfully.');
-      setTimeout(() => {
-        setCurrentView('signIn');
-        setPassword('');
-        setConfirmPassword('');
-        window.history.replaceState({}, document.title, "/login");
-      }, 3000);
-    } catch (error) {
-      setError(error.message);
+      const data = await resetPassword({ email, code: verificationCode, newPassword });
+      setVerificationCode('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPassword('');
+      setCurrentView('signIn');
+      setMessage(data.message || 'Password updated successfully. You can now sign in.');
+    } catch (resetError) {
+      setError(resetError.message || 'Unable to reset the password.');
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
+  };
+
+  const handleManualAssistance = async () => {
+    if (!emailRegex.test(email)) {
+      setError('Enter your registered email before requesting manual assistance.');
+      return;
+    }
+    setIsLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const data = await requestPasswordResetAssistance(email);
+      setMessage(data.message || 'If the account is eligible, a manual recovery request is pending with the Registrar.');
+    } catch (assistanceError) {
+      setError(assistanceError.message || 'Unable to request manual assistance.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const renderPasswordInput = ({
@@ -211,8 +219,8 @@ const Login = ({ onLogin }) => {
 
           <h2 className="welcome-text">
             {currentView === 'signIn' && "Welcome"}
-            {currentView === 'forgotPassword' && "Reset Password"}
-            {currentView === 'resetPassword' && "Create New Password"}
+            {currentView === 'forgotPassword' && "Forgot Password"}
+            {currentView === 'resetPassword' && "Verify and Reset Password"}
           </h2>
           {error && <p style={{ color: 'red', textAlign: 'center' }}>{error}</p>}
           {message && <p style={{ color: 'green', textAlign: 'center' }}>{message}</p>}
@@ -281,44 +289,45 @@ const Login = ({ onLogin }) => {
                 <input type="email" placeholder="Your registered email" value={email} onChange={(e) => setEmail(e.target.value)} required />
               </div>
               <button type="submit" className="sign-in-btn" disabled={isLoading}>
-                {isLoading ? (<><span className="spinner"></span> Sending...</>) : 'Send Reset OTP'}
+                {isLoading ? (<><span className="spinner"></span> Sending...</>) : 'Send Reset Code'}
+              </button>
+              <p style={{ color: '#64748b', fontSize: '12px', lineHeight: 1.5, textAlign: 'center' }}>
+                Self-service email recovery is available only for active Student and Faculty accounts.
+              </p>
+              <button type="button" className="toggle-view auth-link" onClick={handleManualAssistance} disabled={isLoading} style={{ cursor: 'pointer', fontWeight: 'bold', marginTop: '8px', border: 'none', background: 'transparent' }}>
+                Can't access your registered email? Request Manual Assistance
               </button>
             </form>
           )}
 
-          {/* RESET PASSWORD FORM */}
           {currentView === 'resetPassword' && (
-            <form className="login-form" onSubmit={handleResetSubmit}>
-              
+            <form className="login-form" onSubmit={handleResetPassword}>
               <div className="input-group">
-                <label>Reset OTP</label>
-                <input type="text" inputMode="numeric" pattern="[0-9]{6}" maxLength="6" placeholder="6-digit OTP" value={resetOtp} onChange={(e) => setResetOtp(e.target.value.replace(/\D/g, ''))} required />
+                <label>Verification Code</label>
+                <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength="6" pattern="[0-9]{6}" placeholder="6-digit verification code" value={verificationCode} onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, ''))} required />
               </div>
               {renderPasswordInput({
-                label: "New Password",
-                value: password,
-                onChange: (e) => setPassword(e.target.value),
-                placeholder: "New Password",
-                autoComplete: "new-password",
-                isVisible: showPassword,
-                onToggle: () => setShowPassword((current) => !current),
+                label: 'New Password', value: newPassword,
+                onChange: (e) => setNewPassword(e.target.value), placeholder: 'New Password',
+                autoComplete: 'new-password', isVisible: showNewPassword,
+                onToggle: () => setShowNewPassword((current) => !current),
               })}
               {renderPasswordInput({
-                label: "Confirm Password",
-                value: confirmPassword,
-                onChange: (e) => setConfirmPassword(e.target.value),
-                placeholder: "Confirm New Password",
-                autoComplete: "new-password",
-                isVisible: showConfirmPassword,
+                label: 'Confirm New Password', value: confirmPassword,
+                onChange: (e) => setConfirmPassword(e.target.value), placeholder: 'Confirm New Password',
+                autoComplete: 'new-password', isVisible: showConfirmPassword,
                 onToggle: () => setShowConfirmPassword((current) => !current),
               })}
               <button type="submit" className="sign-in-btn" disabled={isLoading}>
-                {isLoading ? (<><span className="spinner"></span> Updating...</>) : 'Update Password'}
+                {isLoading ? (<><span className="spinner"></span> Resetting...</>) : 'Reset Password'}
+              </button>
+              <button type="button" className="toggle-view auth-link" onClick={handleManualAssistance} disabled={isLoading} style={{ cursor: 'pointer', fontWeight: 'bold', marginTop: '8px', border: 'none', background: 'transparent' }}>
+                Request Manual Assistance
               </button>
             </form>
           )}
 
-          {currentView === 'forgotPassword' && (
+          {(currentView === 'forgotPassword' || currentView === 'resetPassword') && (
             <p className="toggle-view auth-link" onClick={() => { setCurrentView('signIn'); setError(''); setMessage(''); }} style={{ cursor: 'pointer', fontWeight: 'bold', marginTop: '15px' }}>
               Back to Sign In
             </p>
