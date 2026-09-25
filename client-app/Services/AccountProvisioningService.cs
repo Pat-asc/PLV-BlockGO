@@ -443,6 +443,11 @@ namespace Client_app.Services
                         ? @"
                             UPDATE password_reset_requests
                             SET request_status = 'COMPLETED',
+                                reviewed_by = COALESCE(reviewed_by, (
+                                    SELECT id FROM users WHERE LOWER(email) = LOWER(@actorEmail) LIMIT 1
+                                )),
+                                reviewed_at = COALESCE(reviewed_at, CURRENT_TIMESTAMP),
+                                review_note = COALESCE(review_note, 'Approved and completed through password management.'),
                                 completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
                             WHERE user_id = @userId
                               AND request_status IN ('PENDING', 'APPROVED');"
@@ -461,6 +466,10 @@ namespace Client_app.Services
 
                     await using var expireRequests = new NpgsqlCommand(completeRequestSql, connection, transaction);
                     expireRequests.Parameters.AddWithValue("userId", userId);
+                    if (hasApprovalStatus)
+                    {
+                        expireRequests.Parameters.AddWithValue("actorEmail", actorEmail);
+                    }
                     await expireRequests.ExecuteNonQueryAsync(cancellationToken);
                 }
             }

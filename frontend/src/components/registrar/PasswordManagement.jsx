@@ -11,6 +11,7 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
   const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [requestsRefreshKey, setRequestsRefreshKey] = useState(0);
 
   const accounts = useMemo(() => {
     const byId = new Map();
@@ -41,6 +42,7 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
       const response = await resetManagedAccountPassword(selected.id, newPassword);
       setNotice({ type: 'success', message: response?.message || `Password reset for ${selected.email}.` });
       setNewPassword(''); setConfirmPassword('');
+      setRequestsRefreshKey((current) => current + 1);
     } catch (error) { setNotice({ type: 'error', message: error.message || 'Unable to reset the password.' }); }
     finally { setSaving(false); }
   };
@@ -75,7 +77,20 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3"><p className="text-[10px] text-slate-500">Password must contain at least 8 characters.</p><button disabled={saving || !selected} className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"><LockIcon />{saving ? 'Resetting…' : 'Reset Password'}</button></div>
       </form>
     </section>
-    <PasswordResetRequests />
+    <PasswordResetRequests
+      refreshKey={requestsRefreshKey}
+      onSelectRequest={(request) => {
+        const account = accounts.find((item) => String(item.id) === String(request.userId));
+        if (!account) {
+          setNotice({ type: 'error', message: 'The requested account is not available in the current account list.' });
+          return;
+        }
+        setRoleFilter(account.role);
+        setSearch(account.email);
+        setSelectedId(account.key);
+        setNotice({ type: 'success', message: account.name + ' is selected. Enter and confirm the new password above.' });
+      }}
+    />
   </div>;
 };
 

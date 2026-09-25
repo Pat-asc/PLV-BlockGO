@@ -1100,6 +1100,25 @@ namespace Client_app.Controllers
             public Dictionary<string, int>? ExpectedSectionIds { get; set; }
         }
 
+        public sealed class PromoteStudentEnrollmentItem
+        {
+            public string StudentId { get; set; } = "";
+            public string Program { get; set; } = "";
+            public string SourceSchoolYear { get; set; } = "";
+            public string SourceSemester { get; set; } = "";
+            public string SourceYearLevel { get; set; } = "";
+            public string SourceSection { get; set; } = "";
+            public string TargetSchoolYear { get; set; } = "";
+            public string TargetSemester { get; set; } = "";
+            public string TargetYearLevel { get; set; } = "";
+            public string TargetSection { get; set; } = "";
+        }
+
+        public sealed class PromoteStudentEnrollmentsRequest
+        {
+            public List<PromoteStudentEnrollmentItem> Students { get; set; } = new();
+        }
+
         public sealed class ChangeEnrollmentProgramRequest
         {
             public string Program { get; set; } = "";
@@ -1233,6 +1252,105 @@ namespace Client_app.Controllers
             }
             catch (ArgumentException ex) { return BadRequest(new { status = "Error", message = ex.Message }); }
             catch (KeyNotFoundException ex) { return NotFound(new { status = "Error", message = ex.Message }); }
+            catch (InvalidOperationException ex) { return Conflict(new { status = "Error", message = ex.Message }); }
+        }
+
+        [HttpPost("students/promote")]
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> PromoteStudentEnrollments(
+            [FromBody] PromoteStudentEnrollmentsRequest request,
+            CancellationToken cancellationToken)
+        {
+            if (request.Students.Count == 0)
+                return BadRequest(new { status = "Error", message = "At least one student is required for promotion." });
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(cancellationToken);
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                var seenStudents = new HashSet<int>();
+                var promoted = new List<object>();
+
+                foreach (var item in request.Students.OrderBy(value => value.StudentId, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrWhiteSpace(item.StudentId) || string.IsNullOrWhiteSpace(item.Program))
+                        throw new ArgumentException("Every promotion must identify a student and academic program.");
+                    var sourceSchoolYear = NormalizeSchoolYear(item.SourceSchoolYear);
+                    var sourceSemester = NormalizeEnrollmentSemester(item.SourceSemester);
+                    var sourceYearLevel = NormalizeYearLevel(item.SourceYearLevel, item.SourceSection);
+                    var sourceSection = NormalizeEnrollmentSection(item.SourceSection, sourceYearLevel);
+                    var targetSchoolYear = NormalizeSchoolYear(item.TargetSchoolYear);
+                    var targetSemester = NormalizeEnrollmentSemester(item.TargetSemester);
+                    var targetYearLevel = NormalizeYearLevel(item.TargetYearLevel, item.TargetSection);
+                    var targetSection = NormalizeEnrollmentSection(item.TargetSection, targetYearLevel);
+                    if (targetYearLevel != sourceYearLevel + 1)
+                        throw new ArgumentException($"Student '{item.StudentId}' must advance exactly one year level.");
+                    var sourceStart = int.Parse(sourceSchoolYear[..4]);
+                    var targetStart = int.Parse(targetSchoolYear[..4]);
+                    if (targetStart != sourceStart + 1)
+                        throw new ArgumentException($"Student '{item.StudentId}' must advance to the next academic year.");
+
+                    var program = await ResolveEnrollmentProgramAsync(connection, transaction, item.Program, cancellationToken);
+                    int userId;
+                    string studentNo;
+                    long? curriculumId;
+                    await using (var current = new NpgsqlCommand(@"
+                        SELECT u.id, enrollment.student_no, enrollment.curriculum_id
+                        FROM student_enrollments enrollment
+                        JOIN users u ON u.id = enrollment.student_user_id
+                        JOIN studentprofiles profile ON profile.user_id = u.id
+                        WHERE LOWER(u.role) = 'student' AND LOWER(u.status) = 'approved' AND u.is_active
+                          AND (LOWER(profile.student_no) = LOWER(@studentId) OR u.id::text = @studentId)
+                          AND enrollment.program_id = @programId
+                          AND enrollment.school_year = @sourceSchoolYear
+                          AND enrollment.semester = @sourceSemester
+                          AND enrollment.year_level = @sourceYearLevel
+                          AND enrollment.section = @sourceSection
+                          AND enrollment.status = 'ENROLLED'
+                        FOR UPDATE OF u, enrollment;", connection, transaction))
+                    {
+                        current.Parameters.AddWithValue("studentId", item.StudentId.Trim());
+                        current.Parameters.AddWithValue("programId", program.Id);
+                        current.Parameters.AddWithValue("sourceSchoolYear", sourceSchoolYear);
+                        current.Parameters.AddWithValue("sourceSemester", sourceSemester);
+                        current.Parameters.AddWithValue("sourceYearLevel", sourceYearLevel);
+                        current.Parameters.AddWithValue("sourceSection", sourceSection);
+                        await using var reader = await current.ExecuteReaderAsync(cancellationToken);
+                        if (!await reader.ReadAsync(cancellationToken))
+                            throw new InvalidOperationException($"Student '{item.StudentId}' no longer matches the saved source enrollment. Refresh sections before promoting.");
+                        userId = reader.GetInt32(0);
+                        studentNo = reader.GetString(1);
+                        curriculumId = reader.IsDBNull(2) ? null : reader.GetInt64(2);
+                        if (await reader.ReadAsync(cancellationToken))
+                            throw new InvalidOperationException($"Student '{item.StudentId}' has duplicate source enrollments.");
+                    }
+                    if (!seenStudents.Add(userId))
+                        throw new ArgumentException($"Student '{item.StudentId}' appears more than once in the promotion request.");
+
+                    curriculumId ??= await ResolveEnrollmentCurriculumAsync(
+                        connection, transaction, program.Id, null, null, cancellationToken);
+                    var sectionId = await EnsureEnrollmentSectionAsync(
+                        connection, transaction, program.Name, targetYearLevel, targetSection, cancellationToken);
+                    await UpsertStudentEnrollmentAsync(connection, transaction, userId, studentNo,
+                        program.Id, curriculumId, sectionId, targetSchoolYear, targetSemester,
+                        targetYearLevel, targetSection, User.Identity?.Name ?? "registrar", cancellationToken);
+                    await _auditLog.LogAsync(User.Identity?.Name ?? "registrar", "registrar",
+                        "STUDENT_PROMOTED", "student_enrollment", userId.ToString(),
+                        new { schoolYear = sourceSchoolYear, semester = sourceSemester, yearLevel = sourceYearLevel, section = sourceSection },
+                        new { schoolYear = targetSchoolYear, semester = targetSemester, yearLevel = targetYearLevel, section = targetSection },
+                        "Registrar promoted the student to the next academic year.",
+                        HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
+                    promoted.Add(new { userId, studentNo, schoolYear = targetSchoolYear,
+                        semester = targetSemester, yearLevel = targetYearLevel, section = targetSection });
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+                _cache.Remove("approved_students");
+                await SafeNotifyAcademicDataChangedAsync("students_promoted", null, User.Identity?.Name);
+                return Ok(new { status = "Success", promotedCount = promoted.Count, students = promoted });
+            }
+            catch (ArgumentException ex) { return BadRequest(new { status = "Error", message = ex.Message }); }
             catch (InvalidOperationException ex) { return Conflict(new { status = "Error", message = ex.Message }); }
         }
 
