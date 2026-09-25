@@ -241,10 +241,12 @@ namespace Client_app.Services
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = @userId AND LOWER(role) = 'registrar';", connection, transaction))
             {
-                command.Parameters.AddWithValue("email", newEmail);
-                command.Parameters.AddWithValue("password", (object?)request.Password ?? DBNull.Value);
-                command.Parameters.AddWithValue("isActive", (object?)request.IsActive ?? DBNull.Value);
-                command.Parameters.AddWithValue("userId", userId);
+                command.Parameters.Add("email", NpgsqlTypes.NpgsqlDbType.Text).Value = newEmail;
+                command.Parameters.Add("password", NpgsqlTypes.NpgsqlDbType.Text).Value =
+                    (object?)request.Password ?? DBNull.Value;
+                command.Parameters.Add("isActive", NpgsqlTypes.NpgsqlDbType.Boolean).Value =
+                    (object?)request.IsActive ?? DBNull.Value;
+                command.Parameters.Add("userId", NpgsqlTypes.NpgsqlDbType.Integer).Value = userId;
                 await command.ExecuteNonQueryAsync(cancellationToken);
             }
 

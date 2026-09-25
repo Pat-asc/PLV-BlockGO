@@ -55,10 +55,12 @@ spec:
         imagePullPolicy: IfNotPresent
         securityContext:
           runAsUser: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
         command: ["sh", "-c", "mkdir -p /data/ipfs && chown -R 1000:100 /data/ipfs && chmod -R u+rwX,g+rwX /data/ipfs"]
         resources:
-          requests: { cpu: 1m, memory: 4Mi }
-          limits: { memory: 32Mi }
+          requests: { cpu: 100m, memory: 128Mi }
+          limits: { cpu: 200m, memory: 256Mi }
         volumeMounts:
         - name: ipfs-data
           mountPath: /data/ipfs
@@ -66,6 +68,9 @@ spec:
       - name: ipfs
         image: ipfs/kubo:v0.41.0
         imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
         command:
         - /bin/sh
         - -ec
@@ -124,6 +129,8 @@ spec:
         - name: ipfs-init-volume
           mountPath: /container-init.d/01-disable-autoconf.sh
           subPath: 01-disable-autoconf.sh
+        - name: temporary-files
+          mountPath: /tmp
         startupProbe:
           tcpSocket:
             port: 5001
@@ -144,8 +151,8 @@ spec:
           timeoutSeconds: 5
         resources:
           requests:
-            cpu: 10m
-            memory: 32Mi
+            cpu: 100m
+            memory: 128Mi
           limits:
             memory: 256Mi
       volumes:
@@ -158,6 +165,8 @@ spec:
         configMap:
           name: ipfs-init-config
           defaultMode: 511
+      - name: temporary-files
+        emptyDir: {}
   volumeClaimTemplates:
   - metadata:
       name: ipfs-data
@@ -373,7 +382,7 @@ spec:
       - name: fix-permissions
         image: busybox:1.36.1
         imagePullPolicy: IfNotPresent
-        securityContext: { runAsUser: 0 }
+        securityContext: { runAsUser: 0, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true }
         command: ["sh", "-c", "mkdir -p /data/ipfs && chown -R 1000:100 /data/ipfs && chmod -R u+rwX,g+rwX /data/ipfs"]
         resources:
           requests: { cpu: 1m, memory: 4Mi }
@@ -384,6 +393,7 @@ spec:
       - name: ipfs
         image: ipfs/kubo:v0.41.0
         imagePullPolicy: IfNotPresent
+        securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true }
         command: ["/bin/sh", "-ec"]
         args:
         - |
@@ -403,6 +413,7 @@ spec:
         - { name: ipfs-data, mountPath: /data/ipfs }
         - { name: swarm-key, mountPath: /etc/ipfs/swarm.key, subPath: swarm.key }
         - { name: ipfs-init-volume, mountPath: /container-init.d/01-disable-autoconf.sh, subPath: 01-disable-autoconf.sh }
+        - { name: temporary-files, mountPath: /tmp }
         startupProbe: { tcpSocket: { port: 5001 }, periodSeconds: 5, timeoutSeconds: 5, failureThreshold: 60 }
         livenessProbe: { tcpSocket: { port: 5001 }, initialDelaySeconds: 30, periodSeconds: 10, timeoutSeconds: 5 }
         readinessProbe: { tcpSocket: { port: 5001 }, initialDelaySeconds: 15, periodSeconds: 5, timeoutSeconds: 5 }
@@ -412,6 +423,7 @@ spec:
       volumes:
       - { name: swarm-key, configMap: { name: ipfs-swarm-key } }
       - { name: ipfs-init-volume, configMap: { name: ipfs-init-config, defaultMode: 511 } }
+      - { name: temporary-files, emptyDir: {} }
   volumeClaimTemplates:
   - metadata: { name: ipfs-data }
     spec:
@@ -447,7 +459,7 @@ spec:
       - name: fix-permissions
         image: busybox:1.36.1
         imagePullPolicy: IfNotPresent
-        securityContext: { runAsUser: 0 }
+        securityContext: { runAsUser: 0, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true }
         command: ["sh", "-c", "mkdir -p /data/ipfs && chown -R 1000:100 /data/ipfs && chmod -R u+rwX,g+rwX /data/ipfs"]
         resources:
           requests: { cpu: 1m, memory: 4Mi }
@@ -458,6 +470,7 @@ spec:
       - name: ipfs
         image: ipfs/kubo:v0.41.0
         imagePullPolicy: IfNotPresent
+        securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true }
         command: ["/bin/sh", "-ec"]
         args:
         - |
@@ -477,6 +490,7 @@ spec:
         - { name: ipfs-data, mountPath: /data/ipfs }
         - { name: swarm-key, mountPath: /etc/ipfs/swarm.key, subPath: swarm.key }
         - { name: ipfs-init-volume, mountPath: /container-init.d/01-disable-autoconf.sh, subPath: 01-disable-autoconf.sh }
+        - { name: temporary-files, mountPath: /tmp }
         startupProbe: { tcpSocket: { port: 5001 }, periodSeconds: 5, timeoutSeconds: 5, failureThreshold: 60 }
         livenessProbe: { tcpSocket: { port: 5001 }, initialDelaySeconds: 30, periodSeconds: 10, timeoutSeconds: 5 }
         readinessProbe: { tcpSocket: { port: 5001 }, initialDelaySeconds: 15, periodSeconds: 5, timeoutSeconds: 5 }
@@ -486,6 +500,7 @@ spec:
       volumes:
       - { name: swarm-key, configMap: { name: ipfs-swarm-key } }
       - { name: ipfs-init-volume, configMap: { name: ipfs-init-config, defaultMode: 511 } }
+      - { name: temporary-files, emptyDir: {} }
   volumeClaimTemplates:
   - metadata: { name: ipfs-data }
     spec:
@@ -554,22 +569,43 @@ spec:
     metadata:
       labels: { app: ipfs-ha-router }
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
       containers:
       - name: nginx
         image: nginx:1.27-alpine
         imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 101
+          runAsGroup: 101
+          privileged: false
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: { drop: ["ALL"] }
         ports:
         - { name: api, containerPort: 5001 }
         - { name: gateway, containerPort: 8080 }
         volumeMounts:
         - { name: config, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf, readOnly: true }
+        - { name: nginx-cache, mountPath: /var/cache/nginx }
+        - { name: nginx-run, mountPath: /var/run }
+        - { name: temporary-files, mountPath: /tmp }
         readinessProbe: { httpGet: { path: /router-health, port: 5001 }, periodSeconds: 5 }
         livenessProbe: { httpGet: { path: /router-health, port: 5001 }, initialDelaySeconds: 10, periodSeconds: 15 }
         resources:
-          requests: { cpu: 10m, memory: 16Mi }
-          limits: { memory: 64Mi }
+          requests: { cpu: 100m, memory: 128Mi }
+          limits: { cpu: 250m, memory: 256Mi }
       volumes:
       - { name: config, configMap: { name: ipfs-ha-router-config } }
+      - { name: nginx-cache, emptyDir: {} }
+      - { name: nginx-run, emptyDir: {} }
+      - { name: temporary-files, emptyDir: {} }
 ---
 apiVersion: v1
 kind: Service

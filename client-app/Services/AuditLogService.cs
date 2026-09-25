@@ -65,7 +65,7 @@ namespace Client_app.Services
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken);
                 await reader.ReadAsync(cancellationToken);
                 var auditId = reader.GetInt64(0);
-                var occurredAt = reader.GetFieldValue<DateTimeOffset>(1);
+                var occurredAt = reader.GetDateTime(1);
                 await reader.DisposeAsync();
 
                 try

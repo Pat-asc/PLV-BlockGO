@@ -474,14 +474,18 @@ namespace Client_app.Controllers
             try
             {
                 using var client = _httpClientFactory.CreateClient();
-                client.Timeout = TimeSpan.FromSeconds(4);
+                // The HA router can make up to three 3-second upstream connection
+                // attempts before a healthy campus answers. Keep this probe bounded,
+                // but allow the configured failover path to finish.
+                client.Timeout = TimeSpan.FromSeconds(12);
                 using var response = await client.PostAsync($"{_ipfsUrl.TrimEnd('/')}/api/v0/version", null, cancellationToken);
                 services.Add(Service("ipfs", "IPFS Cluster Gateway", "Storage", response.IsSuccessStatusCode ? "healthy" : "down",
                     stopwatch.ElapsedMilliseconds, $"HTTP {(int)response.StatusCode}", "Internal IPFS API"));
             }
-            catch (Exception exception)
+            catch (Exception)
             {
-                services.Add(Service("ipfs", "IPFS Cluster Gateway", "Storage", "down", stopwatch.ElapsedMilliseconds, SafeMessage(exception), "Internal IPFS API"));
+                services.Add(Service("ipfs", "IPFS Cluster Gateway", "Storage", "down", stopwatch.ElapsedMilliseconds,
+                    "The storage service is temporarily unreachable.", "Internal IPFS API"));
             }
         }
 
