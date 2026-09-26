@@ -27,6 +27,8 @@ temp/
 /tests/*
 !/tests/KubernetesPodHealthTests/
 !/tests/KubernetesPodHealthTests/**
+/tests/KubernetesPodHealthTests/bin/
+/tests/KubernetesPodHealthTests/obj/
 !/tests/AssignmentRegressionTests/
 !/tests/AssignmentRegressionTests/AssignmentRegressionTests.csproj
 !/tests/AssignmentRegressionTests/Program.cs

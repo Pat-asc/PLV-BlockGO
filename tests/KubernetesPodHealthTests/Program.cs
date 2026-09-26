@@ -57,8 +57,8 @@ Pass("custom-root TLS validation trusts only the mounted CA and preserves hostna
 var missingAll = await KubernetesPodHealthProbe.CheckAsync(
     new KubernetesPodHealthOptions("kubernetes.default.svc", "443", Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}"), TimeSpan.FromSeconds(1)),
     CancellationToken.None);
-Check(missingAll.Status == "not_configured" && missingAll.Message == "In-cluster Kubernetes monitoring is not configured.",
-    "Missing service-account files were not classified as not configured.");
+Check(missingAll.Status == "unavailable" && missingAll.Message == "Kubernetes API health check is unavailable.",
+    "Missing service-account files were not classified safely.");
 Pass("missing Kubernetes environment/service-account files");
 
 var testDirectory = Path.Combine(Path.GetTempPath(), $"blockgo-kubernetes-health-{Guid.NewGuid():N}");
@@ -71,7 +71,7 @@ try
     var missingToken = await KubernetesPodHealthProbe.CheckAsync(
         new KubernetesPodHealthOptions("kubernetes.default.svc", "443", testDirectory, TimeSpan.FromSeconds(1)),
         CancellationToken.None);
-    Check(missingToken.Status == "not_configured" && missingToken.Message == "In-cluster Kubernetes monitoring is not configured.",
+    Check(missingToken.Status == "unavailable" && missingToken.Message == "Kubernetes API health check is unavailable.",
         "A missing service-account token was not handled safely.");
     Pass("missing Kubernetes service-account token");
 
@@ -80,7 +80,7 @@ try
     var missingCa = await KubernetesPodHealthProbe.CheckAsync(
         new KubernetesPodHealthOptions("kubernetes.default.svc", "443", testDirectory, TimeSpan.FromSeconds(1)),
         CancellationToken.None);
-    Check(missingCa.Status == "not_configured" && missingCa.Message == "In-cluster Kubernetes monitoring is not configured.",
+    Check(missingCa.Status == "unavailable" && missingCa.Message == "Kubernetes API health check is unavailable.",
         "A missing Kubernetes CA was not handled safely.");
     Pass("missing Kubernetes service-account CA");
 
@@ -119,17 +119,17 @@ try
             _ => new StubHandler((_, _) => Response(statusCode, content)));
 
     var unauthorized = await StatusResponse(HttpStatusCode.Unauthorized);
-    Check(unauthorized.Status == "unavailable" && unauthorized.Message == "Kubernetes monitoring authentication was rejected.",
+    Check(unauthorized.Status == "unavailable" && unauthorized.Message == "Kubernetes workload monitoring is not authorized.",
         "HTTP 401 status mapping is incorrect.");
     Pass("HTTP 401 authentication warning");
 
     var forbidden = await StatusResponse(HttpStatusCode.Forbidden);
-    Check(forbidden.Status == "unavailable" && forbidden.Message == "Kubernetes monitoring does not have permission to list pods.",
+    Check(forbidden.Status == "unavailable" && forbidden.Message == "Kubernetes workload monitoring is not authorized.",
         "HTTP 403 status mapping is incorrect.");
     Pass("HTTP 403 RBAC warning");
 
     var serverError = await StatusResponse(HttpStatusCode.InternalServerError);
-    Check(serverError.Status == "unavailable" && serverError.Message == "Kubernetes API returned HTTP 500.",
+    Check(serverError.Status == "unavailable" && serverError.Message == "Kubernetes API health check is unavailable.",
         "HTTP 500 status mapping is incorrect.");
     Pass("HTTP 500 API failure");
 
@@ -140,11 +140,11 @@ try
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return new HttpResponseMessage(HttpStatusCode.OK);
         }));
-    Check(timeout.Status == "unavailable" && timeout.Message == "Kubernetes API request timed out.", "Timeout mapping is incorrect.");
+    Check(timeout.Status == "unavailable" && timeout.Message == "Kubernetes API health check timed out.", "Timeout mapping is incorrect.");
     Pass("Kubernetes API timeout");
 
     var malformed = await StatusResponse(HttpStatusCode.OK, "{\"unexpected\":true}");
-    Check(malformed.Status == "unavailable" && malformed.Message == "Kubernetes API returned an invalid response.",
+    Check(malformed.Status == "unavailable" && malformed.Message == "Kubernetes API health check is unavailable.",
         "Malformed response mapping is incorrect.");
     Pass("malformed Kubernetes response");
 
@@ -163,7 +163,7 @@ try
         _ => new StubHandler((_, _) => throw new HttpRequestException(
             $"credential={bearerToken}", new AuthenticationException("certificate rejected"))));
     Check(tlsFailure.Status == "unavailable" &&
-          tlsFailure.Message == "Secure connection to the Kubernetes API could not be established using the mounted service-account CA." &&
+          tlsFailure.Message == "Kubernetes API health check is unavailable." &&
           !tlsFailure.Message.Contains(bearerToken, StringComparison.Ordinal),
         "TLS failure leaked credentials or returned the wrong safe message.");
     Pass("TLS failure is credential-safe");

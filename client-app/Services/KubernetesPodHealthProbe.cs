@@ -23,8 +23,9 @@ public sealed record KubernetesPodHealthResult(
 
 public static class KubernetesPodHealthProbe
 {
-    private const string NotConfiguredMessage = "In-cluster Kubernetes monitoring is not configured.";
     private const string KubernetesApiTarget = "Kubernetes API";
+    private const string UnavailableMessage = "Kubernetes API health check is unavailable.";
+    private const string UnauthorizedMessage = "Kubernetes workload monitoring is not authorized.";
 
     public static async Task<KubernetesPodHealthResult> CheckAsync(
         KubernetesPodHealthOptions options,
@@ -36,21 +37,22 @@ public static class KubernetesPodHealthProbe
         var caPath = Path.Combine(options.ServiceAccountPath, "ca.crt");
         if (string.IsNullOrWhiteSpace(options.Host) ||
             !File.Exists(tokenPath) ||
-            !File.Exists(namespacePath) ||
             !File.Exists(caPath))
         {
-            return new KubernetesPodHealthResult("not_configured", NotConfiguredMessage, KubernetesApiTarget, null, 0);
+            return Unavailable(0);
         }
 
         var stopwatch = Stopwatch.StartNew();
         try
         {
             var token = (await File.ReadAllTextAsync(tokenPath, cancellationToken)).Trim();
-            var namespaceName = (await File.ReadAllTextAsync(namespacePath, cancellationToken)).Trim();
+            var namespaceName = File.Exists(namespacePath)
+                ? (await File.ReadAllTextAsync(namespacePath, cancellationToken)).Trim()
+                : "default";
             if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(namespaceName) ||
                 !int.TryParse(options.Port, out var port) || port is < 1 or > 65535)
             {
-                return new KubernetesPodHealthResult("not_configured", NotConfiguredMessage, KubernetesApiTarget, null, stopwatch.ElapsedMilliseconds);
+                return Unavailable(stopwatch.ElapsedMilliseconds);
             }
 
             var caPem = await File.ReadAllTextAsync(caPath, cancellationToken);
@@ -63,12 +65,10 @@ public static class KubernetesPodHealthProbe
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
-            if (response.StatusCode == HttpStatusCode.Unauthorized)
-                return Result("unavailable", "Kubernetes monitoring authentication was rejected.", namespaceName, null, stopwatch);
-            if (response.StatusCode == HttpStatusCode.Forbidden)
-                return Result("unavailable", "Kubernetes monitoring does not have permission to list pods.", namespaceName, null, stopwatch);
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                return Result("unavailable", UnauthorizedMessage, namespaceName, null, stopwatch);
             if (!response.IsSuccessStatusCode)
-                return Result("unavailable", $"Kubernetes API returned HTTP {(int)response.StatusCode}.", namespaceName, null, stopwatch);
+                return Result("unavailable", UnavailableMessage, namespaceName, null, stopwatch);
 
             await using var body = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken);
@@ -121,31 +121,31 @@ public static class KubernetesPodHealthProbe
         }
         catch (TaskCanceledException)
         {
-            return new KubernetesPodHealthResult("unavailable", "Kubernetes API request timed out.", KubernetesApiTarget, null, stopwatch.ElapsedMilliseconds);
+            return new KubernetesPodHealthResult("unavailable", "Kubernetes API health check timed out.", KubernetesApiTarget, null, stopwatch.ElapsedMilliseconds);
         }
         catch (HttpRequestException exception) when (ContainsTlsFailure(exception))
         {
-            return new KubernetesPodHealthResult("unavailable", "Secure connection to the Kubernetes API could not be established using the mounted service-account CA.", KubernetesApiTarget, null, stopwatch.ElapsedMilliseconds);
+            return Unavailable(stopwatch.ElapsedMilliseconds);
         }
         catch (CryptographicException)
         {
-            return new KubernetesPodHealthResult("unavailable", "Secure connection to the Kubernetes API could not be established using the mounted service-account CA.", KubernetesApiTarget, null, stopwatch.ElapsedMilliseconds);
+            return Unavailable(stopwatch.ElapsedMilliseconds);
         }
         catch (HttpRequestException)
         {
-            return new KubernetesPodHealthResult("unavailable", "Kubernetes API is unreachable.", KubernetesApiTarget, null, stopwatch.ElapsedMilliseconds);
+            return Unavailable(stopwatch.ElapsedMilliseconds);
         }
         catch (JsonException)
         {
-            return new KubernetesPodHealthResult("unavailable", "Kubernetes API returned an invalid response.", KubernetesApiTarget, null, stopwatch.ElapsedMilliseconds);
+            return Unavailable(stopwatch.ElapsedMilliseconds);
         }
         catch (IOException)
         {
-            return new KubernetesPodHealthResult("not_configured", NotConfiguredMessage, KubernetesApiTarget, null, stopwatch.ElapsedMilliseconds);
+            return Unavailable(stopwatch.ElapsedMilliseconds);
         }
         catch (UnauthorizedAccessException)
         {
-            return new KubernetesPodHealthResult("not_configured", NotConfiguredMessage, KubernetesApiTarget, null, stopwatch.ElapsedMilliseconds);
+            return Unavailable(stopwatch.ElapsedMilliseconds);
         }
     }
 
@@ -197,6 +197,9 @@ public static class KubernetesPodHealthProbe
         int? runningPods,
         Stopwatch stopwatch) =>
         new(status, message, $"Namespace {namespaceName}", runningPods, stopwatch.ElapsedMilliseconds);
+
+    private static KubernetesPodHealthResult Unavailable(long latencyMs) =>
+        new("unavailable", UnavailableMessage, KubernetesApiTarget, null, latencyMs);
 
     private static bool ContainsTlsFailure(Exception exception)
     {
