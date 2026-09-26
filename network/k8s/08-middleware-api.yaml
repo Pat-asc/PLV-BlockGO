@@ -243,6 +243,10 @@ spec:
         - { name: NODE_OPTIONS, value: "--max-old-space-size=256" }
         - name: INTERNAL_API_KEY
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: INTERNAL_API_KEY } }
+        - name: POSTGRES_USER
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: POSTGRES_USER } }
+        - name: POSTGRES_PASS
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: POSTGRES_PASS } }
         - name: COUCHDB_USER
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: COUCHDB_USER } }
         - name: COUCHDB_PASS

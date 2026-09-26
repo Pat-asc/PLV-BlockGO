@@ -203,6 +203,20 @@ test('production PostgreSQL policy permits every ASP.NET workload', () => {
     }
 });
 
+test('Fabric identity service receives the production PostgreSQL credentials', () => {
+    const deployment = byKey.get('plv-fabric/Deployment/fabric-identity-service');
+    assert.ok(deployment, 'fabric-identity-service deployment is missing');
+    const container = deployment.spec.template.spec.containers.find((item) => item.name === 'identity-service');
+    assert.ok(container, 'fabric-identity-service identity-service container is missing');
+    const environment = new Map((container.env || []).map((item) => [item.name, item]));
+    for (const name of ['POSTGRES_USER', 'POSTGRES_PASS']) {
+        const reference = environment.get(name)?.valueFrom?.secretKeyRef;
+        assert.equal(reference?.name, 'blockgo-secrets', `${name} must come from blockgo-secrets`);
+        assert.equal(reference?.key, name, `${name} must use the matching secret key`);
+        assert.notEqual(reference?.optional, true, `${name} must be required`);
+    }
+});
+
 test('IPFS GKE backend uses the router health endpoint', () => {
     const service = byKey.get('plv-fabric/Service/ipfs-ha-gateway');
     const backend = byKey.get('plv-fabric/BackendConfig/ipfs-ha-gateway-backend');
