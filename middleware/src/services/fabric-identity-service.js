@@ -5,6 +5,7 @@ const { requestJson } = require('../shared/internal-http');
 const createLogger = require('../shared/logger');
 const { normalizeAuthRole } = require('../shared/roles');
 const { createServiceApp, installErrorHandler, listen } = require('../shared/service-app');
+const { getPools } = require('../shared/database');
 const { adminUser, cacheStats, enrollIdentity, ensureAdminEnrolled, registerIdentity, registrationPayload } = require('../fabric/ca-manager');
 const { checkWallets, getWallet } = require('../fabric/wallet-manager');
 const { REGISTRAR_SERVICE_LABEL, REGISTRAR_MSP_ID, ensureRegistrarServiceIdentity } = require('../fabric/registrar-service-identity');
@@ -12,6 +13,7 @@ const { REGISTRAR_SERVICE_LABEL, REGISTRAR_MSP_ID, ensureRegistrarServiceIdentit
 const serviceName = 'fabric-identity-service';
 const logger = createLogger(serviceName);
 const { app, metrics } = createServiceApp(serviceName, logger);
+const { read: dbRead } = getPools();
 const authenticate = authenticateJWT();
 
 async function invalidateLedgerIdentity(username) {
@@ -24,21 +26,40 @@ async function invalidateLedgerIdentity(username) {
     }
 }
 
-async function forceUpdateAndEnroll(username, password, role) {
+async function forceUpdateAndEnroll(username, password, role, academicScope = {}) {
     const config = await ensureAdminEnrolled(role);
     const wallet = await getWallet(config.role);
     const user = await adminUser(config, wallet);
     await config.client.newIdentityService().update(username, {
-        type: registrationPayload(username, password, role).role,
+        type: registrationPayload(username, password, role, academicScope).role,
         secret: password,
         max_enrollments: -1,
-        attrs: registrationPayload(username, password, role).attrs
+        attrs: registrationPayload(username, password, role, academicScope).attrs
     }, user);
     return enrollIdentity(username, password, role);
 }
 
+async function authoritativeAcademicScope(username, role) {
+    const normalized = normalizeAuthRole(role);
+    if (normalized === 'faculty') {
+        const result = await dbRead.query(`SELECT fp.department,
+            COALESCE(array_agg(DISTINCT fs.section) FILTER (WHERE fs.is_active = TRUE), '{}') AS sections
+            FROM users u JOIN facultyprofiles fp ON fp.user_id = u.id
+            LEFT JOIN facultysections fs ON fs.user_id = u.id
+            WHERE LOWER(u.email) = LOWER($1) GROUP BY fp.department`, [username]);
+        return result.rows.length ? { department: result.rows[0].department, sections: result.rows[0].sections } : {};
+    }
+    if (normalized === 'department_admin') {
+        const result = await dbRead.query(`SELECT ap.department FROM users u JOIN adminprofiles ap ON ap.user_id = u.id
+            WHERE LOWER(u.email) = LOWER($1) LIMIT 1`, [username]);
+        return result.rows.length ? { department: result.rows[0].department } : {};
+    }
+    return {};
+}
+
 async function ensureIdentity(username, password, role) {
     const normalized = normalizeAuthRole(role);
+    const academicScope = await authoritativeAcademicScope(username, normalized);
     const wallet = await getWallet(normalized);
     const existing = await wallet.get(username);
     if (existing) return { created: false, mspId: existing.mspId };
@@ -46,13 +67,13 @@ async function ensureIdentity(username, password, role) {
         const enrolled = await enrollIdentity(username, password, normalized);
         return { created: true, mspId: enrolled.identity.mspId };
     } catch (firstError) {
-        await registerIdentity(username, password, normalized);
+        await registerIdentity(username, password, normalized, academicScope);
         try {
             const enrolled = await enrollIdentity(username, password, normalized);
             return { created: true, mspId: enrolled.identity.mspId };
         } catch (enrollmentError) {
             logger.warn({ username, role: normalized, err: enrollmentError }, 'Existing CA identity secret is stale; updating it for wallet recovery');
-            const enrolled = await forceUpdateAndEnroll(username, password, normalized);
+            const enrolled = await forceUpdateAndEnroll(username, password, normalized, academicScope);
             return { created: true, mspId: enrolled.identity.mspId };
         }
     }
@@ -100,7 +121,8 @@ app.post('/api/register', authenticate, requireRegistrarOrInternal, async (req, 
     const { username, password } = req.body || {};
     const role = normalizeAuthRole(req.body?.role);
     if (!username || !password || !role) return res.status(400).json({ error: 'username, password, and role are required.' });
-    const secret = await registerIdentity(username, password, role);
+    const academicScope = await authoritativeAcademicScope(username, role);
+    const secret = await registerIdentity(username, password, role, academicScope);
     res.status(201).json({ status: 'success', secret });
 });
 

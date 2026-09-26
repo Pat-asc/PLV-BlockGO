@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.SignalR;
 using Npgsql;
 using NpgsqlTypes;
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace Client_app.Controllers
 {
@@ -16,7 +17,10 @@ namespace Client_app.Controllers
     public sealed class SupportTicketsController : ControllerBase
     {
         private static readonly HashSet<string> Statuses = new(StringComparer.OrdinalIgnoreCase) { "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED" };
-        private static readonly HashSet<string> Severities = new(StringComparer.OrdinalIgnoreCase) { "NORMAL", "HIGH", "CRITICAL" };
+        private static readonly HashSet<string> Severities = new(StringComparer.OrdinalIgnoreCase) { "LOW", "NORMAL", "HIGH", "CRITICAL" };
+        private static readonly HashSet<string> AttachmentTypes = new(StringComparer.OrdinalIgnoreCase)
+            { "image/png", "image/jpeg", "image/webp", "application/pdf", "text/plain" };
+        private const long MaximumAttachmentBytes = 5 * 1024 * 1024;
         private static readonly IReadOnlyDictionary<string, (string Label, string Scope)> Specialists =
             new Dictionary<string, (string Label, string Scope)>(StringComparer.OrdinalIgnoreCase)
             {
@@ -47,7 +51,16 @@ namespace Client_app.Controllers
             await using var command = new NpgsqlCommand(@"
                 SELECT t.ticket_id, t.title, t.description, t.severity, t.status, t.admin_response,
                        t.created_at, t.updated_at, t.resolved_at, registrar.email,
-                       COALESCE(ap.full_name, registrar.email), t.assigned_specialist
+                       COALESCE(ap.full_name, registrar.email), t.assigned_specialist,
+                       COALESCE((
+                           SELECT jsonb_agg(jsonb_build_object(
+                               'attachmentId', a.attachment_id,
+                               'fileName', a.file_name,
+                               'contentType', a.content_type,
+                               'fileSize', a.file_size,
+                               'createdAt', a.created_at) ORDER BY a.created_at)
+                           FROM support_ticket_attachments a WHERE a.ticket_id = t.ticket_id
+                       ), '[]'::jsonb)::text
                 FROM support_tickets t
                 JOIN users registrar ON registrar.id = t.registrar_id
                 LEFT JOIN adminprofiles ap ON ap.user_id = registrar.id
@@ -72,7 +85,9 @@ namespace Client_app.Controllers
                     assignedSpecialist,
                     assignedSpecialistLabel = assignedSpecialist is not null && Specialists.TryGetValue(assignedSpecialist, out var specialist)
                         ? $"{specialist.Label} - {specialist.Scope}"
-                        : null
+                        : null,
+                    attachments = JsonSerializer.Deserialize<List<AttachmentSummary>>(reader.GetString(12),
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new()
                 });
             }
             return Ok(new { status = "Success", data = tickets });
@@ -137,6 +152,111 @@ namespace Client_app.Controllers
                 HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return CreatedAtAction(nameof(List), new { id = ticketId }, new { status = "Success", data = new { ticketId } });
+        }
+
+        public sealed class CreateSupportTicketWithAttachmentsRequest
+        {
+            public string Title { get; set; } = string.Empty;
+            public string Description { get; set; } = string.Empty;
+            public string Severity { get; set; } = "NORMAL";
+            public string AssignedSpecialist { get; set; } = string.Empty;
+            public List<IFormFile> Files { get; set; } = new();
+        }
+
+        [HttpPost("with-attachments")]
+        [Authorize(Roles = "registrar")]
+        [Consumes("multipart/form-data")]
+        [RequestSizeLimit(26 * 1024 * 1024)]
+        public async Task<IActionResult> CreateWithAttachments(
+            [FromForm] CreateSupportTicketWithAttachmentsRequest request, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(request.Description) || request.Description.Trim().Length is < 10 or > 5000)
+                return BadRequest(new { status = "Error", message = "Description must contain 10 to 5000 characters." });
+            if (request.Files.Count > 5)
+                return BadRequest(new { status = "Error", message = "A support ticket can contain at most five attachments." });
+            var severity = request.Severity.Trim().ToUpperInvariant();
+            if (!Severities.Contains(severity) || severity == "CRITICAL")
+                return BadRequest(new { status = "Error", message = "Select Low, Normal, or High priority." });
+            var assignedSpecialist = NormalizeSpecialist(request.AssignedSpecialist);
+            if (assignedSpecialist is null || !Specialists.ContainsKey(assignedSpecialist))
+                return BadRequest(new { status = "Error", message = "Select a valid support specialty." });
+            foreach (var file in request.Files)
+            {
+                var extension = Path.GetExtension(file.FileName);
+                var allowedLog = string.Equals(extension, ".log", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(file.ContentType, "text/plain", StringComparison.OrdinalIgnoreCase);
+                if (file.Length <= 0 || file.Length > MaximumAttachmentBytes ||
+                    (!AttachmentTypes.Contains(file.ContentType) && !allowedLog))
+                    return BadRequest(new { status = "Error", message = $"Attachment '{Path.GetFileName(file.FileName)}' is empty, too large, or has a blocked file type." });
+            }
+
+            var title = string.IsNullOrWhiteSpace(request.Title)
+                ? $"{Specialists[assignedSpecialist].Label} support request"
+                : request.Title.Trim();
+            if (title.Length is < 3 or > 200)
+                return BadRequest(new { status = "Error", message = "Title must contain 3 to 200 characters." });
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await using var command = new NpgsqlCommand(@"
+                INSERT INTO support_tickets (registrar_id, title, description, severity, assigned_specialist)
+                SELECT id, @title, @description, @severity, @assignedSpecialist FROM users
+                WHERE LOWER(email) = LOWER(@actor) AND LOWER(role) = 'registrar' AND is_active = TRUE
+                RETURNING ticket_id;", connection, transaction);
+            command.Parameters.AddWithValue("title", title);
+            command.Parameters.AddWithValue("description", request.Description.Trim());
+            command.Parameters.AddWithValue("severity", severity);
+            command.Parameters.AddWithValue("assignedSpecialist", assignedSpecialist);
+            command.Parameters.AddWithValue("actor", ActorEmail());
+            var result = await command.ExecuteScalarAsync(cancellationToken);
+            if (result is null) return Forbid();
+            var ticketId = Convert.ToInt64(result);
+
+            foreach (var file in request.Files)
+            {
+                await using var memory = new MemoryStream();
+                await file.CopyToAsync(memory, cancellationToken);
+                await using var attachment = new NpgsqlCommand(@"
+                    INSERT INTO support_ticket_attachments
+                        (ticket_id, file_name, content_type, file_size, content, uploaded_by)
+                    VALUES (@ticketId, @fileName, @contentType, @fileSize, @content,
+                            (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1));", connection, transaction);
+                attachment.Parameters.AddWithValue("ticketId", ticketId);
+                attachment.Parameters.AddWithValue("fileName", Path.GetFileName(file.FileName));
+                attachment.Parameters.AddWithValue("contentType", file.ContentType);
+                attachment.Parameters.AddWithValue("fileSize", file.Length);
+                attachment.Parameters.AddWithValue("content", memory.ToArray());
+                attachment.Parameters.AddWithValue("actor", ActorEmail());
+                await attachment.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await _auditLog.LogAsync(ActorEmail(), "registrar", "SUPPORT_TICKET_CREATED", "support_ticket", ticketId.ToString(), null,
+                new { title, severity, status = "OPEN", assignedSpecialist, attachmentCount = request.Files.Count },
+                "Registrar reported a system error with validated support attachments.",
+                HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return CreatedAtAction(nameof(List), new { id = ticketId }, new { status = "Success", data = new { ticketId } });
+        }
+
+        [HttpGet("attachments/{attachmentId:long}")]
+        public async Task<IActionResult> DownloadAttachment(long attachmentId, CancellationToken cancellationToken)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new NpgsqlCommand(@"
+                SELECT a.file_name, a.content_type, a.content
+                FROM support_ticket_attachments a
+                JOIN support_tickets t ON t.ticket_id = a.ticket_id
+                JOIN users registrar ON registrar.id = t.registrar_id
+                WHERE a.attachment_id = @attachmentId
+                  AND (@isAdmin OR LOWER(registrar.email) = LOWER(@actor));", connection);
+            command.Parameters.AddWithValue("attachmentId", attachmentId);
+            command.Parameters.AddWithValue("isAdmin", ActorRole() == "system_admin");
+            command.Parameters.AddWithValue("actor", ActorEmail());
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken)) return NotFound();
+            return File((byte[])reader[2], reader.GetString(1), reader.GetString(0));
         }
 
         [HttpPut("{ticketId:long}")]
@@ -213,6 +333,9 @@ namespace Client_app.Controllers
             string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
 
         private static char RandomLetter() => (char)('A' + RandomNumberGenerator.GetInt32(26));
+
+        private sealed record AttachmentSummary(long AttachmentId, string FileName, string ContentType,
+            long FileSize, DateTimeOffset CreatedAt);
 
         private string ActorRole() => (User.Claims.FirstOrDefault(claim => claim.Type == "dbRole")?.Value
             ?? User.Claims.FirstOrDefault(claim => claim.Type == ClaimTypes.Role)?.Value ?? string.Empty)

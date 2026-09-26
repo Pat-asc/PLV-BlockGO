@@ -66,16 +66,20 @@ async function ensureAdminEnrolled(role) {
     return config;
 }
 
-function registrationPayload(username, password, role) {
+function registrationPayload(username, password, role, academicScope = {}) {
     const normalized = normalizeAuthRole(role);
+    const attrs = [
+        { name: 'role', value: normalized, ecert: true },
+        { name: 'grade.manage', value: normalized === 'faculty' ? 'true' : 'false', ecert: true }
+    ];
+    if (academicScope.department) attrs.push({ name: 'academic.department', value: String(academicScope.department), ecert: true });
+    if (Array.isArray(academicScope.sections) && academicScope.sections.length)
+        attrs.push({ name: 'academic.sections', value: academicScope.sections.map(String).join('|'), ecert: true });
     return {
         enrollmentID: username,
         enrollmentSecret: password,
         role: ['registrar', 'department_admin'].includes(normalized) ? 'admin' : 'client',
-        attrs: [
-            { name: 'role', value: normalized, ecert: true },
-            { name: 'grade.manage', value: normalized === 'faculty' ? 'true' : 'false', ecert: true }
-        ]
+        attrs
     };
 }
 
@@ -85,18 +89,18 @@ async function adminUser(config, wallet) {
     return wallet.getProviderRegistry().getProvider(identity.type).getUserContext(identity, 'admin');
 }
 
-async function registerIdentity(username, password, role) {
+async function registerIdentity(username, password, role, academicScope = {}) {
     const config = await ensureAdminEnrolled(role);
     const wallet = await getWallet(config.role);
     const user = await adminUser(config, wallet);
     try {
-        return await config.client.register(registrationPayload(username, password, role), user);
+        return await config.client.register(registrationPayload(username, password, role, academicScope), user);
     } catch (error) {
         if (String(error).toLowerCase().includes('already registered')) return password;
         if (String(error).includes('code: 20') || String(error).includes('Authentication failure')) {
             await wallet.remove(config.adminLabel);
             const refreshed = await ensureAdminEnrolled(role);
-            return refreshed.client.register(registrationPayload(username, password, role), await adminUser(refreshed, wallet));
+            return refreshed.client.register(registrationPayload(username, password, role, academicScope), await adminUser(refreshed, wallet));
         }
         throw error;
     }
@@ -107,7 +111,8 @@ async function enrollIdentity(username, password, role) {
     const wallet = await getWallet(config.role);
     const enrollment = await config.client.enroll({
         enrollmentID: username, enrollmentSecret: password,
-        attr_reqs: [{ name: 'role', optional: true }, { name: 'grade.manage', optional: true }]
+        attr_reqs: [{ name: 'role', optional: true }, { name: 'grade.manage', optional: true },
+            { name: 'academic.department', optional: true }, { name: 'academic.sections', optional: true }]
     });
     await wallet.put(username, {
         credentials: { certificate: enrollment.certificate, privateKey: enrollment.key.toBytes() },

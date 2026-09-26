@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { createSupportTicket, fetchSupportSpecialists, fetchSupportTickets } from '../../services/api';
+import { createSupportTicket, downloadSupportAttachment, fetchSupportSpecialists, fetchSupportTickets } from '../../services/api';
 import SupportAssignmentSelect, { assignmentPayload } from '../shared/SupportAssignmentSelect';
 
 const initialForm = { title: '', description: '', severity: 'NORMAL', assignment: '' };
@@ -49,7 +49,7 @@ const RegistrarSupportTickets = () => {
         description: form.description,
         severity: form.severity,
         ...assignment,
-      });
+      }, files);
       setForm(initialForm);
       setFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -104,7 +104,13 @@ const RegistrarSupportTickets = () => {
               <Icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-500"><path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.6-9.6a4 4 0 0 1 5.7 5.7l-9.6 9.6a2 2 0 0 1-2.8-2.8l8.9-8.9" /></Icon>
               <div className="min-w-0"><p className="text-xs font-bold">Attach files <span className="font-normal text-slate-500">(optional)</span></p><p className="truncate text-[10px] text-slate-500">{files.length ? files.map((file) => file.name).join(', ') : 'Upload screenshots, logs, or documents to help us resolve the issue faster.'}</p></div>
             </div>
-            <input ref={fileInputRef} type="file" multiple accept="image/*,.pdf,.txt,.log,.doc,.docx" onChange={(event) => setFiles(Array.from(event.target.files || []))} className="hidden" />
+            <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/webp,.pdf,.txt,.log" onChange={(event) => {
+              const selected = Array.from(event.target.files || []);
+              if (selected.length > 5 || selected.some((file) => file.size > 5 * 1024 * 1024)) {
+                setFiles([]);
+                setNotice({ type: 'error', message: 'Choose at most five files, no larger than 5 MB each.' });
+              } else setFiles(selected);
+            }} className="hidden" />
             <button type="button" onClick={() => fileInputRef.current?.click()} className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50">Choose Files</button>
           </div>
 
@@ -119,7 +125,7 @@ const RegistrarSupportTickets = () => {
         </div>
 
         {loading ? <p className="rounded-lg border border-slate-200 bg-slate-50 py-12 text-center text-sm text-slate-500">Loading tickets…</p> : <div className="space-y-3">
-          {tickets.map((ticket) => <article key={ticket.ticketId} className="rounded-lg border border-slate-200 p-4"><div className="flex flex-wrap justify-between gap-2"><h3 className="font-bold text-slate-800">#{ticket.ticketId} · {ticket.title}</h3><span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-800">{ticket.status}</span></div><p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">{ticket.description}</p><p className="mt-2 text-xs text-slate-500">{ticket.severity} · {new Date(ticket.createdAt).toLocaleString()}</p>{ticket.assignedSpecialistLabel && <p className="mt-2 text-xs font-semibold text-indigo-700">Assigned to: {ticket.assignedSpecialistLabel}</p>}{ticket.adminResponse && <div className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800"><strong>System Administrator:</strong> {ticket.adminResponse}</div>}</article>)}
+          {tickets.map((ticket) => <article key={ticket.ticketId} className="rounded-lg border border-slate-200 p-4"><div className="flex flex-wrap justify-between gap-2"><h3 className="font-bold text-slate-800">#{ticket.ticketId} · {ticket.title}</h3><span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-800">{ticket.status}</span></div><p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">{ticket.description}</p><p className="mt-2 text-xs text-slate-500">{ticket.severity} · {new Date(ticket.createdAt).toLocaleString()}</p>{ticket.assignedSpecialistLabel && <p className="mt-2 text-xs font-semibold text-indigo-700">Assigned to: {ticket.assignedSpecialistLabel}</p>}{ticket.attachments?.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{ticket.attachments.map((attachment) => <button type="button" key={attachment.attachmentId} onClick={() => downloadSupportAttachment(attachment.attachmentId, attachment.fileName)} className="rounded-md border border-blue-200 px-2 py-1 text-xs font-semibold text-blue-700">{attachment.fileName} ({Math.ceil(attachment.fileSize / 1024)} KB)</button>)}</div>}{ticket.adminResponse && <div className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800"><strong>System Administrator:</strong> {ticket.adminResponse}</div>}</article>)}
           {tickets.length === 0 && <div className="flex min-h-20 items-center justify-center rounded-md border border-slate-200 bg-slate-50/70 px-5 py-5 text-center"><div><Icon className="mx-auto h-7 w-7 text-blue-200"><path d="M4 7h5l2 2h9v10H4Z" /><path d="m14 6 4-2-1 4" /></Icon><p className="mt-1.5 text-xs font-bold text-slate-700">No support tickets submitted yet.</p></div></div>}
         </div>}
       </section>

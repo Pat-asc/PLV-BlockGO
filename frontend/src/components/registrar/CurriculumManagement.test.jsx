@@ -60,19 +60,20 @@ test('shows program assignment and archive controls beneath the curriculum table
   const finalTable = tables[tables.length - 1];
   const actions = screen.getByRole('region', { name: 'Curriculum actions' });
 
-  expect(within(actions).getByRole('button', { name: 'Assign to Program' })).toBeInTheDocument();
+  expect(within(actions).getByRole('button', { name: 'Assign to Batch' })).toBeInTheDocument();
   expect(within(actions).getByRole('button', { name: 'Archive' })).toBeInTheDocument();
   expect(finalTable.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
-test('assigns the selected curriculum to its program', async () => {
+test('assigns the selected curriculum to its student batch', async () => {
   render(<CurriculumManagement />);
 
   fireEvent.click(await screen.findByRole('button', { name: /Published \(1\)/i }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Assign to Program' }));
+  fireEvent.change(screen.getByLabelText('Student batch year'), { target: { value: '2026' } });
+  fireEvent.click(await screen.findByRole('button', { name: 'Assign to Batch' }));
 
-  await waitFor(() => expect(assignProgramCurriculum).toHaveBeenCalledWith(21));
-  expect(await screen.findByText('Curriculum assigned to BSIT. 4 students synchronized.')).toBeInTheDocument();
+  await waitFor(() => expect(assignProgramCurriculum).toHaveBeenCalledWith(21, '2026'));
+  expect(await screen.findByText('Curriculum assigned to BSIT batch 2026. 4 students synchronized.')).toBeInTheDocument();
 });
 
 test('archives the selected published curriculum', async () => {

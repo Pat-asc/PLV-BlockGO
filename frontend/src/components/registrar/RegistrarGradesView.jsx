@@ -19,6 +19,7 @@ import StudentEnrollmentManagement from './StudentEnrollmentManagement';
 import PasswordManagement from './PasswordManagement';
 import RegistrarGradesLedger from './RegistrarGradesLedger';
 import { exportRegistrarGradesLedgerPdf } from '../../utils/registrarGradesLedgerPdf';
+import RegistrarTranscriptOfRecords from './RegistrarTranscriptOfRecords';
 
 const RegistrarGradesView = ({
     loggedInEmail = '',
@@ -30,6 +31,7 @@ const RegistrarGradesView = ({
 }) => {
     const managementMenuItems = [
         { id: 'grades', label: 'Grades Ledger' },
+        { id: 'transcript', label: 'Transcript of Records' },
         { id: 'assigning', label: 'Assigning' },
         { id: 'bulkEnroll', label: 'Student Enrollment' },
         { id: 'createAccounts', label: 'Create Staff Accounts' },
@@ -327,15 +329,10 @@ const RegistrarGradesView = ({
         } catch (error) { console.error('Error loading faculties:', error); }
     }, []);
 
-    const handleResetEncodingSeason = useCallback(async () => {
+    const handleResetEncodingSeason = useCallback(async (academicContext) => {
         try {
-            await resetEncodingSeason();
-            const resetEncodingPeriod = JSON.stringify({
-                semester: '2nd Semester',
-                startDate: '',
-                endDate: '',
-                term: 'midterm',
-            });
+            const response = await resetEncodingSeason(academicContext);
+            const resetEncodingPeriod = JSON.stringify({ ...academicContext });
             localStorage.removeItem('registrarAssignments');
             localStorage.setItem('encodingPeriod', resetEncodingPeriod);
             localStorage.setItem('facultyLoadResetAt', new Date().toISOString());
@@ -354,6 +351,7 @@ const RegistrarGradesView = ({
             );
             await loadApprovedFaculties();
             await loadGrades();
+            return response;
         } catch (error) {
             alert(error.message || 'Failed to reset encoding season.');
             throw error;
@@ -400,6 +398,9 @@ const RegistrarGradesView = ({
             loadApprovedStudents();
             loadApprovedAdmins();
             loadApprovedFaculties();
+        }
+        if (mainTab === 'transcript') {
+            loadApprovedStudents();
         }
     }, [mainTab, loadApprovedStudents, loadApprovedAdmins, loadApprovedFaculties]);
 
@@ -944,6 +945,7 @@ const RegistrarGradesView = ({
                             onExport={handleDownloadLedgerPDF}
                         />
                     )}
+                    {mainTab === 'transcript' && <RegistrarTranscriptOfRecords students={approvedStudents} />}
                     {mainTab === 'legacy-grades-monitoring' && (
                         <>
                             <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

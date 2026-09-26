@@ -990,7 +990,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     setUploadingSection(sectionName);
 
     try {
-      const res = await batchUploadGrades(file, {
+      const uploadContext = {
         semester,
         schoolYear,
         course,
@@ -1000,7 +1000,15 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         facultySectionId: sectionData.facultySectionId,
         academicSectionId: sectionData.academicSectionId,
         subjectCode: sectionData.subjectCode,
-      });
+      };
+      let res;
+      try {
+        res = await batchUploadGrades(file, uploadContext);
+      } catch (uploadError) {
+        if (!String(uploadError.message).includes('Conflict preview') ||
+            !window.confirm(`${uploadError.message}\n\nOverwrite the existing Draft/Returned grade rows?`)) throw uploadError;
+        res = await batchUploadGrades(file, { ...uploadContext, confirmOverwrite: true });
+      }
       if (res.status === 'Success' || res.status === 'Partial Success') {
         setUploadResult({ 
           type: 'success', 
@@ -1354,7 +1362,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                       <input
                         type="file"
                         aria-label="Bulk upload grades workbook"
-                        accept=".xlsx"
+                        accept=".csv,.xlsx"
                         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                         onChange={(e) => handleFileUpload(activeSection, e)}
                         disabled={uploadingSection === activeSection || isClosed}

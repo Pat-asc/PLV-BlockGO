@@ -2,7 +2,9 @@ import React, { useEffect, useState } from "react";
 import { getSystemSetting, updateSystemSetting } from "../../services/api";
 
 function EncodingPeriod({ onResetEncodingSeason }) {
+  const currentYear = new Date().getFullYear();
   const [period, setPeriod] = useState({
+    schoolYear: `${currentYear}-${currentYear + 1}`,
     semester: "2nd Semester",
     startDate: "",
     endDate: "",
@@ -24,6 +26,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
         if (res.status === "Success" && res.value) {
           const savedPeriod = JSON.parse(res.value);
           setPeriod({
+            schoolYear: savedPeriod?.schoolYear || `${currentYear}-${currentYear + 1}`,
             semester: savedPeriod?.semester || "2nd Semester",
             startDate: savedPeriod?.startDate || "",
             endDate: savedPeriod?.endDate || "",
@@ -41,7 +44,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
     loadSavedPeriod();
   }, []);
 
-  const { semester, startDate, endDate, term } = period;
+  const { schoolYear, semester, startDate, endDate, term } = period;
 
   const updatePeriod = (field, value) => {
     setPeriod((current) => ({ ...current, [field]: value }));
@@ -93,21 +96,15 @@ function EncodingPeriod({ onResetEncodingSeason }) {
 
   const handleResetSeason = async () => {
     const shouldReset = window.confirm(
-      "Reset this encoding season? This will clear assigned faculty sections for the current encoding cycle, but will keep the saved student sections."
+      `Open ${schoolYear} ${semester} ${term} as a new encoding context? Current faculty assignments will be deactivated, while historical grades and saved sections remain intact.`
     );
 
     if (!shouldReset) return;
 
     try {
       setIsResettingSeason(true);
-      await onResetEncodingSeason?.();
-      setPeriod({
-        semester: "2nd Semester",
-        startDate: "",
-        endDate: "",
-        term: "midterm",
-      });
-      setSavedPeriod(null);
+      await onResetEncodingSeason?.(period);
+      setSavedPeriod(period);
       setStatusMessage(
         "Encoding season reset successfully. Faculty assigned sections were cleared, saved sections were kept, and the encoding period was closed."
       );
@@ -174,7 +171,17 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           </div>
         )}
 
-        <div className="mt-3 grid grid-cols-1 items-end gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_auto_1fr]">
+        <div className="mt-3 grid grid-cols-1 items-end gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto_1fr]">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-700">School Year</label>
+            <input
+              value={schoolYear}
+              onChange={(event) => updatePeriod("schoolYear", event.target.value)}
+              placeholder="2026-2027"
+              pattern="\d{4}-\d{4}"
+              className="h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700">Semester</label>
             <select
@@ -250,7 +257,11 @@ function EncodingPeriod({ onResetEncodingSeason }) {
       <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm md:p-4">
         <h3 className="text-base font-bold text-slate-900">Current Schedule</h3>
 
-        <div className="mt-3 grid grid-cols-1 overflow-hidden rounded-md border border-blue-100 bg-blue-50/30 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="mt-3 grid grid-cols-1 overflow-hidden rounded-md border border-blue-100 bg-blue-50/30 sm:grid-cols-2 xl:grid-cols-6">
+          <div className="p-3 xl:border-r xl:border-slate-200">
+            <p className="text-[10px] text-slate-500">School Year</p>
+            <p className="mt-1.5 text-xs font-semibold text-slate-900">{savedPeriod?.schoolYear || "Not set"}</p>
+          </div>
           <div className="p-3 xl:border-r xl:border-slate-200">
             <p className="text-[10px] text-slate-500">Semester</p>
             <p className="mt-1.5 text-xs font-semibold text-slate-900">{savedPeriod?.semester || "Not set"}</p>

@@ -571,6 +571,14 @@ const Chat = ({
       window.dispatchEvent(new CustomEvent('blockgo:transaction-recorded', { detail: payload }));
     });
 
+    conn.on('SecurityAlert', (payload) => {
+      let alert = payload;
+      if (typeof payload === 'string') {
+        try { alert = JSON.parse(payload); } catch { alert = { summary: payload }; }
+      }
+      window.dispatchEvent(new CustomEvent('blockgo:security-alert', { detail: alert }));
+    });
+
     conn.on('ChatContacts', (contacts) => {
       if (!Array.isArray(contacts)) return;
       const normalizedContacts = contacts.map(normalizeUser).filter((u) => u.email);

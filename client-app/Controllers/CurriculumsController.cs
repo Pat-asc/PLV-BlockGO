@@ -421,11 +421,10 @@ namespace Client_app.Controllers
                 publish.Parameters.AddWithValue("id", id);
                 await publish.ExecuteNonQueryAsync(cancellationToken);
             }
-            var affectedStudents = await AssignProgramCurriculumAsync(
-                connection, transaction, curriculum.ProgramId, id, actor.Id, cancellationToken);
+            var affectedStudents = 0;
             await _auditLog.LogAsync(actor.Email, actor.Role, "CURRICULUM_PUBLISHED", "curriculum", id.ToString(),
                 new { status = curriculum.Status }, new { status = CurriculumStatuses.Published },
-                $"Registrar reviewed and published the submitted curriculum and assigned it to the program ({affectedStudents} student(s) synchronized).",
+                "Registrar reviewed and published the submitted curriculum. Cohort assignment remains a separate controlled action.",
                 IpAddress(), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             await TryRecordLedgerAuditAsync("CURRICULUM_PUBLISHED", id, actor, new[] { "status", "published_at" }, cancellationToken);
@@ -443,23 +442,54 @@ namespace Client_app.Controllers
                 "CURRICULUM_ARCHIVED", "Registrar archived the published curriculum.", null, true, cancellationToken);
 
         [HttpPut("{id:long}/program-assignment")]
-        [Authorize(Roles = "department_admin,registrar")]
-        public async Task<IActionResult> AssignProgram(long id, CancellationToken cancellationToken)
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> AssignProgram(long id, [FromBody] AssignCurriculumBatchRequest request,
+            CancellationToken cancellationToken)
         {
             await using var connection = await OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             var curriculum = await RequireStatusAsync(connection, transaction, id,
                 new[] { CurriculumStatuses.Published, CurriculumStatuses.Archived }, cancellationToken);
             var actor = await GetActorAsync(connection, transaction, cancellationToken);
-            if (actor.Role == "department_admin")
+            await using (var assignment = new NpgsqlCommand(@"
+                INSERT INTO curriculum_batch_assignments
+                    (program_id, batch_year, curriculum_id, assigned_by, assigned_at, updated_at)
+                VALUES (@programId, @batchYear, @curriculumId, @actorId, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (program_id, batch_year) DO UPDATE
+                SET curriculum_id = EXCLUDED.curriculum_id, assigned_by = EXCLUDED.assigned_by,
+                    assigned_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP;", connection, transaction))
             {
-                await ResolveOwnedProgramAsync(connection, transaction, actor.Id, curriculum.ProgramCode, cancellationToken);
+                assignment.Parameters.AddWithValue("programId", curriculum.ProgramId);
+                assignment.Parameters.AddWithValue("batchYear", request.BatchYear);
+                assignment.Parameters.AddWithValue("curriculumId", id);
+                assignment.Parameters.AddWithValue("actorId", actor.Id);
+                await assignment.ExecuteNonQueryAsync(cancellationToken);
             }
-            var affectedStudents = await AssignProgramCurriculumAsync(
-                connection, transaction, curriculum.ProgramId, id, actor.Id, cancellationToken);
-            await _auditLog.LogAsync(actor.Email, actor.Role, "PROGRAM_CURRICULUM_ASSIGNED", "curriculum", id.ToString(), null,
-                new { curriculum.ProgramId, affectedStudents },
-                $"{(actor.Role == "registrar" ? "Registrar" : "Department Head")} changed the active curriculum for the academic program.",
+            int affectedStudents;
+            await using (var enrollments = new NpgsqlCommand(@"
+                UPDATE student_enrollments
+                SET curriculum_id = @curriculumId, updated_at = CURRENT_TIMESTAMP
+                WHERE program_id = @programId AND batch_year = @batchYear AND status = 'ENROLLED';", connection, transaction))
+            {
+                enrollments.Parameters.AddWithValue("curriculumId", id);
+                enrollments.Parameters.AddWithValue("programId", curriculum.ProgramId);
+                enrollments.Parameters.AddWithValue("batchYear", request.BatchYear);
+                affectedStudents = await enrollments.ExecuteNonQueryAsync(cancellationToken);
+            }
+            await using (var profiles = new NpgsqlCommand(@"
+                UPDATE studentprofiles profile SET curriculum_id = @curriculumId
+                WHERE profile.batch_year = @batchYear
+                  AND LOWER(profile.department) IN (LOWER(@programCode), LOWER(@programName));", connection, transaction))
+            {
+                profiles.Parameters.AddWithValue("curriculumId", id);
+                profiles.Parameters.AddWithValue("batchYear", request.BatchYear);
+                profiles.Parameters.AddWithValue("programCode", curriculum.ProgramCode);
+                profiles.Parameters.AddWithValue("programName", curriculum.ProgramName);
+                await profiles.ExecuteNonQueryAsync(cancellationToken);
+            }
+            await _auditLog.LogAsync(actor.Email, actor.Role, "CURRICULUM_BATCH_ASSIGNED", "curriculum", id.ToString(), null,
+                new { curriculum.ProgramId, request.BatchYear, affectedStudents },
+                "Registrar assigned the published curriculum to one student cohort.",
                 IpAddress(), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             await TryRecordLedgerAuditAsync("PROGRAM_CURRICULUM_ASSIGNED", id, actor,
@@ -467,7 +497,8 @@ namespace Client_app.Controllers
             return Ok(new
             {
                 status = "Success",
-                message = "The curriculum is now active for every student in the program.",
+                message = $"The curriculum is now assigned to batch {request.BatchYear} only.",
+                batchYear = request.BatchYear,
                 affectedStudents,
                 data = await LoadCurriculumAsync(connection, id, cancellationToken)
             });
@@ -503,12 +534,11 @@ namespace Client_app.Controllers
                              se.enrollment_id DESC
                     LIMIT 1
                 ) enrollment ON TRUE
-                LEFT JOIN program_curriculum_assignments pca ON pca.program_id = enrollment.program_id
-                JOIN curriculums c ON c.curriculum_id = COALESCE(enrollment.curriculum_id, pca.curriculum_id)
+                JOIN curriculums c ON c.curriculum_id = enrollment.curriculum_id
                     AND c.program_id = enrollment.program_id AND c.status IN ('PUBLISHED', 'ARCHIVED')
                 WHERE LOWER(u.email) = LOWER(@actor) AND LOWER(u.role) = 'student'
                   AND LOWER(u.status) = 'approved' AND u.is_active
-                  AND enrollment.status = 'ENROLLED';", connection);
+                  AND enrollment.status = 'ENROLLED' AND enrollment.enrollment_state = 'FINALIZED';", connection);
             command.Parameters.AddWithValue("actor", ActorEmail());
             long? resolvedId = null;
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken))

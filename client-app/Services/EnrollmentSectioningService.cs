@@ -9,7 +9,8 @@ public static class EnrollmentSectioningService
     public sealed record EnrolledStudent(long EnrollmentId, int Id, string StudentNo,
         string FullName, string Email, string? StudentEmail, string Department,
         string YearLevel, string EnrollmentStatus, int? AcademicSectionId, string? Section,
-        string? Sex, long? CurriculumId, int? BatchYear, string SchoolYear, string Semester);
+        string? Sex, long? CurriculumId, int? BatchYear, string SchoolYear, string Semester,
+        string EnrollmentState);
 
     public static async Task<List<EnrolledStudent>> GetUnassignedAsync(NpgsqlConnection connection,
         string? department, short? yearLevel, string? schoolYear, string? semester, string? departmentScope)
@@ -18,7 +19,7 @@ public static class EnrollmentSectioningService
             SELECT e.enrollment_id, u.id, e.student_no, COALESCE(sp.full_name, ''), u.email,
                    sp.student_email, p.program_name, e.year_level::text, e.status,
                    e.academic_section_id, e.section, sp.sex, e.curriculum_id, e.batch_year,
-                   e.school_year, e.semester
+                   e.school_year, e.semester, e.enrollment_state
             FROM student_enrollments e
             JOIN users u ON u.id = e.student_user_id
             JOIN studentprofiles sp ON sp.user_id = u.id
@@ -46,7 +47,8 @@ public static class EnrollmentSectioningService
                 reader.GetString(6), reader.GetString(7), reader.GetString(8),
                 reader.IsDBNull(9) ? null : reader.GetInt32(9), reader.IsDBNull(10) ? null : reader.GetString(10),
                 reader.IsDBNull(11) ? null : reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetInt64(12),
-                reader.IsDBNull(13) ? null : reader.GetInt32(13), reader.GetString(14), reader.GetString(15)));
+                reader.IsDBNull(13) ? null : reader.GetInt32(13), reader.GetString(14), reader.GetString(15),
+                reader.GetString(16)));
         return result;
     }
 
@@ -58,7 +60,7 @@ public static class EnrollmentSectioningService
                    sp.student_email, p.program_name, e.year_level::text, e.status,
                    e.academic_section_id,
                    CONCAT(section.year_level, '-', section.section_num),
-                   sp.sex, e.curriculum_id, e.batch_year, e.school_year, e.semester
+                   sp.sex, e.curriculum_id, e.batch_year, e.school_year, e.semester, e.enrollment_state
             FROM student_enrollments e
             JOIN users u ON u.id = e.student_user_id
             JOIN studentprofiles sp ON sp.user_id = u.id
@@ -87,7 +89,7 @@ public static class EnrollmentSectioningService
                 reader.GetString(6), reader.GetString(7), reader.GetString(8), reader.GetInt32(9),
                 reader.GetString(10), reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.IsDBNull(12) ? null : reader.GetInt64(12), reader.IsDBNull(13) ? null : reader.GetInt32(13),
-                reader.GetString(14), reader.GetString(15)));
+                reader.GetString(14), reader.GetString(15), reader.GetString(16)));
         return result;
     }
 
@@ -102,9 +104,9 @@ public static class EnrollmentSectioningService
             throw new ArgumentException("Expected section IDs must be positive and refer to students in this request.");
         await using var transaction = await connection.BeginTransactionAsync();
         string department;
-        int programId, yearLevel, sectionNumber;
+        int programId, yearLevel, sectionNumber, maxCapacity;
         await using (var section = new NpgsqlCommand(@"
-            SELECT s.department, s.year_level, s.section_num, p.program_id
+            SELECT s.department, s.year_level, s.section_num, p.program_id, s.max_capacity
             FROM academicsections s
             JOIN academic_programs p ON LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name))
             WHERE s.id = @id
@@ -119,7 +121,17 @@ public static class EnrollmentSectioningService
             yearLevel = reader.GetInt32(1);
             sectionNumber = reader.GetInt32(2);
             programId = reader.GetInt32(3);
+            maxCapacity = reader.GetInt32(4);
         }
+
+        await using var countCommand = new NpgsqlCommand(@"
+            SELECT COUNT(*) FROM student_enrollments
+            WHERE academic_section_id = @sectionId AND school_year = @schoolYear
+              AND semester = @semester AND status = 'ENROLLED';", connection, transaction);
+        countCommand.Parameters.AddWithValue("sectionId", sectionId);
+        countCommand.Parameters.AddWithValue("schoolYear", schoolYear);
+        countCommand.Parameters.AddWithValue("semester", semester);
+        var occupied = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
 
         var assignedUsers = new HashSet<int>();
         // Stable ordering and row locks serialize competing assignments. The entire request is atomic.
@@ -140,6 +152,30 @@ public static class EnrollmentSectioningService
                 if (await reader.ReadAsync()) throw new InvalidOperationException($"Student identifier '{identifier}' is ambiguous. Use the student number.");
             }
             if (!assignedUsers.Add(userId)) continue;
+            int? currentSectionId;
+            string enrollmentState;
+            await using (var current = new NpgsqlCommand(@"
+                SELECT academic_section_id, enrollment_state
+                FROM student_enrollments
+                WHERE student_user_id = @userId AND school_year = @schoolYear AND semester = @semester
+                  AND status = 'ENROLLED' AND program_id = @programId AND year_level = @yearLevel
+                FOR UPDATE;", connection, transaction))
+            {
+                current.Parameters.AddWithValue("userId", userId);
+                current.Parameters.AddWithValue("schoolYear", schoolYear);
+                current.Parameters.AddWithValue("semester", semester);
+                current.Parameters.AddWithValue("programId", programId);
+                current.Parameters.AddWithValue("yearLevel", yearLevel);
+                await using var reader = await current.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    throw new InvalidOperationException($"Student '{identifier}' has no eligible enrollment for this program and period.");
+                currentSectionId = reader.IsDBNull(0) ? null : reader.GetInt32(0);
+                enrollmentState = reader.GetString(1);
+            }
+            if (!string.Equals(enrollmentState, "PLANNING", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Student '{identifier}' enrollment is finalized and locked.");
+            if (currentSectionId != sectionId && occupied >= maxCapacity)
+                throw new InvalidOperationException($"Section {yearLevel}-{sectionNumber} is full ({occupied}/{maxCapacity}).");
             await using var update = new NpgsqlCommand(@"
                 UPDATE student_enrollments
                 SET academic_section_id = @sectionId, section = @section, updated_at = CURRENT_TIMESTAMP
@@ -164,6 +200,7 @@ public static class EnrollmentSectioningService
             var enrollmentId = await update.ExecuteScalarAsync();
             if (enrollmentId is null)
                 throw new InvalidOperationException($"Student '{identifier}' needs an unassigned ENROLLED record for {schoolYear} {semester} in this program and year level. The student may already belong to another section.");
+            if (currentSectionId != sectionId) occupied++;
 
             // Assigning an older period must not replace the current profile snapshot.
             await using var profile = new NpgsqlCommand(@"
@@ -183,5 +220,75 @@ public static class EnrollmentSectioningService
         }
         await transaction.CommitAsync();
         return (assignedUsers.Count, department);
+    }
+
+    public static async Task UnassignAsync(NpgsqlConnection connection, int sectionId, string studentId,
+        string schoolYear, string semester)
+    {
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using var command = new NpgsqlCommand(@"
+            UPDATE student_enrollments enrollment
+            SET academic_section_id = NULL, section = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE enrollment.academic_section_id = @sectionId
+              AND enrollment.school_year = @schoolYear AND enrollment.semester = @semester
+              AND enrollment.status = 'ENROLLED' AND enrollment.enrollment_state = 'PLANNING'
+              AND EXISTS (
+                  SELECT 1 FROM studentprofiles profile
+                  WHERE profile.user_id = enrollment.student_user_id
+                    AND (LOWER(profile.student_no) = LOWER(@studentId)
+                         OR profile.user_id::text = @studentId))
+            RETURNING enrollment.student_user_id;", connection, transaction);
+        command.Parameters.AddWithValue("sectionId", sectionId);
+        command.Parameters.AddWithValue("schoolYear", schoolYear);
+        command.Parameters.AddWithValue("semester", semester);
+        command.Parameters.AddWithValue("studentId", studentId.Trim());
+        var userId = await command.ExecuteScalarAsync();
+        if (userId is null)
+            throw new InvalidOperationException("The planning enrollment was not found in that section or is already finalized.");
+
+        await using var profile = new NpgsqlCommand(@"
+            UPDATE studentprofiles SET section = NULL, assignment_status = 'Unassigned'
+            WHERE user_id = @userId AND NOT EXISTS (
+                SELECT 1 FROM student_enrollments newer
+                WHERE newer.student_user_id = @userId
+                  AND (newer.school_year > @schoolYear OR
+                       (newer.school_year = @schoolYear AND newer.semester <> @semester)));", connection, transaction);
+        profile.Parameters.AddWithValue("userId", Convert.ToInt32(userId));
+        profile.Parameters.AddWithValue("schoolYear", schoolYear);
+        profile.Parameters.AddWithValue("semester", semester);
+        await profile.ExecuteNonQueryAsync();
+        await transaction.CommitAsync();
+    }
+
+    public static async Task<int> FinalizeAsync(NpgsqlConnection connection, int programId,
+        string schoolYear, string semester, int actorId)
+    {
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using (var incomplete = new NpgsqlCommand(@"
+            SELECT COUNT(*) FROM student_enrollments
+            WHERE program_id = @programId AND school_year = @schoolYear AND semester = @semester
+              AND status = 'ENROLLED' AND enrollment_state = 'PLANNING'
+              AND academic_section_id IS NULL;", connection, transaction))
+        {
+            incomplete.Parameters.AddWithValue("programId", programId);
+            incomplete.Parameters.AddWithValue("schoolYear", schoolYear);
+            incomplete.Parameters.AddWithValue("semester", semester);
+            if (Convert.ToInt32(await incomplete.ExecuteScalarAsync()) > 0)
+                throw new InvalidOperationException("Every planning enrollment must have a section before finalization.");
+        }
+
+        await using var command = new NpgsqlCommand(@"
+            UPDATE student_enrollments
+            SET enrollment_state = 'FINALIZED', finalized_at = CURRENT_TIMESTAMP,
+                finalized_by = @actorId, updated_at = CURRENT_TIMESTAMP
+            WHERE program_id = @programId AND school_year = @schoolYear AND semester = @semester
+              AND status = 'ENROLLED' AND enrollment_state = 'PLANNING';", connection, transaction);
+        command.Parameters.AddWithValue("programId", programId);
+        command.Parameters.AddWithValue("schoolYear", schoolYear);
+        command.Parameters.AddWithValue("semester", semester);
+        command.Parameters.AddWithValue("actorId", actorId);
+        var count = await command.ExecuteNonQueryAsync();
+        await transaction.CommitAsync();
+        return count;
     }
 }

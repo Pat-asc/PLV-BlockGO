@@ -31,6 +31,7 @@ function RegistrarSidebar({
   const managementTabs = [
     "monitoring",
     "grades",
+    "transcript",
     "assigning",
     "createAccounts",
     "tickets",

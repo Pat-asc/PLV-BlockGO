@@ -25,6 +25,7 @@ const CurriculumManagement = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [batchYear, setBatchYear] = useState(String(new Date().getFullYear()));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,16 +86,20 @@ const CurriculumManagement = () => {
 
   const assign = async () => {
     if (!selected) return;
-    if (!window.confirm(`This version will become the active curriculum for every ${selected.programCode} student. Continue?`)) return;
+    if (!/^\d{4}$/.test(batchYear) || Number(batchYear) < 2000) {
+      setNotice({ type: 'error', message: 'Enter a valid four-digit student batch year.' });
+      return;
+    }
+    if (!window.confirm(`Assign this curriculum to ${selected.programCode} batch ${batchYear} only?`)) return;
 
     setSaving(true);
     setNotice(null);
     try {
-      const response = await assignProgramCurriculum(selected.curriculumId);
+      const response = await assignProgramCurriculum(selected.curriculumId, batchYear);
       const affectedStudents = Number(response?.affectedStudents ?? 0);
       setNotice({
         type: 'success',
-        message: `Curriculum assigned to ${selected.programCode}. ${affectedStudents} student${affectedStudents === 1 ? '' : 's'} synchronized.`,
+        message: `Curriculum assigned to ${selected.programCode} batch ${batchYear}. ${affectedStudents} student${affectedStudents === 1 ? '' : 's'} synchronized.`,
       });
       await load();
     } catch (error) {
@@ -181,8 +186,11 @@ const CurriculumManagement = () => {
 
               {showAssignmentActions ? (
                 <section aria-label="Curriculum actions" className="mt-4 flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <label className="text-sm font-semibold text-slate-700">Student batch year
+                    <input aria-label="Student batch year" value={batchYear} onChange={(event) => setBatchYear(event.target.value)} className="ml-2 w-28 rounded-lg border border-slate-300 px-3 py-2 font-normal" />
+                  </label>
                   <button disabled={saving} type="button" onClick={assign} className="rounded-lg bg-[#003366] px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">
-                    Assign to Program
+                    Assign to Batch
                   </button>
                   <button disabled={saving} type="button" onClick={() => action('archive')} className="rounded-lg bg-slate-700 px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">Archive</button>
                 </section>

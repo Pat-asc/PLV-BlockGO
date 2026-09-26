@@ -141,8 +141,11 @@ function SystemMonitoring({ activeView = 'overview' }) {
   useEffect(() => {
     refresh();
     const intervalId = window.setInterval(refresh, REFRESH_INTERVAL_MS);
+    const handleSecurityAlert = () => refresh();
+    window.addEventListener('blockgo:security-alert', handleSecurityAlert);
     return () => {
       window.clearInterval(intervalId);
+      window.removeEventListener('blockgo:security-alert', handleSecurityAlert);
       activeRequest.current?.abort();
     };
   }, [refresh]);

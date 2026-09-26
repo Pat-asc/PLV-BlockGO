@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchApprovedStudents,
   fetchCurriculums,
+  fetchNstpOptions,
   registrarBulkEnrollStudents,
   registrarBulkUpdateStudents,
 } from '../../services/api';
@@ -21,10 +22,12 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
     semester: new Date().getMonth() >= 5 ? 'FIRST' : 'SECOND',
     yearLevel: '1',
     curriculumId: '',
+    nstpOption: '',
   });
   const [file, setFile] = useState(null);
   const [students, setStudents] = useState([]);
   const [curricula, setCurricula] = useState([]);
+  const [nstpOptions, setNstpOptions] = useState([]);
   const emptyManualForm = { firstName: '', lastName: '', middleName: '', sex: '', birthdate: '', email: '', contactNumber: '', homeAddress: '' };
   const [manualForm, setManualForm] = useState(emptyManualForm);
   const [loading, setLoading] = useState(true);
@@ -37,12 +40,14 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [studentsResponse, curriculumResponse] = await Promise.all([
+      const [studentsResponse, curriculumResponse, nstpResponse] = await Promise.all([
         fetchApprovedStudents(),
         fetchCurriculums('PUBLISHED'),
+        typeof fetchNstpOptions === 'function' ? fetchNstpOptions() : Promise.resolve({ data: [] }),
       ]);
       setStudents(studentsResponse?.students || studentsResponse?.data || []);
       setCurricula(curriculumResponse?.data || []);
+      setNstpOptions(nstpResponse?.data || []);
     } catch (error) {
       setResult({ status: 'Error', message: error.message || 'Enrollment data could not be loaded.' });
     } finally {
@@ -96,6 +101,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
     schoolYear: form.schoolYear,
     semester: form.semester,
     yearLevel: form.yearLevel,
+    nstpOption: form.nstpOption || undefined,
   });
 
   const upload = async (mode) => {
@@ -183,6 +189,12 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
               {matchingCurricula.map((curriculum) => <option key={curriculum.curriculumId} value={curriculum.curriculumId}>{curriculum.curriculumVersion} · {curriculum.curriculumName}</option>)}
             </select>
           </label>
+          {nstpOptions.length ? <label className="text-xs font-semibold text-slate-700">NSTP Program
+            <select value={form.nstpOption} onChange={(event) => updateField('nstpOption', event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-normal">
+              <option value="">Select later</option>
+              {nstpOptions.map((option) => <option key={option.code} value={option.code}>{option.name}</option>)}
+            </select>
+          </label> : null}
         </div>
 
         {matchingCurricula.length === 0 ? <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">No published curriculum exists for this program yet. Enrollment can continue, but the Registrar must assign a published version later.</p> : null}
@@ -206,7 +218,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
           </label>
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="button" onClick={downloadTemplate} className={downloadTemplateButtonClass}>Download Template</button>
-            <button type="button" disabled={saving} onClick={() => upload('enroll')} className="rounded-xl bg-[#003366] px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Upload & Enroll'}</button>
+            <button type="button" disabled={saving} onClick={() => upload('enroll')} className="rounded-xl bg-[#003366] px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Upload & Prepare'}</button>
           </div>
         </div> : <form onSubmit={enrollManualStudent} className="pt-4">
           <div className="mb-4 flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-lg text-blue-700">♙</span><div><h5 className="text-sm font-bold text-[#003366]">Manual Student Enrollment</h5></div></div>

@@ -13,7 +13,7 @@ import {
   parseStudentIdSpreadsheet,
   syncSectionedStudentsToStorage,
 } from "../../utils/studentSectioningHelpers";
-import { fetchDepartmentSections, fetchNextStudentId, fetchSectionedEnrolledStudents, fetchUnassignedEnrolledStudents, getSystemSetting } from "../../services/api";
+import { fetchDepartmentSections, fetchNextStudentId, fetchSectionedEnrolledStudents, fetchUnassignedEnrolledStudents, finalizeEnrollmentRoster, getSystemSetting, removeStudentFromSection } from "../../services/api";
 import { syncSectioningBatchToBackend } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
 
@@ -212,6 +212,7 @@ function RegistrarStudentSectioning({
   const [enrolledLoading, setEnrolledLoading] = useState(true);
   const [enrolledError, setEnrolledError] = useState("");
   const [enrollmentRefresh, setEnrollmentRefresh] = useState(0);
+  const [sectionCapacity, setSectionCapacity] = useState("40");
   const [savingSections, setSavingSections] = useState(false);
   const [targetSemester] = useState("1st Semester");
   const [promotionSummary, setPromotionSummary] = useState(null);
@@ -855,11 +856,16 @@ function RegistrarStudentSectioning({
       );
       return;
     }
+    const capacity = Number(sectionCapacity);
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 500) {
+      alert("Section capacity must be between 1 and 500.");
+      return;
+    }
     const generatedSections = buildGeneratedSections({
       program: workspace.program,
       yearLevel: targetYearLevel,
       sectionCount: requestedSectionCount,
-    });
+    }).map((section) => ({ ...section, maxCapacity: capacity }));
     const existingYearSections = (workspace.sectionPlans || []).filter((section) =>
       sectionMatchesYearLevel(section, targetYearLevel)
     );
@@ -1030,10 +1036,23 @@ function RegistrarStudentSectioning({
     setPendingRemoval(null);
   };
 
-  const handleConfirmRemoveStudent = () => {
+  const handleConfirmRemoveStudent = async () => {
     if (!pendingRemoval?.reason) {
       alert("Please choose a removal reason before removing a student.");
       return;
+    }
+
+    const studentToRemove = students.find((student) => student.studentId === pendingRemoval.studentId);
+    if (studentToRemove?.academicSectionId) {
+      try {
+        await removeStudentFromSection(studentToRemove.academicSectionId, studentToRemove.studentId, {
+          schoolYear: selectedBatch.schoolYear || schoolYear,
+          semester: selectedBatch.semester || sectioningSemester,
+        });
+      } catch (error) {
+        alert(`Student removal failed: ${error.message}`);
+        return;
+      }
     }
 
     updateSelectedBatch((batch) => {
@@ -1064,6 +1083,7 @@ function RegistrarStudentSectioning({
     });
 
     setPendingRemoval(null);
+    setEnrollmentRefresh((current) => current + 1);
   };
 
   const handleRestoreStudent = (studentId) => {
@@ -1342,6 +1362,27 @@ function RegistrarStudentSectioning({
     }
   };
 
+  const handleFinalizeEnrollment = async () => {
+    if (!selectedBatch || savingSections) return;
+    if (!window.confirm(`Finalize and lock the reviewed ${selectedBatch.program} roster for ${selectedBatch.schoolYear || schoolYear} ${selectedBatch.semester || sectioningSemester}?`)) return;
+    setSavingSections(true);
+    try {
+      const synced = await syncBatchToBackend(selectedBatch);
+      if (!synced) return;
+      const response = await finalizeEnrollmentRoster({
+        program: selectedBatch.program,
+        schoolYear: selectedBatch.schoolYear || schoolYear,
+        semester: selectedBatch.semester || sectioningSemester,
+      });
+      alert(`${response.finalized || 0} enrollment(s) finalized. The roster is now locked.`);
+      setEnrollmentRefresh((current) => current + 1);
+    } catch (error) {
+      alert(`Enrollment finalization failed: ${error.message}`);
+    } finally {
+      setSavingSections(false);
+    }
+  };
+
   const handleShuffleSections = () => {
     if (!selectedBatch || yearSectionPlans.length < 2) {
       alert("At least two saved sections are needed before shuffling students.");
@@ -1357,10 +1398,24 @@ function RegistrarStudentSectioning({
       return;
     }
 
-    const shuffledStudents = [...studentsForYear].sort(() => Math.random() - 0.5);
+    const totalCapacity = yearSectionPlans.reduce((sum, section) => sum + Number(section.maxCapacity || 40), 0);
+    if (studentsForYear.length > totalCapacity) {
+      alert(`The selected sections have ${totalCapacity} total slots for ${studentsForYear.length} students.`);
+      return;
+    }
+    const stableScore = (student) => String(student.studentId || '').split('').reduce((score, character) => ((score * 31) + character.charCodeAt(0)) >>> 0, 7);
+    const shuffledStudents = [...studentsForYear].sort((left, right) => stableScore(left) - stableScore(right) || String(left.studentId).localeCompare(String(right.studentId)));
+    const targetCounts = new Map(yearSectionPlans.map((section) => [section.sectionCode, 0]));
     const assignedStudentsById = new Map(
       shuffledStudents.map((student, index) => {
-        const targetSection = yearSectionPlans[index % yearSectionPlans.length];
+        const targetSection = [...yearSectionPlans]
+          .filter((section) => targetCounts.get(section.sectionCode) < Number(section.maxCapacity || 40))
+          .sort((left, right) => {
+            const leftRatio = targetCounts.get(left.sectionCode) / Number(left.maxCapacity || 40);
+            const rightRatio = targetCounts.get(right.sectionCode) / Number(right.maxCapacity || 40);
+            return leftRatio - rightRatio || String(left.sectionCode).localeCompare(String(right.sectionCode));
+          })[0];
+        targetCounts.set(targetSection.sectionCode, targetCounts.get(targetSection.sectionCode) + 1);
         const sectionName =
           targetSection.sectionName ||
           getDefaultSectionName(selectedBatch.program, targetSection.sectionCode);
@@ -2730,6 +2785,13 @@ function RegistrarStudentSectioning({
                   />
                 </label>
 
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-slate-700">Maximum students</span>
+                  <input type="number" min="1" max="500" value={sectionCapacity}
+                    onChange={(event) => setSectionCapacity(event.target.value)}
+                    className="h-8 w-full rounded-md border border-slate-300 px-2 text-[11px] outline-none focus:border-[#003366]" />
+                </label>
+
                 <button
                   type="button"
                   onClick={handleGenerateSections}
@@ -2753,6 +2815,11 @@ function RegistrarStudentSectioning({
                   className="h-8 whitespace-nowrap rounded-md border border-[#003366] px-3 text-[11px] font-semibold text-[#003366] transition hover:bg-[#003366] hover:text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
                 >
                   Save Sections
+                </button>
+                <button type="button" onClick={handleFinalizeEnrollment}
+                  disabled={!selectedBatch || !sectionPlans.length || savingSections}
+                  className="h-8 whitespace-nowrap rounded-md bg-emerald-700 px-3 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
+                  Review &amp; Finalize Enrollment
                 </button>
               </div>
 

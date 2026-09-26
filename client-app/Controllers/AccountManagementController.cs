@@ -25,12 +25,12 @@ namespace Client_app.Controllers
         [Authorize(Roles = "registrar")]
         [Consumes("multipart/form-data")]
         [RequestSizeLimit(2 * 1024 * 1024)]
-        public async Task<IActionResult> BulkCreateFaculty([FromForm] IFormFile file, CancellationToken cancellationToken)
+        public async Task<IActionResult> BulkCreateStaff([FromForm] IFormFile file, CancellationToken cancellationToken)
         {
             if (file is null || file.Length == 0)
-                return BadRequest(new { status = "Error", message = "A non-empty CSV faculty account file is required." });
+                return BadRequest(new { status = "Error", message = "A non-empty CSV staff account file is required." });
             if (!string.Equals(Path.GetExtension(file.FileName), ".csv", StringComparison.OrdinalIgnoreCase))
-                return BadRequest(new { status = "Error", message = "Faculty bulk upload currently accepts CSV files only." });
+                return BadRequest(new { status = "Error", message = "Staff bulk upload currently accepts CSV files only." });
 
             try
             {

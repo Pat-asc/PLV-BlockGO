@@ -100,6 +100,30 @@ func authorizeGradeReader(stub shim.ChaincodeStubInterface) (string, *pb.Respons
 	return role, nil
 }
 
+func academicScopeAllows(stub shim.ChaincodeStubInterface, role string, record AcademicRecord) bool {
+	if role == "registrar" || role == "student" {
+		return true
+	}
+	department, hasDepartment := getSafeAttribute(stub, "academic.department")
+	if !hasDepartment || (!strings.EqualFold(strings.TrimSpace(department), strings.TrimSpace(record.Program)) &&
+		!strings.EqualFold(strings.TrimSpace(department), strings.TrimSpace(record.Course))) {
+		return false
+	}
+	if role != "faculty" {
+		return true
+	}
+	sections, hasSections := getSafeAttribute(stub, "academic.sections")
+	if !hasSections {
+		return false
+	}
+	for _, section := range strings.Split(sections, "|") {
+		if strings.EqualFold(strings.TrimSpace(section), strings.TrimSpace(record.Section)) {
+			return true
+		}
+	}
+	return false
+}
+
 func getTransactionDate(stub shim.ChaincodeStubInterface) string {
 	return getTransactionTime(stub).Format("2006-01-02")
 }
@@ -157,7 +181,7 @@ func (cc *SmartContract) Invoke(stub shim.ChaincodeStubInterface) *pb.Response {
 	case "InitLedger":
 		return cc.initLedger(stub)
 	case "ResetLedgerToGenesis":
-		return cc.resetLedgerToGenesis(stub, args)
+		return shim.Error("ResetLedgerToGenesis is disabled: academic ledger history is immutable in application operations")
 	case "IssueGrade":
 		return cc.issueGrade(stub, args)
 	case "IssueBatchGrades":
@@ -298,6 +322,9 @@ func (cc *SmartContract) issueGrade(stub shim.ChaincodeStubInterface, args []str
 	if record.Grade == "" {
 		return shim.Error("Grade field cannot be empty")
 	}
+	if !academicScopeAllows(stub, role, record) {
+		return shim.Error("ABAC Denied: Grade is outside the caller's authoritative academic assignment scope")
+	}
 
 	existing, err := stub.GetState(record.ID)
 	if err != nil {
@@ -361,6 +388,9 @@ func (cc *SmartContract) issueBatchGrades(stub shim.ChaincodeStubInterface, args
 		if record.Grade == "" {
 			return shim.Error(fmt.Sprintf("Grade field cannot be empty for record %s", record.ID))
 		}
+		if !academicScopeAllows(stub, role, record) {
+			return shim.Error(fmt.Sprintf("ABAC Denied: Record %s is outside the caller's authoritative academic assignment scope", record.ID))
+		}
 		existing, err := stub.GetState(record.ID)
 		if err != nil {
 			return shim.Error(fmt.Sprintf("Failed to read from state database for record %s: %v", record.ID, err))
@@ -413,6 +443,9 @@ func (cc *SmartContract) returnGrade(stub shim.ChaincodeStubInterface, args []st
 	if err := json.Unmarshal(recordJSON, &record); err != nil {
 		return shim.Error(fmt.Sprintf("Failed to unmarshal record: %v", err))
 	}
+	if isDepartmentAdmin && !academicScopeAllows(stub, role, record) {
+		return shim.Error("ABAC Denied: Grade is outside the Chairperson's authoritative department scope")
+	}
 	if record.Status == statusReturned && record.Note == note {
 		return shim.Success(recordJSON)
 	}
@@ -453,14 +486,16 @@ func (cc *SmartContract) readGrade(stub shim.ChaincodeStubInterface, args []stri
 		return shim.Error("Record not found")
 	}
 
+	var record AcademicRecord
+	if err := json.Unmarshal(recordJSON, &record); err != nil {
+		return shim.Error(fmt.Sprintf("Failed to unmarshal record: %v", err))
+	}
 	if role == "student" {
-		var record AcademicRecord
-		if err := json.Unmarshal(recordJSON, &record); err != nil {
-			return shim.Error(fmt.Sprintf("Failed to unmarshal record: %v", err))
-		}
 		if !strings.EqualFold(record.StudentHash, getClientCommonName(stub)) {
 			return shim.Error("ABAC Denied: Students may read only their own grade records")
 		}
+	} else if role != "registrar" && !academicScopeAllows(stub, role, record) {
+		return shim.Error("ABAC Denied: Grade is outside the caller's authoritative academic scope")
 	}
 
 	return shim.Success(recordJSON)
@@ -499,6 +534,9 @@ func (cc *SmartContract) updateGrade(stub shim.ChaincodeStubInterface, args []st
 	}
 	if existing.Status != statusReturned {
 		return shim.Error("Invalid grade transition: only a returned grade can be corrected")
+	}
+	if !academicScopeAllows(stub, role, existing) {
+		return shim.Error("ABAC Denied: Grade is outside the caller's authoritative academic assignment scope")
 	}
 
 	submitterID, _ := cid.GetID(stub)
@@ -546,7 +584,7 @@ func (cc *SmartContract) approveGrade(stub shim.ChaincodeStubInterface, args []s
 		return shim.Error("ABAC Denied: User role attribute not found.")
 	}
 
-	isDeptAdmin := mspID == "DepartmentMSP" && role == "department_admin"
+	isDeptAdmin := mspID == "DepartmentMSP" && (role == "department_admin" || role == "deptAdmin")
 	isRegistrar := mspID == "RegistrarMSP" && role == "registrar"
 
 	if !isDeptAdmin && !isRegistrar {
@@ -564,6 +602,9 @@ func (cc *SmartContract) approveGrade(stub shim.ChaincodeStubInterface, args []s
 	var record AcademicRecord
 	if err := json.Unmarshal(recordJSON, &record); err != nil {
 		return shim.Error(fmt.Sprintf("Failed to unmarshal record: %v", err))
+	}
+	if isDeptAdmin && !academicScopeAllows(stub, role, record) {
+		return shim.Error("ABAC Denied: Grade is outside the Chairperson's authoritative department scope")
 	}
 	if record.Status == statusDepartmentApproved {
 		return shim.Success(recordJSON)
@@ -664,6 +705,9 @@ func (cc *SmartContract) getAllGrades(stub shim.ChaincodeStubInterface) *pb.Resp
 		var record AcademicRecord
 		if err := json.Unmarshal(queryResponse.Value, &record); err != nil {
 			return shim.Error(fmt.Sprintf("Failed to unmarshal record: %v", err))
+		}
+		if role != "registrar" && role != "student" && !academicScopeAllows(stub, role, record) {
+			continue
 		}
 		records = append(records, record)
 	}
@@ -775,9 +819,13 @@ func (cc *SmartContract) createAuditEvent(stub shim.ChaincodeStubInterface, args
 	allowed := map[string]bool{
 		"REGISTRAR_ACCOUNT_CREATED": true,
 		"REGISTRAR_ACCOUNT_UPDATED": true,
+		"REGISTRAR_ACCOUNT_DELETED": true,
 		"CURRICULUM_APPROVED":       true,
 		"CURRICULUM_PUBLISHED":      true,
 		"CURRICULUM_ARCHIVED":       true,
+		"PROGRAM_CURRICULUM_ASSIGNED": true,
+		"CURRICULUM_BATCH_ASSIGNED": true,
+		"GRADES_RELEASED":           true,
 	}
 	if !allowed[event.EventType] {
 		return shim.Error("Unsupported audit event type")
@@ -811,7 +859,7 @@ func (cc *SmartContract) getGradeHistory(stub shim.ChaincodeStubInterface, args 
 	if denied != nil || role == "student" {
 		return shim.Error("ABAC Denied: Students cannot view the full audit history.")
 	}
-	if role == "faculty" {
+	if role != "registrar" {
 		currentJSON, readErr := stub.GetState(recordID)
 		if readErr != nil || currentJSON == nil {
 			return shim.Error("Record not found")
@@ -820,7 +868,10 @@ func (cc *SmartContract) getGradeHistory(stub shim.ChaincodeStubInterface, args 
 		if err := json.Unmarshal(currentJSON, &current); err != nil {
 			return shim.Error("Failed to decode current record: " + err.Error())
 		}
-		if !strings.EqualFold(current.FacultyID, getClientCommonName(stub)) {
+		if !academicScopeAllows(stub, role, current) {
+			return shim.Error("ABAC Denied: Grade history is outside the caller's authoritative academic scope")
+		}
+		if role == "faculty" && !strings.EqualFold(current.FacultyID, getClientCommonName(stub)) {
 			return shim.Error("ABAC Denied: Faculty may view only the history of grades they submitted")
 		}
 	}

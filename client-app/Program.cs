@@ -418,6 +418,7 @@ try
     {
         builder.Services.AddHostedService<BackendKeepAliveService>();
     }
+    builder.Services.AddHostedService<SecurityEventBroadcastService>();
     builder.Services.AddScoped<IFabricCaAuthService, FabricCaAuthService>();
     builder.Services.AddScoped<IEmailService, EmailService>();
     builder.Services.AddScoped<IAuditLogService, AuditLogService>();

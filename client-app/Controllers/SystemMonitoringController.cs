@@ -229,6 +229,7 @@ namespace Client_app.Controllers
 
             await AddIpfsHealthAsync(services, cancellationToken);
             await AddFabricHealthAsync(services, cancellationToken);
+            var runningPods = await AddKubernetesHealthAsync(services, cancellationToken);
 
             services.Insert(0, Service("backend", "ASP.NET Core API", "Application", "healthy", 0, "Monitoring endpoint is responsive.", HttpContext.Request.Host.Value));
             var alerts = await LoadSecurityAlertsAsync(cancellationToken);
@@ -287,7 +288,7 @@ namespace Client_app.Controllers
                     source = prometheusAvailable ? "prometheus" : "runtime",
                     cpuCores = (double?)null,
                     memoryBytes = (long?)null,
-                    runningPods = (long?)null,
+                    runningPods,
                     healthyFabricTargets = services.Count(item => JsonSerializer.Serialize(item).Contains("Fabric Middleware") && JsonSerializer.Serialize(item).Contains("healthy"))
                 },
                 alerts
@@ -516,6 +517,55 @@ namespace Client_app.Controllers
             {
                 services.Add(Service("fabric-network", "Fabric Peers and Orderers", "Blockchain", "down", stopwatch.ElapsedMilliseconds,
                     SafeMessage(exception), "Internal Fabric readiness"));
+            }
+        }
+
+        private async Task<int?> AddKubernetesHealthAsync(List<object> services, CancellationToken cancellationToken)
+        {
+            const string serviceAccountPath = "/var/run/secrets/kubernetes.io/serviceaccount";
+            var host = Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_HOST");
+            var port = Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_PORT_HTTPS") ?? "443";
+            if (string.IsNullOrWhiteSpace(host) || !System.IO.File.Exists($"{serviceAccountPath}/token"))
+            {
+                services.Add(Service("kubernetes", "Kubernetes Pods", "Infrastructure", "not_configured", 0,
+                    "In-cluster Kubernetes service-account access is unavailable.", "Kubernetes API"));
+                return null;
+            }
+
+            var stopwatch = Stopwatch.StartNew();
+            try
+            {
+                var token = await System.IO.File.ReadAllTextAsync($"{serviceAccountPath}/token", cancellationToken);
+                var namespaceName = System.IO.File.Exists($"{serviceAccountPath}/namespace")
+                    ? (await System.IO.File.ReadAllTextAsync($"{serviceAccountPath}/namespace", cancellationToken)).Trim()
+                    : "default";
+                using var request = new HttpRequestMessage(HttpMethod.Get,
+                    $"https://{host}:{port}/api/v1/namespaces/{Uri.EscapeDataString(namespaceName)}/pods");
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token.Trim());
+                using var client = _httpClientFactory.CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(5);
+                using var response = await client.SendAsync(request, cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    services.Add(Service("kubernetes", "Kubernetes Pods", "Infrastructure", "down", stopwatch.ElapsedMilliseconds,
+                        $"Kubernetes API returned HTTP {(int)response.StatusCode}.", $"Namespace {namespaceName}"));
+                    return null;
+                }
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                var pods = document.RootElement.GetProperty("items").EnumerateArray().ToList();
+                var running = pods.Count(pod => pod.GetProperty("status").TryGetProperty("phase", out var phase) && phase.GetString() == "Running");
+                var ready = pods.Count(pod => pod.GetProperty("status").TryGetProperty("containerStatuses", out var containers)
+                    && containers.ValueKind == JsonValueKind.Array && containers.EnumerateArray().All(container => container.GetProperty("ready").GetBoolean()));
+                var healthy = pods.Count > 0 && running == pods.Count && ready == pods.Count;
+                services.Add(Service("kubernetes", "Kubernetes Pods", "Infrastructure", healthy ? "healthy" : "warning",
+                    stopwatch.ElapsedMilliseconds, $"{ready}/{pods.Count} pods ready; {running} running.", $"Namespace {namespaceName}"));
+                return running;
+            }
+            catch (Exception exception)
+            {
+                services.Add(Service("kubernetes", "Kubernetes Pods", "Infrastructure", "down", stopwatch.ElapsedMilliseconds,
+                    SafeMessage(exception), "Kubernetes API"));
+                return null;
             }
         }
 

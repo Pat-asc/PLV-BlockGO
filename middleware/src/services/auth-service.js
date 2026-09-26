@@ -22,9 +22,19 @@ const emailService = createEmailService();
 async function recordSecurityEvent(req, eventType, severity, attemptedIdentity, details) {
     try {
         await dbWrite.query(
-            `INSERT INTO security_events
+            `WITH inserted AS (
+             INSERT INTO security_events
                 (event_type, severity, attempted_identity, ip_address, request_path, request_method, details)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING security_event_id, event_type, severity, attempted_identity, created_at
+             )
+             SELECT pg_notify('blockgo_security_event', json_build_object(
+                'eventId', security_event_id,
+                'eventType', event_type,
+                'severity', severity,
+                'attemptedIdentity', attempted_identity,
+                'createdAt', created_at
+             )::text) FROM inserted`,
             [eventType, severity, attemptedIdentity || null, req.ip || req.socket?.remoteAddress || null, req.originalUrl || req.path, req.method, details]
         );
     } catch (error) {

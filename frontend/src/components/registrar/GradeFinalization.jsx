@@ -10,7 +10,7 @@ import {
   STUDENT_PUBLISHED_GRADES_KEY,
   upsertPublishedStudentGrades,
 } from "../../utils/publishedGradesHelpers";
-import { fetchAllGrades, finalizeGrade } from "../../services/api";
+import { fetchAllGrades, finalizeGrade, releaseFinalizedGrades } from "../../services/api";
 import { isChairpersonForwardedGradeStatus, isDepartmentApprovedGradeStatus } from "../../utils/gradeStatus";
 import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from "../../utils/studentAcademicHelpers";
 
@@ -190,6 +190,7 @@ function GradeFinalization({ allGrades = {} }) {
   );
   const [publishedAtByKey, setPublishedAtByKey] = useState({});
   const [ledgerPendingGrades, setLedgerPendingGrades] = useState([]);
+  const [finalizedGrades, setFinalizedGrades] = useState([]);
   const [ledgerLoading, setLedgerLoading] = useState(true);
   const [finalizingGroup, setFinalizingGroup] = useState("");
   const [ledgerNotice, setLedgerNotice] = useState("");
@@ -202,6 +203,7 @@ function GradeFinalization({ allGrades = {} }) {
       setLedgerPendingGrades(records.filter((record) =>
         isDepartmentApprovedGradeStatus(record.status || record.Status || record.normalized_status)
       ));
+      setFinalizedGrades(records.filter((record) => String(record.status || record.Status || '').toLowerCase() === 'finalized'));
     } catch (error) {
       setLedgerNotice(error.message || "Unable to load grades awaiting ledger finalization.");
     } finally {
@@ -252,6 +254,20 @@ function GradeFinalization({ allGrades = {} }) {
     } finally {
       await loadLedgerPendingGrades();
       setFinalizingGroup("");
+    }
+  };
+
+  const handleReleaseFinalizedGrades = async () => {
+    if (!finalizedGrades.length) return;
+    if (!window.confirm(`Release ${finalizedGrades.length} finalized grade record(s) to Student accounts?`)) return;
+    setLedgerNotice("");
+    try {
+      const response = await releaseFinalizedGrades({
+        recordIds: finalizedGrades.map((record) => record.id || record.Id),
+      });
+      setLedgerNotice(`${response.released || 0} finalized grade record(s) released to students.`);
+    } catch (error) {
+      setLedgerNotice(`Grade release failed: ${error.message}`);
     }
   };
 
@@ -574,7 +590,10 @@ function GradeFinalization({ allGrades = {} }) {
             <h3 className="text-xl font-bold text-[#003366]">Grades Pending Ledger Entry</h3>
             <p className="mt-1 text-sm text-slate-500">Only Chairperson-approved and forwarded staging records can be finalized.</p>
           </div>
-          <button type="button" onClick={loadLedgerPendingGrades} disabled={ledgerLoading || !!finalizingGroup} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60">Refresh Staging</button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={loadLedgerPendingGrades} disabled={ledgerLoading || !!finalizingGroup} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60">Refresh Staging</button>
+            <button type="button" onClick={handleReleaseFinalizedGrades} disabled={!finalizedGrades.length} className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">Release Grades to Students ({finalizedGrades.length})</button>
+          </div>
         </div>
         {ledgerNotice ? <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700" role="status">{ledgerNotice}</p> : null}
         {ledgerLoading ? <p className="mt-4 text-sm text-slate-500">Loading approved grades…</p> : ledgerGroups.length === 0 ? <p className="mt-4 rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No grades approved and forwarded for ledger finalization.</p> : (

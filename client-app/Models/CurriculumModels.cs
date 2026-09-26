@@ -70,6 +70,11 @@ namespace Client_app.Models
         [Required, EmailAddress] public string StudentEmail { get; set; } = string.Empty;
     }
 
+    public sealed class AssignCurriculumBatchRequest
+    {
+        [Range(2000, 9999)] public int BatchYear { get; set; }
+    }
+
     public sealed class CurriculumSubjectDto
     {
         public long SubjectId { get; set; }

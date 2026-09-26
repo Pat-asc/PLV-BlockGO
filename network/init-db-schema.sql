@@ -221,6 +221,16 @@ CREATE TABLE IF NOT EXISTS program_curriculum_assignments (
 CREATE INDEX IF NOT EXISTS idx_program_curriculum_assignment_curriculum
     ON program_curriculum_assignments(curriculum_id);
 
+CREATE TABLE IF NOT EXISTS curriculum_batch_assignments (
+    program_id INTEGER NOT NULL REFERENCES academic_programs(program_id) ON DELETE CASCADE,
+    batch_year INTEGER NOT NULL CHECK (batch_year BETWEEN 2000 AND 9999),
+    curriculum_id BIGINT NOT NULL REFERENCES curriculums(curriculum_id) ON DELETE RESTRICT,
+    assigned_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    assigned_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (program_id, batch_year)
+);
+
 CREATE TABLE IF NOT EXISTS support_tickets (
     ticket_id BIGSERIAL PRIMARY KEY,
     registrar_id INTEGER NOT NULL REFERENCES users(id),
@@ -237,6 +247,17 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     CONSTRAINT ck_support_ticket_severity CHECK (severity IN ('LOW', 'NORMAL', 'HIGH', 'CRITICAL')),
     CONSTRAINT ck_support_ticket_status CHECK (status IN ('OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED')),
     CONSTRAINT ck_support_ticket_specialist CHECK (assigned_specialist IS NULL OR assigned_specialist IN ('IT_ADMIN', 'FRONTEND_DEVELOPER', 'BACKEND_DEVELOPER', 'NETWORK_SPECIALIST'))
+);
+
+CREATE TABLE IF NOT EXISTS support_ticket_attachments (
+    attachment_id BIGSERIAL PRIMARY KEY,
+    ticket_id BIGINT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    original_file_name VARCHAR(255) NOT NULL,
+    content_type VARCHAR(100) NOT NULL,
+    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0 AND size_bytes <= 5242880),
+    content BYTEA NOT NULL,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS password_reset_requests (
@@ -284,6 +305,7 @@ CREATE TABLE IF NOT EXISTS academicsections (
     department VARCHAR(255) NOT NULL,
     year_level INT NOT NULL CHECK (year_level BETWEEN 1 AND 4),
     section_num INT NOT NULL CHECK (section_num > 0),
+    max_capacity INT NOT NULL DEFAULT 40 CHECK (max_capacity BETWEEN 1 AND 500),
     UNIQUE (department, year_level, section_num)
 );
 CREATE TABLE IF NOT EXISTS facultysections (
@@ -325,11 +347,51 @@ CREATE TABLE IF NOT EXISTS student_enrollments (
     section VARCHAR(50),
     status VARCHAR(20) NOT NULL DEFAULT 'ENROLLED'
         CHECK (status IN ('ENROLLED', 'DROPPED', 'WITHDRAWN', 'COMPLETED')),
+    enrollment_state VARCHAR(20) NOT NULL DEFAULT 'PLANNING'
+        CHECK (enrollment_state IN ('PLANNING', 'FINALIZED')),
+    finalized_at TIMESTAMP WITH TIME ZONE,
+    finalized_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    nstp_option VARCHAR(100),
     enrolled_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     enrolled_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (student_user_id, school_year, semester)
 );
+
+CREATE TABLE IF NOT EXISTS nstp_options (
+    option_code VARCHAR(50) PRIMARY KEY,
+    option_name VARCHAR(150) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS grade_releases (
+    record_id VARCHAR(255) PRIMARY KEY,
+    student_identifier VARCHAR(255) NOT NULL,
+    school_year VARCHAR(20) NOT NULL,
+    semester VARCHAR(20) NOT NULL,
+    term VARCHAR(20),
+    released_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    released_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS academic_periods (
+    academic_period_id BIGSERIAL PRIMARY KEY,
+    school_year VARCHAR(20) NOT NULL,
+    semester VARCHAR(20) NOT NULL CHECK (semester IN ('FIRST', 'SECOND', 'MIDYEAR')),
+    term VARCHAR(20) NOT NULL CHECK (term IN ('midterm', 'finals')),
+    start_date DATE,
+    end_date DATE,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'CLOSED')),
+    opened_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    opened_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE (school_year, semester, term),
+    CHECK (start_date IS NULL OR end_date IS NULL OR end_date >= start_date)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_academic_period_active
+    ON academic_periods ((status)) WHERE status = 'ACTIVE';
 
 CREATE TABLE IF NOT EXISTS student_id_sequences (
     enrollment_year INTEGER PRIMARY KEY CHECK (enrollment_year BETWEEN 2000 AND 9999),

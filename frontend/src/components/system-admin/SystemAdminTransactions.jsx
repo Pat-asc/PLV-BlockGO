@@ -41,14 +41,18 @@ function SystemAdminTransactions() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    const refresh = () => load();
-    window.addEventListener('blockgo:transaction-recorded', refresh);
-    window.addEventListener('blockgo:academic-data-changed', refresh);
-    return () => {
-      window.removeEventListener('blockgo:transaction-recorded', refresh);
-      window.removeEventListener('blockgo:academic-data-changed', refresh);
+    const append = (event) => {
+      if (!event?.detail) return;
+      const liveRecord = { ...event.detail, recordSource: event.detail.recordSource || 'application' };
+      setRecords((current) => [liveRecord, ...current.filter((record) =>
+        String(value(record, 'auditId', 'transactionId')) !== String(value(liveRecord, 'auditId', 'transactionId')))]);
+      setPage(1);
     };
-  }, [load]);
+    window.addEventListener('blockgo:transaction-recorded', append);
+    return () => {
+      window.removeEventListener('blockgo:transaction-recorded', append);
+    };
+  }, []);
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -63,7 +67,7 @@ function SystemAdminTransactions() {
       <div className="border-b border-slate-300 pb-5">
         <p className="text-xs font-bold uppercase text-slate-500">System Administration</p>
         <h2 className="mt-1 text-2xl font-bold text-[#003366]">Application & Blockchain Transactions</h2>
-        <p className="mt-2 text-sm text-slate-600">Read-only activity with automatic SignalR refresh. Ten transactions are shown per page.</p>
+        <p className="mt-2 text-sm text-slate-600">Read-only history with live SignalR transaction insertion. Ten transactions are shown per page.</p>
       </div>
       <form className="grid gap-3 rounded-md border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_220px_auto]" onSubmit={(event) => { event.preventDefault(); load(); }}>
         <label className="text-sm font-semibold text-slate-700">Search

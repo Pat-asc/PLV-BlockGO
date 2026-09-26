@@ -140,12 +140,11 @@ namespace Client_app.Controllers
                 JOIN academicsections s ON s.id = se.academic_section_id
                     AND s.year_level = se.year_level
                     AND LOWER(TRIM(s.department)) IN (LOWER(TRIM(p.program_code)), LOWER(TRIM(p.program_name)))
-                JOIN program_curriculum_assignments pca ON pca.program_id = p.program_id
-                JOIN curriculums c ON c.curriculum_id = pca.curriculum_id
+                JOIN curriculums c ON c.curriculum_id = se.curriculum_id
                     AND c.program_id = p.program_id AND c.status IN ('PUBLISHED', 'ARCHIVED')
                 WHERE LOWER(u.email) = LOWER(@email)
                   AND LOWER(u.role) = 'student' AND LOWER(u.status) = 'approved' AND u.is_active
-                  AND se.status = 'ENROLLED';", connection);
+                  AND se.status = 'ENROLLED' AND se.enrollment_state = 'FINALIZED';", connection);
             enrollment.Parameters.AddWithValue("email", email);
             string studentNo, schoolYear, semester, programCode, department;
             long enrollmentId;
@@ -349,6 +348,7 @@ namespace Client_app.Controllers
                                COALESCE(grade.transaction_hash, '') AS transaction_hash,
                                COALESCE(grade.recorded_at::text, '') AS recorded_at
                         FROM pending_grade_records grade
+                        JOIN grade_releases release ON release.record_id = grade.id
                         JOIN users student ON LOWER(student.email) = LOWER(@email)
                           AND LOWER(student.role) = 'student'
                         JOIN studentprofiles sp ON sp.user_id = student.id
@@ -619,7 +619,7 @@ namespace Client_app.Controllers
                 FROM users u
                 JOIN studentprofiles sp ON sp.user_id = u.id
                 LEFT JOIN LATERAL (
-                    SELECT se.program_id
+                    SELECT se.program_id, se.curriculum_id
                     FROM student_enrollments se
                     WHERE se.student_user_id = u.id
                     ORDER BY se.updated_at DESC, se.enrollment_id DESC LIMIT 1
@@ -627,8 +627,7 @@ namespace Client_app.Controllers
                 JOIN academic_programs p ON p.program_id = enrollment.program_id
                     OR (enrollment.program_id IS NULL AND
                         (LOWER(p.program_name) = LOWER(sp.department) OR LOWER(p.program_code) = LOWER(sp.department)))
-                JOIN program_curriculum_assignments pca ON pca.program_id = p.program_id
-                JOIN curriculums c ON c.curriculum_id = pca.curriculum_id
+                JOIN curriculums c ON c.curriculum_id = enrollment.curriculum_id
                 JOIN curriculum_subjects cs ON cs.curriculum_id = c.curriculum_id
                 WHERE LOWER(u.email) = LOWER(@email)
                   AND c.status IN ('PUBLISHED', 'ARCHIVED')
@@ -681,10 +680,23 @@ namespace Client_app.Controllers
             var responseJson = await _blockchain.GetAllGradesAsync(email);
             using var document = JsonDocument.Parse(responseJson);
             var data = document.RootElement.TryGetProperty("data", out var nested) ? nested : document.RootElement;
+            var releasedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using (var connection = new NpgsqlConnection(_connectionString))
+            {
+                await connection.OpenAsync();
+                await using var command = new NpgsqlCommand(@"
+                    SELECT record_id FROM grade_releases
+                    WHERE LOWER(student_identifier) IN (LOWER(@email), LOWER(@studentNo));", connection);
+                command.Parameters.AddWithValue("email", email);
+                command.Parameters.AddWithValue("studentNo", studentNo);
+                await using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync()) releasedIds.Add(reader.GetString(0));
+            }
             return (JsonSerializer.Deserialize<List<AcademicRecord>>(data.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                     ?? new List<AcademicRecord>())
                 .Where(record => StudentSubjectGradeResolver.MatchesStudent(record, email, studentNo)
-                    && string.Equals(record.Status?.Trim(), "Finalized", StringComparison.OrdinalIgnoreCase))
+                    && string.Equals(record.Status?.Trim(), "Finalized", StringComparison.OrdinalIgnoreCase)
+                    && releasedIds.Contains(record.Id))
                 .ToList();
         }
 
@@ -777,7 +789,7 @@ namespace Client_app.Controllers
                 FROM users u
                 JOIN studentprofiles sp ON sp.user_id = u.id
                 LEFT JOIN LATERAL (
-                    SELECT se.program_id
+                    SELECT se.program_id, se.curriculum_id
                     FROM student_enrollments se
                     WHERE se.student_user_id = u.id
                     ORDER BY se.updated_at DESC, se.enrollment_id DESC
@@ -786,8 +798,7 @@ namespace Client_app.Controllers
                 JOIN academic_programs p ON p.program_id = enrollment.program_id
                     OR (enrollment.program_id IS NULL AND
                         (LOWER(p.program_name) = LOWER(sp.department) OR LOWER(p.program_code) = LOWER(sp.department)))
-                JOIN program_curriculum_assignments pca ON pca.program_id = p.program_id
-                JOIN curriculums c ON c.curriculum_id = pca.curriculum_id
+                JOIN curriculums c ON c.curriculum_id = enrollment.curriculum_id
                     AND c.status IN ('PUBLISHED', 'ARCHIVED')
                 JOIN curriculum_subjects cs ON cs.curriculum_id = c.curriculum_id
                 WHERE LOWER(u.email) = LOWER(@email);";

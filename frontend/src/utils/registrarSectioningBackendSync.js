@@ -76,6 +76,7 @@ export const syncSectioningBatchToBackend = async (batch = {}) => {
           department,
           yearLevel,
           sectionNum,
+          maxCapacity: Number(section.maxCapacity || 40),
         });
         sectionsSynced += 1;
         backendSection = {

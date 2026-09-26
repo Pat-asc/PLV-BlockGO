@@ -22,6 +22,8 @@ public static class FacultyAccountFile
             ["program"] = "program_code",
             ["department"] = "program_code",
             ["type"] = "faculty_type",
+            ["account_role"] = "role",
+            ["staff_role"] = "role",
             ["password"] = "temporary_password",
             ["temp_password"] = "temporary_password"
         };
@@ -39,20 +41,20 @@ public static class FacultyAccountFile
             ExceptionMessagesContainRawData = false
         };
         using var csv = new CsvReader(reader, configuration);
-        if (!csv.Read()) throw new ArgumentException("The faculty account file is empty.");
+        if (!csv.Read()) throw new ArgumentException("The staff account file is empty.");
         csv.ReadHeader();
         var headers = (csv.HeaderRecord ?? Array.Empty<string>()).Select(NormalizeHeader).ToArray();
         if (headers.Any(string.IsNullOrWhiteSpace) || headers.Distinct(StringComparer.OrdinalIgnoreCase).Count() != headers.Length)
-            throw new ArgumentException("Faculty account column headings must be non-empty and unique.");
+            throw new ArgumentException("Staff account column headings must be non-empty and unique.");
         var missing = RequiredHeaders.Where(required => !headers.Contains(required, StringComparer.OrdinalIgnoreCase)).ToArray();
         if (missing.Length > 0)
-            throw new ArgumentException($"Missing required faculty account columns: {string.Join(", ", missing)}.");
+            throw new ArgumentException($"Missing required staff account columns: {string.Join(", ", missing)}.");
 
         var rows = new List<FacultyAccountRow>();
         while (csv.Read())
         {
             if (rows.Count >= maximumRows)
-                throw new ArgumentException($"A faculty account upload can contain at most {maximumRows} rows.");
+                throw new ArgumentException($"A staff account upload can contain at most {maximumRows} rows.");
             var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             for (var index = 0; index < headers.Length; index++)
                 values[headers[index]] = index < csv.Parser.Count ? csv.GetField(index)?.Trim() ?? string.Empty : string.Empty;
@@ -64,13 +66,13 @@ public static class FacultyAccountFile
                 MiddleName = OptionalValue(values, "middle_name"),
                 LastName = Value(values, "last_name"),
                 Email = Value(values, "email"),
-                Role = "faculty",
+                Role = NormalizeRole(OptionalValue(values, "role")),
                 ProgramCode = Value(values, "program_code"),
                 FacultyType = OptionalValue(values, "faculty_type") ?? "Regular",
                 Password = Value(values, "temporary_password")
             }));
         }
-        if (rows.Count == 0) throw new ArgumentException("The faculty account file has headings but no account rows.");
+        if (rows.Count == 0) throw new ArgumentException("The staff account file has headings but no account rows.");
         return rows;
     }
 
@@ -85,4 +87,15 @@ public static class FacultyAccountFile
 
     private static string? OptionalValue(IReadOnlyDictionary<string, string> values, string key) =>
         values.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
+
+    private static string NormalizeRole(string? value)
+    {
+        var role = (value ?? "faculty").Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return role switch
+        {
+            "faculty" => "faculty",
+            "chairperson" or "department_head" or "department_admin" => "department_admin",
+            _ => throw new ArgumentException("Staff role must be Faculty or Chairperson/Department Head.")
+        };
+    }
 }
