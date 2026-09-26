@@ -25,6 +25,8 @@ temp/
 *.cache
 *.cache.json
 /tests/*
+!/tests/KubernetesPodHealthTests/
+!/tests/KubernetesPodHealthTests/**
 !/tests/AssignmentRegressionTests/
 !/tests/AssignmentRegressionTests/AssignmentRegressionTests.csproj
 !/tests/AssignmentRegressionTests/Program.cs

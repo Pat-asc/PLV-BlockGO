@@ -6,6 +6,7 @@ const REFRESH_INTERVAL_MS = 30000;
 const statusStyles = {
   healthy: 'border-emerald-300 bg-emerald-50 text-emerald-800',
   warning: 'border-amber-300 bg-amber-50 text-amber-800',
+  unavailable: 'border-amber-300 bg-amber-50 text-amber-800',
   down: 'border-red-300 bg-red-50 text-red-800',
   not_configured: 'border-slate-300 bg-slate-100 text-slate-700',
   checking: 'border-blue-200 bg-blue-50 text-blue-800',

@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Client_app.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
@@ -268,11 +269,14 @@ namespace Client_app.Controllers
             var process = Process.GetCurrentProcess();
             var serviceStatuses = services.Select(item => JsonSerializer.Serialize(item)).ToArray();
             var hasDownService = serviceStatuses.Any(item => item.Contains("\"status\":\"down\"", StringComparison.Ordinal));
+            var hasUnavailableService = serviceStatuses.Any(item =>
+                item.Contains("\"status\":\"unavailable\"", StringComparison.Ordinal) ||
+                item.Contains("\"status\":\"warning\"", StringComparison.Ordinal));
             var hasCriticalAlert = alerts.Any(item => JsonSerializer.Serialize(item).Contains("\"severity\":\"critical\"", StringComparison.OrdinalIgnoreCase));
             return Ok(new
             {
                 generatedAt = DateTimeOffset.UtcNow,
-                status = hasDownService ? "down" : hasCriticalAlert || alerts.Count > 0 ? "warning" : "healthy",
+                status = hasDownService ? "down" : hasUnavailableService || hasCriticalAlert || alerts.Count > 0 ? "warning" : "healthy",
                 services,
                 database,
                 runtime = new
@@ -523,50 +527,19 @@ namespace Client_app.Controllers
         private async Task<int?> AddKubernetesHealthAsync(List<object> services, CancellationToken cancellationToken)
         {
             const string serviceAccountPath = "/var/run/secrets/kubernetes.io/serviceaccount";
-            var host = Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_HOST");
-            var port = Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_PORT_HTTPS") ?? "443";
-            if (string.IsNullOrWhiteSpace(host) || !System.IO.File.Exists($"{serviceAccountPath}/token"))
-            {
-                services.Add(Service("kubernetes", "Kubernetes Pods", "Infrastructure", "not_configured", 0,
-                    "In-cluster Kubernetes service-account access is unavailable.", "Kubernetes API"));
-                return null;
-            }
-
-            var stopwatch = Stopwatch.StartNew();
-            try
-            {
-                var token = await System.IO.File.ReadAllTextAsync($"{serviceAccountPath}/token", cancellationToken);
-                var namespaceName = System.IO.File.Exists($"{serviceAccountPath}/namespace")
-                    ? (await System.IO.File.ReadAllTextAsync($"{serviceAccountPath}/namespace", cancellationToken)).Trim()
-                    : "default";
-                using var request = new HttpRequestMessage(HttpMethod.Get,
-                    $"https://{host}:{port}/api/v1/namespaces/{Uri.EscapeDataString(namespaceName)}/pods");
-                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token.Trim());
-                using var client = _httpClientFactory.CreateClient();
-                client.Timeout = TimeSpan.FromSeconds(5);
-                using var response = await client.SendAsync(request, cancellationToken);
-                if (!response.IsSuccessStatusCode)
-                {
-                    services.Add(Service("kubernetes", "Kubernetes Pods", "Infrastructure", "down", stopwatch.ElapsedMilliseconds,
-                        $"Kubernetes API returned HTTP {(int)response.StatusCode}.", $"Namespace {namespaceName}"));
-                    return null;
-                }
-                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-                var pods = document.RootElement.GetProperty("items").EnumerateArray().ToList();
-                var running = pods.Count(pod => pod.GetProperty("status").TryGetProperty("phase", out var phase) && phase.GetString() == "Running");
-                var ready = pods.Count(pod => pod.GetProperty("status").TryGetProperty("containerStatuses", out var containers)
-                    && containers.ValueKind == JsonValueKind.Array && containers.EnumerateArray().All(container => container.GetProperty("ready").GetBoolean()));
-                var healthy = pods.Count > 0 && running == pods.Count && ready == pods.Count;
-                services.Add(Service("kubernetes", "Kubernetes Pods", "Infrastructure", healthy ? "healthy" : "warning",
-                    stopwatch.ElapsedMilliseconds, $"{ready}/{pods.Count} pods ready; {running} running.", $"Namespace {namespaceName}"));
-                return running;
-            }
-            catch (Exception exception)
-            {
-                services.Add(Service("kubernetes", "Kubernetes Pods", "Infrastructure", "down", stopwatch.ElapsedMilliseconds,
-                    SafeMessage(exception), "Kubernetes API"));
-                return null;
-            }
+            const string kubernetesApiHost = "kubernetes.default.svc";
+            var result = await KubernetesPodHealthProbe.CheckAsync(
+                new KubernetesPodHealthOptions(
+                    kubernetesApiHost,
+                    Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_PORT_HTTPS")
+                        ?? Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_PORT")
+                        ?? "443",
+                    serviceAccountPath,
+                    TimeSpan.FromSeconds(5)),
+                cancellationToken);
+            services.Add(Service("kubernetes", "Kubernetes Pods", "Infrastructure", result.Status,
+                result.LatencyMs, result.Message, result.Target));
+            return result.RunningPods;
         }
 
         private bool TryGetCouchDbTarget(string target, out string targetUrl, out IActionResult? failure)
