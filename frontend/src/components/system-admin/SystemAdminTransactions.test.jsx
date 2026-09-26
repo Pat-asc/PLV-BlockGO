@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import SystemAdminTransactions from './SystemAdminTransactions';
 import { fetchApplicationTransactions, fetchLedgerTransactions } from '../../services/api';
 
@@ -13,12 +13,16 @@ beforeEach(() => {
   fetchLedgerTransactions.mockResolvedValue({ data: [] });
 });
 
-test('shows ten transactions per page and refreshes from the SignalR browser event', async () => {
+test('shows ten transactions per page and appends the SignalR transaction payload', async () => {
   render(<SystemAdminTransactions />);
   expect(await screen.findByText('ACTION_11')).toBeInTheDocument();
   expect(screen.queryByText('ACTION_1')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Next' }));
   expect(screen.getByText('ACTION_1')).toBeInTheDocument();
-  fireEvent(window, new CustomEvent('blockgo:transaction-recorded'));
-  await waitFor(() => expect(fetchApplicationTransactions).toHaveBeenCalledTimes(2));
+  fireEvent(window, new CustomEvent('blockgo:transaction-recorded', { detail: {
+    auditId: 99, action: 'LIVE_ACTION', actor: 'Registrar', entityId: 'record-live',
+    actorRole: 'registrar', occurredAt: '2026-09-25T01:00:00Z',
+  } }));
+  expect(await screen.findByText('LIVE_ACTION')).toBeInTheDocument();
+  expect(fetchApplicationTransactions).toHaveBeenCalledTimes(1);
 });

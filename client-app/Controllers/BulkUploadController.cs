@@ -71,6 +71,7 @@ namespace BlockGo.Controllers
                 JOIN academic_programs p
                   ON LOWER(s.department) IN (LOWER(p.program_name), LOWER(p.program_code))
                 WHERE LOWER(@department) IN (LOWER(p.program_name), LOWER(p.program_code))
+                  AND s.is_active = TRUE
                   AND s.year_level = @yearLevel AND s.section_num = @sectionNumber
                   AND p.is_active = TRUE
                   AND EXISTS (

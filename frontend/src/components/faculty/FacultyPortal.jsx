@@ -198,7 +198,7 @@ const getAcademicStatus = (student = {}) => {
 const FacultyPortal = ({ facultyData, onLogout }) => {
   const [portalView, setPortalView] = useState('grades');
   const [activeSection, setActiveSection] = useState(null);
-  const [activeTab, setActiveTab] = useState("All Sections");
+  const [activeTab, setActiveTab] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [rowSaveState, setRowSaveState] = useState({});
   const [sectionStatus, setSectionStatus] = useState({});
@@ -1275,11 +1275,11 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             {isLoadingData ? (
               <div className="col-span-full py-10 text-center text-slate-500">Loading assigned sections and enrolled students...</div>
             ) : Object.keys(sections).length === 0 ? (
-              <div className="col-span-full py-10 text-center text-slate-500">No sections are currently assigned to you.</div>
+              <div className="col-span-full py-10 text-center text-slate-500">No active sections are currently assigned to your account.</div>
             ) : (
               Object.entries(sections)
               .filter(([name, data]) => {
-                const matchesTab = activeTab === "All Sections" || data.year === activeTab;
+                const matchesTab = data.year === activeTab;
                 const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase());
                 return matchesTab && matchesSearch;
               })

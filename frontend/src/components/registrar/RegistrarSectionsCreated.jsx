@@ -12,7 +12,7 @@ import {
 } from "../../utils/studentSectioningHelpers";
 import { syncSectioningBatchesToBackend } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
-import { fetchNextStudentId } from "../../services/api";
+import { deleteAcademicSection, fetchDepartmentSections, fetchNextStudentId } from "../../services/api";
 
 const GRADUATING_STUDENTS_KEY = "graduatingStudents";
 const IRREGULAR_SUBJECTS_KEY = "irregularSubjectAssignments";
@@ -346,17 +346,39 @@ function RegistrarSectionsCreated() {
     }));
   };
 
-  const handleDeleteSection = () => {
+  const handleDeleteSection = async () => {
     if (!selectedBatch || !selectedSection) return;
 
     const sectionName =
       selectedSection.sectionName ||
       getDefaultSectionName(selectedBatch.program, selectedSection.sectionCode);
     const confirmed = window.confirm(
-      `Delete ${sectionName}? This will remove the section and all students assigned to it.`
+      `Remove ${sectionName} from active sectioning? Planning assignments will be cleared; finalized academic history will be retained.`
     );
 
     if (!confirmed) return;
+
+    let canonicalId = selectedSection.academicSectionId || selectedSection.id;
+    if (!canonicalId && selectedBatch.program) {
+      try {
+        const response = await fetchDepartmentSections(selectedBatch.program);
+        const [yearLevel, sectionNum] = String(selectedSection.sectionCode).split("-");
+        canonicalId = (response.data || response.sections || []).find(
+          (candidate) => String(candidate.yearLevel) === yearLevel && String(candidate.sectionNum) === sectionNum
+        )?.id;
+      } catch (error) {
+        alert(error.message || "The current section list could not be verified.");
+        return;
+      }
+    }
+    if (canonicalId) {
+      try {
+        await deleteAcademicSection(canonicalId);
+      } catch (error) {
+        alert(error.message || "The section could not be deleted.");
+        return;
+      }
+    }
 
     updateSelectedBatch((batch) => ({
       ...batch,

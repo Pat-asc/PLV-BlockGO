@@ -2,6 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import RegistrarStudentSectioning, { buildSectionTemplateDownload } from './RegistrarStudentSectioning';
 import {
+  deleteAcademicSection,
   fetchDepartmentSections,
   fetchNextStudentId,
   fetchSectionedEnrolledStudents,
@@ -12,6 +13,7 @@ import { syncSectioningBatchToBackend } from '../../utils/registrarSectioningBac
 import { STUDENT_BATCHES_KEY } from '../../utils/studentSectioningHelpers';
 
 jest.mock('../../services/api', () => ({
+  deleteAcademicSection: jest.fn(),
   fetchDepartmentSections: jest.fn(),
   fetchNextStudentId: jest.fn(),
   fetchSectionedEnrolledStudents: jest.fn(),
@@ -28,6 +30,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   localStorage.clear();
   window.alert = jest.fn();
+  window.confirm = jest.fn(() => true);
+  deleteAcademicSection.mockResolvedValue({ status: 'Success', mode: 'deleted' });
   fetchNextStudentId.mockResolvedValue({ highestSequence: 42 });
   getSystemSetting.mockResolvedValue({ status: 'Success', value: { schoolYear: '2026-2027', semester: 'FIRST' } });
   fetchUnassignedEnrolledStudents.mockImplementation(async (period) => ({ data: [{ ...student, ...period }] }));
@@ -156,6 +160,22 @@ test('Section Creator removes the global template button and exposes one accessi
   expect(actions).toHaveLength(2);
   expect(screen.queryByRole('button', { name: 'Download Template' })).not.toBeInTheDocument();
   actions.forEach((action) => expect(action).toHaveClass('min-h-8'));
+});
+
+test('deleting a persisted section updates the API and reloads canonical section state', async () => {
+  fetchDepartmentSections
+    .mockResolvedValueOnce({ data: [
+      { id: 1, department: 'BS Information Technology', yearLevel: 1, sectionNum: 1 },
+      { id: 2, department: 'BS Information Technology', yearLevel: 1, sectionNum: 2 },
+    ] })
+    .mockResolvedValue({ data: [
+      { id: 2, department: 'BS Information Technology', yearLevel: 1, sectionNum: 2 },
+    ] });
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  const deleteButtons = await screen.findAllByRole('button', { name: 'Delete Section' });
+  fireEvent.click(deleteButtons[0]);
+  await waitFor(() => expect(deleteAcademicSection).toHaveBeenCalledWith(1));
+  await waitFor(() => expect(fetchDepartmentSections).toHaveBeenCalledTimes(2));
 });
 
 test('section template uses exact academic_section_id when display labels are duplicated', () => {

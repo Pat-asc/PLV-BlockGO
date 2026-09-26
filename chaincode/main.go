@@ -546,11 +546,10 @@ func (cc *SmartContract) updateGrade(stub shim.ChaincodeStubInterface, args []st
 		email = cert.Subject.CommonName
 	}
 
-	
 	if existing.FacultyID != submitterID && existing.FacultyID != email {
-		
+
 		if existing.Status == statusReturned && (role == "department_admin" || role == "deptAdmin" || role == "registrar") {
-			
+
 		} else {
 			return shim.Error("Only the original professor who issued the grade can update it")
 		}
@@ -817,15 +816,15 @@ func (cc *SmartContract) createAuditEvent(stub shim.ChaincodeStubInterface, args
 		return shim.Error("Invalid audit event: " + err.Error())
 	}
 	allowed := map[string]bool{
-		"REGISTRAR_ACCOUNT_CREATED": true,
-		"REGISTRAR_ACCOUNT_UPDATED": true,
-		"REGISTRAR_ACCOUNT_DELETED": true,
-		"CURRICULUM_APPROVED":       true,
-		"CURRICULUM_PUBLISHED":      true,
-		"CURRICULUM_ARCHIVED":       true,
+		"REGISTRAR_ACCOUNT_CREATED":   true,
+		"REGISTRAR_ACCOUNT_UPDATED":   true,
+		"REGISTRAR_ACCOUNT_DELETED":   true,
+		"CURRICULUM_APPROVED":         true,
+		"CURRICULUM_PUBLISHED":        true,
+		"CURRICULUM_ARCHIVED":         true,
 		"PROGRAM_CURRICULUM_ASSIGNED": true,
-		"CURRICULUM_BATCH_ASSIGNED": true,
-		"GRADES_RELEASED":           true,
+		"CURRICULUM_BATCH_ASSIGNED":   true,
+		"GRADES_RELEASED":             true,
 	}
 	if !allowed[event.EventType] {
 		return shim.Error("Unsupported audit event type")

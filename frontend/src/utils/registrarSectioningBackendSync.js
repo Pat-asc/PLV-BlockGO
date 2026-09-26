@@ -106,6 +106,12 @@ export const syncSectioningBatchToBackend = async (batch = {}) => {
         ) === normalizeSectionValue(yearLevel)
     );
 
+    // Retain the canonical ID so a later delete is a server operation rather
+    // than a browser-only removal that reappears after refresh.
+    if (backendSection?.id) {
+      section.id = Number(backendSection.id);
+      section.academicSectionId = Number(backendSection.id);
+    }
     if (!backendSection?.id || !sectionStudents.length) continue;
 
     const studentIds = [...new Set(sectionStudents.map((student) => student.studentId))];

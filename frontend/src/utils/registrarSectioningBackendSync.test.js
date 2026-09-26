@@ -17,6 +17,7 @@ const batch = {
 beforeEach(() => {
   jest.clearAllMocks();
   batch.students.forEach((student) => { delete student.academicSectionId; });
+  batch.sectionPlans.forEach((section) => { delete section.id; delete section.academicSectionId; });
   fetchDepartmentSections.mockResolvedValue({ data: [{ id: '7', department: 'Information Technology', yearLevel: '1', sectionNum: '1' }] });
   createSection.mockResolvedValue({ id: 8 });
   assignStudentsToSection.mockResolvedValue({ status: 'Success', assignedCount: 1, errors: [] });
@@ -34,6 +35,13 @@ test('creates a section and assigns its enrolled roster without a file upload', 
   expect(await syncSectioningBatchToBackend(batch)).toEqual({ sectionsSynced: 1, studentsSynced: 1 });
   expect(assignStudentsToSection).toHaveBeenCalledWith(8, ['26-0001'], expect.any(Object));
   expect(batchEnrollStudentsToSection).not.toHaveBeenCalled();
+});
+
+test('retains the canonical section ID even when an empty section has no students', async () => {
+  const emptyBatch = { ...batch, sectionPlans: [{ yearLevel: '1st Year', sectionCode: '1-1' }], students: [] };
+  await syncSectioningBatchToBackend(emptyBatch);
+  expect(emptyBatch.sectionPlans[0]).toEqual(expect.objectContaining({ id: 7, academicSectionId: 7 }));
+  expect(assignStudentsToSection).not.toHaveBeenCalled();
 });
 
 test('surfaces assignment errors without re-enrolling students', async () => {

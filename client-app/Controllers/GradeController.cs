@@ -1103,7 +1103,7 @@ namespace BlockGo.Controllers
                 int? workbookFacultySectionId = null;
 
                 var ext = Path.GetExtension(file.FileName).ToLower();
-                string NormalizeHeader(string s) => System.Text.RegularExpressions.Regex.Replace(s.Trim().ToLower(), @"[^a-z0-9]+", "_").Trim('_');
+                string NormalizeHeader(string s) => FacultyGradeWorkbookService.NormalizeHeader(s);
 
                 if (ext != ".csv" && ext != ".xlsx")
                     return BadRequest(new { status = "Error", message = "Only .csv and .xlsx files are supported." });
@@ -1119,10 +1119,15 @@ namespace BlockGo.Controllers
 
                     if (ext == ".xlsx")
                     {
+                        await using (var validationStream = System.IO.File.OpenRead(tempFile))
+                        {
+                            var parsedWorkbook = FacultyGradeWorkbookService.Parse(validationStream);
+                            workbookFacultySectionId = parsedWorkbook.FacultySectionId;
+                        }
                         using var workbook = new XLWorkbook(tempFile);
-                        var ws = workbook.Worksheet(1);
+                        var ws = workbook.Worksheet(FacultyGradeWorkbookService.GradeSheetName);
                         if (ws == null) return BadRequest(new { status = "Error", message = "The Excel file is empty." });
-                        if (!workbook.TryGetWorksheet("Assignment", out var assignmentSheet) ||
+                        if (!workbook.TryGetWorksheet(FacultyGradeWorkbookService.AssignmentSheetName, out var assignmentSheet) ||
                             !int.TryParse(assignmentSheet.Cell("B1").GetString(), out var embeddedFacultySectionId))
                             return BadRequest(new { status = "Error", message = "The workbook is not tied to an exact Faculty assignment. Download a fresh grading sheet." });
                         workbookFacultySectionId = embeddedFacultySectionId;
@@ -1213,6 +1218,7 @@ namespace BlockGo.Controllers
                     }
                     else if (ext == ".csv")
                     {
+                        var csvStudentIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                         using (var reader = new StreamReader(tempFile, System.Text.Encoding.UTF8))
                         {
                             string? line;
@@ -1261,7 +1267,14 @@ namespace BlockGo.Controllers
                                 }
 
                                 var sId = GetVal("student_id", "student_no", "id_number", "student_number");
-                                if (string.IsNullOrEmpty(sId)) continue;
+                                if (string.IsNullOrEmpty(sId))
+                                {
+                                    if (fields.Any(value => !string.IsNullOrWhiteSpace(value)))
+                                        return BadRequest(new { status = "ValidationError", message = $"Row {lineNum} — Student ID is required." });
+                                    continue;
+                                }
+                                if (!csvStudentIds.Add(sId))
+                                    return BadRequest(new { status = "ValidationError", message = $"Row {lineNum} — duplicate Student ID {sId}." });
 
                                 parsedRecords.Add(new GradeRequest
                                 {
@@ -1350,6 +1363,17 @@ namespace BlockGo.Controllers
                             {
                                 failureCount++;
                                 errors.Add(new BulkUploadError { StudentId = record.StudentId ?? "", Reason = "Uploaded subject does not match the selected faculty assignment." });
+                                continue;
+                            }
+                            var uploadedGradeValue = GetGradeLogValue(record.Grade, term);
+                            if (!decimal.TryParse(uploadedGradeValue, NumberStyles.Number, CultureInfo.InvariantCulture, out var numericGrade) ||
+                                numericGrade is < 60 or > 100)
+                            {
+                                failureCount++;
+                                errors.Add(new BulkUploadError {
+                                    StudentId = record.StudentId ?? "UNKNOWN",
+                                    Reason = $"The {term} grade must be a number from 60 to 100."
+                                });
                                 continue;
                             }
                             record.SubjectCode = facultyAssignment.Subject;
@@ -1588,6 +1612,10 @@ namespace BlockGo.Controllers
                     enrollmentId = ex.EnrollmentId,
                     internalStudentId = ex.StudentUserId
                 });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { status = "ValidationError", message = ex.Message });
             }
             catch (Exception ex)
             {
@@ -2684,7 +2712,7 @@ namespace BlockGo.Controllers
                             (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1))
                     ON CONFLICT (record_id) DO NOTHING;", connection, transaction);
                 command.Parameters.AddWithValue("recordId", record.Id);
-                command.Parameters.AddWithValue("student", record.StudentHash ?? record.StudentNo ?? "");
+                command.Parameters.AddWithValue("student", FirstNonBlank(record.StudentHash, record.StudentNo));
                 command.Parameters.AddWithValue("schoolYear", record.SchoolYear ?? "");
                 command.Parameters.AddWithValue("semester", record.Semester ?? "");
                 command.Parameters.AddWithValue("term", (object?)record.Term ?? DBNull.Value);
@@ -2698,7 +2726,7 @@ namespace BlockGo.Controllers
                 HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
 
-            foreach (var student in releasable.Select(record => record.StudentHash).Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase))
+            foreach (var student in releasable.Select(record => FirstNonBlank(record.StudentHash, record.StudentNo)).Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase))
                 await _chatHubContext.Clients.Group($"private_{student}").SendAsync("GradesReleased", new
                 {
                     schoolYear = request.SchoolYear,
@@ -2718,7 +2746,7 @@ namespace BlockGo.Controllers
                     var finRec = JsonSerializer.Deserialize<AcademicRecord>(recJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                     if (finRec != null && !string.IsNullOrEmpty(finRec.StudentHash) && finRec.StudentHash.Contains("@")) {
                         var subj = "PLV Academic Update: Grade Finalized";
-                        var htmlBody = $"<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;'><h2 style='color: #003366;'>Pamantasan ng Lungsod ng Valenzuela</h2><p>Hello,</p><p>Your grade for subject <strong>{finRec.SubjectCode}</strong> has been officially finalized and permanently recorded to the academic ledger.</p><p>You may view it on the Student Portal.</p></div>";
+                        var htmlBody = $"<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;'><h2 style='color: #003366;'>Pamantasan ng Lungsod ng Valenzuela</h2><p>Hello,</p><p>Your grade for subject <strong>{finRec.SubjectCode}</strong> has been officially finalized and permanently recorded to the academic ledger.</p><p>It will become visible in the Student Portal after the Registrar releases it.</p></div>";
                         await _emailService.SendEmailAsync(finRec.StudentHash, subj, htmlBody, true);
                     }
                 } catch (Exception ex) { _logger.LogWarning(ex, "Failed to send finalization notification to student."); }

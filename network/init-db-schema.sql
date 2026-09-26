@@ -306,6 +306,9 @@ CREATE TABLE IF NOT EXISTS academicsections (
     year_level INT NOT NULL CHECK (year_level BETWEEN 1 AND 4),
     section_num INT NOT NULL CHECK (section_num > 0),
     max_capacity INT NOT NULL DEFAULT 40 CHECK (max_capacity BETWEEN 1 AND 500),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    archived_at TIMESTAMP WITH TIME ZONE,
+    archived_by VARCHAR(255),
     UNIQUE (department, year_level, section_num)
 );
 CREATE TABLE IF NOT EXISTS facultysections (

@@ -39,6 +39,7 @@ public static class DotnetServiceTopology
                 "Client_app.Controllers.GradeTemplateController",
                 "Client_app.Controllers.SectioningController",
                 "Client_app.Controllers.RegistrarDashboardController",
+                "Client_app.Controllers.TranscriptController",
                 "Client_app.Controllers.SearchController"),
             [Grade] = ControllerSet(
                 "BlockGo.Controllers.GradesController",
@@ -126,6 +127,7 @@ public static class DotnetServiceTopology
             "/api/GradeTemplate", "/api/GradeTemplate/{**catch-all}",
             "/api/Sectioning", "/api/Sectioning/{**catch-all}",
             "/api/RegistrarDashboard", "/api/RegistrarDashboard/{**catch-all}",
+            "/api/Transcript", "/api/Transcript/{**catch-all}",
             "/api/registrar/Search", "/api/registrar/Search/{**catch-all}");
         AddRoutes(routes, Grade,
             "/api/Grades", "/api/Grades/{**catch-all}",

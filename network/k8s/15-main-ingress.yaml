@@ -188,6 +188,14 @@ spec:
             port:
               number: 5000
 
+      - path: /api/Transcript
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
+
       - path: /api/registrar
         pathType: Prefix
         backend:

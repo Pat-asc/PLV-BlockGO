@@ -42,7 +42,7 @@ public static class FacultyBulkAssignmentService
             FROM academicsections section
             JOIN academic_programs p
               ON LOWER(section.department) IN (LOWER(p.program_code), LOWER(p.program_name))
-            WHERE section.id = @academicSectionId AND p.is_active = TRUE
+            WHERE section.id = @academicSectionId AND section.is_active = TRUE AND p.is_active = TRUE
             LIMIT 1;", connection))
         {
             scope.Parameters.AddWithValue("academicSectionId", request.AcademicSectionId);
@@ -64,7 +64,7 @@ public static class FacultyBulkAssignmentService
                 FROM academicsections section
                 JOIN academic_programs p
                   ON LOWER(section.department) IN (LOWER(p.program_code), LOWER(p.program_name))
-                WHERE section.id = @academicSectionId AND p.is_active = TRUE
+                WHERE section.id = @academicSectionId AND section.is_active = TRUE AND p.is_active = TRUE
                 FOR SHARE OF section;", connection, transaction))
             {
                 section.Parameters.AddWithValue("academicSectionId", request.AcademicSectionId);

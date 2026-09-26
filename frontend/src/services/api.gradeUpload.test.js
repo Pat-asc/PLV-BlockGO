@@ -64,6 +64,16 @@ test('finals bulk upload sends the canonical term with the complete multipart id
   expect(options.body.get('section')).toBe('BSIT 1-1');
 });
 
+test('draft overwrite confirmation is explicit in multipart data', async () => {
+  await batchUploadGrades(new File(['xlsx'], 'grades.xlsx'), {
+    facultySectionId: 77, academicSectionId: 12, subjectCode: 'IT 101',
+    section: 'BSIT 1-1', schoolYear: '2026-2027', semester: 'FIRST',
+    term: 'midterm', confirmOverwrite: true,
+  });
+  const [, options] = global.fetch.mock.calls[0];
+  expect(options.body.get('confirmOverwrite')).toBe('true');
+});
+
 test('registrar finalization uses the current-cycle backend queue', async () => {
   await fetchRegistrarFinalizationQueue();
 

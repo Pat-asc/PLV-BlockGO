@@ -1,20 +1,32 @@
-import React from "react";
+import React, { useEffect, useMemo } from "react";
+
+const YEAR_ORDER = ["1st Year", "2nd Year", "3rd Year", "4th Year"];
 
 const YearTabs = ({ activeTab, setActiveTab, sections, className = "" }) => {
-  const totalSections = Object.keys(sections).length;
+  const activeSections = useMemo(() => Object.values(sections || {}), [sections]);
+  const totalSections = activeSections.length;
+  const tabData = useMemo(() => {
+    const years = [...new Set(activeSections.map((section) => section.year).filter(Boolean))];
+    years.sort((left, right) => {
+      const leftIndex = YEAR_ORDER.indexOf(left);
+      const rightIndex = YEAR_ORDER.indexOf(right);
+      if (leftIndex === -1 || rightIndex === -1) return left.localeCompare(right);
+      return leftIndex - rightIndex;
+    });
+    return years.map((label) => {
+      const count = activeSections.filter((section) => section.year === label).length;
+      return { label, count, progress: totalSections > 0 ? (count / totalSections) * 100 : 0 };
+    });
+  }, [activeSections, totalSections]);
 
-  const tabData = ["All Sections", "1st Year", "2nd Year", "3rd Year", "4th Year"].map(label => {
-    const count =
-      label === "All Sections"
-        ? totalSections
-        : Object.values(sections).filter(s => s.year === label).length;
-
-    return {
-      label,
-      count,
-      progress: totalSections > 0 ? (count / totalSections) * 100 : 0,
-    };
-  });
+  useEffect(() => {
+    const availableYears = tabData.map((tab) => tab.label);
+    if (!availableYears.length) {
+      if (activeTab) setActiveTab("");
+    } else if (!availableYears.includes(activeTab)) {
+      setActiveTab(availableYears[0]);
+    }
+  }, [activeTab, setActiveTab, tabData]);
 
   return (
     <div className={`flex min-w-0 gap-4 overflow-x-auto py-2 ${className}`}>

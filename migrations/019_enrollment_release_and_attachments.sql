@@ -2,6 +2,10 @@
 -- capacity, grade publication, configurable NSTP data, and support attachments.
 
 ALTER TABLE academicsections ADD COLUMN IF NOT EXISTS max_capacity INTEGER;
+ALTER TABLE academicsections
+    ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS archived_by VARCHAR(255);
 UPDATE academicsections SET max_capacity = 40 WHERE max_capacity IS NULL;
 ALTER TABLE academicsections ALTER COLUMN max_capacity SET DEFAULT 40;
 ALTER TABLE academicsections ALTER COLUMN max_capacity SET NOT NULL;
@@ -37,6 +41,8 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS idx_student_enrollments_planning_period
     ON student_enrollments(program_id, school_year, semester, enrollment_state, academic_section_id);
+CREATE INDEX IF NOT EXISTS idx_academicsections_active_department
+    ON academicsections(LOWER(department), year_level, section_num) WHERE is_active = TRUE;
 
 CREATE TABLE IF NOT EXISTS nstp_options (
     option_code VARCHAR(50) PRIMARY KEY,

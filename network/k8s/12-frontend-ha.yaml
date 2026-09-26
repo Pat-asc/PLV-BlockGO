@@ -90,6 +90,7 @@ data:
       location ^~ /api/AccountManagement { proxy_pass http://client_app; }
       location ^~ /api/Curriculums { proxy_pass http://client_app; }
       location ^~ /api/SupportTickets { proxy_pass http://client_app; }
+      location ^~ /api/Transcript { proxy_pass http://client_app; }
       location ^~ /api/backend/health { proxy_pass http://client_app; }
       location ^~ /api/password-reset-requests { proxy_pass http://client_app; }
       location ^~ /api/Auth { proxy_pass http://client_app; }

@@ -132,7 +132,7 @@ test('GKE Ingress sends every frontend API family to its owning gateway', () => 
 
     const dotnetFamilies = new Set([
         'Auth', 'password-reset-requests', 'student', 'Student', 'AccountManagement',
-        'Curriculums', 'SupportTickets', 'SystemMonitoring', 'Grades', 'GradeTemplate',
+        'Curriculums', 'SupportTickets', 'Transcript', 'SystemMonitoring', 'Grades', 'GradeTemplate',
         'SystemSettings', 'BulkUpload', 'RegistrarDashboard', 'registrar'
     ]);
     const source = fs.readFileSync(path.join(repoRoot, 'frontend', 'src', 'services', 'api.js'), 'utf8');

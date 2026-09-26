@@ -77,6 +77,11 @@ namespace Client_app.Controllers
                         section_num INT NOT NULL,
                         UNIQUE(department, year_level, section_num)
                     );
+
+                    ALTER TABLE academicsections
+                        ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP WITH TIME ZONE,
+                        ADD COLUMN IF NOT EXISTS archived_by VARCHAR(255);
                     
                     DO $$ 
                     BEGIN 
@@ -1821,6 +1826,7 @@ namespace Client_app.Controllers
                 JOIN academic_programs p
                   ON LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name))
                 WHERE p.is_active = TRUE
+                  AND s.is_active = TRUE
                   AND LOWER(@department) IN (LOWER(p.program_code), LOWER(p.program_name))
                 ORDER BY s.year_level, s.section_num;", connection))
             {
@@ -2196,6 +2202,7 @@ namespace Client_app.Controllers
                             JOIN academic_programs p
                               ON LOWER(section.department) IN (LOWER(p.program_code), LOWER(p.program_name))
                             WHERE section.id = @academicSectionId
+                              AND section.is_active = TRUE
                               AND p.program_id = @programId
                               AND EXISTS (
                                   SELECT 1
@@ -2509,7 +2516,9 @@ namespace Client_app.Controllers
                     LEFT JOIN academicsections s ON s.id = fs.academic_section_id
                     LEFT JOIN academic_programs p
                       ON LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name))
-                    WHERE LOWER(u.email) = LOWER(@email) AND u.status = 'APPROVED' AND fs.is_active = TRUE
+                    WHERE LOWER(u.email) = LOWER(@email) AND u.status = 'APPROVED'
+                      AND fs.is_active = TRUE
+                      AND (fs.academic_section_id IS NULL OR s.is_active = TRUE)
                     ORDER BY fs.department, fs.year_level, fs.section", conn);
                 
                 cmd.Parameters.AddWithValue("email", email);
@@ -3828,10 +3837,10 @@ namespace Client_app.Controllers
                            (SELECT COUNT(*) FROM student_enrollments enrollment
                             WHERE enrollment.academic_section_id = s.id AND enrollment.status = 'ENROLLED')
                     FROM academicsections s
-                    WHERE LOWER(s.department) = LOWER(@dept) OR EXISTS (
+                    WHERE s.is_active = TRUE AND (LOWER(s.department) = LOWER(@dept) OR EXISTS (
                         SELECT 1 FROM academic_programs p
                         WHERE LOWER(@dept) IN (LOWER(p.program_code), LOWER(p.program_name))
-                          AND LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name)))
+                          AND LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name))))
                     ORDER BY s.year_level, s.section_num", conn);
                 cmd.Parameters.AddWithValue("dept", department);
 
@@ -3873,7 +3882,7 @@ namespace Client_app.Controllers
                 using var connection = new NpgsqlConnection(_connectionString);
                 await connection.OpenAsync();
                 await using var command = new NpgsqlCommand(
-                    "SELECT department, year_level, section_num FROM academicsections WHERE id = @id", connection);
+                    "SELECT department, year_level, section_num FROM academicsections WHERE id = @id AND is_active = TRUE", connection);
                 command.Parameters.AddWithValue("id", sectionId);
                 await using var reader = await command.ExecuteReaderAsync();
                 if (!await reader.ReadAsync())
@@ -3917,39 +3926,18 @@ namespace Client_app.Controllers
                 using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
                 
-                string dept = "", year = "", secNum = "";
-                using (var getCmd = new NpgsqlCommand("SELECT department, year_level, section_num FROM AcademicSections WHERE id = @id", conn))
-                {
-                    getCmd.Parameters.AddWithValue("id", sectionId);
-                    using var reader = await getCmd.ExecuteReaderAsync();
-                    if (await reader.ReadAsync())
-                    {
-                        dept = reader.GetString(0);
-                        year = reader.GetInt32(1).ToString();
-                        secNum = reader.GetInt32(2).ToString();
-                    }
-                    else return Ok(new { status = "Success", message = "Section already deleted." });
-                }
+                var result = await AcademicSectionLifecycleService.DeleteOrArchiveAsync(
+                    conn, sectionId, User.Identity?.Name ?? "unknown", HttpContext.RequestAborted);
+                if (result is null)
+                    return Ok(new { status = "Success", mode = "absent", message = "Section is already absent." });
 
-                using var tx = await conn.BeginTransactionAsync();
-
-                using (var assignmentCheck = new NpgsqlCommand("SELECT COUNT(*) FROM FacultySections WHERE academic_section_id = @id", conn, tx))
-                {
-                    assignmentCheck.Parameters.AddWithValue("id", sectionId);
-                    if (Convert.ToInt64(await assignmentCheck.ExecuteScalarAsync()) > 0)
-                    {
-                        await tx.RollbackAsync();
-                        return Conflict(new { status = "Error", message = "This section has faculty-assignment history and cannot be deleted. Deactivate current assignments instead." });
-                    }
-                }
-
-                using var cmdSec = new NpgsqlCommand("DELETE FROM AcademicSections WHERE id = @id", conn, tx);
-                cmdSec.Parameters.AddWithValue("id", sectionId);
-                await cmdSec.ExecuteNonQueryAsync();
-
-                await tx.CommitAsync();
-                await NotifyAcademicDataChangedAsync("section_deleted", dept, User.Identity?.Name);
-                return Ok(new { status = "Success", message = "Section deleted successfully." });
+                await NotifyAcademicDataChangedAsync($"section_{result.Mode}", result.Department, User.Identity?.Name);
+                return Ok(new {
+                    status = "Success", mode = result.Mode,
+                    message = result.Mode == "deleted"
+                        ? "Unused section deleted successfully."
+                        : "Referenced section archived and removed from active workflows."
+                });
             }
             catch (Exception ex) { return StatusCode(500, new { status = "Error", message = ex.Message }); }
         }

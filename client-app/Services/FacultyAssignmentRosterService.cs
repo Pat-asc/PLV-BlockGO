@@ -78,7 +78,7 @@ public static class FacultyAssignmentRosterService
             SELECT fs.id, fs.user_id, u.email, fs.department, fs.section,
                    COALESCE(fs.year_level, ''), COALESCE(fs.subject, ''),
                    fs.academic_section_id, fs.school_year, fs.semester,
-                   fs.is_active,
+                   fs.is_active AND (fs.academic_section_id IS NULL OR COALESCE(s.is_active, FALSE)),
                    CASE WHEN s.id IS NULL THEN fs.section
                         ELSE CONCAT(p.program_code, ' ', s.year_level, '-', s.section_num) END
             FROM facultysections fs

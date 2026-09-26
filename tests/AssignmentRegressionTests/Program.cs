@@ -60,6 +60,32 @@ Check(ids.SequenceEqual(canonical.Select(s=>s.StudentNo)), "Template roster diff
 Check(!ids.Contains("26-0002"), "Removed student is present."); Pass(27, "removed student excluded from XLSX");
 Check(book.Worksheet("Assignment").Cell("B1").GetValue<int>() == assignment.Id,
     "Workbook does not retain FacultySections.id."); Pass(38, "XLSX exact FacultySections identity");
+sheet.Cell("C2").Value = 80; sheet.Cell("D2").Value = 90; sheet.Cell("E2").Value = 100; sheet.Cell("F2").Value = 85;
+using (var populatedStream = new MemoryStream())
+{
+    book.SaveAs(populatedStream); populatedStream.Position = 0;
+    var parsedTemplate = FacultyGradeWorkbookService.Parse(populatedStream);
+    Check(parsedTemplate.FacultySectionId == assignment.Id && parsedTemplate.Rows.Count == canonical.Count &&
+          parsedTemplate.Rows[0].Values["student_id"] == canonical[0].StudentNo,
+        "A generated grading sheet could not be parsed by the upload contract.");
+} Pass(85, "generated XLSX template round-trip parser contract");
+bool WorkbookRejected(Action<XLWorkbook> mutate, string expected)
+{
+    using var input = new MemoryStream(bytes);
+    using var candidate = new XLWorkbook(input);
+    mutate(candidate);
+    using var output = new MemoryStream(); candidate.SaveAs(output); output.Position = 0;
+    try { FacultyGradeWorkbookService.Parse(output); return false; }
+    catch (ArgumentException ex) { return ex.Message.Contains(expected, StringComparison.OrdinalIgnoreCase); }
+}
+Check(WorkbookRejected(workbook => workbook.Worksheet("Grade Encoding").Cell("B1").Value = "", "heading"),
+    "Blank XLSX heading was accepted."); Pass(88, "blank XLSX heading fails with validation error");
+Check(WorkbookRejected(workbook => workbook.Worksheet("Grade Encoding").Cell("C1").Value = "Student ID", "Duplicate"),
+    "Duplicate XLSX heading was accepted."); Pass(89, "duplicate XLSX heading fails with validation error");
+Check(WorkbookRejected(workbook => workbook.Worksheet("Grade Encoding").Cell("A3").Value = "26-0001", "duplicate Student ID"),
+    "Duplicate XLSX student ID was accepted."); Pass(90, "duplicate XLSX student row fails before staging");
+Check(WorkbookRejected(workbook => workbook.Worksheet("Grade Encoding").Cell("C2").Value = "not-a-grade", "number from 0 to 100"),
+    "Invalid XLSX numeric grade was accepted."); Pass(91, "invalid XLSX grade is a readable validation error");
 var distinctIdentityAssignment = assignment with { Id = 123, AcademicSectionId = 45 };
 Check(FacultyAssignmentRosterService.ValidateUploadContext(distinctIdentityAssignment, 45, "IT 101", "2026-2027", "FIRST", "BSIT 1-1") == null,
     "Valid assignment context was rejected."); Pass(39, "bulk assignment context accepts FacultySections.id distinct from academic section");
@@ -85,9 +111,9 @@ CREATE TEMP TABLE users(id INT PRIMARY KEY,username TEXT,email TEXT,role TEXT,st
 CREATE TEMP TABLE academic_programs(program_id INT PRIMARY KEY,program_code TEXT,program_name TEXT,is_active BOOLEAN);
 CREATE TEMP TABLE curriculums(curriculum_id INT PRIMARY KEY,program_id INT,status TEXT);
 CREATE TEMP TABLE curriculum_subjects(id SERIAL,curriculum_id INT,subject_code TEXT,year_level INT,semester TEXT);
-CREATE TEMP TABLE academicsections(id INT PRIMARY KEY,department TEXT,year_level INT,section_num INT);
+CREATE TEMP TABLE academicsections(id INT PRIMARY KEY,department TEXT,year_level INT,section_num INT,max_capacity INT DEFAULT 40,is_active BOOLEAN DEFAULT TRUE,archived_at TIMESTAMPTZ,archived_by TEXT);
 CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_name TEXT,department TEXT,section TEXT,assignment_status TEXT,student_email TEXT,sex TEXT,curriculum_id BIGINT,batch_year INT,year_level TEXT);
-CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,updated_at TIMESTAMPTZ,UNIQUE(student_user_id,school_year,semester));
+CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,enrollment_state TEXT DEFAULT 'PLANNING',updated_at TIMESTAMPTZ,UNIQUE(student_user_id,school_year,semester));
 CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_name TEXT,department TEXT);
 CREATE TEMP TABLE systemsettings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TEMP TABLE facultysections(id SERIAL PRIMARY KEY,user_id INT,department TEXT,section TEXT,year_level TEXT,subject TEXT,academic_section_id INT,school_year TEXT,semester TEXT,is_active BOOLEAN DEFAULT TRUE,deactivated_at TIMESTAMPTZ,deactivated_by TEXT);
@@ -96,13 +122,32 @@ CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id 
 CREATE UNIQUE INDEX ux_test_pending_assignment_student ON pending_grade_records(assignment_cycle_id,student_no);
 INSERT INTO academic_programs VALUES(1,'BSIT','BS Information Technology',TRUE),(2,'BSCS','BS Computer Science',TRUE); INSERT INTO curriculums VALUES(1,1,'PUBLISHED'),(2,2,'PUBLISHED');
 INSERT INTO curriculum_subjects(curriculum_id,subject_code,year_level,semester) VALUES(1,'IT 101',1,'FIRST'),(1,'IT 102',1,'FIRST'),(1,'IT 101',1,'SECOND'),(2,'CS 101',1,'FIRST');
-INSERT INTO academicsections VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2),(3,'BS Computer Science',1,1);
+INSERT INTO academicsections(id,department,year_level,section_num) VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2),(3,'BS Computer Science',1,1);
 INSERT INTO users VALUES(1,'x','profx@plv.edu.ph','faculty','APPROVED',TRUE),(3,'y','profy@plv.edu.ph','faculty','APPROVED',TRUE),(9,'z','profz@plv.edu.ph','faculty','APPROVED',TRUE),(2,'a','a@plv.edu.ph','student','APPROVED',TRUE),(4,'b','b@plv.edu.ph','student','APPROVED',TRUE),(5,'c','c@plv.edu.ph','student','APPROVED',TRUE),(6,'stale','stale@plv.edu.ph','student','APPROVED',TRUE),(7,'old','old@plv.edu.ph','student','APPROVED',TRUE),(8,'second','second@plv.edu.ph','student','APPROVED',TRUE),(12,'csc','csc@plv.edu.ph','student','APPROVED',TRUE);
 INSERT INTO facultyprofiles VALUES(1,'FAC-1','Professor X','BS Information Technology'),(3,'FAC-3','Professor Y','BS Information Technology'),(9,'FAC-9','Professor Z','BS Information Technology');
 INSERT INTO studentprofiles(user_id,student_no,full_name,department,section,assignment_status) VALUES(2,'26-0001','Student A','Wrong','9-9','Dropped'),(4,'26-0002','Student B','BS Information Technology','BSIT 1-1','Enrolled'),(5,'26-0003','Student C','BS Information Technology','BSIT 1-1','Enrolled'),(6,'26-0004','Stale Profile','BS Information Technology','BSIT 1-1','Enrolled'),(7,'25-0001','Old Period','BS Information Technology','BSIT 1-1','Enrolled'),(8,'26-0005','Second Term','BS Information Technology','BSIT 1-1','Enrolled'),(12,'26-0100','Computer Science Student','BS Computer Science','BSCS 1-1','Enrolled');
 INSERT INTO student_enrollments(student_user_id,student_no,program_id,curriculum_id,academic_section_id,school_year,semester,year_level,status) VALUES(2,'26-0001',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(4,'26-0002',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(5,'26-0003',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(7,'25-0001',1,1,1,'2025-2026','FIRST',1,'ENROLLED'),(8,'26-0005',1,1,1,'2026-2027','SECOND',1,'ENROLLED'),(12,'26-0100',2,2,3,'2026-2027','FIRST',1,'ENROLLED');");
 var enrollmentCount=await Count("SELECT COUNT(*) FROM student_enrollments"); var profileCount=await Count("SELECT COUNT(*) FROM studentprofiles");
 Task<bool> AllowProgram(string program, CancellationToken _) => Task.FromResult(program == "BSIT");
+await Exec("INSERT INTO academicsections(id,department,year_level,section_num) VALUES(90,'BS Information Technology',4,9)");
+var unusedSectionResult = await AcademicSectionLifecycleService.DeleteOrArchiveAsync(db,90,"registrar@plv.edu.ph");
+Check(unusedSectionResult?.Mode=="deleted" && await Count("SELECT COUNT(*) FROM academicsections WHERE id=90")==0,
+    "Unused section remained in canonical storage after deletion.");
+var deletedAssignmentRejected=false;
+try { await EnrollmentSectioningService.AssignAsync(db,90,new[]{"26-0004"},"2026-2027","FIRST",null); }
+catch(Exception ex) when (ex is ArgumentException or KeyNotFoundException) { deletedAssignmentRejected=ex.Message.Contains("not found",StringComparison.OrdinalIgnoreCase); }
+Check(deletedAssignmentRejected,"Deleted section still accepted student assignment."); Pass(86,"unused section deletion persists and rejects assignment");
+await Exec("INSERT INTO academicsections(id,department,year_level,section_num) VALUES(91,'BS Information Technology',1,9); INSERT INTO facultysections(id,user_id,department,section,year_level,subject,academic_section_id,school_year,semester,is_active) VALUES(190,1,'BS Information Technology','BSIT 1-9','1','IT 101',91,'2026-2027','FIRST',TRUE); INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('historical-section-grade','190','26-0001','Finalized','{}')");
+var historicalSectionResult = await AcademicSectionLifecycleService.DeleteOrArchiveAsync(db,91,"registrar@plv.edu.ph");
+Check(historicalSectionResult?.Mode=="archived" &&
+      await Count("SELECT COUNT(*) FROM academicsections WHERE id=91 AND is_active=FALSE")==1 &&
+      await Count("SELECT COUNT(*) FROM facultysections WHERE id=190 AND is_active=FALSE")==1 &&
+      await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='historical-section-grade'")==1,
+    "Referenced section archival destroyed history or left an active workflow reference.");
+var archivedFacultyAssignmentRejected=false;
+try { await FacultyBulkAssignmentService.AssignAsync(db,new BulkFacultyAssignmentItemRequest { FacultyUserId=1,SubjectCode="IT 101",AcademicSectionId=91,SchoolYear="2026-2027",Semester="FIRST" },AllowProgram); }
+catch(ArgumentException) { archivedFacultyAssignmentRejected=true; }
+Check(archivedFacultyAssignmentRejected,"Archived section accepted a new Faculty load."); Pass(87,"referenced section archives while preserving grade history");
 var bulkOne = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
     ClientId="one", FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=1, SchoolYear="2026-2027", Semester="FIRST"
 }, AllowProgram);
