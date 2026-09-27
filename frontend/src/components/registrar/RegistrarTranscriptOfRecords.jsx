@@ -90,7 +90,7 @@ const RegistrarTranscriptOfRecords = ({ students = [] }) => {
     <section className="space-y-5 print:bg-white">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
         <h2 className="text-2xl font-bold text-[#003366]">Transcript of Records</h2>
-        <p className="mt-1 text-sm text-slate-500">Generate a Registrar-authorized TOR from explicitly released, finalized ledger grades.</p>
+        <p className="mt-1 text-sm text-slate-500">Generate a Registrar-authorized TOR from Chairperson-finalized ledger grades.</p>
         <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
           <SearchField value={search} onChange={setSearch} label="Search students" placeholder="Number, name, email, program, or section" />
           <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
@@ -130,7 +130,7 @@ const RegistrarTranscriptOfRecords = ({ students = [] }) => {
         </div>
         <div className={`mt-6 rounded-xl p-4 text-sm ${transcript.completeness.isComplete ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-900'}`}>
           <strong>{transcript.completeness.isComplete ? 'Curriculum complete' : 'Curriculum incomplete'}:</strong> {transcript.completeness.completedSubjects}/{transcript.completeness.requiredSubjects} required subjects completed.
-          {!transcript.completeness.isComplete && <p className="mt-1">Official completion certification must not be issued until the listed missing, failed, or unreleased subjects are resolved.</p>}
+          {!transcript.completeness.isComplete && <p className="mt-1">Official completion certification must not be issued until the listed missing, failed, or unfinished subjects are resolved.</p>}
         </div>
         <div className="mt-6 flex gap-3 print:hidden">
           <button type="button" onClick={exportPdf} className="rounded-xl bg-[#003366] px-4 py-2 text-sm font-bold text-white">Download multi-page PDF</button>

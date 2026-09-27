@@ -2626,14 +2626,6 @@ namespace BlockGo.Controllers
             }
         }
 
-        public class ReleaseGradesRequest
-        {
-            public string[] RecordIds { get; set; } = Array.Empty<string>();
-            public string? SchoolYear { get; set; }
-            public string? Semester { get; set; }
-            public string? Term { get; set; }
-        }
-
         [HttpGet("finalization-queue")]
         [Authorize(Roles = "department_admin")]
         public async Task<IActionResult> GetFinalizationQueue()
@@ -2654,69 +2646,6 @@ namespace BlockGo.Controllers
             }
         }
 
-        [HttpPost("release")]
-        [Authorize(Roles = "registrar")]
-        public async Task<IActionResult> ReleaseGrades([FromBody] ReleaseGradesRequest request,
-            CancellationToken cancellationToken)
-        {
-            var actor = AuthenticatedEmail();
-            var responseJson = await _blockchainService.GetAllGradesAsync(actor);
-            using var document = JsonDocument.Parse(responseJson);
-            var payload = document.RootElement.TryGetProperty("data", out var nested) ? nested : document.RootElement;
-            var records = JsonSerializer.Deserialize<List<AcademicRecord>>(payload.GetRawText(),
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<AcademicRecord>();
-            var requestedIds = (request.RecordIds ?? Array.Empty<string>())
-                .Where(value => !string.IsNullOrWhiteSpace(value)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var releasable = records.Where(record =>
-                    string.Equals(record.Status, "Finalized", StringComparison.OrdinalIgnoreCase)
-                    && (requestedIds.Count == 0 || requestedIds.Contains(record.Id))
-                    && (string.IsNullOrWhiteSpace(request.SchoolYear) || string.Equals(record.SchoolYear, request.SchoolYear, StringComparison.OrdinalIgnoreCase))
-                    && (string.IsNullOrWhiteSpace(request.Semester) || string.Equals(record.Semester, request.Semester, StringComparison.OrdinalIgnoreCase))
-                    && (string.IsNullOrWhiteSpace(request.Term) || string.Equals(record.Term, request.Term, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
-            if (releasable.Count == 0)
-                return Conflict(new { status = "Error", message = "No matching finalized ledger grades are available to release." });
-            if (requestedIds.Count > 0 && releasable.Count != requestedIds.Count)
-                return Conflict(new { status = "Error", message = "One or more selected records are missing or not Finalized. Nothing was released." });
-
-            await using var connection = new NpgsqlConnection(_connectionString);
-            await connection.OpenAsync(cancellationToken);
-            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-            foreach (var record in releasable)
-            {
-                await using var command = new NpgsqlCommand(@"
-                    INSERT INTO grade_releases
-                        (record_id, student_identifier, school_year, semester, term, released_by)
-                    VALUES (@recordId, @student, @schoolYear, @semester, @term,
-                            (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1))
-                    ON CONFLICT (record_id) DO NOTHING;", connection, transaction);
-                command.Parameters.AddWithValue("recordId", record.Id);
-                command.Parameters.AddWithValue("student", FirstNonBlank(record.StudentHash, record.StudentNo));
-                command.Parameters.AddWithValue("schoolYear", record.SchoolYear ?? "");
-                command.Parameters.AddWithValue("semester", record.Semester ?? "");
-                command.Parameters.AddWithValue("term", (object?)record.Term ?? DBNull.Value);
-                command.Parameters.AddWithValue("actor", actor);
-                await command.ExecuteNonQueryAsync(cancellationToken);
-            }
-            await _auditLog.LogAsync(actor, "registrar", "GRADES_RELEASED", "grade_release",
-                $"{request.SchoolYear}:{request.Semester}:{request.Term}", null,
-                new { count = releasable.Count, recordIds = releasable.Select(record => record.Id).ToArray(), request.SchoolYear, request.Semester, request.Term },
-                "Registrar released finalized grades for Student Portal visibility.",
-                HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-
-            foreach (var student in releasable.Select(record => FirstNonBlank(record.StudentHash, record.StudentNo)).Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase))
-                await _chatHubContext.Clients.Group($"private_{student}").SendAsync("GradesReleased", new
-                {
-                    schoolYear = request.SchoolYear,
-                    semester = request.Semester,
-                    term = request.Term,
-                    releasedAt = DateTimeOffset.UtcNow
-                }, cancellationToken);
-            await NotifyAcademicDataChangedAsync("grades_released", null, actor);
-            return Ok(new { status = "Success", released = releasable.Count, message = "Finalized grades released to students." });
-        }
-
         private void NotifyStudentOfFinalization(string recordId, string invokerId)
         {
             _ = Task.Run(async () => {
@@ -2725,7 +2654,7 @@ namespace BlockGo.Controllers
                     var finRec = JsonSerializer.Deserialize<AcademicRecord>(recJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                     if (finRec != null && !string.IsNullOrEmpty(finRec.StudentHash) && finRec.StudentHash.Contains("@")) {
                         var subj = "PLV Academic Update: Grade Finalized";
-                        var htmlBody = $"<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;'><h2 style='color: #003366;'>Pamantasan ng Lungsod ng Valenzuela</h2><p>Hello,</p><p>Your grade for subject <strong>{finRec.SubjectCode}</strong> has been officially finalized and permanently recorded to the academic ledger.</p><p>It will become visible in the Student Portal after the Registrar releases it.</p></div>";
+                        var htmlBody = $"<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;'><h2 style='color: #003366;'>Pamantasan ng Lungsod ng Valenzuela</h2><p>Hello,</p><p>Your grade for subject <strong>{finRec.SubjectCode}</strong> has been officially finalized and permanently recorded to the academic ledger.</p><p>It is now available in the Student Portal.</p></div>";
                         await _emailService.SendEmailAsync(finRec.StudentHash, subj, htmlBody, true);
                     }
                 } catch (Exception ex) { _logger.LogWarning(ex, "Failed to send finalization notification to student."); }
@@ -3751,17 +3680,6 @@ namespace BlockGo.Controllers
                 records = records
                     .Where(record => string.Equals(record.Status, "Finalized", StringComparison.OrdinalIgnoreCase))
                     .ToList();
-
-                if (userRole.Equals("student", StringComparison.OrdinalIgnoreCase) && records.Count > 0)
-                {
-                    var releasedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    await using var releaseConnection = new NpgsqlConnection(_connectionString);
-                    await releaseConnection.OpenAsync();
-                    await using var releaseCommand = new NpgsqlCommand("SELECT record_id FROM grade_releases", releaseConnection);
-                    await using var releaseReader = await releaseCommand.ExecuteReaderAsync();
-                    while (await releaseReader.ReadAsync()) releasedIds.Add(releaseReader.GetString(0));
-                    records = records.Where(record => releasedIds.Contains(record.Id)).ToList();
-                }
 
                 if (records.Count == 0)
                     return NotFound(new { status = "Error", message = "No finalized grades are available for this PDF." });

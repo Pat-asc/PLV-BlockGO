@@ -1,5 +1,6 @@
 import React from "react";
 import plvlogo from "../../assets/plvlogo.png";
+import SettingsMenu from "../shared/SettingsMenu";
 
 const stripRolePrefix = (value = "") =>
   String(value)
@@ -53,6 +54,8 @@ const FacultyHeader = ({ facultyData, totalSections, onLogout }) => {
               <p className="text-xs text-white/70">Semester</p>
               <p className="text-sm font-semibold text-white">{semester}</p>
             </div>
+
+            <SettingsMenu />
 
             <button
               onClick={onLogout}

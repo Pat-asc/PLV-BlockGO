@@ -1,4 +1,5 @@
 import plvlogo from "../../assets/plvlogo.png";
+import SettingsMenu from "../shared/SettingsMenu";
 
 const StudentNavbar = ({ onLogout, onOpenSettings }) => {
   return (
@@ -30,6 +31,7 @@ const StudentNavbar = ({ onLogout, onOpenSettings }) => {
 
         {/* Right */}
         <div className="flex items-center gap-3">
+          <SettingsMenu />
           <button
             onClick={onLogout}
             className="rounded-xl border border-yellow-400 bg-transparent px-5 py-2 text-sm font-semibold text-yellow-400 transition hover:bg-yellow-400 hover:text-[#003366]"

@@ -888,9 +888,6 @@ export const fetchRegistrarFinalizationQueue = async () => {
     return await fetchWithAuth('/Grades/finalization-queue');
 };
 
-export const releaseFinalizedGrades = async (payload) => fetchWithAuth('/Grades/release', {
-    method: 'POST', body: JSON.stringify(payload),
-});
 
 export const approveStagedGrades = async (stagingIds) => {
     return await fetchWithAuth(`/BulkUpload/approve-grades`, {

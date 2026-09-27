@@ -1,5 +1,6 @@
 import React from "react";
 import plvlogo from "../../assets/plvlogo.png";
+import SettingsMenu from "../shared/SettingsMenu";
 
 function ChairpersonHeader({
   chairpersonData,
@@ -66,6 +67,8 @@ function ChairpersonHeader({
               {chairpersonData?.semester || "2nd Semester"}
             </p>
           </div>
+
+          <SettingsMenu />
 
           <button
             onClick={onLogout}

@@ -97,11 +97,6 @@ public sealed class TranscriptController : ControllerBase
                         reader.GetInt16(3), reader.GetString(4)));
             }
 
-            var releasedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            await using (var releaseCommand = new NpgsqlCommand("SELECT record_id FROM grade_releases;", connection))
-            await using (var reader = await releaseCommand.ExecuteReaderAsync(cancellationToken))
-                while (await reader.ReadAsync(cancellationToken)) releasedIds.Add(reader.GetString(0));
-
             var actor = User.Identity?.Name ?? throw new InvalidOperationException("Registrar identity is unavailable.");
             var ledgerJson = await _blockchain.GetAllGradesAsync(actor);
             using var ledgerDocument = JsonDocument.Parse(ledgerJson);
@@ -109,9 +104,8 @@ public sealed class TranscriptController : ControllerBase
                 ? data : ledgerDocument.RootElement;
             var ledgerRecords = JsonSerializer.Deserialize<List<AcademicRecord>>(ledgerElement.GetRawText(),
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
-            var releasedRecords = ledgerRecords
-                .Where(record => releasedIds.Contains(record.Id)
-                    && string.Equals(record.Status?.Trim(), "Finalized", StringComparison.OrdinalIgnoreCase)
+            var finalizedRecords = ledgerRecords
+                .Where(record => string.Equals(record.Status?.Trim(), "Finalized", StringComparison.OrdinalIgnoreCase)
                     && StudentSubjectGradeResolver.MatchesStudent(record, email, studentNo))
                 .GroupBy(record => record.SubjectCode?.Trim() ?? "", StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group
@@ -119,7 +113,7 @@ public sealed class TranscriptController : ControllerBase
 
             var transcriptRows = subjects.Select(subject =>
             {
-                releasedRecords.TryGetValue(subject.Code, out var record);
+                finalizedRecords.TryGetValue(subject.Code, out var record);
                 var grade = StudentSubjectGradeResolver.ParseFinalGrade(record?.Grade);
                 var standing = ParseStanding(record?.Grade);
                 var completed = record is not null && IsPassing(grade, standing);
@@ -139,7 +133,7 @@ public sealed class TranscriptController : ControllerBase
                 };
             }).ToList();
             var incomplete = transcriptRows.Where(row => !row.completed)
-                .Select(row => new { row.subjectCode, row.subjectTitle, reason = row.grade is null ? "No released final grade" : row.standing })
+                .Select(row => new { row.subjectCode, row.subjectTitle, reason = row.grade is null ? "No finalized grade" : row.standing })
                 .ToList();
 
             return Ok(new
@@ -163,7 +157,7 @@ public sealed class TranscriptController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to build transcript for student user {StudentUserId}", studentUserId);
-            return StatusCode(500, new { status = "Error", message = "Unable to build the transcript from released ledger records." });
+            return StatusCode(500, new { status = "Error", message = "Unable to build the transcript from finalized ledger records." });
         }
     }
 
@@ -174,7 +168,7 @@ public sealed class TranscriptController : ControllerBase
 
     private static string ParseStanding(string? grade)
     {
-        if (string.IsNullOrWhiteSpace(grade)) return "Not released";
+        if (string.IsNullOrWhiteSpace(grade)) return "Not finalized";
         try
         {
             using var document = JsonDocument.Parse(grade);

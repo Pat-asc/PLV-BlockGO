@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import RegistrarStudentSectioning, { buildSectionTemplateDownload } from './RegistrarStudentSectioning';
+import RegistrarStudentSectioning, { buildCustomSectionTemplateDownload, buildSectionTemplateDownload } from './RegistrarStudentSectioning';
 import {
   deleteAcademicSection,
   fetchDepartmentSections,
@@ -62,6 +62,28 @@ test('uses the active encoding period without a manual semester control', async 
   await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled \(1\)/ })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Generate Sections' }));
   await waitFor(() => expect(syncSectioningBatchToBackend).toHaveBeenCalledWith(expect.objectContaining({ semester: 'FIRST', schoolYear: '2026-2027' })));
+});
+
+test('Auto-Populate creates and assigns sections through the authoritative sync flow', async () => {
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  const autoPopulate = await screen.findByRole('button', { name: /Auto-Populate Enrolled \(1\)/ });
+  fireEvent.click(autoPopulate);
+  await waitFor(() => expect(syncSectioningBatchToBackend).toHaveBeenCalledWith(expect.objectContaining({
+    program: 'BSIT', schoolYear: '2026-2027', semester: 'FIRST',
+    students: [expect.objectContaining({ studentId: '26-0042', sectionCode: '1-1' })],
+  })));
+  await waitFor(() => expect(fetchSectionedEnrolledStudents).toHaveBeenCalledTimes(2));
+});
+
+test('Auto-Populate reports when no eligible enrollment data exists', async () => {
+  fetchUnassignedEnrolledStudents.mockResolvedValue({ data: [] });
+  fetchSectionedEnrolledStudents.mockResolvedValue({ data: [] });
+  fetchDepartmentSections.mockResolvedValue({ data: [] });
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  const autoPopulate = await screen.findByRole('button', { name: /Auto-Populate Enrolled \(0\)/ });
+  fireEvent.click(autoPopulate);
+  expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('No eligible unassigned students'));
+  expect(syncSectioningBatchToBackend).not.toHaveBeenCalled();
 });
 
 test('shows fetch failures and allows refresh even with zero students', async () => {
@@ -209,4 +231,10 @@ test('section template fails closed when an exact academic section ID is absent'
     schoolYear: '2026-2027',
     semester: 'FIRST',
   })).toBeNull();
+});
+
+test('custom section template round-trips the exact uploader headers', () => {
+  const download = buildCustomSectionTemplateDownload();
+  expect(download.fileName).toBe('custom-section-template.csv');
+  expect(download.content).toBe('Student ID,Sex,Last Name,First Name,Middle Name,Year Level');
 });

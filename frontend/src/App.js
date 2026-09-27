@@ -25,7 +25,6 @@ import {
 
 import { BrowserRouter as Router, useLocation, useNavigate } from 'react-router-dom';
 import { NotificationProvider, useNotification } from './services/NotificationContext';
-import TextSizeControl from './components/shared/TextSizeControl';
 
 const normalizeAppRole = normalizeSessionRole;
 
@@ -254,7 +253,6 @@ function AppContent() {
 
   return (
     <div className="main-app-wrapper">
-      <TextSizeControl />
       {isRestoringSession ? (
         <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-600">Restoring this tab's session...</div>
       ) : !user ? (

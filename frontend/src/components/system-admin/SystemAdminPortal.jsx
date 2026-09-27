@@ -7,6 +7,7 @@ import SupportTicketManagement from './SupportTicketManagement';
 import GrafanaObservability from './GrafanaObservability';
 import SystemAdminTransactions from './SystemAdminTransactions';
 import CouchDbBrowser from './CouchDbBrowser';
+import SettingsMenu from '../shared/SettingsMenu';
 
 const navigationItems = [
   { id: 'overview', label: 'Overview' },
@@ -59,6 +60,7 @@ function SystemAdminPortal({ adminData, onLogout }) {
               <p className="truncate text-sm font-semibold">{adminData?.name || 'System Administrator'}</p>
               <p className="truncate text-xs text-blue-100">{adminData?.email || ''}</p>
             </div>
+            <SettingsMenu />
             <button
               type="button"
               onClick={onLogout}

@@ -1,4 +1,5 @@
 using ClosedXML.Excel;
+using BlockGo.Models;
 using Client_app.Models;
 using Client_app.Services;
 using BlockGo.Services;
@@ -38,6 +39,28 @@ Check(new[] { "SubmittedToChairperson", "ChairpersonApproved", "DepartmentApprov
       !new[] { "Draft", "Returned" }.Any(RegistrarGradeLedgerMetadataService.IsBrowsableStatus),
     "Registrar ledger browsing statuses included editable rows or omitted submitted history.");
 Pass(82, "Registrar ledger status scope is historical and read-only");
+var studentAttempt = new StudentSubjectAttempt(
+    10, "student@plv.edu.ph", "26-0042", "IT 101", "2026-2027", "FIRST", "BSIT 1-1", "104");
+var finalizedStudentGrade = new AcademicRecord
+{
+    Id = "finalized-visible", StudentHash = "student@plv.edu.ph", StudentNo = "26-0042",
+    SubjectCode = "IT 101", SchoolYear = "2026-2027", Semester = "FIRST",
+    Section = "BSIT 1-1", AssignmentCycleId = "104", Status = "Finalized", Grade = "92"
+};
+var visibleResolution = StudentSubjectGradeResolver.Resolve(studentAttempt, new[] { finalizedStudentGrade });
+Check(visibleResolution.IsFinalized && visibleResolution.FinalizedGrade == 92m,
+    "A Chairperson-finalized grade was not immediately visible to its exact student and assignment cycle.");
+Pass(92, "Chairperson Finalized grade is immediately student-visible");
+var hiddenWorkflowGrades = new[] { "Draft", "SubmittedToChairperson", "Returned", "DepartmentApproved" }
+    .Select(status => new AcademicRecord
+    {
+        Id = $"hidden-{status}", StudentHash = "student@plv.edu.ph", StudentNo = "26-0042",
+        SubjectCode = "IT 101", SchoolYear = "2026-2027", Semester = "FIRST",
+        Section = "BSIT 1-1", AssignmentCycleId = "104", Status = status, Grade = "89"
+    });
+Check(!StudentSubjectGradeResolver.Resolve(studentAttempt, hiddenWorkflowGrades).IsFinalized,
+    "A non-finalized workflow grade became student-visible.");
+Pass(93, "non-finalized workflow grades remain hidden from students");
 var closedRejected = false;
 try { GradeEncodingPeriodService.ParseOpen("{\"semester\":\"FIRST\",\"startDate\":\"2026-10-01\",\"endDate\":\"2026-10-31\",\"term\":\"midterm\"}", new DateOnly(2026, 9, 22)); }
 catch (GradeEncodingPeriodException) { closedRejected = true; }

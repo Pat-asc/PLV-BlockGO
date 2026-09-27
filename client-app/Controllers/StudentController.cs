@@ -348,7 +348,6 @@ namespace Client_app.Controllers
                                COALESCE(grade.transaction_hash, '') AS transaction_hash,
                                COALESCE(grade.recorded_at::text, '') AS recorded_at
                         FROM pending_grade_records grade
-                        JOIN grade_releases release ON release.record_id = grade.id
                         JOIN users student ON LOWER(student.email) = LOWER(@email)
                           AND LOWER(student.role) = 'student'
                         JOIN studentprofiles sp ON sp.user_id = student.id
@@ -680,23 +679,10 @@ namespace Client_app.Controllers
             var responseJson = await _blockchain.GetAllGradesAsync(email);
             using var document = JsonDocument.Parse(responseJson);
             var data = document.RootElement.TryGetProperty("data", out var nested) ? nested : document.RootElement;
-            var releasedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            await using (var connection = new NpgsqlConnection(_connectionString))
-            {
-                await connection.OpenAsync();
-                await using var command = new NpgsqlCommand(@"
-                    SELECT record_id FROM grade_releases
-                    WHERE LOWER(student_identifier) IN (LOWER(@email), LOWER(@studentNo));", connection);
-                command.Parameters.AddWithValue("email", email);
-                command.Parameters.AddWithValue("studentNo", studentNo);
-                await using var reader = await command.ExecuteReaderAsync();
-                while (await reader.ReadAsync()) releasedIds.Add(reader.GetString(0));
-            }
             return (JsonSerializer.Deserialize<List<AcademicRecord>>(data.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                     ?? new List<AcademicRecord>())
                 .Where(record => StudentSubjectGradeResolver.MatchesStudent(record, email, studentNo)
-                    && string.Equals(record.Status?.Trim(), "Finalized", StringComparison.OrdinalIgnoreCase)
-                    && releasedIds.Contains(record.Id))
+                    && string.Equals(record.Status?.Trim(), "Finalized", StringComparison.OrdinalIgnoreCase))
                 .ToList();
         }
 

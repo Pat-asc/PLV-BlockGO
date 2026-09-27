@@ -16,6 +16,7 @@ import {
 import { deleteAcademicSection, fetchDepartmentSections, fetchNextStudentId, fetchSectionedEnrolledStudents, fetchUnassignedEnrolledStudents, finalizeEnrollmentRoster, getSystemSetting, removeStudentFromSection } from "../../services/api";
 import { syncSectioningBatchToBackend } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
+import { validateCsvUpload } from "../../utils/csvUploadValidation";
 
 const buildStudentName = (student) => {
   if (student.fullName) return student.fullName;
@@ -82,6 +83,11 @@ export const buildSectionTemplateDownload = ({
     students: exactStudents,
   };
 };
+
+export const buildCustomSectionTemplateDownload = () => ({
+  content: buildStudentCsvContent([]),
+  fileName: "custom-section-template.csv",
+});
 
 const buildGeneratedSections = ({
   program,
@@ -947,6 +953,19 @@ function RegistrarStudentSectioning({
     }
   };
 
+  const handleAutoPopulate = async () => {
+    if (enrolledLoading || savingSections) return;
+    if (enrolledError) {
+      setEnrollmentRefresh((value) => value + 1);
+      return;
+    }
+    if (enrolledCount === 0) {
+      alert(`No eligible unassigned students were found for ${chairpersonDepartment || "this program"}, ${selectedYearLevel}, ${schoolYear} ${sectioningSemester}.`);
+      return;
+    }
+    await handleGenerateSections();
+  };
+
   const handleSectionNameChange = (sectionCode, sectionName) => {
     updateSelectedBatch((batch) => {
       const nextSectionPlans = (batch.sectionPlans || []).map((section) =>
@@ -1238,7 +1257,13 @@ function RegistrarStudentSectioning({
     );
   };
 
-  const handleDownloadSectionTemplate = (academicSectionId) => {
+  const handleDownloadSectionTemplate = (section) => {
+    const academicSectionId = section?.academicSectionId || section?.id;
+    if (!Number.isInteger(Number(academicSectionId)) || Number(academicSectionId) <= 0) {
+      const download = buildCustomSectionTemplateDownload();
+      downloadCsvFile(download.content, download.fileName);
+      return;
+    }
     const download = buildSectionTemplateDownload({
       sections: sectionPlans,
       students,
@@ -1271,13 +1296,14 @@ function RegistrarStudentSectioning({
     input.type = "file";
     input.accept = ".csv";
 
-    input.onchange = (event) => {
+    input.onchange = async (event) => {
       const file = event.target.files?.[0];
 
       if (!file) return;
 
-      if (!file.name.toLowerCase().endsWith(".csv")) {
-        alert("Please upload a CSV file.");
+      const validationError = await validateCsvUpload(file);
+      if (validationError) {
+        alert(validationError);
         return;
       }
 
@@ -2671,7 +2697,7 @@ function RegistrarStudentSectioning({
                   {sectioningSemester === "FIRST" ? "First Semester" : sectioningSemester === "SECOND" ? "Second Semester" : "Midyear"} (active term)
                 </span>
                 <button type="button" disabled={enrolledLoading || savingSections}
-                  onClick={() => setEnrollmentRefresh((value) => value + 1)}
+                  onClick={handleAutoPopulate}
                   className="rounded-md border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700 disabled:opacity-50">
                   {enrolledLoading ? "Loading enrolled students..." : `Auto-Populate Enrolled (${enrolledCount})`}
                 </button>
@@ -2842,7 +2868,7 @@ function RegistrarStudentSectioning({
                 <button type="button" onClick={handleFinalizeEnrollment}
                   disabled={!selectedBatch || !sectionPlans.length || savingSections}
                   className="h-8 whitespace-nowrap rounded-md bg-emerald-700 px-3 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
-                  Review &amp; Finalize Enrollment
+                  Review
                 </button>
               </div>
 
@@ -2963,16 +2989,14 @@ function RegistrarStudentSectioning({
                         >
                           Export CSV
                         </button>
-                        {Number(section.academicSectionId || section.id) > 0 ? (
-                          <button
-                            type="button"
-                            aria-label={`Download template for ${section.sectionName}`}
-                            onClick={() => handleDownloadSectionTemplate(section.academicSectionId || section.id)}
-                            className="min-h-8 rounded-md border border-blue-200 px-3 py-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                          >
-                            Download Template
-                          </button>
-                        ) : null}
+                        <button
+                          type="button"
+                          aria-label={`Download template for ${section.sectionName}`}
+                          onClick={() => handleDownloadSectionTemplate(section)}
+                          className="min-h-8 rounded-md border border-blue-200 px-3 py-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        >
+                          Download Template
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleImportSectionCsv(section.sectionCode)}
