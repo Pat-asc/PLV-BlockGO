@@ -114,7 +114,23 @@ export const syncSectioningBatchToBackend = async (batch = {}) => {
     }
     if (!backendSection?.id || !sectionStudents.length) continue;
 
-    const studentIds = [...new Set(sectionStudents.map((student) => student.studentId))];
+    const normalizedStudentIds = sectionStudents.map((student) =>
+      String(student.studentId || "").trim()
+    );
+
+    const invalidStudentIds = normalizedStudentIds.filter(
+      (studentId) =>
+        !/^\d{2,4}-\d{4,}$/.test(studentId) ||
+        /-0+$/.test(studentId)
+    );
+
+    if (invalidStudentIds.length) {
+      throw new Error(
+        `Invalid or stale Student ID(s): ${[...new Set(invalidStudentIds)].join(", ")}. Refresh the enrolled roster before saving.`
+      );
+    }
+
+    const studentIds = [...new Set(normalizedStudentIds)];
     const expectedSectionIds = Object.fromEntries(sectionStudents
       .filter((student) => student.academicSectionId && String(student.academicSectionId) !== String(backendSection.id))
       .map((student) => [student.studentId, Number(student.academicSectionId)]));
