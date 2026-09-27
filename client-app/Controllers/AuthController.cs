@@ -74,14 +74,28 @@ namespace Client_app.Controllers
                         id SERIAL PRIMARY KEY,
                         department VARCHAR(255) NOT NULL,
                         year_level INT NOT NULL,
-                        section_num INT NOT NULL,
-                        UNIQUE(department, year_level, section_num)
+                        section_num INT NOT NULL
                     );
 
                     ALTER TABLE academicsections
                         ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,
                         ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP WITH TIME ZONE,
                         ADD COLUMN IF NOT EXISTS archived_by VARCHAR(255);
+
+                    -- Archived sections must not block recreation of the same
+                    -- department/year/section combination.
+                    ALTER TABLE academicsections
+                        DROP CONSTRAINT IF EXISTS academicsections_department_year_level_section_num_key;
+
+                    DROP INDEX IF EXISTS idx_academicsections_active_department;
+
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_academicsections_active_department_year_section
+                        ON academicsections (
+                            LOWER(department),
+                            year_level,
+                            section_num
+                        )
+                        WHERE is_active = TRUE;
                     
                     DO $$ 
                     BEGIN 
