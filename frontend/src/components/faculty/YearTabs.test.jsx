@@ -35,3 +35,13 @@ test('allows selecting another available assigned year', async () => {
   fireEvent.click(screen.getByText('4th Year'));
   expect(screen.getByTestId('active-year')).toHaveTextContent('4th Year');
 });
+
+test('uses a responsive non-clipping grid for narrow containers', () => {
+  render(<Harness sections={[{ year: '1st Year' }, { year: '2nd Year' }, { year: '3rd Year' }, { year: '4th Year' }]} />);
+  const layout = screen.getByRole('tablist', { name: 'Academic year filters' });
+  expect(layout).toHaveClass('w-full', 'min-w-0', 'grid-cols-[repeat(auto-fit,minmax(140px,1fr))]');
+  screen.getAllByRole('tab').forEach((tab) => {
+    expect(tab).toHaveClass('min-w-0');
+    expect(tab).not.toHaveClass('scale-105');
+  });
+});

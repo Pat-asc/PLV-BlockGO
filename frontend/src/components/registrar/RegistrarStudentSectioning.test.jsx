@@ -64,6 +64,12 @@ test('uses the active encoding period without a manual semester control', async 
   await waitFor(() => expect(syncSectioningBatchToBackend).toHaveBeenCalledWith(expect.objectContaining({ semester: 'FIRST', schoolYear: '2026-2027' })));
 });
 
+test('uses the one-word Finalize action for roster finalization', async () => {
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  expect(await screen.findByRole('button', { name: 'Finalize' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
+});
+
 test('Auto-Populate creates and assigns sections through the authoritative sync flow', async () => {
   render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
   const autoPopulate = await screen.findByRole('button', { name: /Auto-Populate Enrolled \(1\)/ });

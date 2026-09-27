@@ -90,3 +90,15 @@ test('filters current enrollments by the dynamic Program / Course dropdown', asy
   expect(screen.getByText('BSA Student')).toBeInTheDocument();
   expect(screen.queryByText('BSIT Student')).not.toBeInTheDocument();
 });
+
+test('accepts a newly loaded active program without a hardcoded mapping', async () => {
+  const newProgram = 'Bachelor of Science in Data Science';
+  const { rerender } = render(<StudentEnrollmentManagement programs={[program]} />);
+  await screen.findByText('Juan Dela Cruz');
+  rerender(<StudentEnrollmentManagement programs={[program, newProgram]} />);
+
+  const programSelect = screen.getByLabelText(/academic program/i);
+  expect(Array.from(programSelect.options).map((option) => option.value)).toContain(newProgram);
+  fireEvent.change(programSelect, { target: { value: newProgram } });
+  expect(programSelect).toHaveValue(newProgram);
+});

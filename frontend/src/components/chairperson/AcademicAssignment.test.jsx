@@ -5,7 +5,11 @@ import AcademicAssignment from "./AcademicAssignment";
 import { fetchApprovedFaculties, fetchCurriculums, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend } from "../../services/api";
 jest.mock("../../services/api", () => ({ fetchApprovedFaculties: jest.fn(), fetchCurriculums: jest.fn(), fetchFacultyAssignmentOptions: jest.fn(), assignFacultyLoadToBackend: jest.fn() }));
 jest.mock("../../utils/sharedClientState", () => ({ pushAssignmentsSharedState: jest.fn() }));
-jest.mock("./FacultyLoading", () => () => <div>Bulk import</div>);
+jest.mock("./FacultyLoading", () => ({
+  __esModule: true,
+  default: () => <div>Bulk import</div>,
+  DAY_OPTIONS: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+}));
 beforeEach(() => {
   localStorage.clear(); jest.clearAllMocks();
   fetchApprovedFaculties.mockResolvedValue({ faculties: [{ id: 1, fullname: "Carlos Reyes", department: "Bachelor of Science in Information Technology" }] });
@@ -51,7 +55,7 @@ test("stages assignments, prevents duplicates, and persists only on Save", async
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   fireEvent.click(await screen.findByRole("button", { name: /Carlos Reyes/ }));
   fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
-  fireEvent.change(screen.getByLabelText("Schedule for BSIT 3-1"), { target: { value: "Mon 8:00 AM – 10:00 AM" } });
+  fireEvent.change(screen.getByLabelText("Schedule for BSIT 3-1"), { target: { value: "Monday" } });
   fireEvent.click(screen.getByRole("button", { name: "＋ Assign" }));
   expect(localStorage.getItem("registrarAssignments")).toBeNull();
   expect(screen.getByText("1 pending assignment")).toBeInTheDocument();
@@ -61,7 +65,8 @@ test("stages assignments, prevents duplicates, and persists only on Save", async
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Assignments saved successfully"));
   const saved = JSON.parse(localStorage.getItem("registrarAssignments"));
   expect(saved).toHaveLength(1);
-  expect(saved[0]).toMatchObject({ facultyId: "1", subjectCode: "IT 321", sectionName: "BSIT 3-1", schedule: "Mon 8:00 AM – 10:00 AM" });
+  expect(saved[0]).toMatchObject({ facultyId: "1", subjectCode: "IT 321", sectionName: "BSIT 3-1", schedule: "Monday" });
+  expect(assignFacultyLoadToBackend).toHaveBeenCalledWith(expect.objectContaining({ schedule: "Monday" }));
   expect(assignFacultyLoadToBackend).toHaveBeenCalledTimes(1);
 });
 test("saves only the selected professor's pending load", async () => {
@@ -184,7 +189,7 @@ test("Clear Selection removes temporary schedule state and allows a fresh select
   await selectFaculty();
   stageAssignment();
   const schedule = screen.getByLabelText("Schedule for BSIT 3-1");
-  fireEvent.change(schedule, { target: { value: "Saturday 9:00 AM" } });
+  fireEvent.change(schedule, { target: { value: "Saturday" } });
   fireEvent.click(screen.getByRole("button", { name: /Clear Selection/ }));
 
   stageAssignment();
@@ -264,5 +269,21 @@ test("filters manual assignment rows by exact academicSectionId and restores all
   fireEvent.change(screen.getByLabelText("Section Filter"), { target: { value: "all" } });
   expect(screen.getByLabelText("Schedule for BSIT 3-1")).toBeInTheDocument();
   expect(screen.getByLabelText("Schedule for BECE 3-1")).toBeInTheDocument();
+});
+
+test("hydrates a persisted server schedule after reload", async () => {
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    program: { code: "BSIT", name: "Bachelor of Science in Information Technology" },
+    subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems", yearLevel: 3, semester: "SECOND", units: 3 }],
+    sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
+    schoolYears: ["2026-2027"], enrollmentPeriods: [],
+    assignments: [{ id: 77, facultyUserId: 1, facultyName: "Carlos Reyes", program: "Bachelor of Science in Information Technology", sectionName: "BSIT 3-1", yearLevel: "3", subjectCode: "IT 321", academicSectionId: 31, schoolYear: "2026-2027", semester: "SECOND", schedule: "Tuesday" }],
+  });
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await selectFaculty();
+  expect(await screen.findByText("Tuesday")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
+  expect(screen.getByLabelText("Schedule for BSIT 3-1")).toHaveValue("Tuesday");
+  expect(JSON.parse(localStorage.getItem("registrarAssignments"))[0]).toMatchObject({ id: 77, schedule: "Tuesday" });
 });
 
