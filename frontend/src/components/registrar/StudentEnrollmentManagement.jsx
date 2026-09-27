@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import SearchField from '../shared/SearchField';
 import {
   fetchApprovedStudents,
   fetchCurriculums,
@@ -70,7 +71,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
     const programStudents = programFilter ? students.filter((student) => String(student.department || '').toLowerCase() === programFilter.toLowerCase()) : students;
     if (!query) return programStudents;
     return programStudents.filter((student) =>
-      [student.fullname, student.studentno, student.email, student.department]
+      [student.fullname, student.firstName, student.middleName, student.lastName, student.studentno, student.email, student.studentEmail, student.department, student.programCode, student.section, student.yearLevel]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(query))
     );
@@ -107,8 +108,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   const upload = async (mode) => {
     const validationError = validateContext();
     if (validationError) return setResult({ status: 'Error', message: validationError });
-    if (!file) return setResult({ status: 'Error', message: 'Choose a CSV or XLSX file first.' });
-    if (file.size > 10 * 1024 * 1024) return setResult({ status: 'Error', message: 'Enrollment files cannot exceed 10 MB.' });
+    if (!file) return setResult({ status: 'Error', message: 'Choose a CSV file first.' });
 
     setSaving(true); setResult(null);
     try {
@@ -212,8 +212,8 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
         {enrollmentMethod === 'bulk' ? <div>
           <label className="mt-4 flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-blue-300 bg-blue-50/30 p-4 text-center text-xs font-semibold text-blue-700">
             <span>Drag and drop your file here, or click to browse</span>
-            <span className="mt-1 text-[10px] font-normal text-slate-500">Accepted file type: .xlsx or .csv</span>
-            <input type="file" accept=".csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] || null)} className="sr-only" />
+            <span className="mt-1 text-[10px] font-normal text-slate-500">Accepted file type: CSV (less than 10 MB)</span>
+            <input type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] || null)} className="sr-only" />
             {file ? <span className="mt-2 text-emerald-700">{file.name}</span> : null}
           </label>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -243,8 +243,8 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
       </section>
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between"><h4 className="text-sm font-bold text-[#003366]">Current Student Enrollments</h4><div className="flex flex-col gap-2 sm:flex-row"><select aria-label="Program / Course" value={programFilter} onChange={(event) => setProgramFilter(event.target.value)} className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs"><option value="">All Programs</option>{availablePrograms.map((program) => <option key={program} value={program}>{program}</option>)}</select><input value={enrollmentSearch} onChange={(event) => setEnrollmentSearch(event.target.value)} placeholder="Search by student name or ID..." className="h-9 w-full rounded-lg border border-slate-300 px-3 text-xs outline-none sm:w-64"/><button type="button" onClick={load} className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700">Refresh</button></div></div>
-        <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr className="bg-slate-50 text-slate-600"><th className="px-4 py-3">Student</th><th className="px-4 py-3">Program / Year Level</th><th className="px-4 py-3">School Year</th><th className="px-4 py-3">Curriculum</th><th className="px-4 py-3">Status</th></tr></thead><tbody>{visibleStudents.map((student) => <tr key={student.id} className="border-b"><td className="px-4 py-3"><span className="block font-semibold">{student.fullname}</span><span className="text-xs text-slate-500">{student.studentno}</span></td><td className="px-4 py-3">{student.department || 'Unassigned'}<span className="block text-xs text-slate-500">Year {student.yearLevel || '—'}</span></td><td className="px-4 py-3">{student.schoolYear || '—'}</td><td className="px-4 py-3">{student.curriculumVersion || 'Not assigned'}</td><td className="px-4 py-3">{student.enrollmentStatus || student.assignmentStatus || 'Unassigned'}</td></tr>)}{!loading && visibleStudents.length === 0 ? <tr><td colSpan="5" className="px-4 py-8 text-center text-slate-500">No active student enrollment yet.</td></tr> : null}</tbody></table></div>
+        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between"><h4 className="text-sm font-bold text-[#003366]">Current Student Enrollments</h4><div className="flex flex-col gap-2 sm:flex-row"><select aria-label="Program / Course" value={programFilter} onChange={(event) => setProgramFilter(event.target.value)} className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs"><option value="">All Programs</option>{availablePrograms.map((program) => <option key={program} value={program}>{program}</option>)}</select><SearchField value={enrollmentSearch} onChange={setEnrollmentSearch} label="Search student enrollments" placeholder="ID, name, email, program, or section" className="sm:w-72" inputClassName="h-9 text-xs"/><button type="button" onClick={load} className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700">Refresh</button></div></div>
+        <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr className="bg-slate-50 text-slate-600"><th className="px-4 py-3">Student</th><th className="px-4 py-3">Program / Year Level</th><th className="px-4 py-3">School Year</th><th className="px-4 py-3">Curriculum</th><th className="px-4 py-3">Status</th></tr></thead><tbody>{visibleStudents.map((student) => <tr key={student.id} className="border-b"><td className="px-4 py-3"><span className="block font-semibold">{student.fullname}</span><span className="text-xs text-slate-500">{student.studentno}</span></td><td className="px-4 py-3">{student.department || 'Unassigned'}<span className="block text-xs text-slate-500">Year {student.yearLevel || '—'}</span></td><td className="px-4 py-3">{student.schoolYear || '—'}</td><td className="px-4 py-3">{student.curriculumVersion || 'Not assigned'}</td><td className="px-4 py-3">{student.enrollmentStatus || student.assignmentStatus || 'Unassigned'}</td></tr>)}{!loading && visibleStudents.length === 0 ? <tr><td colSpan="5" className="px-4 py-8 text-center text-slate-500">{enrollmentSearch.trim() || programFilter ? 'No results found.' : 'No active student enrollment yet.'}</td></tr> : null}</tbody></table></div>
       </section>
     </div>
   );

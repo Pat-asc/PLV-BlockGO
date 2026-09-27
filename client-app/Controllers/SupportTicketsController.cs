@@ -55,9 +55,9 @@ namespace Client_app.Controllers
                        COALESCE((
                            SELECT jsonb_agg(jsonb_build_object(
                                'attachmentId', a.attachment_id,
-                               'fileName', a.file_name,
+                               'fileName', a.original_file_name,
                                'contentType', a.content_type,
-                               'fileSize', a.file_size,
+                               'fileSize', a.size_bytes,
                                'createdAt', a.created_at) ORDER BY a.created_at)
                            FROM support_ticket_attachments a WHERE a.ticket_id = t.ticket_id
                        ), '[]'::jsonb)::text
@@ -219,7 +219,7 @@ namespace Client_app.Controllers
                 await file.CopyToAsync(memory, cancellationToken);
                 await using var attachment = new NpgsqlCommand(@"
                     INSERT INTO support_ticket_attachments
-                        (ticket_id, file_name, content_type, file_size, content, uploaded_by)
+                        (ticket_id, original_file_name, content_type, size_bytes, content, uploaded_by)
                     VALUES (@ticketId, @fileName, @contentType, @fileSize, @content,
                             (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1));", connection, transaction);
                 attachment.Parameters.AddWithValue("ticketId", ticketId);
@@ -245,7 +245,7 @@ namespace Client_app.Controllers
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
             await using var command = new NpgsqlCommand(@"
-                SELECT a.file_name, a.content_type, a.content
+                SELECT a.original_file_name, a.content_type, a.content
                 FROM support_ticket_attachments a
                 JOIN support_tickets t ON t.ticket_id = a.ticket_id
                 JOIN users registrar ON registrar.id = t.registrar_id

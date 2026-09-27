@@ -133,17 +133,17 @@ namespace Client_app.Controllers
 
         [HttpPost("bulk-import")]
         [Authorize(Roles = "department_admin")]
-        [RequestSizeLimit(5 * 1024 * 1024)]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkImport([FromForm] ImportCurriculumRequest request, CancellationToken cancellationToken)
         {
-            if (request.File is null || request.File.Length == 0)
-                return BadRequest(new { status = "Error", message = "A non-empty curriculum CSV file is required." });
-            if (!string.Equals(Path.GetExtension(request.File.FileName), ".csv", StringComparison.OrdinalIgnoreCase))
-                return BadRequest(new { status = "Error", message = "Curriculum bulk import accepts CSV files only." });
+            var validationError = await CsvUploadValidator.ValidateAsync(request.File, cancellationToken);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
+            var file = request.File!;
 
             var subjects = new List<CurriculumSubjectRequest>();
             var errors = new List<object>();
-            await using (var stream = request.File.OpenReadStream())
+            await using (var stream = file.OpenReadStream())
             using (var reader = new StreamReader(stream))
             using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
             {
@@ -525,7 +525,7 @@ namespace Client_app.Controllers
                 FROM users u
                 JOIN studentprofiles sp ON sp.user_id = u.id
                 JOIN LATERAL (
-                    SELECT se.program_id, se.curriculum_id, se.status
+                    SELECT se.program_id, se.curriculum_id, se.status, se.enrollment_state
                     FROM student_enrollments se
                     WHERE se.student_user_id = u.id
                       AND LOWER(TRIM(se.student_no)) = LOWER(TRIM(sp.student_no))
@@ -536,7 +536,7 @@ namespace Client_app.Controllers
                 ) enrollment ON TRUE
                 JOIN curriculums c ON c.curriculum_id = enrollment.curriculum_id
                     AND c.program_id = enrollment.program_id AND c.status IN ('PUBLISHED', 'ARCHIVED')
-                WHERE LOWER(u.email) = LOWER(@actor) AND LOWER(u.role) = 'student'
+                WHERE (LOWER(u.email) = LOWER(@actor) OR LOWER(TRIM(sp.student_no)) = LOWER(TRIM(@actor))) AND LOWER(u.role) = 'student'
                   AND LOWER(u.status) = 'approved' AND u.is_active
                   AND enrollment.status = 'ENROLLED' AND enrollment.enrollment_state = 'FINALIZED';", connection);
             command.Parameters.AddWithValue("actor", ActorEmail());

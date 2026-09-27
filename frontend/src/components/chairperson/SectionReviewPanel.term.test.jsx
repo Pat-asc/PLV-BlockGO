@@ -26,7 +26,7 @@ const renderPanel = (activeTerm) => render(
     activeTerm={activeTerm}
     onSendBack={jest.fn()}
     onApprove={jest.fn()}
-    onSubmitToRegistrar={jest.fn()}
+    onFinalize={jest.fn()}
     onViewIpfs={jest.fn()}
   />
 );

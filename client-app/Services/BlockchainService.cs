@@ -46,7 +46,7 @@ namespace BlockGo.Services
             _httpClient.DefaultRequestHeaders.Add("x-api-key", apiKey);
             // Fabric commits regularly take longer than a normal read request because the
             // transaction must be endorsed, ordered, and committed before middleware replies.
-            // Two seconds caused valid registrar finalizations to be cancelled mid-commit.
+            // Two seconds caused valid Chairperson finalizations to be cancelled mid-commit.
             var requestTimeoutSeconds = configuration.GetValue<int?>("Middleware:RequestTimeoutSeconds") ?? 120;
             _httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(10, requestTimeoutSeconds));
         }

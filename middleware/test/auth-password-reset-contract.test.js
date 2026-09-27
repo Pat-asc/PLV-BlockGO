@@ -12,7 +12,7 @@ const {
 function harness({ role = 'student', status = 'APPROVED', active = true, exists = true, smtpFailure = false } = {}) {
     let clock = Date.parse('2026-09-25T00:00:00Z');
     const account = exists ? {
-        id: 7, email: 'person@plv.edu.ph', role, status, is_active: active,
+        id: 7, email: 'person@plv.edu.ph', recovery_email: 'person@plv.edu.ph', role, status, is_active: active, auth_version: 1,
         password_hash: bcrypt.hashSync('OldPassword1!', 4)
     } : null;
     const state = { tokens: [], manualRequests: [], sent: [] };
@@ -21,17 +21,17 @@ function harness({ role = 'student', status = 'APPROVED', active = true, exists 
     const query = async (sql, params = []) => {
         const normalized = sql.replace(/\s+/g, ' ').trim();
         if (normalized === 'BEGIN') {
-            snapshot = { tokens: structuredClone(state.tokens), password_hash: account?.password_hash };
+            snapshot = { tokens: structuredClone(state.tokens), password_hash: account?.password_hash, auth_version: account?.auth_version };
             return { rows: [] };
         }
         if (normalized === 'COMMIT') { snapshot = undefined; return { rows: [] }; }
         if (normalized === 'ROLLBACK') {
             state.tokens = snapshot?.tokens || state.tokens;
-            if (account && snapshot) account.password_hash = snapshot.password_hash;
+            if (account && snapshot) { account.password_hash = snapshot.password_hash; account.auth_version = snapshot.auth_version; }
             snapshot = undefined;
             return { rows: [] };
         }
-        if ((normalized.includes('SELECT id, email, role, status, is_active') || normalized.includes('SELECT id, email, role')) && normalized.includes('FROM users')) {
+        if ((normalized.includes('SELECT u.id, u.email, u.role, u.status, u.is_active') || normalized.includes('SELECT u.id, u.email, u.role')) && normalized.includes('FROM users u')) {
             return { rows: account && account.email === String(params[0]).toLowerCase() ? [{ ...account }] : [] };
         }
         if (normalized.includes('COUNT(*)::int AS count')) {
@@ -63,6 +63,7 @@ function harness({ role = 'student', status = 'APPROVED', active = true, exists 
         }
         if (normalized.startsWith('UPDATE users') && normalized.includes('SET password_hash = $1')) {
             account.password_hash = params[0];
+            account.auth_version += 1;
             return { rows: [] };
         }
         if (normalized.includes('INSERT INTO password_reset_requests')) {
@@ -96,11 +97,11 @@ test('2. Faculty can request SMTP reset', async () => {
 });
 
 for (const [number, role, label] of [[3, 'registrar', 'Registrar'], [4, 'system_admin', 'System Administrator'], [5, 'department_admin', 'Chairperson']]) {
-    test(`${number}. ${label} cannot use self-service reset`, async () => {
+    test(`${number}. ${label} can use self-service reset`, async () => {
         const h = harness({ role });
         const result = await h.service.requestEmailReset({ email: h.account.email });
-        assert.equal(result.message, GENERIC_EMAIL_MESSAGE); assert.equal(result.eligible, false);
-        assert.equal(h.state.tokens.length, 0); assert.equal(h.state.sent.length, 0);
+        assert.equal(result.message, GENERIC_EMAIL_MESSAGE); assert.equal(result.eligible, true);
+        assert.equal(h.state.tokens.length, 1); assert.equal(h.state.sent.length, 1);
     });
 }
 
@@ -192,4 +193,16 @@ test('20. Password recovery contains no Fabric or IPFS calls', () => {
     const recoveryRoutes = authSource.slice(authSource.indexOf("app.post('/api/forgot-password'"), authSource.indexOf("app.get('/api/bootstrap'"));
     const recoveryService = fs.readFileSync(path.join(__dirname, '..', 'src', 'shared', 'password-reset-service.js'), 'utf8');
     assert.doesNotMatch(`${recoveryRoutes}\n${recoveryService}`, /fabric|ipfs|chaincode|_blockchainService/i);
+});
+
+test('21. weak passwords are rejected by the backend policy', async () => {
+    const h = harness(); await h.service.requestEmailReset({ email: h.account.email });
+    await assert.rejects(h.service.resetPassword({ email: h.account.email, code: '123456', newPassword: 'password' }), /uppercase letter/);
+});
+
+test('22. successful reset increments auth version to invalidate old JWTs', async () => {
+    const h = harness(); const previous = h.account.auth_version;
+    await h.service.requestEmailReset({ email: h.account.email });
+    await h.service.resetPassword({ email: h.account.email, code: '123456', newPassword: 'NewPassword1!' });
+    assert.equal(h.account.auth_version, previous + 1);
 });

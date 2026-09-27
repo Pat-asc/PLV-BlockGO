@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { fetchAllGrades, fetchRegistrarFinalizationQueue, finalizeGrade, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason } from '../../services/api';
+import { fetchAllGrades, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason } from '../../services/api';
 import RegistrarHeader from './RegistrarHeader';
 import RegistrarSidebar from './RegistrarSidebar';
 import RegistrarDashboard from './RegistrarDashboard';
@@ -10,7 +10,6 @@ import PdfReportViewer from '../shared/PdfReportViewer';
 import Modal from '../../services/Modal';
 import RegistrarStudentSectioning from './RegistrarStudentSectioning';
 import RegistrarSectionsCreated from './RegistrarSectionsCreated';
-import { isDepartmentApprovedGradeStatus } from '../../utils/gradeStatus';
 import StaffAccountCreation from './StaffAccountCreation';
 import CurriculumManagement from './CurriculumManagement';
 import { programOptions, programs } from '../../data/registrarData';
@@ -54,11 +53,7 @@ const RegistrarGradesView = ({
     const [approvedFaculties, setApprovedFaculties] = useState([]);
     const [facultyAssignments, setFacultyAssignments] = useState({});
 
-    const [stagedGrades, setStagedGrades] = useState([]);
-    const [stagedLoading, setStagedLoading] = useState(false);
-    const [finalizingBatchKey, setFinalizingBatchKey] = useState('');
     const [activeSemester, setActiveSemester] = useState('2nd Semester');
-
     const [filterDept, setFilterDept] = useState('All');
     const [filterYear, setFilterYear] = useState('All');
     const [filterSection, setFilterSection] = useState('All');
@@ -252,29 +247,6 @@ const RegistrarGradesView = ({
         }
     }, [loggedInEmail]);
 
-    const loadStagedGrades = useCallback(async () => {
-        setStagedLoading(true);
-        try {
-            const response = await fetchRegistrarFinalizationQueue();
-            const allData = Array.isArray(response) ? response : (response.data || []);
-            const approvedGrades = allData.filter(g =>
-                isDepartmentApprovedGradeStatus(g.status || g.Status || g.normalized_status)
-            );
-            const formattedStaged = approvedGrades.map(g => ({
-                stagingId: g.id,
-                studentHash: g.student_hash || g.studentId,
-                subjectCode: g.subject_code,
-                grade: g.grade,
-                course: g.course,
-                yearLevel: g.year_level || g.yearLevel || "N/A",
-                section: g.section,
-                status: g.status
-            }));
-            setStagedGrades(formattedStaged);
-        } catch (error) { console.error('Error loading staged grades:', error); }
-        setStagedLoading(false);
-    }, []);
-
     const loadRequests = useCallback(async () => {
         try {
             const response = await fetchPendingRequests();
@@ -364,10 +336,7 @@ const RegistrarGradesView = ({
         if (mainTab === 'Requests') {
             loadRequests();
         }
-        if (mainTab === 'finalization') {
-            loadStagedGrades();
-        }
-    }, [mainTab, loadRequests, loadStagedGrades]);
+    }, [mainTab, loadRequests]);
 
     useEffect(() => {
         const handleAcademicDataChanged = () => {
@@ -376,12 +345,11 @@ const RegistrarGradesView = ({
             loadApprovedAdmins();
             loadApprovedFaculties();
             if (mainTab === 'Requests') loadRequests();
-            if (mainTab === 'finalization') loadStagedGrades();
         };
 
         window.addEventListener('blockgo:academic-data-changed', handleAcademicDataChanged);
         return () => window.removeEventListener('blockgo:academic-data-changed', handleAcademicDataChanged);
-    }, [mainTab, loadGrades, loadRequests, loadStagedGrades, loadApprovedStudents, loadApprovedAdmins, loadApprovedFaculties]);
+    }, [mainTab, loadGrades, loadRequests, loadApprovedStudents, loadApprovedAdmins, loadApprovedFaculties]);
 
     useEffect(() => {
         if (mainTab === 'assigning') {
@@ -433,60 +401,6 @@ const RegistrarGradesView = ({
             alert("Faculty assigned successfully!");
             loadApprovedFaculties();
         } catch (error) { alert(`Failed to assign: ${error.message}`); }
-    };
-
-    const groupedStagedGrades = useMemo(() => {
-        const groups = {};
-        stagedGrades.forEach(g => {
-            const key = `${g.course}-${g.yearLevel}-${g.section}-${g.subjectCode}`;
-            if (!groups[key]) {
-                groups[key] = {
-                    course: g.course,
-                    yearLevel: g.yearLevel,
-                    section: g.section,
-                    subjectCode: g.subjectCode,
-                    records: []
-                };
-            }
-            groups[key].records.push(g);
-        });
-        
-        return Object.values(groups).sort((a, b) => 
-            String(a.course).localeCompare(String(b.course)) || 
-            String(a.yearLevel).localeCompare(String(b.yearLevel)) || 
-            String(a.section).localeCompare(String(b.section)) ||
-            String(a.subjectCode).localeCompare(String(b.subjectCode))
-        );
-    }, [stagedGrades]);
-
-    const finalizeBatch = async (records) => {
-        const batchKey = records.map((record) => record.stagingId).sort().join('|');
-        setFinalizingBatchKey(batchKey);
-        try {
-            for (const g of records) {
-                await finalizeGrade(g.stagingId, loggedInEmail);
-            }
-            alert("Section grades officially committed to the ledger!");
-            await Promise.all([loadStagedGrades(), loadGrades()]);
-        } catch (err) {
-            alert(`Finalization failed: ${err.message}`);
-            await loadStagedGrades();
-        } finally {
-            setFinalizingBatchKey('');
-        }
-    };
-
-    const handleFinalizeBatch = (records) => {
-        setConfirmModal({
-            isOpen: true,
-            title: 'Confirm Ledger Finalization',
-            message: `Finalize ${records.length} approved grade${records.length === 1 ? '' : 's'} to the immutable blockchain ledger?`,
-            isDestructive: false,
-            onConfirm: async () => {
-                setConfirmModal((current) => ({ ...current, isOpen: false }));
-                await finalizeBatch(records);
-            },
-        });
     };
 
     const handleViewIpfs = (cid) => {
@@ -1139,75 +1053,6 @@ const RegistrarGradesView = ({
                                 </section>
                             </div>
                         </>
-                    )}
-                    {mainTab === 'finalization' && (
-                        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="mb-6 flex items-center justify-between">
-                                <h3 className="text-xl font-bold text-[#003366]">Grades Pending Ledger Entry</h3>
-                                <button onClick={loadStagedGrades} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-200">Refresh Staging</button>
-                            </div>
-                            {stagedLoading ? <p>Loading staged records...</p> : (
-                                <div className="space-y-6">
-                                    {groupedStagedGrades.length === 0 ? (
-                                        <div className="rounded-xl border border-dashed border-slate-300 p-10 text-center text-slate-500 bg-slate-50">
-                                            No grades approved by departments waiting for finalization.
-                                        </div>
-                                    ) : (
-                                                groupedStagedGrades.map((group, index) => {
-                                                    const batchKey = group.records.map((record) => record.stagingId).sort().join('|');
-                                                    const isFinalizing = finalizingBatchKey === batchKey;
-                                                    return (
-                                                    <div key={index} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-                                                <div className="flex flex-col md:flex-row md:items-center justify-between bg-slate-50 p-5 border-b border-slate-200">
-                                                    <div>
-                                                        <h4 className="font-bold text-[#003366] text-lg">
-                                                            {group.course} — {group.yearLevel} / {group.section}
-                                                        </h4>
-                                                        <p className="text-sm font-semibold text-slate-500 mt-1">
-                                                            Subject: <span className="text-blue-600">{group.subjectCode}</span> 
-                                                            <span className="mx-2">•</span> 
-                                                            {group.records.length} pending grade(s)
-                                                        </p>
-                                                    </div>
-                                                        <button
-                                                            onClick={() => handleFinalizeBatch(group.records)}
-                                                            disabled={!!finalizingBatchKey}
-                                                            className="mt-3 md:mt-0 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 shadow-sm disabled:cursor-not-allowed disabled:bg-slate-400"
-                                                        >
-                                                            {isFinalizing ? 'Finalizing...' : 'Finalize All to Ledger'}
-                                                        </button>
-                                                </div>
-                                                <div className="overflow-x-auto">
-                                                    <table className="w-full text-left text-sm">
-                                                        <thead>
-                                                            <tr className="bg-white text-slate-500 border-b border-slate-200">
-                                                                <th className="p-4 font-semibold">Student (Hashed)</th>
-                                                                <th className="p-4 font-semibold text-center">Grade</th>
-                                                                <th className="p-4 font-semibold text-center">Status</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                            {group.records.map((sg) => (
-                                                                <tr key={sg.stagingId} className="border-b border-slate-50 hover:bg-slate-50">
-                                                                    <td className="p-4 font-mono text-[11px] text-slate-600">{sg.studentHash}</td>
-                                                                    <td className="p-4 font-bold text-blue-700 text-center text-sm">{formatGradePayload(sg.grade)}</td>
-                                                                    <td className="p-4 text-center">
-                                                                        <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-bold uppercase text-emerald-700">
-                                                                            {sg.status}
-                                                                        </span>
-                                                                    </td>
-                                                                </tr>
-                                                            ))}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                                    </div>
-                                                    );
-                                                })
-                                    )}
-                                </div>
-                            )}
-                        </div>
                     )}
                     {mainTab === 'Requests' && (
                         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">

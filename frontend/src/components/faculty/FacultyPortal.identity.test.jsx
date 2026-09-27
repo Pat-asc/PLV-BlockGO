@@ -153,8 +153,8 @@ test('Bulk Upload sends FacultySections.id instead of academicSectionId', async 
     enrollmentStatus: 'ENROLLED' }] });
   await openSection();
 
-  const file = new File(['workbook'], 'grades.xlsx', {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  const file = new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', {
+    type: 'text/csv',
   });
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
@@ -169,8 +169,8 @@ test('Bulk Upload sends FacultySections.id instead of academicSectionId', async 
 
 test('successful Bulk Upload reports exact context and an editable Draft without claiming an IPFS commit', async () => {
   await openSection();
-  const file = new File(['workbook'], 'grades.xlsx', {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  const file = new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', {
+    type: 'text/csv',
   });
 
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
@@ -191,8 +191,8 @@ test.each(['final', 'finals', 'FINAL', 'FINALS'])('normalizes %s encoding season
     value: { startDate: '2020-01-01', endDate: '2099-12-31', semester: '1st Semester', term },
   });
   await openSection();
-  const file = new File(['workbook'], 'finals.xlsx', {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  const file = new File(['Student ID,Grade\n26-0001,90'], 'finals.csv', {
+    type: 'text/csv',
   });
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
@@ -206,7 +206,7 @@ test('a rejected Bulk Upload preserves manually entered grades and shows the bac
   await openSection();
   const gradeInput = screen.getAllByPlaceholderText('60-100')[0];
   fireEvent.change(gradeInput, { target: { value: '88' } });
-  const file = new File(['workbook'], 'wrong-assignment.xlsx');
+  const file = new File(['Student ID,Grade\n26-0001,90'], 'wrong-assignment.csv', { type: 'text/csv' });
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
   const dialog = await screen.findByRole('dialog', { name: 'Batch Upload Failed' });
@@ -218,7 +218,7 @@ test('a rejected Bulk Upload preserves manually entered grades and shows the bac
 test('a backend-closed encoding period uses the failure modal and saves no upload', async () => {
   batchUploadGrades.mockRejectedValue(new Error('The grade encoding period is closed.'));
   await openSection();
-  const file = new File(['workbook'], 'grades.xlsx');
+  const file = new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', { type: 'text/csv' });
 
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
@@ -230,7 +230,7 @@ test('a backend-closed encoding period uses the failure modal and saves no uploa
 
 test('a Midterm upload modal reports only the active term as accepted workflow data', async () => {
   await openSection();
-  const file = new File(['midterm-and-finals'], 'mixed-terms.xlsx');
+  const file = new File(['Student ID,Midterm,Finals\n26-0001,90,91'], 'mixed-terms.csv', { type: 'text/csv' });
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
   const dialog = await screen.findByRole('dialog', { name: 'Upload Successful' });
@@ -280,8 +280,8 @@ test('bulk-uploaded Draft values remain editable and a manual correction can be 
   });
   await openSection();
 
-  const file = new File(['workbook'], 'grades.xlsx', {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  const file = new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', {
+    type: 'text/csv',
   });
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 

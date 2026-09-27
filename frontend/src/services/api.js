@@ -1,4 +1,5 @@
-import { getAuthToken } from './authSession';
+import { expireAuthSession, getAuthToken } from './authSession';
+import { assertValidCsvUpload } from '../utils/csvUploadValidation';
 
 const getBaseUrl = (endpoint) => {
     if (process.env.REACT_APP_API_BASE_URL) {
@@ -42,6 +43,9 @@ const fetchWithAuth = async (endpoint, options = {}) => {
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         const errorMessage = String(errorData.message || errorData.error || 'API Request Failed');
+        const sessionRejected = response.status === 401 ||
+            (response.status === 403 && /invalid|expired|revoked|inactive|no longer authorized/i.test(errorMessage));
+        if (sessionRejected) expireAuthSession(response.status === 401 ? 'unauthorized' : 'revoked');
         throw new Error(errorMessage);
     }
 
@@ -269,12 +273,6 @@ export const approveGradeInBlockchain = async (id) => {
     });
 };
 
-export const finalizeGradeInBlockchain = async (id) => {
-    return await fetchWithAuth(`/finalize-grade/${encodeURIComponent(id)}`, {
-        method: 'POST'
-    });
-};
-
 export const finalizeGrade = async (recordId, invokerId) => {
     return await fetchWithAuth(`/Grades/finalize/${encodeURIComponent(recordId)}?invokerId=${encodeURIComponent(invokerId)}`, {
         method: 'POST'
@@ -320,6 +318,7 @@ export const fetchBlockchainGrades = async () => {
 };
 
 export const middlewareBatchUploadGrades = async (file) => {
+    await assertValidCsvUpload(file);
     const formData = new FormData();
     formData.append('excel', file);
 
@@ -330,6 +329,7 @@ export const middlewareBatchUploadGrades = async (file) => {
 };
 
 export const middlewareUploadGrades = async (file) => {
+    await assertValidCsvUpload(file);
     const formData = new FormData();
     formData.append('excel', file);
 
@@ -347,6 +347,7 @@ export const batchIssueGradeToBlockchain = async (grades = []) => {
 };
 
 export const batchUploadGrades = async (file, context = {}) => {
+    await assertValidCsvUpload(file);
     const {
         semester = '', schoolYear = '', course = '', facultyId = '', term = '', section = '',
         facultySectionId, academicSectionId, subjectCode = '', confirmOverwrite = false,
@@ -681,6 +682,7 @@ export const finalizeEnrollmentRoster = async (payload) => fetchWithAuth('/Auth/
     method: 'POST', body: JSON.stringify(payload),
 });
 export const bulkCreateStaffAccounts = async (file) => {
+    await assertValidCsvUpload(file);
     const formData = new FormData();
     formData.append('file', file);
     return fetchWithAuth('/AccountManagement/staff/bulk-upload', { method: 'POST', body: formData });
@@ -708,6 +710,7 @@ export const deleteDepartmentAcademicSections = async (department) => {
 };
 
 export const batchEnrollStudentsToSection = async (file, sectionId) => {
+    await assertValidCsvUpload(file);
     const formData = new FormData();
     formData.append('file', file);
 
@@ -718,6 +721,7 @@ export const batchEnrollStudentsToSection = async (file, sectionId) => {
 };
 
 export const batchUploadStudents = async (file, defaultDepartment = '', mode = 'enroll', enrollment = {}) => {
+    await assertValidCsvUpload(file);
     const formData = new FormData();
     formData.append('file', file);
     if (defaultDepartment) formData.append('defaultDepartment', defaultDepartment);
@@ -752,6 +756,7 @@ export const registrarBulkUpdateStudents = async (file, department = '', enrollm
 };
 
 export const bulkUploadMasterlist = async (file, department = '') => {
+    await assertValidCsvUpload(file);
     const formData = new FormData();
     formData.append('file', file);
     if (department) formData.append('department', department);
@@ -950,7 +955,7 @@ export const downloadGradingSheet = async (facultySectionId, suggestedName = 'Fa
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${suggestedName}.xlsx`;
+    a.download = `${suggestedName}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();

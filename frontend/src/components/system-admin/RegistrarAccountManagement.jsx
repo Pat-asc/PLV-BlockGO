@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { createRegistrarAccount, deleteRegistrarAccount, fetchRegistrarAccounts, resetManagedAccountPassword, updateRegistrarAccount } from '../../services/api';
+import PasswordStrength from '../shared/PasswordStrength';
+import { isPasswordValid, PASSWORD_POLICY_MESSAGE } from '../../utils/passwordPolicy';
 
 const emptyForm = { registrarId: '', fullName: '', email: '', password: '' };
 export const MAXIMUM_REGISTRAR_ACCOUNTS = 5;
@@ -62,7 +64,9 @@ const RegistrarAccountManagement = () => {
   useEffect(() => { load(); }, [load]);
 
   const create = async (event) => {
-    event.preventDefault(); setSaving(true); setNotice(null);
+    event.preventDefault(); setNotice(null);
+    if (!isPasswordValid(form.password)) return setNotice({ type: 'error', message: PASSWORD_POLICY_MESSAGE });
+    setSaving(true);
     try {
       const response = await createRegistrarAccount(form);
       setNotice({ type: response?.data?.warning ? 'warning' : 'success', message: response?.data?.warning || 'Registrar account created successfully.' });
@@ -86,7 +90,7 @@ const RegistrarAccountManagement = () => {
 
   const resetPassword = async (account) => {
     const edit = edits[account.id] || {};
-    if ((edit.password || '').length < 8) return setNotice({ type: 'error', message: 'The new password must contain at least 8 characters.' });
+    if (!isPasswordValid(edit.password || '')) return setNotice({ type: 'error', message: PASSWORD_POLICY_MESSAGE });
     if (edit.password !== edit.confirmPassword) return setNotice({ type: 'error', message: 'The password confirmation does not match.' });
     if (!window.confirm(`Reset the password for Registrar ${account.email}?`)) return;
     setSaving(true); setNotice(null);
@@ -121,6 +125,7 @@ const RegistrarAccountManagement = () => {
         <label className="text-sm font-semibold">Full Name<input required value={form.fullName} onChange={(event) => setForm({ ...form, fullName: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal" /></label>
         <label className="text-sm font-semibold">Email<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal" /></label>
         <PasswordField required label="Temporary Password" ariaLabel="temporary Registrar password" value={form.password} visible={showCreatePassword} onToggle={() => setShowCreatePassword((current) => !current)} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+        <div className="md:col-span-2"><PasswordStrength password={form.password} /></div>
         <button disabled={saving} className="rounded-lg bg-[#003366] px-4 py-2.5 font-bold text-white disabled:opacity-50 md:col-span-2">{saving ? 'Saving…' : 'Create Registrar'}</button>
       </form> : <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">The five-Registrar limit has been reached. Update an existing account or delete one to create another Registrar.</div>}
     </section>
@@ -134,7 +139,7 @@ const RegistrarAccountManagement = () => {
         return <div key={account.id} className="rounded-xl border border-slate-200 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-bold text-slate-800">{account.fullName}</p><p className="text-xs text-slate-500">{account.accountId} · Registrar</p></div><button disabled={saving} onClick={() => deleteAccount(account)} className="rounded-lg bg-red-100 px-3 py-2 text-sm font-bold text-red-700 disabled:opacity-50">Delete Registrar</button></div>
           <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto]"><label className="text-xs font-semibold text-slate-600">New Email<input type="email" placeholder={account.email} value={edit.email || ''} onChange={(event) => updateEdit({ email: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal" /></label><button disabled={saving || !edit.email} onClick={() => saveEmail(account)} className="self-end rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Update Email</button></div>
-          <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_auto]"><PasswordField label="New Password" ariaLabel={`new password for ${account.fullName}`} value={edit.password || ''} visible={!!visibility.password} onToggle={() => toggleVisibility('password')} onChange={(event) => updateEdit({ password: event.target.value })} /><PasswordField label="Confirm Password" ariaLabel={`password confirmation for ${account.fullName}`} value={edit.confirmPassword || ''} visible={!!visibility.confirmPassword} onToggle={() => toggleVisibility('confirmPassword')} onChange={(event) => updateEdit({ confirmPassword: event.target.value })} /><button disabled={saving || !edit.password} onClick={() => resetPassword(account)} className="self-end rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-900 disabled:opacity-50">Reset Password</button></div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_auto]"><PasswordField label="New Password" ariaLabel={`new password for ${account.fullName}`} value={edit.password || ''} visible={!!visibility.password} onToggle={() => toggleVisibility('password')} onChange={(event) => updateEdit({ password: event.target.value })} /><PasswordField label="Confirm Password" ariaLabel={`password confirmation for ${account.fullName}`} value={edit.confirmPassword || ''} visible={!!visibility.confirmPassword} onToggle={() => toggleVisibility('confirmPassword')} onChange={(event) => updateEdit({ confirmPassword: event.target.value })} /><button disabled={saving || !edit.password} onClick={() => resetPassword(account)} className="self-end rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-900 disabled:opacity-50">Reset Password</button><div className="lg:col-span-3"><PasswordStrength password={edit.password || ''} /></div></div>
         </div>;
       })}{accounts.length === 0 ? <p className="py-8 text-center text-slate-500">No Registrar accounts found.</p> : null}</div>}
     </section>

@@ -20,7 +20,7 @@ function SectionReviewPanel({
   activeTerm,
   onSendBack,
   onApprove,
-  onSubmitToRegistrar,
+  onFinalize,
   onViewIpfs,
 }) {
   const [draftNotes, setDraftNotes] = useState({});
@@ -306,11 +306,11 @@ function SectionReviewPanel({
             Approve Section
           </button>
           <button
-            onClick={() => onSubmitToRegistrar(note)}
+            onClick={() => onFinalize(note)}
             disabled={selectedSection.reviewStatus !== "approved"}
             className="rounded-xl bg-[#003366] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#00264d] disabled:cursor-not-allowed disabled:bg-slate-300"
           >
-            Forward to Registrar
+            Finalize Grades
           </button>
         </div>
       </div>

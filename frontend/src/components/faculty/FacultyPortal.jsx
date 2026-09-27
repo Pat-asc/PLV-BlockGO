@@ -1362,7 +1362,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                       <input
                         type="file"
                         aria-label="Bulk upload grades workbook"
-                        accept=".csv,.xlsx"
+                        accept=".csv,text/csv"
                         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                         onChange={(e) => handleFileUpload(activeSection, e)}
                         disabled={uploadingSection === activeSection || isClosed}
@@ -1598,7 +1598,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             {uploadResult.type === 'success' ? (
               <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
                 <p className="font-bold">Status: Draft - grades remain editable.</p>
-                <p className="mt-1">Nothing was submitted to the Chairperson or finalized. No IPFS upload or Fabric write occurs during Draft import; ledger processing happens only during Registrar finalization.</p>
+                <p className="mt-1">Nothing was submitted to the Chairperson or finalized. No IPFS upload or Fabric write occurs during Draft import; ledger processing happens only during Chairperson finalization.</p>
                 {uploadResult.counts && <p className="mt-2 text-xs">Processed: {uploadResult.counts.processed} | Saved: {uploadResult.counts.successful} | Failed: {uploadResult.counts.failed}</p>}
               </div>
             ) : (

@@ -58,7 +58,7 @@ const getWorkflowLabel = (status = "") => {
   const normalized = String(status || "").toLowerCase();
 
   if (normalized === "returned") return "Returned to Faculty";
-  if (normalized === "forwarded") return "Submitted to Registrar";
+  if (normalized === "forwarded") return "Finalized";
   return "For Review";
 };
 

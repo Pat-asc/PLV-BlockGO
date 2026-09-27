@@ -21,7 +21,7 @@ const ProgramCard = ({
   const isForwarded = reviewStatus === "forwarded";
 
   const getSubmitLabel = () => {
-    if (isForwarded) return "Sent to Registrar";
+    if (isForwarded) return "Finalized by Chairperson";
     if (isApproved) return "Approved by Chairperson";
     if (isSubmitted) return "Submitted to Chairperson";
     if (isReturned) return "Resubmit to Chairperson";

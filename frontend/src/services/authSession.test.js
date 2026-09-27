@@ -7,6 +7,7 @@ import {
   roleForRoute,
   routeForRole,
   setAuthSession,
+  subscribeToAuthSessionEvents,
 } from './authSession';
 
 const tokenFor = (role, username = `${role}@plv.edu.ph`) => {
@@ -51,4 +52,26 @@ test('migrates and removes a legacy shared token', () => {
   expect(getAuthToken()).toBe(token);
   expect(localStorage.getItem('token')).toBeNull();
   expect(decodeAuthToken(token).dbRole).toBe('registrar');
+});
+
+test('manual logout notifies this tab and clears the session without an event loop', () => {
+  const listener = jest.fn();
+  const unsubscribe = subscribeToAuthSessionEvents(listener);
+  setAuthSession(tokenFor('student'), 'student');
+  clearAuthSession({ broadcast: true, reason: 'manual_logout' });
+  expect(getAuthToken()).toBeNull();
+  expect(listener).toHaveBeenCalledTimes(1);
+  expect(listener.mock.calls[0][0].reason).toBe('manual_logout');
+  unsubscribe();
+});
+
+test('ignores a logout event for a different signed-in account', () => {
+  const listener = jest.fn();
+  const unsubscribe = subscribeToAuthSessionEvents(listener);
+  setAuthSession(tokenFor('faculty', 'faculty-a@plv.edu.ph'), 'faculty');
+  window.dispatchEvent(new CustomEvent('blockgo.auth.event', {
+    detail: { type: 'logout', account: 'faculty-b@plv.edu.ph', reason: 'manual_logout' },
+  }));
+  expect(listener).not.toHaveBeenCalled();
+  unsubscribe();
 });

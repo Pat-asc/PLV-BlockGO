@@ -21,6 +21,6 @@ test('registrars cannot bypass the Faculty and Chairperson correction workflow',
 
 test('the approved returned-grade workflow remains available', () => {
   assert.match(gradeController, /HttpPost\("return\/\{recordId\}"\)/);
-  assert.match(gradeController, /Authorize\(Roles\s*=\s*"department_admin,registrar"\)/);
+  assert.match(gradeController, /HttpPost\("return\/\{recordId\}"\)\][\s\S]{0,100}Authorize\(Roles\s*=\s*"department_admin"\)/);
   assert.match(gradeController, /Grade returned to faculty with correction remarks/);
 });

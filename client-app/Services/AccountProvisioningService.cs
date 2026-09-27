@@ -45,6 +45,7 @@ namespace Client_app.Services
             string? ipAddress,
             CancellationToken cancellationToken)
         {
+            PasswordPolicy.EnsureValid(request.Password);
             var role = NormalizeStaffRole(request.Role);
             var email = request.Email.Trim().ToLowerInvariant();
             var staffId = request.StaffId.Trim();
@@ -141,6 +142,7 @@ namespace Client_app.Services
             string? ipAddress,
             CancellationToken cancellationToken)
         {
+            PasswordPolicy.EnsureValid(request.Password);
             var email = request.Email.Trim().ToLowerInvariant();
             var accountId = request.RegistrarId.Trim();
             await using var connection = new NpgsqlConnection(_connectionString);
@@ -192,6 +194,10 @@ namespace Client_app.Services
             {
                 throw new ArgumentException("At least one Registrar account field must be supplied.");
             }
+            if (request.Password is not null)
+            {
+                PasswordPolicy.EnsureValid(request.Password);
+            }
 
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
@@ -236,6 +242,7 @@ namespace Client_app.Services
                 UPDATE users
                 SET email = @email,
                     password_hash = CASE WHEN @password IS NULL THEN password_hash ELSE crypt(@password, gen_salt('bf')) END,
+                    auth_version = CASE WHEN @password IS NULL THEN auth_version ELSE auth_version + 1 END,
                     is_active = COALESCE(@isActive, is_active),
                     status = CASE WHEN COALESCE(@isActive, is_active) THEN 'APPROVED' ELSE 'DEACTIVATED' END,
                     updated_at = CURRENT_TIMESTAMP
@@ -342,10 +349,7 @@ namespace Client_app.Services
             string? ipAddress,
             CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 8 || newPassword.Length > 128)
-            {
-                throw new ArgumentException("The new password must be between 8 and 128 characters.");
-            }
+            PasswordPolicy.EnsureValid(newPassword);
 
             var normalizedActorRole = NormalizeAccountRole(actorRole);
             await using var connection = new NpgsqlConnection(_connectionString);
@@ -400,6 +404,7 @@ namespace Client_app.Services
                 await using var update = new NpgsqlCommand(@"
                     UPDATE users
                     SET password_hash = crypt(@password, gen_salt('bf')),
+                        auth_version = auth_version + 1,
                         password_reset_token = NULL,
                         password_reset_expires = NULL,
                         updated_at = CURRENT_TIMESTAMP

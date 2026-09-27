@@ -16,6 +16,7 @@ using ClosedXML.Excel;
 using BlockGo.Models;
 using BlockGo.Services;
 using BlockGo.Mappers;
+using Client_app.Services;
 
 namespace BlockGo.Controllers
 {
@@ -173,12 +174,14 @@ namespace BlockGo.Controllers
 
         [HttpPost("bulk-upload")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkUploadGrades([FromForm] IFormFile file, [FromForm] string? semester, [FromForm] string? schoolYear, [FromForm] string? yearLevel, [FromForm] string? section)
         {
             _logger.LogInformation("Bulk upload initiated by: {User}", User.Identity?.Name);
             
-            if (file == null || file.Length == 0)
-                return BadRequest(new { status = "Error", message = "File required" });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, HttpContext.RequestAborted);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
 
             var facultyEmail = User.Identity?.Name;
             if (string.IsNullOrEmpty(facultyEmail))
@@ -186,9 +189,7 @@ namespace BlockGo.Controllers
 
             try
             {
-                var ext = Path.GetExtension(file.FileName).ToLower();
-                if (ext != ".csv" && ext != ".xlsx")
-                    return BadRequest(new { status = "Error", message = "Only .csv and .xlsx files are supported." });
+                const string ext = ".csv";
 
                 var tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ext);
                 var batchId = Guid.NewGuid().ToString();
@@ -340,7 +341,7 @@ namespace BlockGo.Controllers
                     approvedCount += await cmd.ExecuteNonQueryAsync();
                 }
 
-                return Ok(new { status = "Success", message = $"{approvedCount} grades approved by Department Admin. Ready for Registrar finalization.", approvedCount });
+                return Ok(new { status = "Success", message = $"{approvedCount} grades approved by the Chairperson and ready for Chairperson finalization.", approvedCount });
             }
             catch (Exception ex)
             {
@@ -349,66 +350,16 @@ namespace BlockGo.Controllers
         }
 
         [HttpPost("finalize-grades")]
-        [Authorize(Roles = "registrar")]
-        public async Task<IActionResult> FinalizeGradesAsRegistrar([FromBody] FinalizeGradesRequest request)
+        [Authorize(Roles = "department_admin")]
+        public IActionResult RetiredBulkGradeFinalization()
         {
-            var registrarEmail = User.Identity?.Name;
-            try
+            // Retired: this legacy route does not perform the authoritative
+            // section-scope checks now required for Chairperson finalization.
+            return StatusCode(StatusCodes.Status410Gone, new
             {
-                using var conn = new NpgsqlConnection(_connectionString);
-                await conn.OpenAsync();
-                int finalizedCount = 0;
-
-                foreach (var stagingId in request.StagingIds ?? new List<int>())
-                {
-                    using var selectCmd = new NpgsqlCommand("SELECT * FROM bulk_grade_staging WHERE staging_id = @id", conn);
-                    selectCmd.Parameters.AddWithValue("id", stagingId);
-                    using var reader = await selectCmd.ExecuteReaderAsync();
-                    if (await reader.ReadAsync()) {
-                        var record = new AcademicRecord {
-                            Id = Guid.NewGuid().ToString(),
-                            StudentHash = reader["student_hash"].ToString() ?? "",
-                            Course = reader["course"].ToString() ?? "",
-                            SubjectCode = reader["subject_code"].ToString() ?? "",
-                            Grade = reader["grade"].ToString() ?? "",
-                            Semester = reader["semester"].ToString() ?? "",
-                            SchoolYear = reader["school_year"].ToString() ?? "",
-                            YearLevel = reader["year_level"].ToString() ?? "",
-                            Section = reader["section"].ToString() ?? "",
-                            FacultyId = reader["faculty_id"].ToString() ?? "",
-                            University = "PLV",
-                            Date = DateTime.Now.ToString("yyyy-MM-dd"),
-                            Status = "FINALIZED",
-                            Version = 1
-                        };
-                        reader.Close();
-
-                        await _blockchainService.SubmitGradeAsync(record, registrarEmail ?? "system");
-
-                        using var deleteCmd = new NpgsqlCommand("DELETE FROM bulk_grade_staging WHERE staging_id = @id", conn);
-                        deleteCmd.Parameters.AddWithValue("id", stagingId);
-                        await deleteCmd.ExecuteNonQueryAsync();
-
-                        using var auditCmd = new NpgsqlCommand(@"
-                            INSERT INTO gradecorrectionlogs (recordid, oldgrade, newgrade, reasontext, approvedby, timestamp)
-                            VALUES (@rid, 'STAGED', 'FINALIZED', 'Bulk Finalization to Ledger', @reg, CURRENT_TIMESTAMP)", conn);
-                        auditCmd.Parameters.AddWithValue("rid", record.Id);
-                        auditCmd.Parameters.AddWithValue("reg", registrarEmail ?? "system");
-                        await auditCmd.ExecuteNonQueryAsync();
-
-                        finalizedCount++;
-                    } else {
-                        reader.Close();
-                    }
-                }
-
-                return Ok(new { status = "Success", message = $"{finalizedCount} grades officially committed to the blockchain ledger.", finalizedCount });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Finalization error");
-                return StatusCode(500, new { status = "Error", message = ex.Message });
-            }
+                status = "Error",
+                message = "This legacy bulk-finalization route is retired. Chairpersons must use the scoped grade finalization workflow."
+            });
         }
 
         [HttpGet("staged")]
@@ -460,16 +411,16 @@ namespace BlockGo.Controllers
         [HttpPost("/api/bulk-faculty-sections-upload")]
         [Authorize(Roles = "registrar,department_admin,chairperson,admin")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkFacultySectionsUpload([FromForm] IFormFile file, [FromForm] string? department)
         {
             _logger.LogInformation("Bulk faculty sections upload initiated by: {User}", User.Identity?.Name);
 
-            if (file == null || file.Length == 0)
-                return BadRequest(new { status = "Error", message = "CSV file required." });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, HttpContext.RequestAborted);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
 
-            var ext = Path.GetExtension(file.FileName).ToLower();
-            if (ext != ".csv" && ext != ".xlsx")
-                return BadRequest(new { status = "Error", message = "Only .csv and .xlsx files are supported." });
+            const string ext = ".csv";
 
             var tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ext);
 
@@ -622,16 +573,16 @@ namespace BlockGo.Controllers
         [HttpPost("/api/bulk-faculty-load-chairperson")]
         [Authorize(Roles = "department_admin,chairperson,registrar,admin")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkFacultyLoadChairperson([FromForm] IFormFile file, [FromForm] string? department)
         {
             _logger.LogInformation("Chairperson bulk faculty load initiated by: {User}", User.Identity?.Name);
 
-            if (file == null || file.Length == 0)
-                return BadRequest(new { status = "Error", message = "CSV file required." });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, HttpContext.RequestAborted);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
 
-            var ext = Path.GetExtension(file.FileName).ToLower();
-            if (ext != ".csv" && ext != ".xlsx")
-                return BadRequest(new { status = "Error", message = "Only .csv and .xlsx files are supported." });
+            const string ext = ".csv";
 
             var tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ext);
 
@@ -830,8 +781,4 @@ namespace BlockGo.Controllers
         public List<int> StagingIds { get; set; } = new();
     }
 
-    public class FinalizeGradesRequest
-    {
-        public List<int> StagingIds { get; set; } = new();
-    }
 }

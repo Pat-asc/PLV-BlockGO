@@ -88,6 +88,12 @@ namespace BlockGo.Models
         [JsonPropertyName("version")]
         public int Version { get; set; }
 
+        [JsonPropertyName("finalized_by")]
+        public string FinalizedBy { get; set; } = string.Empty;
+
+        [JsonPropertyName("finalized_at")]
+        public string FinalizedAt { get; set; } = string.Empty;
+
         [JsonPropertyName("assignment_cycle_id")]
         public string AssignmentCycleId { get; set; } = string.Empty;
     }

@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchApplicationTransactions, fetchLedgerTransactions } from '../../services/api';
+import SearchField from '../shared/SearchField';
+import useDebouncedValue from '../../hooks/useDebouncedValue';
 
 const PAGE_SIZE = 10;
 
@@ -16,6 +18,7 @@ function SystemAdminTransactions() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -23,7 +26,7 @@ function SystemAdminTransactions() {
     try {
       const requests = [];
       if (source !== 'blockchain') requests.push(fetchApplicationTransactions());
-      if (source !== 'application') requests.push(fetchLedgerTransactions({ search }));
+      if (source !== 'application') requests.push(fetchLedgerTransactions({ search: debouncedSearch }));
       const responses = await Promise.all(requests);
       const next = responses.flatMap((response, index) => {
         const data = Array.isArray(response?.data) ? response.data : [];
@@ -37,7 +40,9 @@ function SystemAdminTransactions() {
     } finally {
       setLoading(false);
     }
-  }, [search, source]);
+  }, [debouncedSearch, source]);
+
+  useEffect(() => { setPage(1); }, [search]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -70,9 +75,7 @@ function SystemAdminTransactions() {
         <p className="mt-2 text-sm text-slate-600">Read-only history with live SignalR transaction insertion. Ten transactions are shown per page.</p>
       </div>
       <form className="grid gap-3 rounded-md border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_220px_auto]" onSubmit={(event) => { event.preventDefault(); load(); }}>
-        <label className="text-sm font-semibold text-slate-700">Search
-          <input aria-label="Search transactions" value={search} onChange={(event) => setSearch(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-slate-300 px-3" placeholder="Hash, action, actor, or record" />
-        </label>
+        <SearchField value={search} onChange={setSearch} label="Search transactions" placeholder="Hash, action, actor, status, or record" inputClassName="min-h-11" />
         <label className="text-sm font-semibold text-slate-700">Source
           <select aria-label="Transaction source" value={source} onChange={(event) => setSource(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-slate-300 px-3">
             <option value="all">All sources</option><option value="application">Application</option><option value="blockchain">Blockchain</option>

@@ -424,8 +424,8 @@ function ChairpersonPortal({ onLogout, allGrades = {} }) {
                   activeTerm={activeTerm}
                   onSendBack={(note) => updateReviewStatus("returned", note)}
                   onApprove={(note) => updateReviewStatus("approved", note)}
-                  onSubmitToRegistrar={(note) =>
-                    updateReviewStatus("forwarded", note)
+                  onFinalize={(note) =>
+                    updateReviewStatus("finalized", note)
                   }
                 />
               </>
@@ -442,8 +442,8 @@ function ChairpersonPortal({ onLogout, allGrades = {} }) {
                   activeTerm={activeTerm}
                   onSendBack={(note) => updateReviewStatus("returned", note)}
                   onApprove={(note) => updateReviewStatus("approved", note)}
-                  onSubmitToRegistrar={(note) =>
-                    updateReviewStatus("forwarded", note)
+                  onFinalize={(note) =>
+                    updateReviewStatus("finalized", note)
                   }
                 />
               </>

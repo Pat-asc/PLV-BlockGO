@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchAcademicPrograms, fetchAllGrades } from '../../services/api';
 import { buildLedgerHierarchy, canonicalizeLedgerPrograms, filterLedgerRecords, getLedgerFilterOptions } from '../../utils/registrarGradesLedger';
 import { selectLedgerExportRecords } from '../../utils/registrarGradesLedgerPdf';
+import SearchField from '../shared/SearchField';
 
 const PAGE_SIZE = 25;
 const displayValue = (value) => (value === null || value === undefined || String(value).trim() === '' ? '--' : String(value));
@@ -201,7 +202,7 @@ const RegistrarGradesLedger = ({ loggedInEmail, onViewIpfs, onExport }) => {
   const requestExport = (scope = { type: 'all' }) => {
     const scopedRecords = selectLedgerExportRecords(filteredRecords, scope);
     if (scopedRecords.length === 0) {
-      window.alert('No grade records available for this export.');
+      window.alert('No finalized grade records are available for this export.');
       return;
     }
     onExport?.(scopedRecords, filters, scope);
@@ -248,9 +249,7 @@ const RegistrarGradesLedger = ({ loggedInEmail, onViewIpfs, onExport }) => {
               <option value="all">All Statuses</option>{options.statuses.map((value) => <option key={value}>{value}</option>)}
             </select>
           </label>
-          <label className="text-xs font-semibold text-slate-600">Search
-            <input aria-label="Search" value={filters.search} onChange={(event) => updateFilter('search', event.target.value)} placeholder="Faculty, section, student" className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm" />
-          </label>
+          <SearchField value={filters.search} onChange={(value) => updateFilter('search', value)} label="Search grades" placeholder="Student, faculty, subject, section, or ID" />
         </div>
       </div>
 

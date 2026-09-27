@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { resetManagedAccountPassword } from '../../services/api';
 import PasswordResetRequests from './PasswordResetRequests';
+import PasswordStrength from '../shared/PasswordStrength';
+import { isPasswordValid, PASSWORD_POLICY_MESSAGE } from '../../utils/passwordPolicy';
+import SearchField from '../shared/SearchField';
 
 const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = [], onRefresh }) => {
   const [roleFilter, setRoleFilter] = useState('all');
@@ -34,7 +37,7 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
   const resetPassword = async (event) => {
     event.preventDefault(); setNotice(null);
     if (!selected) return setNotice({ type: 'error', message: 'Select an account first.' });
-    if (newPassword.length < 8 || newPassword.length > 128) return setNotice({ type: 'error', message: 'Password must be between 8 and 128 characters.' });
+    if (!isPasswordValid(newPassword)) return setNotice({ type: 'error', message: PASSWORD_POLICY_MESSAGE });
     if (newPassword !== confirmPassword) return setNotice({ type: 'error', message: 'The password confirmation does not match.' });
     if (!window.confirm(`Reset the password for ${selected.name} (${selected.roleLabel})?`)) return;
     setSaving(true);
@@ -61,7 +64,8 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
       </div>
       <div className="space-y-3">
         <label className="block text-[11px] font-semibold text-slate-700">Account Type<select value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value); setSelectedId(''); }} className={fieldClass}><option value="all">All Accounts</option><option value="student">Students</option><option value="faculty">Faculty</option><option value="department_admin">Department Administrators</option></select></label>
-        <label className="block text-[11px] font-semibold text-slate-700">Search Account<span className="relative mt-1.5 block"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><SearchIcon /></span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, ID, email, or department..." className="h-9 w-full rounded-md border border-slate-300 pl-9 pr-3 text-xs font-normal outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></span></label>
+        <SearchField value={search} onChange={(value) => { setSearch(value); setSelectedId(''); }} label="Search Account" placeholder="Name, ID, email, role, or department" inputClassName="h-9 text-xs" />
+        {search.trim() && visibleAccounts.length === 0 ? <p className="text-xs text-slate-500">No results found.</p> : null}
         <label className="block text-[11px] font-semibold text-slate-700">Account<select required value={selectedId} onChange={(event) => setSelectedId(event.target.value)} className={fieldClass}><option value="">Select an account</option>{visibleAccounts.map((account) => <option key={account.key} value={account.key}>{account.roleLabel} — {account.name} — {account.accountCode}</option>)}</select></label>
       </div>
     </section>
@@ -74,6 +78,7 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
           <label className="block text-[11px] font-semibold text-slate-700">Confirm Password<input required minLength="8" maxLength="128" type={showPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Confirm new password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className={fieldClass} /></label>
         </div>
         <label className="mt-2.5 flex w-fit items-center gap-2 text-[10px] text-slate-600"><input type="checkbox" checked={showPassword} onChange={(event) => setShowPassword(event.target.checked)} className="h-3 w-3" />Show passwords</label>
+        <PasswordStrength password={newPassword} />
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3"><p className="text-[10px] text-slate-500">Password must contain at least 8 characters.</p><button disabled={saving || !selected} className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"><LockIcon />{saving ? 'Resetting…' : 'Reset Password'}</button></div>
       </form>
     </section>

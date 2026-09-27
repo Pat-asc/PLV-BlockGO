@@ -31,9 +31,11 @@ const upload = multer({
         destination: (req, file, callback) => callback(null, uploadDir),
         filename: (req, file, callback) => callback(null, `${Date.now()}-${path.basename(file.originalname)}`)
     }),
-    limits: { fileSize: 15 * 1024 * 1024 },
+    limits: { fileSize: (10 * 1024 * 1024) + (64 * 1024) },
     fileFilter: (req, file, callback) => {
-        const valid = ['.csv', '.xlsx', '.xls'].includes(path.extname(file.originalname).toLowerCase());
+        const allowedTypes = new Set(['text/csv', 'application/csv', 'text/plain', 'application/vnd.ms-excel', 'application/octet-stream', '']);
+        const valid = path.extname(file.originalname).toLowerCase() === '.csv' &&
+            allowedTypes.has(String(file.mimetype || '').toLowerCase().split(';')[0]);
         callback(valid ? null : new Error('INVALID_FILE_TYPE'), valid);
     }
 }).single('excel');
@@ -41,7 +43,7 @@ const upload = multer({
 function uploadMiddleware(req, res, next) {
     upload(req, res, (error) => {
         if (error instanceof multer.MulterError) return res.status(400).json({ error: `Upload error: ${error.message}.` });
-        if (error?.message === 'INVALID_FILE_TYPE') return res.status(400).json({ error: 'Only Excel (.xlsx, .xls) and CSV (.csv) files are allowed.' });
+        if (error?.message === 'INVALID_FILE_TYPE') return res.status(400).json({ error: 'Only CSV files are allowed.' });
         if (error) return next(error);
         next();
     });
@@ -49,6 +51,29 @@ function uploadMiddleware(req, res, next) {
 
 app.post(['/api/batch-upload', '/api/upload-grades'], authenticateJWT(), uploadMiddleware, async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded. Expected form-data field "excel".' });
+    const rejectUploadedFile = async (message) => {
+        await fs.promises.unlink(req.file.path).catch(() => {});
+        return res.status(400).json({ error: message });
+    };
+    if (req.file.size >= 10 * 1024 * 1024) {
+        return rejectUploadedFile('The selected CSV file must be less than 10 MB.');
+    }
+    const sample = Buffer.alloc(Math.min(req.file.size, 16 * 1024));
+    const handle = await fs.promises.open(req.file.path, 'r');
+    try {
+        await handle.read(sample, 0, sample.length, 0);
+    } finally {
+        await handle.close();
+    }
+    const nonCsvSignature = sample.subarray(0, 2).equals(Buffer.from('MZ')) ||
+        sample.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) ||
+        sample.subarray(0, 4).equals(Buffer.from('%PDF')) ||
+        sample.subarray(0, 4).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0]));
+    const binary = sample.some((value) => value === 0 || value < 0x09 || (value > 0x0d && value < 0x20));
+    const header = sample.toString('utf8').split(/\r?\n|\r/).find((line) => line.trim());
+    if (nonCsvSignature || binary || !header?.includes(',')) {
+        return rejectUploadedFile('The selected file does not contain valid CSV text.');
+    }
     const mapperPath = path.join(middlewareRoot, 'mapper.py');
     const workerPath = path.join(middlewareRoot, 'uploadWorker.js');
     if (!fs.existsSync(mapperPath)) return res.status(500).json({ error: 'Mapper script not found', expected: mapperPath });

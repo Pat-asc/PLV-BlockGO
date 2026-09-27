@@ -25,7 +25,12 @@ function ChairpersonOverview({ metrics }) {
     {
       title: "Approved Sections",
       value: metrics.approvedSections,
-      subtitle: "Sections approved and ready to forward to registrar",
+      subtitle: "Sections approved and awaiting finalization",
+    },
+    {
+      title: "Finalized Sections",
+      value: metrics.forwardedSections,
+      subtitle: "Sections finalized and verified on the ledger",
     },
   ];
 

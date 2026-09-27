@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 test('bulk grade multipart data always carries the exact assignment identity', async () => {
-  const file = new File(['xlsx'], 'grades.xlsx');
+  const file = new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', { type: 'text/csv' });
   await batchUploadGrades(file, {
     facultySectionId: 123,
     academicSectionId: 45,
@@ -35,14 +35,14 @@ test('bulk grade multipart data always carries the exact assignment identity', a
 });
 
 test('bulk grade upload refuses to send when the exact assignment ID is absent', async () => {
-  await expect(batchUploadGrades(new File(['xlsx'], 'grades.xlsx'), {
+  await expect(batchUploadGrades(new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', { type: 'text/csv' }), {
     academicSectionId: 45,
   })).rejects.toThrow('exact Faculty assignment is missing');
   expect(global.fetch).not.toHaveBeenCalled();
 });
 
 test('finals bulk upload sends the canonical term with the complete multipart identity', async () => {
-  await batchUploadGrades(new File(['xlsx'], 'finals.xlsx'), {
+  await batchUploadGrades(new File(['Student ID,Grade\n26-0001,90'], 'finals.csv', { type: 'text/csv' }), {
     facultySectionId: 77,
     academicSectionId: 12,
     subjectCode: 'IT 101',
@@ -65,7 +65,7 @@ test('finals bulk upload sends the canonical term with the complete multipart id
 });
 
 test('draft overwrite confirmation is explicit in multipart data', async () => {
-  await batchUploadGrades(new File(['xlsx'], 'grades.xlsx'), {
+  await batchUploadGrades(new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', { type: 'text/csv' }), {
     facultySectionId: 77, academicSectionId: 12, subjectCode: 'IT 101',
     section: 'BSIT 1-1', schoolYear: '2026-2027', semester: 'FIRST',
     term: 'midterm', confirmOverwrite: true,
@@ -74,7 +74,7 @@ test('draft overwrite confirmation is explicit in multipart data', async () => {
   expect(options.body.get('confirmOverwrite')).toBe('true');
 });
 
-test('registrar finalization uses the current-cycle backend queue', async () => {
+test('Chairperson finalization queue uses the current-cycle backend queue', async () => {
   await fetchRegistrarFinalizationQueue();
 
   expect(global.fetch.mock.calls[0][0]).toContain('/Grades/finalization-queue');

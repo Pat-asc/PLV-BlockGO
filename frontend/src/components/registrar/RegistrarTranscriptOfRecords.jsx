@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { fetchStudentTranscript } from '../../services/api';
+import SearchField from '../shared/SearchField';
 
 const semesterLabel = (value) => ({ FIRST: 'First Semester', SECOND: 'Second Semester', MIDYEAR: 'Midyear' }[value] || value);
 
@@ -12,7 +13,7 @@ const RegistrarTranscriptOfRecords = ({ students = [] }) => {
 
   const filteredStudents = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return students.filter((student) => !query || [student.fullname, student.studentno, student.email]
+    return students.filter((student) => !query || [student.fullname, student.studentno, student.email, student.studentEmail, student.department, student.programCode, student.section]
       .some((value) => String(value || '').toLowerCase().includes(query))).slice(0, 100);
   }, [search, students]);
 
@@ -53,8 +54,8 @@ const RegistrarTranscriptOfRecords = ({ students = [] }) => {
       doc.setFontSize(9);
       doc.setTextColor(40);
       doc.text(`${student.studentName}  |  ${student.studentNo}`, 14, 31);
-      doc.text(`${student.programName} (${student.programCode})`, 14, 36);
-      doc.text(`Curriculum: ${curriculum.curriculumName} ${curriculum.curriculumVersion}`, 14, 41);
+      doc.text(`${student.programName} (${student.programCode})  |  Year: ${student.yearLevel || records[0]?.yearLevel || '--'}  |  Section: ${student.section || records[0]?.section || '--'}`, 14, 36);
+      doc.text(`Curriculum: ${curriculum.curriculumName} ${curriculum.curriculumVersion}  |  Generated: ${new Date().toLocaleString()}`, 14, 41);
     };
     drawHeader();
     doc.autoTable({
@@ -67,8 +68,6 @@ const RegistrarTranscriptOfRecords = ({ students = [] }) => {
       columnStyles: { 3: { cellWidth: 63 } },
       didDrawPage: ({ pageNumber }) => {
         if (pageNumber > 1) drawHeader();
-        doc.setFontSize(8);
-        doc.text(`Page ${pageNumber}`, 196, 289, { align: 'right' });
       },
       margin: { top: 47, bottom: 14 },
     });
@@ -76,6 +75,12 @@ const RegistrarTranscriptOfRecords = ({ students = [] }) => {
     doc.setFontSize(9);
     doc.text(`Curriculum completeness: ${completeness.completedSubjects}/${completeness.requiredSubjects}`, 14, finalY);
     doc.text('Prepared by the Office of the University Registrar', 14, finalY + 7);
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let page = 1; page <= totalPages; page += 1) {
+      doc.setPage(page);
+      doc.setFontSize(8);
+      doc.text(`Page ${page} of ${totalPages}`, 196, 289, { align: 'right' });
+    }
     doc.save(`TOR_${student.studentNo || student.studentName.replace(/\s+/g, '_')}.pdf`);
   };
 
@@ -87,8 +92,7 @@ const RegistrarTranscriptOfRecords = ({ students = [] }) => {
         <h2 className="text-2xl font-bold text-[#003366]">Transcript of Records</h2>
         <p className="mt-1 text-sm text-slate-500">Generate a Registrar-authorized TOR from explicitly released, finalized ledger grades.</p>
         <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student number, name, or email"
-            className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+          <SearchField value={search} onChange={setSearch} label="Search students" placeholder="Number, name, email, program, or section" />
           <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
             <option value="">Select student</option>
             {filteredStudents.map((student) => <option key={student.id} value={student.id}>{student.studentno || 'No ID'} — {student.fullname}</option>)}
@@ -97,6 +101,7 @@ const RegistrarTranscriptOfRecords = ({ students = [] }) => {
             {loading ? 'Loading…' : 'Generate TOR'}
           </button>
         </div>
+        {search.trim() && filteredStudents.length === 0 ? <p className="mt-3 text-sm text-slate-500">No results found.</p> : null}
         {error && <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       </div>
 
@@ -108,6 +113,7 @@ const RegistrarTranscriptOfRecords = ({ students = [] }) => {
         <div className="mt-5 grid gap-2 text-sm md:grid-cols-2">
           <p><strong>Student:</strong> {transcript.student.studentName}</p><p><strong>Student No.:</strong> {transcript.student.studentNo}</p>
           <p><strong>Program:</strong> {transcript.student.programName}</p><p><strong>Batch:</strong> {transcript.student.batchYear || '—'}</p>
+          <p><strong>Year Level:</strong> {transcript.student.yearLevel || transcript.records?.[0]?.yearLevel || '—'}</p><p><strong>Section:</strong> {transcript.student.section || transcript.records?.[0]?.section || '—'}</p>
           <p className="md:col-span-2"><strong>Curriculum:</strong> {transcript.curriculum.curriculumName} {transcript.curriculum.curriculumVersion}</p>
         </div>
         <div className="mt-6 space-y-5">

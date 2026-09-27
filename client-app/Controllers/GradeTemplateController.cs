@@ -140,10 +140,10 @@ namespace Client_app.Controllers
                 var students = await FacultyAssignmentRosterService.GetRosterAsync(
                     conn, assignment, HttpContext.RequestAborted);
 
-                var content = FacultyGradeWorkbookService.Build(assignment, students);
+                var content = FacultyGradeWorkbookService.BuildCsv(assignment, students);
                 string safeSection = string.Join("_", assignment.CanonicalSection.Split(Path.GetInvalidFileNameChars()));
-                return File(content, FacultyGradeWorkbookService.ContentType,
-                    $"{assignment.Subject}_{safeSection}_{assignment.SchoolYear}_{assignment.Semester}.xlsx");
+                return File(content, "text/csv; charset=utf-8",
+                    $"{assignment.Subject}_{safeSection}_{assignment.SchoolYear}_{assignment.Semester}.csv");
             }
             catch (FacultyAssignmentRosterService.RosterDataIntegrityException ex)
             {
@@ -156,7 +156,7 @@ namespace Client_app.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { status = "Error", message = $"Excel generation failed: {ex.Message}" });
+                return StatusCode(500, new { status = "Error", message = $"CSV generation failed: {ex.Message}" });
             }
         }
     }

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { normalizeAuthRole } = require('./roles');
 const { PasswordResetEmailError } = require('./email-service');
+const { validatePassword } = require('./password-policy');
 
 const CODE_TTL_MINUTES = 10;
 const CODE_TTL_MS = CODE_TTL_MINUTES * 60 * 1000;
@@ -25,13 +26,12 @@ function hashResetCode(code) {
 }
 
 function eligibleRole(role) {
-    return ['student', 'faculty'].includes(normalizeAuthRole(role));
+    return ['system_admin', 'registrar', 'department_admin', 'faculty', 'student'].includes(normalizeAuthRole(role));
 }
 
 function validateNewPassword(password) {
-    if (typeof password !== 'string' || password.length < 8 || password.length > 128) {
-        throw new PasswordResetError('The new password must be between 8 and 128 characters.');
-    }
+    const policyError = validatePassword(password);
+    if (policyError) throw new PasswordResetError(policyError);
 }
 
 function createPasswordResetService({
@@ -49,13 +49,18 @@ function createPasswordResetService({
             await client.query('BEGIN');
             transactionOpen = true;
             const accountResult = await client.query(`
-                SELECT id, email, role, status, is_active
-                  FROM users
-                 WHERE LOWER(email) = LOWER($1)
+                SELECT u.id, u.email, u.role, u.status, u.is_active,
+                       COALESCE(NULLIF(sp.student_email, ''), u.email) AS recovery_email
+                  FROM users u
+                  LEFT JOIN studentprofiles sp ON sp.user_id = u.id
+                 WHERE LOWER(u.email) = LOWER($1)
+                    OR LOWER(COALESCE(u.username, '')) = LOWER($1)
+                    OR LOWER(COALESCE(sp.student_no, '')) = LOWER($1)
                  LIMIT 1
-                 FOR UPDATE`, [email]);
+                 FOR UPDATE OF u`, [email]);
             const account = accountResult.rows[0];
-            if (!account || account.is_active !== true || String(account.status).toLowerCase() !== 'approved' || !eligibleRole(account.role)) {
+            if (!account || account.is_active !== true || String(account.status).toLowerCase() !== 'approved' ||
+                !eligibleRole(account.role) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account.recovery_email || '')) {
                 await client.query('COMMIT');
                 transactionOpen = false;
                 return { message: GENERIC_EMAIL_MESSAGE, eligible: false, delivered: false };
@@ -86,7 +91,7 @@ function createPasswordResetService({
                 VALUES ($1, $2, $3, 0, $4)`, [account.id, codeHash, expiresAt, requestedIp || null]);
 
             await emailService.sendPasswordResetCode({
-                to: account.email,
+                to: account.recovery_email,
                 code,
                 expiresInMinutes: CODE_TTL_MINUTES
             });
@@ -118,7 +123,10 @@ function createPasswordResetService({
                        u.role, u.status, u.is_active
                   FROM password_reset_tokens t
                   JOIN users u ON u.id = t.user_id
-                 WHERE LOWER(u.email) = LOWER($1)
+                  LEFT JOIN studentprofiles sp ON sp.user_id = u.id
+                 WHERE (LOWER(u.email) = LOWER($1)
+                    OR LOWER(COALESCE(u.username, '')) = LOWER($1)
+                    OR LOWER(COALESCE(sp.student_no, '')) = LOWER($1))
                    AND t.used_at IS NULL
                  ORDER BY t.created_at DESC
                  LIMIT 1
@@ -167,6 +175,7 @@ function createPasswordResetService({
             await client.query(`
                 UPDATE users
                    SET password_hash = $1,
+                       auth_version = auth_version + 1,
                        password_reset_token = NULL,
                        password_reset_expires = NULL,
                        updated_at = CURRENT_TIMESTAMP
@@ -188,11 +197,14 @@ function createPasswordResetService({
 
     async function requestManualAssistance({ email }) {
         const result = await dbRead.query(`
-            SELECT id, email, role
-              FROM users
-             WHERE LOWER(email) = LOWER($1)
-               AND is_active = TRUE
-               AND LOWER(status) = 'approved'
+            SELECT u.id, u.email, u.role
+              FROM users u
+              LEFT JOIN studentprofiles sp ON sp.user_id = u.id
+             WHERE (LOWER(u.email) = LOWER($1)
+                OR LOWER(COALESCE(u.username, '')) = LOWER($1)
+                OR LOWER(COALESCE(sp.student_no, '')) = LOWER($1))
+               AND u.is_active = TRUE
+               AND LOWER(u.status) = 'approved'
              LIMIT 1`, [email]);
         const account = result.rows[0];
         if (account && eligibleRole(account.role)) {

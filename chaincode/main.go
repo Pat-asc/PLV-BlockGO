@@ -43,6 +43,8 @@ type AcademicRecord struct {
 	Status          string  `json:"status"`
 	Note            string  `json:"note"`
 	Version         int     `json:"version"`
+	FinalizedBy     string  `json:"finalized_by,omitempty"`
+	FinalizedAt     string  `json:"finalized_at,omitempty"`
 }
 
 type AuditRecord struct {
@@ -426,9 +428,8 @@ func (cc *SmartContract) returnGrade(stub shim.ChaincodeStubInterface, args []st
 	mspID, _ := cid.GetMSPID(stub)
 	role, found := getSafeAttribute(stub, "role")
 	isDepartmentAdmin := mspID == "DepartmentMSP" && (role == "department_admin" || role == "deptAdmin")
-	isRegistrar := mspID == "RegistrarMSP" && role == "registrar"
-	if !found || (!isDepartmentAdmin && !isRegistrar) {
-		return shim.Error("OBAC/ABAC Denied: Only Department Admin or Registrar can return grades for revision")
+	if !found || !isDepartmentAdmin {
+		return shim.Error("OBAC/ABAC Denied: Only an authorized Chairperson can return grades for revision")
 	}
 
 	recordID := args[0]
@@ -443,17 +444,14 @@ func (cc *SmartContract) returnGrade(stub shim.ChaincodeStubInterface, args []st
 	if err := json.Unmarshal(recordJSON, &record); err != nil {
 		return shim.Error(fmt.Sprintf("Failed to unmarshal record: %v", err))
 	}
-	if isDepartmentAdmin && !academicScopeAllows(stub, role, record) {
+	if !academicScopeAllows(stub, role, record) {
 		return shim.Error("ABAC Denied: Grade is outside the Chairperson's authoritative department scope")
 	}
 	if record.Status == statusReturned && record.Note == note {
 		return shim.Success(recordJSON)
 	}
-	if isDepartmentAdmin && record.Status != statusIssued && record.Status != statusCorrected && record.Status != statusDepartmentApproved {
+	if record.Status != statusIssued && record.Status != statusCorrected && record.Status != statusDepartmentApproved {
 		return shim.Error("Invalid grade transition: Department Admin may return only issued, corrected, or department-approved grades")
-	}
-	if isRegistrar && record.Status != statusIssued && record.Status != statusCorrected && record.Status != statusDepartmentApproved && record.Status != statusFinalized {
-		return shim.Error("Invalid grade transition: Registrar cannot return a grade in its current status")
 	}
 
 	record.Status = statusReturned
@@ -584,10 +582,8 @@ func (cc *SmartContract) approveGrade(stub shim.ChaincodeStubInterface, args []s
 	}
 
 	isDeptAdmin := mspID == "DepartmentMSP" && (role == "department_admin" || role == "deptAdmin")
-	isRegistrar := mspID == "RegistrarMSP" && role == "registrar"
-
-	if !isDeptAdmin && !isRegistrar {
-		return shim.Error("OBAC/ABAC Denied: Only Department Admin or Registrar can approve grades.")
+	if !isDeptAdmin {
+		return shim.Error("OBAC/ABAC Denied: Only an authorized Chairperson can approve grades.")
 	}
 
 	recordJSON, err := stub.GetState(args[0])
@@ -635,10 +631,10 @@ func (cc *SmartContract) finalizeRecord(stub shim.ChaincodeStubInterface, args [
 		return shim.Error("ABAC Denied: User role attribute not found.")
 	}
 
-	isRegistrar := mspID == "RegistrarMSP" && role == "registrar"
+	isDeptAdmin := mspID == "DepartmentMSP" && (role == "department_admin" || role == "deptAdmin")
 
-	if !isRegistrar {
-		return shim.Error("OBAC/ABAC Denied: Only the Master Registrar can finalize records to the ledger.")
+	if !isDeptAdmin {
+		return shim.Error("OBAC/ABAC Denied: Only an authorized Chairperson can finalize records to the ledger.")
 	}
 
 	recordJSON, err := stub.GetState(args[0])
@@ -653,14 +649,19 @@ func (cc *SmartContract) finalizeRecord(stub shim.ChaincodeStubInterface, args [
 	if err := json.Unmarshal(recordJSON, &record); err != nil {
 		return shim.Error(fmt.Sprintf("Failed to unmarshal record: %v", err))
 	}
+	if !academicScopeAllows(stub, role, record) {
+		return shim.Error("ABAC Denied: Grade is outside the Chairperson's authoritative department scope")
+	}
 	if record.Status == statusFinalized {
 		return shim.Success(recordJSON)
 	}
 	if record.Status != statusDepartmentApproved {
-		return shim.Error("Invalid grade transition: Registrar may finalize only department-approved grades")
+		return shim.Error("Invalid grade transition: Chairperson may finalize only department-approved grades")
 	}
 
 	record.Status = statusFinalized
+	record.FinalizedBy = getClientCommonName(stub)
+	record.FinalizedAt = getTransactionTime(stub).Format(time.RFC3339Nano)
 	record.Version++
 	stampRecord(stub, &record, getClientCommonName(stub))
 	updatedJSON, _ := json.Marshal(record)

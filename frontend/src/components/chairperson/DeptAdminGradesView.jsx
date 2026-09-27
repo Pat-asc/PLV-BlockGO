@@ -1226,7 +1226,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
         } catch(e) { addNotification(`Error approving section: ${e.message}`, "error"); }
     };
 
-    const handleBulkForward = async () => {
+    const handleBulkFinalize = async () => {
         if (!selectedReviewSection) return;
         try {
             const recordsToForward = grades.filter(g => {
@@ -1258,10 +1258,10 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             });
 
             for (const g of recordsToForward) await finalizeGrade(g.id, loggedInEmail);
-            addNotification("Section forwarded to Registrar successfully!", "success");
+            addNotification("Section finalized and verified on the ledger successfully!", "success");
             setSelectedReviewSection(null);
             loadGrades();
-        } catch(e) { addNotification(`Error forwarding section: ${e.message}`, "error"); }
+        } catch(e) { addNotification(`Error finalizing section: ${e.message}`, "error"); }
     };
 
     const handleBulkReturn = async (notes) => {
@@ -1535,7 +1535,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                     selectedSection={selectedReviewSection} 
                                     activeTerm={activeEncodingTerm}
                                     onApprove={handleBulkApprove} 
-                                    onSubmitToRegistrar={handleBulkForward} 
+                                    onFinalize={handleBulkFinalize}
                                     onSendBack={(notes) => handleBulkReturn(notes)} 
                                     onViewIpfs={handleViewIpfs}
                                 />
@@ -1588,7 +1588,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                             <input 
                                                 id="myclass-student-enroll-upload"
                                                 type="file" 
-                                                accept=".csv, .xlsx"
+                                                accept=".csv,text/csv"
                                                 onChange={(e) => setEnrollFile(e.target.files[0])}
                                                 className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
                                             />
@@ -1630,7 +1630,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                                 <div className="relative overflow-hidden">
                                                     <input 
                                                         type="file" 
-                                                        accept=".csv, .xlsx"
+                                                        accept=".csv,text/csv"
                                                         onChange={(e) => setUploadFile(e.target.files[0])}
                                                         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                                                     />

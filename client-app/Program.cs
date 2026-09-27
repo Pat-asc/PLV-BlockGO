@@ -311,14 +311,21 @@ try
                     await using var connection = new NpgsqlConnection(validationConnection);
                     await connection.OpenAsync(context.HttpContext.RequestAborted);
                     await using var command = new NpgsqlCommand(@"
-                        SELECT role
+                        SELECT role, auth_version
                         FROM users
                         WHERE LOWER(email) = LOWER(@email)
                           AND is_active = TRUE
                           AND LOWER(status) = 'approved'
                         LIMIT 1;", connection);
                     command.Parameters.AddWithValue("email", email);
-                    var databaseRole = (await command.ExecuteScalarAsync(context.HttpContext.RequestAborted))?.ToString();
+                    await using var reader = await command.ExecuteReaderAsync(context.HttpContext.RequestAborted);
+                    string? databaseRole = null;
+                    var databaseAuthVersion = 0;
+                    if (await reader.ReadAsync(context.HttpContext.RequestAborted))
+                    {
+                        databaseRole = reader.GetString(0);
+                        databaseAuthVersion = reader.GetInt32(1);
+                    }
                     static string NormalizeRole(string value)
                     {
                         var normalized = value.Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
@@ -330,7 +337,10 @@ try
                             var role => role
                         };
                     }
-                    if (string.IsNullOrWhiteSpace(databaseRole) || NormalizeRole(databaseRole) != NormalizeRole(tokenRole))
+                    var tokenAuthVersionClaim = context.Principal?.Claims.FirstOrDefault(claim => claim.Type == "authVersion")?.Value;
+                    var tokenAuthVersion = int.TryParse(tokenAuthVersionClaim, out var parsedVersion) ? parsedVersion : 1;
+                    if (string.IsNullOrWhiteSpace(databaseRole) || NormalizeRole(databaseRole) != NormalizeRole(tokenRole) ||
+                        databaseAuthVersion != tokenAuthVersion)
                     {
                         Log.Warning(
                             "JWT rejected for {Email}. TokenRole={TokenRole}, DatabaseRole={DatabaseRole}",

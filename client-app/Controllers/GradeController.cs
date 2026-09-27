@@ -1046,6 +1046,7 @@ namespace BlockGo.Controllers
         [HttpPost("bulk-upload")]
         [Authorize(Roles = "faculty,department_admin")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkUploadGrades([FromForm] IFormFile file, [FromForm] int facultySectionId,
             [FromForm] int academicSectionId, [FromForm] string? subjectCode, [FromForm] string? semester,
             [FromForm] string? schoolYear, [FromForm] string? facultyId, [FromForm] string? course,
@@ -1053,12 +1054,11 @@ namespace BlockGo.Controllers
         {
             _logger.LogInformation("Bulk upload initiated by user: {User}", User.Identity?.Name);
 
-            if (file == null || file.Length == 0)
-                return BadRequest(new { status = "Error", message = "A .csv or .xlsx file is required." });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, HttpContext.RequestAborted);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
             if (facultySectionId <= 0)
                 return BadRequest(new { status = "Error", message = "facultySectionId is required." });
-            if (file.Length > 10 * 1024 * 1024)
-                return BadRequest(new { status = "Error", message = "Grade upload files cannot exceed 10 MB." });
 
             var jwtUser = User.Identity?.Name;
             var jwtRole = User.Claims.FirstOrDefault(c => c.Type == "dbRole")?.Value ?? User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value;
@@ -1102,11 +1102,8 @@ namespace BlockGo.Controllers
                 var parsedRecords = new List<GradeRequest>();
                 int? workbookFacultySectionId = null;
 
-                var ext = Path.GetExtension(file.FileName).ToLower();
+                const string ext = ".csv";
                 string NormalizeHeader(string s) => FacultyGradeWorkbookService.NormalizeHeader(s);
-
-                if (ext != ".csv" && ext != ".xlsx")
-                    return BadRequest(new { status = "Error", message = "Only .csv and .xlsx files are supported." });
 
                 var tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ext);
                 try
@@ -1845,9 +1842,7 @@ namespace BlockGo.Controllers
                     .Where(record => string.Equals(record.Section?.Trim(), section.Trim(), StringComparison.OrdinalIgnoreCase))
                     .Where(record => string.IsNullOrWhiteSpace(schoolYear) || string.Equals(record.SchoolYear?.Trim(), schoolYear.Trim(), StringComparison.OrdinalIgnoreCase))
                     .Where(record => string.IsNullOrWhiteSpace(semester) || string.Equals(record.Semester?.Trim(), semester.Trim(), StringComparison.OrdinalIgnoreCase))
-                    .Where(record => string.Equals(record.Status, "Finalized", StringComparison.OrdinalIgnoreCase) ||
-                                     string.Equals(record.Status, "DepartmentApproved", StringComparison.OrdinalIgnoreCase) ||
-                                     string.Equals(record.Status, "Issued", StringComparison.OrdinalIgnoreCase))
+                    .Where(record => string.Equals(record.Status, "Finalized", StringComparison.OrdinalIgnoreCase))
                     .GroupBy(record => string.IsNullOrWhiteSpace(record.Id)
                         ? $"{record.StudentHash}|{record.SubjectCode}|{record.SchoolYear}|{record.Semester}"
                         : record.Id,
@@ -1859,7 +1854,7 @@ namespace BlockGo.Controllers
                     .ToList();
 
                 if (records.Count == 0)
-                    return NotFound(new { status = "Error", message = "No approved or finalized grades were found for the selected section and period." });
+                    return NotFound(new { status = "Error", message = "No finalized grades were found for the selected section and period." });
 
                 var lines = new List<string>
                 {
@@ -2442,7 +2437,7 @@ namespace BlockGo.Controllers
                 if (res != null) 
                 {
                     await NotifyAcademicDataChangedAsync("grade_approved", null, invokerId);
-                    return Ok(new { status = "Success", message = "Grade approved by the Chairperson and ready to be forwarded." });
+                    return Ok(new { status = "Success", message = "Grade approved by the Chairperson and ready for finalization." });
                 }
 
                 using (var statusCommand = new NpgsqlCommand("SELECT status FROM pending_grade_records WHERE id = @id", conn))
@@ -2466,47 +2461,31 @@ namespace BlockGo.Controllers
         }
 
         [HttpPost("finalize/{recordId}")]
-        [Authorize(Roles = "department_admin,registrar")]
+        [Authorize(Roles = "department_admin")]
         public async Task<IActionResult> FinalizeGrade(string recordId, [FromQuery] string invokerId)
         {
             invokerId = AuthenticatedEmail();
-            
-            var jwtRole = AuthenticatedRole();
-            var isRegistrar = jwtRole == "registrar";
-            
-            if (!isRegistrar)
-            {
-                using var connIntercept = new NpgsqlConnection(_connectionString);
-                await connIntercept.OpenAsync();
-                if (!await CanAccessGradeRecordAsync(connIntercept, recordId, invokerId, "department_admin"))
-                    return Forbid();
-                using var cmdApprove = new NpgsqlCommand(@"
-                    UPDATE pending_grade_records
-                    SET status = 'DepartmentApproved', date = @date
-                    WHERE id = @id AND LOWER(status) = 'chairpersonapproved'
-                    RETURNING id", connIntercept);
-                cmdApprove.Parameters.AddWithValue("id", recordId);
-                cmdApprove.Parameters.AddWithValue("date", DateTime.UtcNow.ToString("o"));
-                var forwardedId = await cmdApprove.ExecuteScalarAsync();
-                if (forwardedId == null)
-                {
-                    using var statusCommand = new NpgsqlCommand("SELECT status FROM pending_grade_records WHERE id = @id", connIntercept);
-                    statusCommand.Parameters.AddWithValue("id", recordId);
-                    var currentStatus = (await statusCommand.ExecuteScalarAsync())?.ToString();
-                    if (string.Equals(currentStatus, "DepartmentApproved", StringComparison.OrdinalIgnoreCase))
-                        return Ok(new { status = "Success", message = "Grade was already forwarded to the Registrar.", idempotent = true });
-                    if (string.IsNullOrWhiteSpace(currentStatus)) return NotFound(new { status = "Error", message = "Staged grade was not found." });
-                    return Conflict(new { status = "Error", message = $"A grade in {currentStatus} status cannot be forwarded. Chairperson approval is required first." });
-                }
-                
-                await NotifyAcademicDataChangedAsync("grade_forwarded", null, invokerId);
-                return Ok(new { status = "Success", message = "Section forwarded to Registrar successfully." });
-            }
-            
+
             try
             {
                 using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
+                if (!await CanAccessGradeRecordAsync(conn, recordId, invokerId, "department_admin"))
+                    return Forbid();
+
+                // The explicit approval endpoint records the Chairperson's review. Finalization
+                // promotes that reviewed staging state before committing it to Fabric. Keeping
+                // DepartmentApproved as the retryable intermediate state preserves compatibility
+                // with records approved before this workflow change.
+                using (var promote = new NpgsqlCommand(@"
+                    UPDATE pending_grade_records
+                    SET status = 'DepartmentApproved', date = @date
+                    WHERE id = @id AND LOWER(status) = 'chairpersonapproved';", conn))
+                {
+                    promote.Parameters.AddWithValue("id", recordId);
+                    promote.Parameters.AddWithValue("date", DateTime.UtcNow.ToString("o"));
+                    await promote.ExecuteNonQueryAsync();
+                }
                 
                 using var cmd = new NpgsqlCommand(@"
                     SELECT id, student_hash, student_no, student_name, section, course, subject_code, grade,
@@ -2554,7 +2533,7 @@ namespace BlockGo.Controllers
                 if (pendingRecord != null)
                 {
                     if (!string.Equals(pendingRecord.Status, "DepartmentApproved", StringComparison.OrdinalIgnoreCase))
-                        return Conflict(new { status = "Error", message = $"A grade in {pendingRecord.Status} status cannot be committed. It must be approved and forwarded by the Chairperson first." });
+                        return Conflict(new { status = "Error", message = $"A grade in {pendingRecord.Status} status cannot be finalized. Chairperson approval is required first." });
                     var facId = string.IsNullOrEmpty(pendingRecord.FacultyId) ? invokerId : pendingRecord.FacultyId;
                     
                     AcademicRecord? stagedLedgerRecord = null;
@@ -2628,7 +2607,7 @@ namespace BlockGo.Controllers
                     var existingLedgerRecord = JsonSerializer.Deserialize<AcademicRecord>(existingLedgerJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                     if (string.Equals(existingLedgerRecord?.Status, "Finalized", StringComparison.OrdinalIgnoreCase))
                         return Ok(new { status = "Success", message = "Grade was already finalized on the Ledger.", idempotent = true });
-                    return Conflict(new { status = "Error", message = "The staged grade is missing and the Fabric record is not Finalized. Registrar must reconcile this record before retrying." });
+                    return Conflict(new { status = "Error", message = "The staged grade is missing and the Fabric record is not Finalized. The Chairperson must reconcile this record before retrying." });
                 }
                 catch (LedgerGradeNotFoundException)
                 {
@@ -2642,7 +2621,7 @@ namespace BlockGo.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Registrar finalization failed for {RecordId}; approved staging was not removed before ledger verification", recordId);
+                _logger.LogError(ex, "Chairperson finalization failed for {RecordId}; approved staging was not removed before ledger verification", recordId);
                 return StatusCode(500, new { status = "Error", message = ex.Message });
             }
         }
@@ -2656,7 +2635,7 @@ namespace BlockGo.Controllers
         }
 
         [HttpGet("finalization-queue")]
-        [Authorize(Roles = "registrar")]
+        [Authorize(Roles = "department_admin")]
         public async Task<IActionResult> GetFinalizationQueue()
         {
             try
@@ -2670,7 +2649,7 @@ namespace BlockGo.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to load the current Registrar finalization queue");
+                _logger.LogError(ex, "Failed to load the current Chairperson finalization queue");
                 return StatusCode(500, new { status = "Error", message = ex.Message });
             }
         }
@@ -2962,7 +2941,7 @@ namespace BlockGo.Controllers
         }
 
         [HttpPost("return/{recordId}")]
-        [Authorize(Roles = "department_admin,registrar")]
+        [Authorize(Roles = "department_admin")]
         public async Task<IActionResult> ReturnGrade(string recordId, [FromBody] ReturnRequest request)
         {
             var note = request.Note?.Trim();
@@ -3769,24 +3748,23 @@ namespace BlockGo.Controllers
                     }
                 }
 
-                if (!records.Any())
+                records = records
+                    .Where(record => string.Equals(record.Status, "Finalized", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (userRole.Equals("student", StringComparison.OrdinalIgnoreCase) && records.Count > 0)
                 {
-                    records.Add(new AcademicRecord
-                    {
-                        SubjectCode = "ENR",
-                        SubjectTitle = "Academic Standing",
-                        ProfessorName = "Registrar Office",
-                        FacultyId = "registrar",
-                        Section = "N/A",
-                        Grade = "N/A",
-                        Status = "Enrolled / No grades recorded yet",
-                        Date = DateTime.UtcNow.ToString("yyyy-MM-dd"),
-                        StudentHash = targetStudentEmail ?? "N/A",
-                        Course = "Academic Department",
-                        SchoolYear = $"{DateTime.UtcNow.Year}-{DateTime.UtcNow.Year + 1}",
-                        Semester = "1st Semester"
-                    });
+                    var releasedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    await using var releaseConnection = new NpgsqlConnection(_connectionString);
+                    await releaseConnection.OpenAsync();
+                    await using var releaseCommand = new NpgsqlCommand("SELECT record_id FROM grade_releases", releaseConnection);
+                    await using var releaseReader = await releaseCommand.ExecuteReaderAsync();
+                    while (await releaseReader.ReadAsync()) releasedIds.Add(releaseReader.GetString(0));
+                    records = records.Where(record => releasedIds.Contains(record.Id)).ToList();
                 }
+
+                if (records.Count == 0)
+                    return NotFound(new { status = "Error", message = "No finalized grades are available for this PDF." });
 
                 // Student details
                 var first = records.First();

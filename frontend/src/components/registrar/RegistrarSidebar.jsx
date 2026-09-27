@@ -7,7 +7,6 @@ const iconPaths = {
   sectioning: <><path d="M7 3h8l4 4v14H7z" /><path d="M15 3v5h5M10 12h6m-6 4h6" /></>,
   sectionsCreated: <><circle cx="6" cy="7" r="2" /><circle cx="18" cy="17" r="2" /><path d="M8 7h9m-5-3v6M6 9v8h10" /></>,
   monitoring: <><path d="M3 7h6l2-2h10v14H3z" /><path d="M3 9h18" /></>,
-  finalization: <><path d="M7 3h8l4 4v14H7z" /><path d="M15 3v5h5m-9 6 2 2 4-4" /></>,
   reports: <><path d="M7 3h8l4 4v14H7z" /><path d="M15 3v5h5M10 12h6m-6 4h6" /></>,
 };
 
@@ -62,7 +61,6 @@ function RegistrarSidebar({
   { id: "encoding", label: "Encoding Period" },
   { id: "enrollment", label: "Enrollment Management" },
   { id: "monitoring", label: "Operations" },
-  { id: "finalization", label: "Grade Finalization" },
   { id: "reports", label: "Reports & PDF" },
 ];
 

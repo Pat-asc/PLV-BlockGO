@@ -20,6 +20,7 @@ const displayDate = (record) => {
 };
 
 export const selectLedgerExportRecords = (records = [], scope = { type: 'all' }) => records.filter((record) => {
+  if (clean(record.status || record.Status).toLowerCase() !== 'finalized') return false;
   if ((scope.type === 'program' || scope.type === 'faculty' || scope.type === 'section') && !identity(scope.programId)) return false;
   if ((scope.type === 'faculty' || scope.type === 'section') && !identity(scope.facultyUserId)) return false;
   if (scope.type === 'section' && (!identity(scope.academicSectionId) || !identity(scope.schoolYear) || !identity(scope.semester))) return false;
@@ -79,7 +80,7 @@ export const exportRegistrarGradesLedgerPdf = ({
   generatedAt = new Date(),
 } = {}) => {
   const scopedRecords = selectLedgerExportRecords(records, scope);
-  if (scopedRecords.length === 0) return { exported: false, reason: 'empty' };
+  if (scopedRecords.length === 0) return { exported: false, reason: 'no-finalized-records' };
   if (!JsPdf) throw new Error('jsPDF is unavailable.');
 
   const hierarchy = buildLedgerHierarchy(scopedRecords);

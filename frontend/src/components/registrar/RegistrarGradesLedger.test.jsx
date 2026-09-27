@@ -30,7 +30,7 @@ const record = (overrides = {}) => ({
   student_no: '2026-0001',
   student_name: 'Student One',
   grade: JSON.stringify({ midterm: '88' }),
-  status: 'SubmittedToChairperson',
+  status: 'Finalized',
   date: '2026-09-01T00:00:00Z',
   ...overrides,
 });
@@ -279,7 +279,7 @@ test('PDF export 5 - empty filtered export is blocked with the requested message
   fireEvent.change(screen.getByLabelText('Program'), { target: { value: '2' } });
   fireEvent.click(screen.getByRole('button', { name: 'Export all filtered grade records PDF' }));
   expect(onExport).not.toHaveBeenCalled();
-  expect(alertSpy).toHaveBeenCalledWith('No grade records available for this export.');
+  expect(alertSpy).toHaveBeenCalledWith('No finalized grade records are available for this export.');
   alertSpy.mockRestore();
 });
 

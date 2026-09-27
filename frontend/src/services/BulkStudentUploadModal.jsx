@@ -47,12 +47,12 @@ const BulkStudentUploadModal = ({ isOpen, onClose, onUploadComplete, userDepartm
         <Modal isOpen={isOpen} onClose={handleClose} title="Bulk Enroll Students">
             <div className="flex flex-col gap-4">
                 <p className="text-sm text-slate-600">
-                    Upload a <strong>.xlsx</strong> or <strong>.csv</strong> file with student data. The system will automatically create accounts, set default passwords from birthdays, and enroll them.
+                    Upload a <strong>.csv</strong> file smaller than 10 MB. The system will automatically create accounts, set default passwords from birthdays, and enroll them.
                 </p>
                 
                 <div>
                     <label htmlFor="file-upload" className="block text-sm font-medium text-slate-700 mb-1">Student Data File</label>
-                    <input id="file-upload" type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" onChange={handleFileChange} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-[#003366] file:text-white hover:file:bg-[#00264d]" />
+                    <input id="file-upload" type="file" accept=".csv,text/csv" onChange={handleFileChange} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-[#003366] file:text-white hover:file:bg-[#00264d]" />
                 </div>
 
                 {error && <p className="text-sm text-red-600">{error}</p>}

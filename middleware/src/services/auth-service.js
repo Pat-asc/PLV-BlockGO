@@ -11,6 +11,7 @@ const { createLoginLimiter } = require('../shared/login-rate-limit');
 const { createEmailService, PasswordResetEmailError } = require('../shared/email-service');
 const { createPasswordResetLimiter } = require('../shared/password-reset-rate-limit');
 const { PasswordResetError, createPasswordResetService } = require('../shared/password-reset-service');
+const { validatePassword } = require('../shared/password-policy');
 const { createServiceApp, installErrorHandler, listen } = require('../shared/service-app');
 
 const serviceName = 'auth-service';
@@ -45,7 +46,7 @@ async function recordSecurityEvent(req, eventType, severity, attemptedIdentity, 
 async function activeUser(username) {
     if (!username) return null;
     const result = await dbRead.query(
-        `SELECT u.id, u.email, u.role, u.status, u.is_active,
+        `SELECT u.id, u.email, u.role, u.status, u.is_active, u.auth_version,
                 ap.department, p.program_code, p.program_name
            FROM users u
            LEFT JOIN adminprofiles ap ON ap.user_id = u.id
@@ -65,6 +66,7 @@ async function activeUser(username) {
         username: user.email,
         email: user.email,
         dbRole: normalizeAuthRole(user.role),
+        authVersion: Number(user.auth_version || 1),
         scope: {
             department: user.department || null,
             programCode: user.program_code || null,
@@ -132,7 +134,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
                 body: { username: account.email, password, role }
             });
         }
-        const payload = { username: account.email, dbRole: role };
+        const payload = { username: account.email, dbRole: role, authVersion: Number(account.auth_version || 1) };
         const jwtOptions = { expiresIn: process.env.JWT_EXPIRES_IN || '12h' };
         if (process.env.JWT_ISSUER) jwtOptions.issuer = process.env.JWT_ISSUER;
         if (process.env.JWT_AUDIENCE) jwtOptions.audience = process.env.JWT_AUDIENCE;
@@ -161,7 +163,8 @@ app.post('/internal/auth/introspect', requireInternalKey, async (req, res) => {
     }
     try {
         const user = await activeUser(decoded.username || decoded.email);
-        if (!user || user.dbRole !== normalizeAuthRole(decoded.dbRole || decoded.role)) {
+        if (!user || user.dbRole !== normalizeAuthRole(decoded.dbRole || decoded.role) ||
+            user.authVersion !== Number(decoded.authVersion || 1)) {
             await recordSecurityEvent(originalRequest, 'REVOKED_ACCOUNT_TOKEN', 'HIGH', decoded.username || decoded.email, 'A token for an inactive, renamed, or role-changed account was rejected.');
             return res.status(403).json({ error: 'This account is inactive, changed, or no longer authorized.' });
         }
@@ -192,20 +195,18 @@ app.post('/api/crypto/hash-password', passwordHashLimiter, async (req, res) => {
     if (unexpectedFields.length) return res.status(400).json({ error: 'Unexpected request fields are not allowed.' });
     const password = req.body?.password;
     if (!password) return res.status(400).json({ error: 'Password is required.' });
-    if (typeof password !== 'string' || password.length > 128) {
-        return res.status(400).json({ error: 'Password must be a string of at most 128 characters.' });
-    }
+    const policyError = validatePassword(password);
+    if (policyError) return res.status(400).json({ error: policyError });
     res.json({ hash: await bcrypt.hash(password, 10) });
 });
 
 app.post('/api/forgot-password', forgotPasswordLimiter, async (req, res) => {
     const unexpectedFields = Object.keys(req.body || {}).filter((key) => key !== 'email');
     if (unexpectedFields.length) return res.status(400).json({ error: 'Unexpected request fields are not allowed.' });
-    if (typeof req.body?.email !== 'string') return res.status(400).json({ error: 'Email must be a string.' });
+    if (typeof req.body?.email !== 'string') return res.status(400).json({ error: 'Account identifier must be a string.' });
     const email = req.body.email.trim().toLowerCase();
-    if (!email) return res.status(400).json({ error: 'Email is required.' });
-    if (email.length > 255) return res.status(400).json({ error: 'Email must be at most 255 characters.' });
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'A valid email is required.' });
+    if (!email) return res.status(400).json({ error: 'Account identifier is required.' });
+    if (email.length > 255 || /[\u0000-\u001f\u007f]/.test(email)) return res.status(400).json({ error: 'Account identifier is invalid.' });
     await recordSecurityEvent(req, 'PASSWORD_RESET_REQUESTED', 'LOW', email,
         'A public self-service password reset was requested.');
     try {
@@ -267,7 +268,7 @@ app.post('/api/password-reset-assistance', manualAssistanceLimiter, async (req, 
     const unexpectedFields = Object.keys(req.body || {}).filter((key) => key !== 'email');
     if (unexpectedFields.length) return res.status(400).json({ error: 'Unexpected request fields are not allowed.' });
     const email = String(req.body?.email || '').trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'A valid email is required.' });
+    if (!email || email.length > 255 || /[\u0000-\u001f\u007f]/.test(email)) return res.status(400).json({ error: 'A valid account identifier is required.' });
     const result = await passwordResetService.requestManualAssistance({ email });
     await recordSecurityEvent(req, 'PASSWORD_RESET_ASSISTANCE_REQUESTED', 'LOW', email,
         'A manual password recovery request was submitted; the public response remains generic.');

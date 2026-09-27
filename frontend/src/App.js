@@ -14,15 +14,18 @@ import { getLocalDevUser } from './utils/localDevAuth';
 import {
   clearAuthSession,
   decodeAuthToken,
+  isAuthTokenExpired,
   migrateLegacyAuthSession,
   normalizeSessionRole,
   roleForRoute,
   routeForRole,
   setAuthSession,
+  subscribeToAuthSessionEvents,
 } from './services/authSession';
 
 import { BrowserRouter as Router, useLocation, useNavigate } from 'react-router-dom';
 import { NotificationProvider, useNotification } from './services/NotificationContext';
+import TextSizeControl from './components/shared/TextSizeControl';
 
 const normalizeAppRole = normalizeSessionRole;
 
@@ -40,6 +43,7 @@ function AppContent() {
 
   const handleLoginSuccess = useCallback(async (token) => {
     try {
+      if (isAuthTokenExpired(token)) throw new Error('This sign-in session has expired. Please sign in again.');
       const payload = decodeAuthToken(token);
       const localDevUser = getLocalDevUser(payload);
       if (localDevUser) {
@@ -113,6 +117,35 @@ function AppContent() {
     }
   }, [navigate]);
 
+  const endLocalSession = useCallback(() => {
+    clearAuthSession();
+    setUser(null);
+    setChatUnreadTotal(0);
+    setLatestChatNotice(null);
+    setChatAutoOpenTarget(null);
+    navigate('/login', { replace: true });
+  }, [navigate]);
+
+  useEffect(() => subscribeToAuthSessionEvents(endLocalSession), [endLocalSession]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const token = migrateLegacyAuthSession();
+    if (!token) return undefined;
+    const expiresAt = Number(decodeAuthToken(token).exp || 0) * 1000;
+    if (!expiresAt) return undefined;
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) {
+      clearAuthSession({ broadcast: true, reason: 'expired' });
+      return undefined;
+    }
+    const timeout = window.setTimeout(
+      () => clearAuthSession({ broadcast: true, reason: 'expired' }),
+      Math.min(remaining, 2_147_000_000)
+    );
+    return () => window.clearTimeout(timeout);
+  }, [user]);
+
   useEffect(() => {
     if (restorationStarted.current) return undefined;
     restorationStarted.current = true;
@@ -140,16 +173,11 @@ function AppContent() {
 
   const handleLogout = () => {
     if (!window.confirm('Are you sure you want to log out?')) return;
-    clearAuthSession();
-    setUser(null);
-    setChatUnreadTotal(0);
-    setLatestChatNotice(null);
-    setChatAutoOpenTarget(null);
-    navigate('/login', { replace: true });
+    clearAuthSession({ broadcast: true, reason: 'manual_logout' });
   };
 
   const handleNginxFailover = useCallback((nextOrigin) => {
-    clearAuthSession();
+    clearAuthSession({ broadcast: true, reason: 'failover' });
     setUser(null);
     setChatUnreadTotal(0);
     setLatestChatNotice(null);
@@ -226,6 +254,7 @@ function AppContent() {
 
   return (
     <div className="main-app-wrapper">
+      <TextSizeControl />
       {isRestoringSession ? (
         <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-600">Restoring this tab's session...</div>
       ) : !user ? (

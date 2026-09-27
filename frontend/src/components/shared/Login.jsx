@@ -5,9 +5,10 @@ import plvbg from '../../assets/plvbg.png';
 import plvlogo from '../../assets/plvlogo.png';
 import { forgotPassword, login, requestPasswordResetAssistance, resetPassword } from '../../services/api';
 import { createLocalDevToken, createLocalDevTokenForRole } from '../../utils/localDevAuth';
+import PasswordStrength from './PasswordStrength';
+import { isPasswordValid, PASSWORD_POLICY_MESSAGE } from '../../utils/passwordPolicy';
 
 const Login = ({ onLogin }) => {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -54,8 +55,8 @@ const Login = ({ onLogin }) => {
 
   const handleForgotPassword = async (e) => {
     e.preventDefault();
-    if (!emailRegex.test(email)) {
-      setError('Please enter a valid email address.');
+    if (!email.trim()) {
+      setError('Please enter your registered email or account identifier.');
       return;
     }
     setIsLoading(true);
@@ -77,8 +78,8 @@ const Login = ({ onLogin }) => {
       setError('Enter the six-digit verification code from your email.');
       return;
     }
-    if (newPassword.length < 8 || newPassword.length > 128) {
-      setError('Password must be between 8 and 128 characters.');
+    if (!isPasswordValid(newPassword)) {
+      setError(PASSWORD_POLICY_MESSAGE);
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -104,8 +105,8 @@ const Login = ({ onLogin }) => {
   };
 
   const handleManualAssistance = async () => {
-    if (!emailRegex.test(email)) {
-      setError('Enter your registered email before requesting manual assistance.');
+    if (!email.trim()) {
+      setError('Enter your registered email or account identifier before requesting manual assistance.');
       return;
     }
     setIsLoading(true);
@@ -285,14 +286,14 @@ const Login = ({ onLogin }) => {
             <form className="login-form" onSubmit={handleForgotPassword}>
               
               <div className="input-group">
-                <label>Email</label>
-                <input type="email" placeholder="Your registered email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                <label>Email or Account ID</label>
+                <input type="text" autoComplete="username" placeholder="Registered email, ID, or student number" value={email} onChange={(e) => setEmail(e.target.value)} required />
               </div>
               <button type="submit" className="sign-in-btn" disabled={isLoading}>
                 {isLoading ? (<><span className="spinner"></span> Sending...</>) : 'Send Reset Code'}
               </button>
               <p style={{ color: '#64748b', fontSize: '12px', lineHeight: 1.5, textAlign: 'center' }}>
-                Self-service email recovery is available only for active Student and Faculty accounts.
+                Self-service email recovery is available for every active BlockGo account with a registered recovery email.
               </p>
               <button type="button" className="toggle-view auth-link" onClick={handleManualAssistance} disabled={isLoading} style={{ cursor: 'pointer', fontWeight: 'bold', marginTop: '8px', border: 'none', background: 'transparent' }}>
                 Can't access your registered email? Request Manual Assistance
@@ -312,6 +313,7 @@ const Login = ({ onLogin }) => {
                 autoComplete: 'new-password', isVisible: showNewPassword,
                 onToggle: () => setShowNewPassword((current) => !current),
               })}
+              <PasswordStrength password={newPassword} />
               {renderPasswordInput({
                 label: 'Confirm New Password', value: confirmPassword,
                 onChange: (e) => setConfirmPassword(e.target.value), placeholder: 'Confirm New Password',

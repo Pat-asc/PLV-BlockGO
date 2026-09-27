@@ -2093,15 +2093,14 @@ namespace Client_app.Controllers
         [HttpPost("faculty/assignments/bulk-upload")]
         [Authorize(Roles = "department_admin,chairperson")]
         [Consumes("multipart/form-data")]
-        [RequestSizeLimit(2 * 1024 * 1024)]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkAssignFacultyLoads(
             [FromForm] IFormFile file,
             CancellationToken cancellationToken)
         {
-            if (file is null || file.Length == 0)
-                return BadRequest(new { status = "Error", message = "A non-empty faculty-loading CSV file is required." });
-            if (!string.Equals(Path.GetExtension(file.FileName), ".csv", StringComparison.OrdinalIgnoreCase))
-                return BadRequest(new { status = "Error", message = "Faculty-load bulk assignment accepts CSV files only." });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, cancellationToken);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
 
             try
             {
@@ -2799,6 +2798,7 @@ namespace Client_app.Controllers
         [HttpPost("students/bulk-upload")]
         [Authorize(Roles = "registrar")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkUploadStudents(
             [FromForm] IFormFile file,
             [FromForm] string? defaultDepartment,
@@ -2810,16 +2810,13 @@ namespace Client_app.Controllers
             [FromForm(Name = "section")] string? defaultSection = null,
             [FromForm] string? nstpOption = null)
         {
-            if (file == null || file.Length == 0)
-                return BadRequest(new { status = "Error", message = "A .csv or .xlsx file is required." });
-            if (file.Length > 10 * 1024 * 1024)
-                return BadRequest(new { status = "Error", message = "Student enrollment files cannot exceed 10 MB." });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, HttpContext.RequestAborted);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
 
             var normalizedMode = string.Equals(mode, "update", StringComparison.OrdinalIgnoreCase) ? "update" : "enroll";
 
-            var ext = Path.GetExtension(file.FileName).ToLower();
-            if (ext != ".csv" && ext != ".xlsx")
-                return BadRequest(new { status = "Error", message = "Only .csv and .xlsx files are supported." });
+            const string ext = ".csv";
 
             var tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ext);
             var fallbackName = Path.GetFileNameWithoutExtension(file.FileName);
@@ -3508,12 +3505,14 @@ namespace Client_app.Controllers
         [HttpPost("bulk-masterlist")]
         [Authorize(Roles = "registrar")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkMasterlistUpload([FromForm] IFormFile file, [FromForm] string department)
         {
-            if (file == null || file.Length == 0) return BadRequest(new { status = "Error", message = "A .csv or .xlsx file is required." });
-            
-            var ext = Path.GetExtension(file.FileName).ToLower();
-            if (ext != ".csv" && ext != ".xlsx") return BadRequest(new { status = "Error", message = "Only .csv and .xlsx files are supported." });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, HttpContext.RequestAborted);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
+
+            const string ext = ".csv";
 
             var tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ext);
             try
@@ -3871,9 +3870,12 @@ namespace Client_app.Controllers
         [Authorize(Roles = "registrar")]
         [HttpPost("sections/{id}/enroll")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> EnrollStudents(string id, [FromForm] IFormFile file)
         {
-            if (file == null || file.Length == 0) return BadRequest(new { status = "Error", message = "A .csv or .xlsx file is required." });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, HttpContext.RequestAborted);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
             if (!int.TryParse(id, out var sectionId))
                 return BadRequest(new { status = "Error", message = "Invalid section ID." });
 
@@ -4305,7 +4307,7 @@ namespace Client_app.Controllers
 
                 var baseIdentifier = identifier.Split('@')[0];
                 using var cmd = new NpgsqlCommand(@"
-                    SELECT u.id, u.email, u.password_hash, u.role, u.status, u.is_active, sp.student_no
+                    SELECT u.id, u.email, u.password_hash, u.role, u.status, u.is_active, sp.student_no, u.auth_version
                     FROM users u
                     LEFT JOIN studentprofiles sp ON u.id = sp.user_id
                     WHERE LOWER(u.email) = @identifier OR LOWER(sp.student_no) = @identifier
@@ -4330,6 +4332,7 @@ namespace Client_app.Controllers
                 var role = reader.GetString(3);
                 var status = reader.GetString(4);
                 var isActive = reader.GetBoolean(5);
+                var authVersion = reader.GetInt32(7);
 
                 if (!string.Equals(status, "approved", StringComparison.OrdinalIgnoreCase) || !isActive)
                     return StatusCode(StatusCodes.Status403Forbidden, new { error = "Account is not active or has not been approved." });
@@ -4361,6 +4364,7 @@ namespace Client_app.Controllers
                         new Claim("username", email),
                         new Claim("email", email),
                         new Claim("dbRole", normalizedRole),
+                        new Claim("authVersion", authVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)),
                         new Claim(ClaimTypes.Role, normalizedRole),
                         new Claim(ClaimTypes.Name, email)
                     }),
