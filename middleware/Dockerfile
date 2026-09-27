@@ -51,6 +51,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         python3 \
         ca-certificates \
+        netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install --global npm@11.19.1 && \
