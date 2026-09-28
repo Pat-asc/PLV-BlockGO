@@ -146,7 +146,7 @@ Check(fullCoverage == (0, 0) && incompleteCoverage == (1, 1), "Roster coverage c
 Pass(42, "submit-to-Chairperson roster coverage");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=103;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -164,9 +164,9 @@ CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_n
 CREATE TEMP TABLE systemsettings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TEMP TABLE facultysections(id SERIAL PRIMARY KEY,user_id INT,department TEXT,section TEXT,year_level TEXT,subject TEXT,academic_section_id INT,school_year TEXT,semester TEXT,is_active BOOLEAN DEFAULT TRUE,deactivated_at TIMESTAMPTZ,deactivated_by TEXT,schedule TEXT);
 CREATE UNIQUE INDEX ux_test_facultysections_exact ON facultysections(user_id,academic_section_id,school_year,semester,LOWER(subject)) WHERE is_active=TRUE;
-CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT,student_hash TEXT,student_name TEXT,section TEXT,course TEXT,subject_code TEXT,semester TEXT,school_year TEXT,faculty_id TEXT,date TEXT,ipfs_cid TEXT,term TEXT);
+CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT,student_hash TEXT,student_name TEXT,section TEXT,course TEXT,subject_code TEXT,semester TEXT,school_year TEXT,faculty_id TEXT,date TEXT,ipfs_cid TEXT,term TEXT,
+    CONSTRAINT unique_grade_entry_assignment_cycle UNIQUE(student_hash,subject_code,school_year,semester,section,assignment_cycle_id,term));
 CREATE TEMP TABLE grade_assignment_cycles(record_id TEXT PRIMARY KEY,assignment_cycle_id TEXT NOT NULL);
-CREATE UNIQUE INDEX ux_test_pending_assignment_student ON pending_grade_records(assignment_cycle_id,student_no);
 INSERT INTO academic_programs VALUES(1,'BSIT','BS Information Technology',TRUE),(2,'BSCS','BS Computer Science',TRUE); INSERT INTO curriculums VALUES(1,1,'PUBLISHED'),(2,2,'PUBLISHED');
 INSERT INTO curriculum_subjects(curriculum_id,subject_code,year_level,semester) VALUES(1,'IT 101',1,'FIRST'),(1,'IT 102',1,'FIRST'),(1,'IT 101',1,'SECOND'),(2,'CS 101',1,'FIRST');
 INSERT INTO academicsections(id,department,year_level,section_num) VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2),(3,'BS Computer Science',1,1);
@@ -316,9 +316,35 @@ var computerScienceSectioned=await EnrollmentSectioningService.GetSectionedAsync
 Check(computerScienceSectioned.Select(student=>student.StudentNo).SequenceEqual(new[]{"26-0100"}) &&
       computerScienceSectioned.All(student=>student.AcademicSectionId==3),
     "Same-label section membership mixed programs."); Pass(65,"Registrar duplicate section labels remain isolated by ID");
-await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('draft-1','104','26-0001','Draft','{}') ON CONFLICT (assignment_cycle_id,student_no) DO UPDATE SET grade=EXCLUDED.grade; INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('draft-2','104','26-0001','Draft','{\"midterm\":\"90\"}') ON CONFLICT (assignment_cycle_id,student_no) DO UPDATE SET grade=EXCLUDED.grade;");
+await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,subject_code,school_year,semester,section,term) VALUES('draft-1','104','26-0001','Draft','{}','draft@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm') ON CONFLICT ON CONSTRAINT unique_grade_entry_assignment_cycle DO UPDATE SET grade=EXCLUDED.grade; INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,subject_code,school_year,semester,section,term) VALUES('draft-2','104','26-0001','Draft','{\"midterm\":\"90\"}','draft@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm') ON CONFLICT ON CONSTRAINT unique_grade_entry_assignment_cycle DO UPDATE SET grade=EXCLUDED.grade;");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE assignment_cycle_id='104' AND student_no='26-0001'")==1,
     "Repeated save created duplicate pending grades."); Pass(47,"no duplicate pending grades");
+await Exec(@"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,subject_code,school_year,semester,section,term) VALUES
+    ('term-mid-draft','104','26-0801','Draft','{""midterm"":""85""}','term-draft@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm'),
+    ('term-final-draft','104','26-0801','Draft','{""finals"":""90""}','term-draft@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals'),
+    ('term-mid-submitted','104','26-0802','SubmittedToChairperson','{}','term-submitted@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm'),
+    ('term-final-after-submitted','104','26-0802','Draft','{}','term-submitted@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals'),
+    ('term-mid-chair','104','26-0803','ChairpersonApproved','{}','term-chair@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm'),
+    ('term-final-after-chair','104','26-0803','Draft','{}','term-chair@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals'),
+    ('term-mid-dept','104','26-0804','DepartmentApproved','{}','term-dept@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm'),
+    ('term-final-after-dept','104','26-0804','Draft','{}','term-dept@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals'),
+    ('term-mid-finalized','104','26-0805','Finalized','{}','term-finalized@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm'),
+    ('term-final-after-finalized','104','26-0805','Draft','{}','term-finalized@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals'),
+    ('term-final-submitted','104','26-0806','SubmittedToChairperson','{}','final-submitted@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals'),
+    ('term-final-chair','104','26-0807','ChairpersonApproved','{}','final-chair@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals');");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE student_hash='term-draft@example.edu' AND assignment_cycle_id='104'")==2,
+    "Midterm and Finals Draft records did not coexist."); Pass(98,"Midterm and Finals Draft coexist under term identity");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('term-final-after-submitted','term-final-after-chair','term-final-after-dept','term-final-after-finalized') AND term='finals' AND status='Draft'")==4,
+    "A prior-term protected status blocked Finals Draft creation."); Pass(99,"protected Midterm statuses do not block Finals creation");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE student_hash='final-submitted@example.edu' AND term='finals' AND LOWER(status) NOT IN ('draft','returned')")==1,
+    "Same-term Finals Submitted was not protected."); Pass(100,"same-term Finals Submitted remains protected");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE student_hash='final-chair@example.edu' AND term='finals' AND LOWER(status) NOT IN ('draft','returned')")==1,
+    "Same-term Finals ChairpersonApproved was not protected."); Pass(101,"same-term Finals ChairpersonApproved remains protected");
+var finalsTermReviewIds=await ChairpersonReviewScopeService.GetCurrentVisibleRecordIdsAsync(db,"finals","FIRST");
+Check(finalsTermReviewIds.Contains("term-final-submitted") && !finalsTermReviewIds.Contains("term-mid-submitted"),
+    "Chairperson review did not isolate submitted Finals from Midterm."); Pass(102,"Chairperson For Review is term scoped");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records GROUP BY student_hash,subject_code,school_year,semester,section,assignment_cycle_id,LOWER(COALESCE(term,'')) HAVING COUNT(*)>1")==0,
+    "Same-term duplicates exist in the migration fixture."); Pass(103,"term-identity duplicate preflight is clean");
 await Exec(@"INSERT INTO pending_grade_records
     (id,assignment_cycle_id,student_no,status,grade,student_hash,student_name,section,course,subject_code,semester,school_year,faculty_id,date,ipfs_cid,term)
     VALUES

@@ -410,11 +410,13 @@ namespace BlockGo.Controllers
                     WHERE assignment_cycle_id = @assignmentCycleId
                       AND LOWER(TRIM(student_hash)) = LOWER(TRIM(@studentHash))
                       AND LOWER(TRIM(subject_code)) = LOWER(TRIM(@subjectCode))
+                      AND LOWER(COALESCE(term, '')) = LOWER(@term)
                     LIMIT 1;", conn))
                 {
                     existingCommand.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
                     existingCommand.Parameters.AddWithValue("studentHash", stuEmail);
                     existingCommand.Parameters.AddWithValue("subjectCode", facultyAssignment.Subject);
+                    existingCommand.Parameters.AddWithValue("term", activeEncodingPeriod.Term);
                     existingGradePayload = (await existingCommand.ExecuteScalarAsync())?.ToString();
                 }
                 if (activeEncodingPeriod.Term == GradeAcademicTerm.Finals && string.IsNullOrWhiteSpace(existingGradePayload))
@@ -457,6 +459,7 @@ namespace BlockGo.Controllers
                                 faculty_id = @fac,
                                 date = @dt,
                                 ipfs_cid = COALESCE(NULLIF(@ipfs, ''), ipfs_cid),
+                                term = @term,
                                 status = 'Draft'
                             WHERE LOWER(TRIM(student_hash)) = LOWER(TRIM(@sh))
                               AND LOWER(TRIM(faculty_id)) = LOWER(TRIM(@fac))
@@ -465,14 +468,15 @@ namespace BlockGo.Controllers
                               AND LOWER(TRIM(subject_code)) = LOWER(TRIM(@subj))
                               AND LOWER(TRIM(school_year)) = LOWER(TRIM(@sy))
                               AND LOWER(TRIM(semester)) = LOWER(TRIM(@sem))
+                              AND LOWER(COALESCE(term, '')) = LOWER(@term)
                               AND (
                                 LOWER(TRIM(COALESCE(section, ''))) = LOWER(TRIM(@sec))
                                 OR LOWER(TRIM(COALESCE(section, ''))) = LOWER(TRIM(@subj))
                               )
                             RETURNING id
                         ), inserted AS (
-                        INSERT INTO pending_grade_records (id, student_hash, student_no, student_name, section, course, subject_code, grade, semester, school_year, faculty_id, date, ipfs_cid, status, assignment_cycle_id)
-                        SELECT @id, @sh, @studentNo, @studentName, @sec, @course, @subj, @gr, @sem, @sy, @fac, @dt, @ipfs, 'Draft', @assignmentCycleId
+                        INSERT INTO pending_grade_records (id, student_hash, student_no, student_name, section, course, subject_code, grade, semester, school_year, faculty_id, date, ipfs_cid, status, assignment_cycle_id, term)
+                        SELECT @id, @sh, @studentNo, @studentName, @sec, @course, @subj, @gr, @sem, @sy, @fac, @dt, @ipfs, 'Draft', @assignmentCycleId, @term
                         WHERE NOT EXISTS (SELECT 1 FROM updated)
                         ON CONFLICT ON CONSTRAINT unique_grade_entry_assignment_cycle DO UPDATE SET
                             student_no = EXCLUDED.student_no,
@@ -483,6 +487,7 @@ namespace BlockGo.Controllers
                             faculty_id = EXCLUDED.faculty_id,
                             date = EXCLUDED.date,
                             ipfs_cid = COALESCE(NULLIF(EXCLUDED.ipfs_cid, ''), pending_grade_records.ipfs_cid),
+                            term = EXCLUDED.term,
                             status = 'Draft'
                         WHERE LOWER(pending_grade_records.status) IN ('draft', 'returned')
                           AND LOWER(TRIM(pending_grade_records.faculty_id)) = LOWER(TRIM(EXCLUDED.faculty_id))
@@ -503,6 +508,7 @@ namespace BlockGo.Controllers
                     cmdStage.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
                     cmdStage.Parameters.AddWithValue("dt", blockchainRecord.Date ?? "");
                     cmdStage.Parameters.AddWithValue("ipfs", blockchainRecord.IpfsCid ?? "");
+                    cmdStage.Parameters.AddWithValue("term", activeEncodingPeriod.Term);
                     var stagedId = await cmdStage.ExecuteScalarAsync();
                     if (stagedId == null)
                         return Conflict(new { status = "Error", message = "This grade is already submitted or approved and cannot be edited by Faculty." });
@@ -920,7 +926,7 @@ namespace BlockGo.Controllers
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_grade_entry_assignment_cycle') THEN
                     ALTER TABLE pending_grade_records ADD CONSTRAINT unique_grade_entry_assignment_cycle
-                    UNIQUE (student_hash, subject_code, school_year, semester, section, assignment_cycle_id);
+                    UNIQUE (student_hash, subject_code, school_year, semester, section, assignment_cycle_id, term);
                 END IF;
             END $$;";
 
@@ -1492,7 +1498,7 @@ namespace BlockGo.Controllers
                             string? existingGradeJson = null;
                             string? existingStatus = null;
 
-                            using (var cmdCheck = new NpgsqlCommand("SELECT id, grade, status FROM pending_grade_records WHERE LOWER(student_hash) = LOWER(@sh) AND LOWER(subject_code) = LOWER(@subj) AND school_year = @sy AND semester = @sem AND LOWER(section) = LOWER(@sec) AND assignment_cycle_id = @assignmentCycleId LIMIT 1", conn))
+                            using (var cmdCheck = new NpgsqlCommand("SELECT id, grade, status FROM pending_grade_records WHERE LOWER(student_hash) = LOWER(@sh) AND LOWER(subject_code) = LOWER(@subj) AND school_year = @sy AND semester = @sem AND LOWER(section) = LOWER(@sec) AND assignment_cycle_id = @assignmentCycleId AND LOWER(COALESCE(term, '')) = LOWER(@term) LIMIT 1", conn))
                             {
                                 cmdCheck.Parameters.AddWithValue("sh", blockchainRecord.StudentHash ?? "");
                                 cmdCheck.Parameters.AddWithValue("subj", blockchainRecord.SubjectCode ?? "");
@@ -1500,6 +1506,7 @@ namespace BlockGo.Controllers
                                 cmdCheck.Parameters.AddWithValue("sem", blockchainRecord.Semester ?? "");
                                 cmdCheck.Parameters.AddWithValue("sec", blockchainRecord.Section ?? "");
                                 cmdCheck.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
+                                cmdCheck.Parameters.AddWithValue("term", term);
                                 using var checkReader = await cmdCheck.ExecuteReaderAsync();
                                 if (await checkReader.ReadAsync())
                                 {
@@ -1551,8 +1558,8 @@ namespace BlockGo.Controllers
                             try
                             {
                                 using var cmdStage = new NpgsqlCommand(@"
-                                    INSERT INTO pending_grade_records (id, student_hash, student_no, student_name, section, course, subject_code, grade, semester, school_year, faculty_id, date, ipfs_cid, status, assignment_cycle_id)
-                        VALUES (@id, @sh, @studentNo, @studentName, @sec, @course, @subj, @gr, @sem, @sy, @fac, @dt, @ipfs, 'Draft', @assignmentCycleId)
+                                    INSERT INTO pending_grade_records (id, student_hash, student_no, student_name, section, course, subject_code, grade, semester, school_year, faculty_id, date, ipfs_cid, status, assignment_cycle_id, term)
+                        VALUES (@id, @sh, @studentNo, @studentName, @sec, @course, @subj, @gr, @sem, @sy, @fac, @dt, @ipfs, 'Draft', @assignmentCycleId, @term)
                                     ON CONFLICT (id) DO UPDATE SET
                                         student_no = EXCLUDED.student_no,
                                         student_name = EXCLUDED.student_name,
@@ -1562,6 +1569,7 @@ namespace BlockGo.Controllers
                                         faculty_id = EXCLUDED.faculty_id,
                                         date = EXCLUDED.date,
                                         ipfs_cid = EXCLUDED.ipfs_cid,
+                                        term = EXCLUDED.term,
                             status = 'Draft';", conn, transaction);
                                 cmdStage.Parameters.AddWithValue("id", blockchainRecord.Id ?? Guid.NewGuid().ToString());
                                 cmdStage.Parameters.AddWithValue("sh", blockchainRecord.StudentHash ?? "");
@@ -1577,6 +1585,7 @@ namespace BlockGo.Controllers
                                 cmdStage.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
                                 cmdStage.Parameters.AddWithValue("dt", blockchainRecord.Date ?? "");
                                 cmdStage.Parameters.AddWithValue("ipfs", blockchainRecord.IpfsCid ?? "");
+                                cmdStage.Parameters.AddWithValue("term", term);
                                 await cmdStage.ExecuteNonQueryAsync();
 
                                 using (var cycleMap = new NpgsqlCommand(@"

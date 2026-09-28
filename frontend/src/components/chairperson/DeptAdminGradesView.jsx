@@ -183,6 +183,11 @@ const parseStoredGrade = (rawGrade) => {
 };
 
 const normalizeText = (value = '') => String(value || '').trim().toLowerCase();
+const normalizeGradeTerm = (value = '') => {
+    const normalized = normalizeText(value);
+    if (normalized === 'final' || normalized === 'finals') return 'finals';
+    return 'midterm';
+};
 const canChairpersonReturnStatus = (status = '') => {
     const normalized = normalizeText(status);
     if (normalized.includes('finalized') || normalized.includes('forwarded')) return false;
@@ -669,6 +674,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 'Unknown Department';
             const schoolYear = g.schoolYear || g.SchoolYear || matchedAssignment?.schoolYear || '2024';
             const semester = g.semester || g.Semester || matchedAssignment?.semester || '2nd Semester';
+            const gradingTerm = normalizeGradeTerm(g.term || g.Term || activeEncodingTerm);
             const status = (g.status || g.Status || '').toLowerCase();
             const key = [
                 facId,
@@ -677,6 +683,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 normalizeText(resolvedSubjectCode),
                 normalizeText(schoolYear),
                 normalizeText(semester),
+                gradingTerm,
             ].join('|');
 
             if (!groups[key]) {
@@ -691,7 +698,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     assignmentCycleId: g.assignment_cycle_id || g.assignmentCycleId || matchedAssignment?.id || '',
                     schoolYear,
                     semester,
-                    term: g.term || g.Term || activeEncodingTerm,
+                    term: gradingTerm,
                     finalizedAt: g.finalized_at || g.finalizedAt || g.timestamp || g.date || '',
                     finalizedBy: g.finalized_by || g.finalizedBy || '',
                     totalStudents: 0,
@@ -1224,6 +1231,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     departmentName;
                 const schoolYear = g.schoolYear || g.SchoolYear || '2024';
                 const semester = g.semester || g.Semester || '2nd Semester';
+                const gradingTerm = normalizeGradeTerm(g.term || g.Term || activeEncodingTerm);
 
                 return (
                     normalizeText(normalizedFacultyId) === normalizeText(selectedReviewSection.facultyId) &&
@@ -1231,6 +1239,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     normalizeText(subjectCode) === normalizeText(selectedReviewSection.subjectCode) &&
                     normalizeText(schoolYear) === normalizeText(selectedReviewSection.schoolYear) &&
                     normalizeText(semester) === normalizeText(selectedReviewSection.semester) &&
+                    gradingTerm === normalizeGradeTerm(selectedReviewSection.term) &&
                     (status.includes('issued') || status.includes('submitted') || status === '')
                 );
             });
@@ -1264,6 +1273,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     departmentName;
                 const schoolYear = g.schoolYear || g.SchoolYear || '2024';
                 const semester = g.semester || g.Semester || '2nd Semester';
+                const gradingTerm = normalizeGradeTerm(g.term || g.Term || activeEncodingTerm);
 
                 return (
                     normalizeText(normalizedFacultyId) === normalizeText(selectedReviewSection.facultyId) &&
@@ -1271,6 +1281,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     normalizeText(subjectCode) === normalizeText(selectedReviewSection.subjectCode) &&
                     normalizeText(schoolYear) === normalizeText(selectedReviewSection.schoolYear) &&
                     normalizeText(semester) === normalizeText(selectedReviewSection.semester) &&
+                    gradingTerm === normalizeGradeTerm(selectedReviewSection.term) &&
                     status.includes('approve')
                 );
             });
@@ -1316,6 +1327,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     departmentName;
                 const schoolYear = g.schoolYear || g.SchoolYear || '2024';
                 const semester = g.semester || g.Semester || '2nd Semester';
+                const gradingTerm = normalizeGradeTerm(g.term || g.Term || activeEncodingTerm);
 
                 return (
                     normalizeText(normalizedFacultyId) === normalizeText(selectedReviewSection.facultyId) &&
@@ -1323,6 +1335,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     normalizeText(subjectCode) === normalizeText(selectedReviewSection.subjectCode) &&
                     normalizeText(schoolYear) === normalizeText(selectedReviewSection.schoolYear) &&
                     normalizeText(semester) === normalizeText(selectedReviewSection.semester) &&
+                    gradingTerm === normalizeGradeTerm(selectedReviewSection.term) &&
                     canChairpersonReturnStatus(status)
                 );
             });
