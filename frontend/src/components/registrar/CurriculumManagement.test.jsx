@@ -6,6 +6,7 @@ import {
   assignProgramCurriculum,
   fetchCurriculums,
 } from '../../services/api';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 
 jest.mock('../../services/api', () => ({
   approveCurriculum: jest.fn(),
@@ -14,6 +15,10 @@ jest.mock('../../services/api', () => ({
   fetchCurriculums: jest.fn(),
   publishCurriculum: jest.fn(),
   returnCurriculum: jest.fn(),
+}));
+jest.mock('../../services/SystemDialogContext', () => ({
+  requestSystemConfirmation: jest.fn(),
+  requestSystemPrompt: jest.fn(),
 }));
 
 const publishedCurriculum = {
@@ -42,14 +47,10 @@ const publishedCurriculum = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  jest.spyOn(window, 'confirm').mockReturnValue(true);
+  requestSystemConfirmation.mockResolvedValue(true);
   fetchCurriculums.mockResolvedValue({ data: [publishedCurriculum] });
   assignProgramCurriculum.mockResolvedValue({ affectedStudents: 4 });
   archiveCurriculum.mockResolvedValue({ status: 'Success' });
-});
-
-afterEach(() => {
-  window.confirm.mockRestore();
 });
 
 test('shows program assignment and archive controls beneath the curriculum table', async () => {

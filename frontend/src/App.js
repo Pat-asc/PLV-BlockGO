@@ -25,6 +25,7 @@ import {
 
 import { BrowserRouter as Router, useLocation, useNavigate } from 'react-router-dom';
 import { NotificationProvider, useNotification } from './services/NotificationContext';
+import { requestSystemConfirmation, SystemDialogProvider } from './services/SystemDialogContext';
 
 const normalizeAppRole = normalizeSessionRole;
 
@@ -170,8 +171,14 @@ function AppContent() {
     if (currentRouteRole !== userRole) navigate(routeForRole(userRole), { replace: true });
   }, [isRestoringSession, location.pathname, navigate, user]);
 
-  const handleLogout = () => {
-    if (!window.confirm('Are you sure you want to log out?')) return;
+  const handleLogout = async () => {
+    const confirmed = await requestSystemConfirmation({
+      title: 'Logout',
+      message: 'Are you sure you want to log out of your account?',
+      confirmLabel: 'Log Out',
+      tone: 'destructive',
+    });
+    if (!confirmed) return;
     clearAuthSession({ broadcast: true, reason: 'manual_logout' });
   };
 
@@ -340,9 +347,11 @@ function AppContent() {
 function App() {
   return (
     <NotificationProvider>
-      <Router>
-        <AppContent />
-      </Router>
+      <SystemDialogProvider>
+        <Router>
+          <AppContent />
+        </Router>
+      </SystemDialogProvider>
     </NotificationProvider>
   );
 }

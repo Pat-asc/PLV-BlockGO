@@ -1,3 +1,4 @@
+import { showSystemNotification } from '../../services/NotificationContext';
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { fetchAcademicPrograms, fetchSystemLogs } from "../../services/api";
 
@@ -397,7 +398,7 @@ function SystemLogs({ grades = [] }) {
       doc.save(`System_Activity_Log_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (error) {
       console.error("PDF Generation failed:", error);
-      alert("Failed to generate PDF. Please try again.");
+      showSystemNotification("Failed to generate PDF. Please try again.");
     }
   };
 

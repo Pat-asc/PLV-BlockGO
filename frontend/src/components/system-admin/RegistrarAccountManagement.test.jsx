@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import RegistrarAccountManagement from './RegistrarAccountManagement';
 import { createRegistrarAccount, deleteRegistrarAccount, fetchRegistrarAccounts } from '../../services/api';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 
 jest.mock('../../services/api', () => ({
   createRegistrarAccount: jest.fn(),
@@ -9,6 +10,7 @@ jest.mock('../../services/api', () => ({
   resetManagedAccountPassword: jest.fn(),
   updateRegistrarAccount: jest.fn(),
 }));
+jest.mock('../../services/SystemDialogContext', () => ({ requestSystemConfirmation: jest.fn() }));
 
 const registrar = (id, changes = {}) => ({
   id,
@@ -22,7 +24,7 @@ const registrar = (id, changes = {}) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
-  window.confirm = jest.fn(() => true);
+  requestSystemConfirmation.mockResolvedValue(true);
   createRegistrarAccount.mockResolvedValue({ data: {} });
   deleteRegistrarAccount.mockResolvedValue({ data: {} });
 });

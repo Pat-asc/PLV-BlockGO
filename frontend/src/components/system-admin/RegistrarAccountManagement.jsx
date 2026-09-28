@@ -1,3 +1,4 @@
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useCallback, useEffect, useState } from 'react';
 import { createRegistrarAccount, deleteRegistrarAccount, fetchRegistrarAccounts, resetManagedAccountPassword, updateRegistrarAccount } from '../../services/api';
 import PasswordStrength from '../shared/PasswordStrength';
@@ -92,7 +93,7 @@ const RegistrarAccountManagement = () => {
     const edit = edits[account.id] || {};
     if (!isPasswordValid(edit.password || '')) return setNotice({ type: 'error', message: PASSWORD_POLICY_MESSAGE });
     if (edit.password !== edit.confirmPassword) return setNotice({ type: 'error', message: 'The password confirmation does not match.' });
-    if (!window.confirm(`Reset the password for Registrar ${account.email}?`)) return;
+    if (!await requestSystemConfirmation(`Reset the password for Registrar ${account.email}?`)) return;
     setSaving(true); setNotice(null);
     try {
       const response = await resetManagedAccountPassword(account.id, edit.password);
@@ -104,7 +105,7 @@ const RegistrarAccountManagement = () => {
   };
 
   const deleteAccount = async (account) => {
-    if (!window.confirm(`Delete Registrar ${account.email}? This revokes access and frees one Registrar slot.`)) return;
+    if (!await requestSystemConfirmation(`Delete Registrar ${account.email}? This revokes access and frees one Registrar slot.`)) return;
     setSaving(true); setNotice(null);
     try {
       const response = await deleteRegistrarAccount(account.id);

@@ -1,3 +1,4 @@
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useMemo, useState } from 'react';
 import { resetManagedAccountPassword } from '../../services/api';
 import PasswordResetRequests from './PasswordResetRequests';
@@ -39,7 +40,7 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
     if (!selected) return setNotice({ type: 'error', message: 'Select an account first.' });
     if (!isPasswordValid(newPassword)) return setNotice({ type: 'error', message: PASSWORD_POLICY_MESSAGE });
     if (newPassword !== confirmPassword) return setNotice({ type: 'error', message: 'The password confirmation does not match.' });
-    if (!window.confirm(`Reset the password for ${selected.name} (${selected.roleLabel})?`)) return;
+    if (!await requestSystemConfirmation(`Reset the password for ${selected.name} (${selected.roleLabel})?`)) return;
     setSaving(true);
     try {
       const response = await resetManagedAccountPassword(selected.id, newPassword);

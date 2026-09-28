@@ -1,3 +1,5 @@
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useState, useEffect, useCallback } from 'react';
 import plvlogo from '../assets/plvlogo.png';
 import { fetchDepartmentTemplates, reviewTemplate } from '../../services/api';
@@ -36,19 +38,19 @@ const DepartmentAdminTemplateReview = ({ adminData, onLogout }) => {
   }, [fetchTemplates]);
 
   const handleReview = async (id, status) => {
-    if (!window.confirm(`Are you sure you want to ${status.toLowerCase()} this grading template?`)) return;
+    if (!await requestSystemConfirmation(`Are you sure you want to ${status.toLowerCase()} this grading template?`)) return;
     
     try {
       const data = await reviewTemplate(id, status);
       if (data.status === "Success") {
-        alert(`Template successfully ${status.toLowerCase()}.`);
+        showSystemNotification(`Template successfully ${status.toLowerCase()}.`);
         setActiveTemplate(null);
         fetchTemplates(); // Refresh the list
       } else {
-        alert(`Error: ${data.message}`);
+        showSystemNotification(`Error: ${data.message}`);
       }
     } catch (error) {
-      alert(`Network error: ${error.message}`);
+      showSystemNotification(`Network error: ${error.message}`);
     }
   };
 

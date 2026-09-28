@@ -1,3 +1,4 @@
+import { showSystemNotification } from '../../services/NotificationContext';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { fetchAllGrades, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason, fetchAcademicPrograms } from '../../services/api';
 import RegistrarHeader from './RegistrarHeader';
@@ -351,7 +352,7 @@ const RegistrarGradesView = ({
             await loadGrades();
             return response;
         } catch (error) {
-            alert(error.message || 'Failed to reset encoding season.');
+            showSystemNotification(error.message || 'Failed to reset encoding season.');
             throw error;
         }
     }, [loadApprovedFaculties, loadGrades]);
@@ -401,33 +402,33 @@ const RegistrarGradesView = ({
 
     const submitStudentAssignment = async (id) => {
         const assignment = studentAssignments[id];
-        if (!assignment || !assignment.department || !assignment.yearLevel || !assignment.sectionNum) return alert("Please provide department, year, and section.");
+        if (!assignment || !assignment.department || !assignment.yearLevel || !assignment.sectionNum) return showSystemNotification("Please provide department, year, and section.");
         try {
             const combinedSection = `${assignment.yearLevel}-${assignment.sectionNum}`;
             await assignStudent(id, { Department: assignment.department, Section: combinedSection });
-            alert("Student assigned successfully!");
+            showSystemNotification("Student assigned successfully!");
             loadApprovedStudents();
-        } catch (error) { alert(`Failed to assign: ${error.message}`); }
+        } catch (error) { showSystemNotification(`Failed to assign: ${error.message}`); }
     };
 
     const submitAdminAssignment = async (id) => {
         const assignment = adminAssignments[id];
-        if (!assignment || !assignment.department) return alert("Please select a department.");
+        if (!assignment || !assignment.department) return showSystemNotification("Please select a department.");
         try {
             await assignDepartmentAdmin(id, { Department: assignment.department });
-            alert("Admin assigned successfully!");
+            showSystemNotification("Admin assigned successfully!");
             loadApprovedAdmins();
-        } catch (error) { alert(`Failed to assign: ${error.message}`); }
+        } catch (error) { showSystemNotification(`Failed to assign: ${error.message}`); }
     };
 
     const submitFacultyAssignment = async (id) => {
         const assignment = facultyAssignments[id];
-        if (!assignment || !assignment.department || !assignment.section || !assignment.yearLevel || !assignment.subject) return alert("Please provide department, section, year level, and subject.");
+        if (!assignment || !assignment.department || !assignment.section || !assignment.yearLevel || !assignment.subject) return showSystemNotification("Please provide department, section, year level, and subject.");
         try {
             await assignFaculty(id, { Department: assignment.department, Section: assignment.section, YearLevel: assignment.yearLevel, Subject: assignment.subject });
-            alert("Faculty assigned successfully!");
+            showSystemNotification("Faculty assigned successfully!");
             loadApprovedFaculties();
-        } catch (error) { alert(`Failed to assign: ${error.message}`); }
+        } catch (error) { showSystemNotification(`Failed to assign: ${error.message}`); }
     };
 
     const handleViewIpfs = (cid) => {
@@ -445,10 +446,10 @@ const RegistrarGradesView = ({
                 setIpfsModalOpen(false);
             } catch (error) {
                 if (viewerWindow) viewerWindow.close();
-                alert(error.message);
+                showSystemNotification(error.message);
             }
         } else {
-            alert("Vault Password is required");
+            showSystemNotification("Vault Password is required");
         }
     };
 
@@ -460,9 +461,9 @@ const RegistrarGradesView = ({
             onConfirm: async () => {
                 try {
                     await approveRegistrationRequest(id, type);
-                    alert("Request approved successfully!");
+                    showSystemNotification("Request approved successfully!");
                     loadRequests(); 
-                } catch (error) { alert(`Failed to approve: ${error.message}`); }
+                } catch (error) { showSystemNotification(`Failed to approve: ${error.message}`); }
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
             }
         });
@@ -477,9 +478,9 @@ const RegistrarGradesView = ({
             onConfirm: async () => {
                 try {
                     await denyRegistrationRequest(id);
-                    alert("Request denied and removed.");
+                    showSystemNotification("Request denied and removed.");
                     loadRequests(); 
-                } catch (error) { alert(`Failed to deny: ${error.message}`); }
+                } catch (error) { showSystemNotification(`Failed to deny: ${error.message}`); }
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
             }
         });
@@ -494,10 +495,10 @@ const RegistrarGradesView = ({
             onConfirm: async () => {
                 try {
                     await dropStudent(id);
-                    alert(`${name} has been dropped and access revoked.`);
+                    showSystemNotification(`${name} has been dropped and access revoked.`);
                     loadApprovedStudents();
                 } catch (error) {
-                    alert(error.message);
+                    showSystemNotification(error.message);
                 }
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
             }
@@ -513,10 +514,10 @@ const RegistrarGradesView = ({
             onConfirm: async () => {
                 try {
                     await revokeFaculty(id);
-                    alert(`${name} has been revoked.`);
+                    showSystemNotification(`${name} has been revoked.`);
                     await loadApprovedFaculties();
                 } catch (error) {
-                    alert(error.message || 'Failed to revoke faculty account.');
+                    showSystemNotification(error.message || 'Failed to revoke faculty account.');
                 }
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
             }
@@ -533,10 +534,10 @@ const RegistrarGradesView = ({
                 try {
                     await revokeDepartmentAdmin(id);
                     setApprovedAdmins((current) => current.filter((admin) => admin.id !== id));
-                    alert(`${name} has been revoked.`);
+                    showSystemNotification(`${name} has been revoked.`);
                     await loadApprovedAdmins();
                 } catch (error) {
-                    alert(error.message || 'Failed to revoke chairperson account.');
+                    showSystemNotification(error.message || 'Failed to revoke chairperson account.');
                 }
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
             }
@@ -716,8 +717,8 @@ const RegistrarGradesView = ({
     const handleDownloadLedgerPDF = (ledgerRecords = filteredGrades, ledgerFilters = {}, scope = { type: 'all' }) => {
         try {
             const result = exportRegistrarGradesLedgerPdf({ records: ledgerRecords, filters: ledgerFilters, scope });
-            if (!result.exported) alert('No grade records available for this export.');
-        } catch (error) { alert("Failed to export PDF."); }
+            if (!result.exported) showSystemNotification('No grade records available for this export.');
+        } catch (error) { showSystemNotification("Failed to export PDF."); }
     };
 
     const handleExportFacultySummaryPDF = (facultyData) => {
@@ -810,7 +811,7 @@ const RegistrarGradesView = ({
             doc.save(`Faculty_Summary_${facultyData.facultyName.replace(/\s+/g, '_')}.pdf`);
         } catch (error) { 
             console.error(error);
-            alert("Failed to export PDF."); 
+            showSystemNotification("Failed to export PDF.");
         }
     };
 

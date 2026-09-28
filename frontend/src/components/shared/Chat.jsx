@@ -1,3 +1,5 @@
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as signalR from '@microsoft/signalr';
@@ -921,7 +923,7 @@ const Chat = ({
       connection.invoke('SendGroupMessage', Number(selectedGroupId), text)
         .catch((error) => {
           console.error('[Chat] SendGroupMessage failed:', error);
-          alert(error?.message || 'The group message could not be sent.');
+          showSystemNotification(error?.message || 'The group message could not be sent.');
         });
       return;
     }
@@ -939,7 +941,7 @@ const Chat = ({
 
     const maxBytes = 5 * 1024 * 1024;
     if (file.size > maxBytes) {
-      alert('File too large (max 5MB)');
+      showSystemNotification('File too large (max 5MB)');
       return;
     }
 
@@ -966,7 +968,7 @@ const Chat = ({
       );
     } catch (err) {
       console.error('[Chat] SendFile failed:', err);
-      alert(err?.message || 'File could not be sent.');
+      showSystemNotification(err?.message || 'File could not be sent.');
     }
   };
 
@@ -989,7 +991,7 @@ const Chat = ({
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error('[Chat] Failed to download attachment:', err);
-      alert('Attachment could not be downloaded.');
+      showSystemNotification('Attachment could not be downloaded.');
     }
   };
 
@@ -1143,7 +1145,7 @@ const Chat = ({
       return true;
     } catch (error) {
       console.error(`[Chat] ${method} failed:`, error);
-      alert(error?.message || 'The conversation could not be updated.');
+      showSystemNotification(error?.message || 'The conversation could not be updated.');
       return false;
     }
   }, [connection, applyConversationState]);
@@ -1153,7 +1155,7 @@ const Chat = ({
   };
 
   const deleteConversation = async (email) => {
-    if (!window.confirm('Permanently delete every message in this conversation? Messages cannot be recovered. The user will remain available to message.')) return;
+    if (!await requestSystemConfirmation('Permanently delete every message in this conversation? Messages cannot be recovered. The user will remain available to message.')) return;
     if (await updateConversationState('DeleteConversation', email)) closeConversationLocally(email);
   };
 
@@ -1207,7 +1209,7 @@ const Chat = ({
       if (accept) selectGroupChat(groupId);
     } catch (error) {
       console.error('[Chat] RespondToGroupInvitation failed:', error);
-      alert(error?.message || 'The group invitation could not be updated.');
+      showSystemNotification(error?.message || 'The group invitation could not be updated.');
     } finally {
       setGroupActionBusy(false);
     }
@@ -1217,7 +1219,7 @@ const Chat = ({
     setSelectedGroupInvitees((prev) => {
       if (prev.includes(email)) return prev.filter((item) => item !== email);
       if (prev.length >= 49) {
-        alert('A group can contain at most 50 people including you.');
+        showSystemNotification('A group can contain at most 50 people including you.');
         return prev;
       }
       return [...prev, email];
@@ -1227,11 +1229,11 @@ const Chat = ({
   const createGroupChat = async () => {
     if (!connection || groupActionBusy) return;
     if (chatGroups.length >= 10) {
-      alert('You can create or accept no more than 10 active group chats.');
+      showSystemNotification('You can create or accept no more than 10 active group chats.');
       return;
     }
     if (groupName.trim().length < 2) {
-      alert('Enter a group name with at least 2 characters.');
+      showSystemNotification('Enter a group name with at least 2 characters.');
       return;
     }
     setGroupActionBusy(true);
@@ -1245,7 +1247,7 @@ const Chat = ({
       selectGroupChat(created.id);
     } catch (error) {
       console.error('[Chat] CreateGroupChat failed:', error);
-      alert(error?.message || 'The group chat could not be created.');
+      showSystemNotification(error?.message || 'The group chat could not be created.');
     } finally {
       setGroupActionBusy(false);
     }

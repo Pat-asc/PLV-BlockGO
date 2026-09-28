@@ -1,3 +1,4 @@
+import { showSystemNotification } from '../../services/NotificationContext';
 import React, { useEffect, useMemo, useState } from "react";
 import {
   AVAILABLE_YEAR_LEVELS,
@@ -282,22 +283,22 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       !units.trim() ||
       !semester.trim()
     ) {
-      alert("Please complete the required fields.");
+      showSystemNotification("Please complete the required fields.");
       return;
     }
 
     if (!selectedSection) {
-      alert("Selected section was not found.");
+      showSystemNotification("Selected section was not found.");
       return;
     }
 
     if (!selectedFaculty) {
-      alert("Selected faculty was not found.");
+      showSystemNotification("Selected faculty was not found.");
       return;
     }
 
     if (selectedFile && !selectedFile.name.toLowerCase().endsWith(".csv")) {
-      alert("Please upload the section roster in CSV format.");
+      showSystemNotification("Please upload the section roster in CSV format.");
       return;
     }
 
@@ -312,7 +313,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       );
 
       if (alreadyExists) {
-        alert("This faculty section distribution already exists.");
+        showSystemNotification("This faculty section distribution already exists.");
         return;
       }
 
@@ -342,7 +343,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       try {
         serverResult = await assignFacultyLoadToBackend(newAssignment);
       } catch (error) {
-        alert(error.message || "The server rejected this faculty assignment.");
+        showSystemNotification(error.message || "The server rejected this faculty assignment.");
         return;
       }
       const savedAssignment = {
@@ -357,7 +358,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
         JSON.stringify(updatedAssignments)
       );
       pushAssignmentsSharedState();
-      alert("Section distributed to faculty successfully.");
+      showSystemNotification("Section distributed to faculty successfully.");
       resetForm();
     };
 
@@ -372,14 +373,14 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       const text = event.target?.result;
 
       if (!text) {
-        alert("Unable to read the uploaded CSV file.");
+        showSystemNotification("Unable to read the uploaded CSV file.");
         return;
       }
 
       const parsedStudents = parseStudentIdSpreadsheet(text);
 
       if (!parsedStudents.length) {
-        alert(
+        showSystemNotification(
           "The section CSV must contain Student ID, Sex, Last Name, First Name, and Middle Initial columns with valid rows."
         );
         return;
@@ -629,17 +630,17 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
 
   const handleImportFacultyLoading = () => {
     if (!selectedProgram) {
-      alert("No department selected for faculty loading.");
+      showSystemNotification("No department selected for faculty loading.");
       return;
     }
 
     if (!facultyLoadingFile) {
-      alert("Please choose a faculty loading CSV file.");
+      showSystemNotification("Please choose a faculty loading CSV file.");
       return;
     }
 
     if (!facultyLoadingFile.name.toLowerCase().endsWith(".csv")) {
-      alert("Please upload a CSV file.");
+      showSystemNotification("Please upload a CSV file.");
       return;
     }
 
@@ -658,7 +659,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       setFacultyLoadingSummary(summary);
 
       if (!previewRows.length) {
-        alert(
+        showSystemNotification(
           `No valid faculty loading rows found.${
             errors.length ? `\n\n${errors.slice(0, 5).join("\n")}` : ""
           }`
@@ -667,7 +668,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       }
 
       if (errors.length) {
-        alert(
+        showSystemNotification(
           `Faculty loading preview ready.\nAccepted: ${summary.acceptedRows}\nRejected: ${summary.rejectedRows}\n\nFirst issues:\n${errors
             .slice(0, 5)
             .join("\n")}`
@@ -680,7 +681,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
 
   const handleConfirmFacultyLoading = async () => {
     if (!facultyLoadingPreview.length || isBulkSaving) {
-      alert("No faculty loading preview to distribute.");
+      showSystemNotification("No faculty loading preview to distribute.");
       return;
     }
     setIsBulkSaving(true);
@@ -743,7 +744,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       if (!failedAssignments.length) {
         setFacultyLoadingFile(null);
       }
-      alert(
+      showSystemNotification(
         failedAssignments.length
           ? `${importedAssignments.length} saved; ${failedAssignments.length} remain pending. Review each row's backend error.`
           : `${importedAssignments.length} faculty loading assignment${importedAssignments.length === 1 ? "" : "s"} distributed.`
@@ -751,7 +752,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     } catch (error) {
       setFacultyLoadingPreview((items) => items.map((item) => ({ ...item, error: error.message || "Bulk assignment failed." })));
       setFacultyLoadingErrors([error.message || "Bulk assignment failed."]);
-      alert(error.message || "Bulk assignment failed.");
+      showSystemNotification(error.message || "Bulk assignment failed.");
     } finally {
       setIsBulkSaving(false);
     }
@@ -759,13 +760,13 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
 
   const handleDeleteAssignment = async (item) => {
     if (!item.id || !item.facultyEmail) {
-      alert("This legacy browser-only record has no authoritative server assignment ID and cannot be removed here.");
+      showSystemNotification("This legacy browser-only record has no authoritative server assignment ID and cannot be removed here.");
       return;
     }
     try {
       await unassignFacultySection(item.facultyEmail, item.id);
     } catch (error) {
-      alert(error.message || "The assignment could not be removed.");
+      showSystemNotification(error.message || "The assignment could not be removed.");
       return;
     }
     const id = item.id;

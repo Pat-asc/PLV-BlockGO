@@ -4,6 +4,21 @@ const NotificationContext = createContext({
     addNotification: (message, type) => console.warn("NotificationProvider missing! Message:", message)
 });
 
+let externalNotificationHandler = null;
+
+const inferNotificationType = (message) => {
+    const value = String(message || '').toLowerCase();
+    if (/fail|error|invalid|unable|cannot|could not|not found|required|please|denied|rejected|missing|no .*available/.test(value)) return 'error';
+    if (/success|saved|created|submitted|approved|assigned|uploaded|imported|exported|forwarded|removed|revoked|reset|finalized|promoted|updated|distributed/.test(value)) return 'success';
+    return 'notice';
+};
+
+export const showSystemNotification = (message, type) => {
+    const resolvedType = type || inferNotificationType(message);
+    if (externalNotificationHandler) externalNotificationHandler(String(message || ''), resolvedType);
+    else console.warn('NotificationProvider missing! Message:', message);
+};
+
 export const useNotification = () => useContext(NotificationContext);
 
 const Notification = ({ message, type, onDismiss }) => {
@@ -34,6 +49,13 @@ export const NotificationProvider = ({ children }) => {
             setNotifications((prev) => prev.filter((notification) => notification.id !== id));
         }, type === 'notice' ? 10000 : 5000);
     }, []);
+
+    React.useEffect(() => {
+        externalNotificationHandler = addNotification;
+        return () => {
+            if (externalNotificationHandler === addNotification) externalNotificationHandler = null;
+        };
+    }, [addNotification]);
 
     const dismissNotification = (id) => {
         setNotifications((prev) => prev.filter((notification) => notification.id !== id));

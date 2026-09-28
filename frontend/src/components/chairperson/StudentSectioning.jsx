@@ -1,3 +1,5 @@
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AVAILABLE_YEAR_LEVELS,
@@ -779,7 +781,7 @@ function StudentSectioning({
     const csvContent = batch.receivedCsvContent;
 
     if (!csvContent) {
-      alert("This imported list has no registrar CSV content saved.");
+      showSystemNotification("This imported list has no registrar CSV content saved.");
       return;
     }
 
@@ -800,19 +802,19 @@ function StudentSectioning({
 
   const handleGenerateSections = () => {
     if (!chairpersonDepartment) {
-      alert("Please choose a department first.");
+      showSystemNotification("Please choose a department first.");
       return;
     }
 
     if (!/^\d{4}$/.test(sectioningBatchYear)) {
-      alert("Enter a valid 4-digit batch year.");
+      showSystemNotification("Enter a valid 4-digit batch year.");
       return;
     }
 
     const requestedSectionCount = Number(manualSectionCount);
 
     if (!Number.isInteger(requestedSectionCount) || requestedSectionCount <= 0) {
-      alert("Enter how many sections to create.");
+      showSystemNotification("Enter how many sections to create.");
       return;
     }
 
@@ -864,7 +866,7 @@ function StudentSectioning({
     };
 
     if (!workspace.students.length && !isRegistrarMode) {
-      alert(
+      showSystemNotification(
         "No students were found for this batch year. Make sure the registrar has forwarded the student list first."
       );
       return;
@@ -936,7 +938,7 @@ function StudentSectioning({
     setSelectedSectionCode(mergedYearSections[0]?.sectionCode || "");
 
     if (!studentsForYear.length) {
-      alert(
+      showSystemNotification(
         `${missingSections.length || mergedYearSections.length} empty 1st Year section${(missingSections.length || mergedYearSections.length) === 1 ? "" : "s"} created for ${workspace.program}.`
       );
     }
@@ -960,13 +962,13 @@ function StudentSectioning({
     });
   };
 
-  const handleDeleteSection = (sectionCode) => {
+  const handleDeleteSection = async (sectionCode) => {
     const section = sectionPlans.find((plan) => plan.sectionCode === sectionCode);
     const sectionName =
       section?.sectionName ||
       getDefaultSectionName(selectedBatch?.program, sectionCode);
 
-    const confirmed = window.confirm(
+    const confirmed = await requestSystemConfirmation(
       `Delete ${sectionName}? Students in this section will become unassigned.`
     );
 
@@ -1036,7 +1038,7 @@ function StudentSectioning({
 
   const handleConfirmRemoveStudent = () => {
     if (!pendingRemoval?.reason) {
-      alert("Please choose a removal reason before removing a student.");
+      showSystemNotification("Please choose a removal reason before removing a student.");
       return;
     }
 
@@ -1084,7 +1086,7 @@ function StudentSectioning({
       );
 
       if (alreadyActive) {
-        alert("This student ID already exists in the active roster.");
+        showSystemNotification("This student ID already exists in the active roster.");
         return batch;
       }
 
@@ -1138,7 +1140,7 @@ function StudentSectioning({
       !lateStudent.firstName.trim() ||
       !lateStudent.middleName.trim()
     ) {
-      alert("Complete all late enrollee fields before adding the student.");
+      showSystemNotification("Complete all late enrollee fields before adding the student.");
       return;
     }
 
@@ -1147,7 +1149,7 @@ function StudentSectioning({
     );
 
     if (duplicateStudent) {
-      alert("This student ID is already in the roster.");
+      showSystemNotification("This student ID is already in the roster.");
       return;
     }
 
@@ -1192,7 +1194,7 @@ function StudentSectioning({
       .sort(compareStudentsByName);
 
     if (!sectionStudents.length) {
-      alert("No students are assigned to this section yet.");
+      showSystemNotification("No students are assigned to this section yet.");
       return;
     }
 
@@ -1204,14 +1206,14 @@ function StudentSectioning({
 
   const handleImportSectionCsv = (sectionCode) => {
     if (!selectedBatch) {
-      alert("Please create or choose a section first.");
+      showSystemNotification("Please create or choose a section first.");
       return;
     }
 
     const section = sectionPlans.find((plan) => plan.sectionCode === sectionCode);
 
     if (!section) {
-      alert("Selected section was not found.");
+      showSystemNotification("Selected section was not found.");
       return;
     }
 
@@ -1225,18 +1227,18 @@ function StudentSectioning({
       if (!file) return;
 
       if (!file.name.toLowerCase().endsWith(".csv")) {
-        alert("Please upload a CSV file.");
+        showSystemNotification("Please upload a CSV file.");
         return;
       }
 
       const reader = new FileReader();
 
-      reader.onload = (readerEvent) => {
+      reader.onload = async (readerEvent) => {
         const text = readerEvent.target?.result;
         const parsedStudents = parseStudentIdSpreadsheet(text || "");
 
         if (!parsedStudents.length) {
-          alert(
+          showSystemNotification(
             "The section CSV must contain Student ID, Sex, Last Name, First Name, and Middle Name columns with valid rows."
           );
           return;
@@ -1256,7 +1258,7 @@ function StudentSectioning({
         ).length;
         const confirmed =
           existingSectionCount === 0 ||
-          window.confirm(
+          await requestSystemConfirmation(
             `Replace ${existingSectionCount} existing student${existingSectionCount === 1 ? "" : "s"} in ${sectionName}?`
           );
 
@@ -1296,7 +1298,7 @@ function StudentSectioning({
 
         persistBatches(nextBatches);
         setSelectedSectionCode(section.sectionCode);
-        alert(
+        showSystemNotification(
           `${importedStudents.length} student${importedStudents.length === 1 ? "" : "s"} imported into ${sectionName}.`
         );
       };
@@ -1311,7 +1313,7 @@ function StudentSectioning({
     localStorage.setItem(STUDENT_BATCHES_KEY, JSON.stringify(batches));
     syncSectionedStudentsToStorage(batches);
     onSectioningSaved?.();
-    alert("Sections saved successfully.");
+    showSystemNotification("Sections saved successfully.");
   };
 
   const persistSectioningData = (nextBatches, nextGraduatingStudents) => {
@@ -1340,9 +1342,9 @@ function StudentSectioning({
     onSectioningSaved?.();
   };
 
-  const handlePromoteStudents = () => {
+  const handlePromoteStudents = async () => {
     if (!currentRolloverBatches.length) {
-      alert("No saved section lists are ready for promotion.");
+      showSystemNotification("No saved section lists are ready for promotion.");
       return;
     }
 
@@ -1350,7 +1352,7 @@ function StudentSectioning({
       (total, batch) => total + (batch.students || []).length,
       0
     );
-    const confirmed = window.confirm(
+    const confirmed = await requestSystemConfirmation(
       `Promote ${studentsToPromote} student${studentsToPromote === 1 ? "" : "s"} across all available departments to the next academic year?`
     );
 
@@ -1551,7 +1553,7 @@ function StudentSectioning({
       ).length,
       batches: currentRolloverBatches.length,
     });
-    alert(
+    showSystemNotification(
       `${allPromotedStudents.length} student${allPromotedStudents.length === 1 ? "" : "s"} promoted successfully across all available departments.`
     );
   };
@@ -1585,7 +1587,7 @@ function StudentSectioning({
       ) || subjectAssignment;
 
     if (!batch || !student || !subjectAssignment || !assignedSection || !sectionSubjectAssignment) {
-      alert("Please choose the student, repeated subject, and assigned section.");
+      showSystemNotification("Please choose the student, repeated subject, and assigned section.");
       return;
     }
 
@@ -1670,7 +1672,7 @@ function StudentSectioning({
     );
 
     if (!batch || !student || !transferSubjectForm.irregularSubjectId || !targetSection) {
-      alert("Please choose the student, repeated subject, and new section.");
+      showSystemNotification("Please choose the student, repeated subject, and new section.");
       return;
     }
 
@@ -1778,7 +1780,7 @@ function StudentSectioning({
 
   const handleBulkGraduatingStatusChange = (status) => {
     if (!visibleGraduatingStudents.length) {
-      alert("No visible fourth-year students to update.");
+      showSystemNotification("No visible fourth-year students to update.");
       return;
     }
 
@@ -1815,8 +1817,8 @@ function StudentSectioning({
     persistSectioningData(batches, nextGraduatingStudents);
   };
 
-  const handleDeleteGraduatingBatch = (batchGroup) => {
-    const confirmed = window.confirm(
+  const handleDeleteGraduatingBatch = async (batchGroup) => {
+    const confirmed = await requestSystemConfirmation(
       `Delete graduation review records for Batch ${batchGroup.batchYear}?`
     );
 
@@ -2561,7 +2563,7 @@ function StudentSectioning({
                     onClick={() => {
                       setSelectedBatchKey(batch.key);
                       setSectioningBatchYear(batch.batchYear);
-                      alert(
+                      showSystemNotification(
                         `${batch.program} Batch ${batch.batchYear} list selected for sectioning.`
                       );
                     }}

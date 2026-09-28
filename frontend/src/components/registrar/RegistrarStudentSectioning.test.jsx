@@ -11,6 +11,8 @@ import {
 } from '../../services/api';
 import { syncSectioningBatchToBackend } from '../../utils/registrarSectioningBackendSync';
 import { STUDENT_BATCHES_KEY } from '../../utils/studentSectioningHelpers';
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 
 jest.mock('../../services/api', () => ({
   deleteAcademicSection: jest.fn(),
@@ -22,6 +24,11 @@ jest.mock('../../services/api', () => ({
 }));
 jest.mock('../../utils/registrarSectioningBackendSync', () => ({ syncSectioningBatchToBackend: jest.fn() }));
 jest.mock('../../utils/sharedClientState', () => ({ pushSectioningSharedState: jest.fn() }));
+jest.mock('../../services/NotificationContext', () => ({
+  ...jest.requireActual('../../services/NotificationContext'),
+  showSystemNotification: jest.fn(),
+}));
+jest.mock('../../services/SystemDialogContext', () => ({ requestSystemConfirmation: jest.fn() }));
 
 const student = { id: 42, enrollmentId: 73, studentNo: '26-0042', fullName: 'Test Student',
   department: 'BSIT', yearLevel: '1', enrollmentStatus: 'ENROLLED', schoolYear: '2026-2027', semester: 'FIRST' };
@@ -29,8 +36,7 @@ const student = { id: 42, enrollmentId: 73, studentNo: '26-0042', fullName: 'Tes
 beforeEach(() => {
   jest.clearAllMocks();
   localStorage.clear();
-  window.alert = jest.fn();
-  window.confirm = jest.fn(() => true);
+  requestSystemConfirmation.mockResolvedValue(true);
   deleteAcademicSection.mockResolvedValue({ status: 'Success', mode: 'deleted' });
   fetchNextStudentId.mockResolvedValue({ highestSequence: 42 });
   getSystemSetting.mockResolvedValue({ status: 'Success', value: { schoolYear: '2026-2027', semester: 'FIRST' } });
@@ -88,7 +94,7 @@ test('Auto-Populate reports when no eligible enrollment data exists', async () =
   render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
   const autoPopulate = await screen.findByRole('button', { name: /Auto-Populate Enrolled \(0\)/ });
   fireEvent.click(autoPopulate);
-  expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('No eligible unassigned students'));
+  expect(showSystemNotification).toHaveBeenCalledWith(expect.stringContaining('No eligible unassigned students'));
   expect(syncSectioningBatchToBackend).not.toHaveBeenCalled();
 });
 
@@ -129,7 +135,7 @@ test('failed assignment does not publish a sectioned roster', async () => {
   await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled/ })).toBeEnabled());
   const sectionPlansBeforeAttempt = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0].sectionPlans;
   fireEvent.click(screen.getByRole('button', { name: 'Generate Sections' }));
-  await waitFor(() => expect(window.alert).toHaveBeenCalledWith('Section assignment failed: Student already assigned'));
+  await waitFor(() => expect(showSystemNotification).toHaveBeenCalledWith('Section assignment failed: Student already assigned'));
   const workspace = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0];
   expect(workspace.sectionPlans).toEqual(sectionPlansBeforeAttempt);
   expect(workspace.students[0].sectionCode).toBe('');

@@ -1,3 +1,4 @@
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { addCurriculumSubject, createCurriculum, fetchAcademicPrograms, fetchCurriculums, removeCurriculumSubject, submitCurriculum, updateCurriculum, updateCurriculumSubject } from '../../services/api';
 
@@ -109,7 +110,7 @@ const CurriculumBuilder = ({ department = '' }) => {
   };
 
   const deleteSubject = async (item) => {
-    if (!window.confirm(`Remove ${item.subjectCode} from this curriculum?`)) return;
+    if (!await requestSystemConfirmation(`Remove ${item.subjectCode} from this curriculum?`)) return;
     if (isLocalMode) { const nextSubjects = subjects.filter((subject) => subject.subjectId !== item.subjectId); saveLocalCurriculum({ ...selected, subjects: nextSubjects, totalUnits: nextSubjects.reduce((sum, subject) => sum + Number(subject.units || 0), 0) }); setNotice({ type: 'success', message: 'Subject removed.' }); return; }
     try { await removeCurriculumSubject(selected.curriculumId, item.subjectId); await load(); setNotice({ type: 'success', message: 'Subject removed.' }); }
     catch (error) { setNotice({ type: 'error', message: error.message }); }
@@ -117,7 +118,7 @@ const CurriculumBuilder = ({ department = '' }) => {
 
   const submit = async () => {
     if (!editable || selected.status !== 'DRAFT') return setNotice({ type: 'error', message: 'Save the curriculum before submitting it.' });
-    if (!window.confirm('Submit this curriculum to the Registrar for review?')) return;
+    if (!await requestSystemConfirmation('Submit this curriculum to the Registrar for review?')) return;
     if (isLocalMode) { saveLocalCurriculum({ ...selected, status: 'PENDING_APPROVAL' }); setNotice({ type: 'success', message: 'Curriculum submitted for review locally.' }); return; }
     setSaving(true); try { await submitCurriculum(selected.curriculumId); await load(); setNotice({ type: 'success', message: 'Curriculum submitted for Registrar review.' }); }
     catch (error) { setNotice({ type: 'error', message: error.message }); } finally { setSaving(false); }

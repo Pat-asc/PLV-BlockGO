@@ -1,3 +1,4 @@
+import { requestSystemConfirmation, requestSystemPrompt } from '../../services/SystemDialogContext';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   approveCurriculum,
@@ -59,14 +60,19 @@ const CurriculumManagement = () => {
     setNotice(null);
 
     let confirmation;
-    if (name === 'approve') confirmation = window.confirm('Approve this curriculum proposal?');
+    if (name === 'approve') confirmation = await requestSystemConfirmation('Approve this curriculum proposal?');
     if (name === 'return') {
-      const reason = window.prompt('Reason for returning this curriculum:');
+      const reason = await requestSystemPrompt({
+        title: 'Return Curriculum',
+        message: 'Explain why this curriculum is being returned to the Chairperson.',
+        inputLabel: 'Return reason',
+        confirmLabel: 'Return Curriculum',
+      });
       if (!reason?.trim()) return;
       confirmation = reason.trim();
     }
-    if (name === 'publish') confirmation = window.confirm('Publish this approved curriculum? Any previous published version for this program will be archived.');
-    if (name === 'archive') confirmation = window.confirm('Archive this published curriculum? It will remain in version history.');
+    if (name === 'publish') confirmation = await requestSystemConfirmation('Publish this approved curriculum? Any previous published version for this program will be archived.');
+    if (name === 'archive') confirmation = await requestSystemConfirmation('Archive this published curriculum? It will remain in version history.');
     if (!confirmation) return;
 
     setSaving(true);
@@ -90,7 +96,7 @@ const CurriculumManagement = () => {
       setNotice({ type: 'error', message: 'Enter a valid four-digit student batch year.' });
       return;
     }
-    if (!window.confirm(`Assign this curriculum to ${selected.programCode} batch ${batchYear} only?`)) return;
+    if (!await requestSystemConfirmation(`Assign this curriculum to ${selected.programCode} batch ${batchYear} only?`)) return;
 
     setSaving(true);
     setNotice(null);

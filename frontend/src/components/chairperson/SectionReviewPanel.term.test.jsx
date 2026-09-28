@@ -57,7 +57,7 @@ test('approval requires confirmation and cancel makes no request', () => {
   }} />);
 
   fireEvent.click(screen.getByRole('button', { name: 'Approve Section' }));
-  expect(screen.getByRole('dialog', { name: 'Approve section grades?' })).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'Approve Grades' })).toBeInTheDocument();
   expect(onApprove).not.toHaveBeenCalled();
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
   expect(onApprove).not.toHaveBeenCalled();
@@ -104,7 +104,7 @@ test('finalization requires confirmation and cancel makes no request', () => {
   }} />);
 
   fireEvent.click(screen.getByRole('button', { name: 'Finalize Grades' }));
-  expect(screen.getByRole('dialog', { name: 'Finalize section grades?' })).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'Finalize Grades' })).toBeInTheDocument();
   expect(onFinalize).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(onFinalize).not.toHaveBeenCalled();

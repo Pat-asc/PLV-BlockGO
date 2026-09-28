@@ -1,3 +1,5 @@
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { fetchFacultySections, fetchFacultyStudents, fetchAllGrades, batchUploadGrades, downloadGradingSheet, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
 import Modal from '../../services/Modal';
@@ -862,7 +864,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     const sectionData = sections[sectionName];
     if (!sectionData || !sectionData.students) return;
     if (!isLockedSectionStatus(getSectionTermStatus(sectionName))) {
-      alert("Export PDF is available only after the grades for this section have been submitted to the Chairperson.");
+      showSystemNotification("Export PDF is available only after the grades for this section have been submitted to the Chairperson.");
       return;
     }
     
@@ -935,7 +937,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         
         doc.save(`${sectionName.replace(/[^a-zA-Z0-9-]/g, "_")}_GradingSheet.pdf`);
     } catch (err) {
-        alert("Could not generate PDF. Make sure jsPDF is available.");
+        showSystemNotification("Could not generate PDF. Make sure jsPDF is available.");
     }
   };
 
@@ -955,7 +957,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     const schoolYear = canonicalAcademicSchoolYear(sectionData.schoolYear);
     if (!sectionData.academicSectionId || !['FIRST', 'SECOND', 'MIDYEAR'].includes(semester) ||
         !/^\d{4}-\d{4}$/.test(schoolYear)) {
-      alert('The assigned subject has no active enrolled academic period. Ask the Registrar to verify the section before uploading grades.');
+      showSystemNotification('The assigned subject has no active enrolled academic period. Ask the Registrar to verify the section before uploading grades.');
       e.target.value = null;
       return;
     }
@@ -981,7 +983,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         res = await batchUploadGrades(file, uploadContext);
       } catch (uploadError) {
         if (!String(uploadError.message).includes('Conflict preview') ||
-            !window.confirm(`${uploadError.message}\n\nOverwrite the existing Draft/Returned grade rows?`)) throw uploadError;
+            !await requestSystemConfirmation(`${uploadError.message}\n\nOverwrite the existing Draft/Returned grade rows?`)) throw uploadError;
         res = await batchUploadGrades(file, { ...uploadContext, confirmOverwrite: true });
       }
       if (res.status === 'Success' || res.status === 'Partial Success') {
@@ -1090,7 +1092,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       updateSectionTermStatus(sectionName, encodingTerm, 'draft');
     } catch (error) {
       console.error(error);
-      alert(`Failed to save all grades: ${error.message}`);
+      showSystemNotification(`Failed to save all grades: ${error.message}`);
       const idle = {};
       students.forEach((_, i) => { idle[i] = 'idle'; });
       setRowSaveState(prev => ({ ...prev, [sectionName]: idle }));
@@ -1110,7 +1112,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     );
     
     if (hasIncomplete) {
-      alert(`Submission Blocked: All students in the section must have ${encodingTerm === 'midterm' ? 'Midterm' : 'Finals'} grades encoded before submitting to the Chairperson.`);
+      showSystemNotification(`Submission Blocked: All students in the section must have ${encodingTerm === 'midterm' ? 'Midterm' : 'Finals'} grades encoded before submitting to the Chairperson.`);
       return;
     }
 
@@ -1131,7 +1133,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       );
       updateSectionTermStatus(sectionName, encodingTerm, 'submitted');
       setSubmitConfirmSection(null);
-    } catch (e) { alert("Error submitting section: " + e.message); }
+    } catch (e) { showSystemNotification("Error submitting section: " + e.message); }
   };
 
   const hasValidationErrors = (sectionName) => {

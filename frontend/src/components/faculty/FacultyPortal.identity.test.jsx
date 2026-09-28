@@ -2,11 +2,16 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import FacultyPortal from './FacultyPortal';
 import { batchUploadGrades, fetchFacultySections, fetchFacultyStudents, fetchAllGrades, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
+import { showSystemNotification } from '../../services/NotificationContext';
 
 jest.mock('../../services/api', () => ({
   fetchFacultySections: jest.fn(), fetchFacultyStudents: jest.fn(), fetchAllGrades: jest.fn(),
   getSystemSetting: jest.fn(), issueGrade: jest.fn(), submitSectionGrades: jest.fn(),
   batchUploadGrades: jest.fn(), downloadGradingSheet: jest.fn(),
+}));
+jest.mock('../../services/NotificationContext', () => ({
+  ...jest.requireActual('../../services/NotificationContext'),
+  showSystemNotification: jest.fn(),
 }));
 
 jest.setTimeout(15000);
@@ -21,7 +26,6 @@ const assignment = {
 beforeEach(() => {
   jest.clearAllMocks();
   localStorage.clear();
-  window.alert = jest.fn();
   localStorage.setItem('registrarAssignments', JSON.stringify([assignment]));
   getSystemSetting.mockResolvedValue({ status: 'Success', value: { startDate: '2020-01-01', endDate: '2099-12-31', semester: '2nd Semester', term: 'midterm' } });
   fetchFacultySections.mockResolvedValue({ sections: [{ id: 77, facultySectionId: 77, assignmentCycleId: 77, department: 'BSIT', section: 'BSIT 1-1',
@@ -85,7 +89,7 @@ test('assignment without an authoritative active period cannot save grades', asy
     yearLevel: '1', subject: 'IT 101' }] });
   await openSection();
   fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }));
-  await waitFor(() => expect(window.alert).toHaveBeenCalledWith(
+  await waitFor(() => expect(showSystemNotification).toHaveBeenCalledWith(
     expect.stringContaining('no active enrolled academic period')));
   expect(issueGrade).not.toHaveBeenCalled();
 });
@@ -108,7 +112,7 @@ test('failed Save never submits a section', async () => {
   fireEvent.change(screen.getAllByPlaceholderText('60-100')[0], { target: { value: '85' } });
   fireEvent.click(screen.getByRole('button', { name: 'Submit to Chairperson' }));
   fireEvent.click(screen.getByRole('button', { name: 'Yes, Submit Final Grades' }));
-  await waitFor(() => expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('Student account was not found')));
+  await waitFor(() => expect(showSystemNotification).toHaveBeenCalledWith(expect.stringContaining('Student account was not found')));
   expect(submitSectionGrades).not.toHaveBeenCalled();
 });
 
@@ -116,7 +120,7 @@ test('an empty authoritative enrollment roster cannot stage grades', async () =>
   fetchFacultyStudents.mockResolvedValue({ students: [] });
   await openSection();
   fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }));
-  await waitFor(() => expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('no active Registrar enrollment roster')));
+  await waitFor(() => expect(showSystemNotification).toHaveBeenCalledWith(expect.stringContaining('no active Registrar enrollment roster')));
   expect(issueGrade).not.toHaveBeenCalled();
 });
 

@@ -37,7 +37,6 @@ beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
   window.history.replaceState({}, '', '/');
-  window.confirm = jest.fn();
   jest.clearAllMocks();
 });
 
@@ -112,14 +111,13 @@ test('submits manual assistance only when the user explicitly selects the fallba
   expect(forgotPassword).not.toHaveBeenCalled();
 });
 
-test('keeps every account session active when logout confirmation is cancelled', async () => {
+test('opens the system logout modal and keeps the session active when cancelled', async () => {
   const token = tokenFor('faculty', 'faculty@plv.edu.ph');
   login.mockResolvedValue({ token });
   fetchUserProfile.mockResolvedValue({
     status: 'Success',
     data: { id: 7, email: 'faculty@plv.edu.ph', fullName: 'Test Faculty', role: 'faculty', status: 'APPROVED' },
   });
-  window.confirm.mockReturnValue(false);
   window.history.replaceState({}, '', '/login');
 
   render(<App />);
@@ -130,20 +128,22 @@ test('keeps every account session active when logout confirmation is cancelled',
 
   fireEvent.click(screen.getByRole('button', { name: /^logout$/i }));
 
-  expect(window.confirm).toHaveBeenCalledWith('Are you sure you want to log out?');
+  const dialog = await screen.findByRole('dialog', { name: /^logout$/i });
+  expect(dialog).toHaveTextContent('Are you sure you want to log out of your account?');
+  fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+  expect(screen.queryByRole('dialog', { name: /^logout$/i })).not.toBeInTheDocument();
   expect(sessionStorage.getItem('blockgo.auth.token')).toBe(token);
   expect(window.location.pathname).toBe('/faculty');
   expect(screen.getByText(/faculty portal for faculty@plv.edu.ph/i)).toBeInTheDocument();
 });
 
-test('clears the shared account session only after logout is confirmed', async () => {
+test('clears the shared account session once after system logout confirmation', async () => {
   const token = tokenFor('faculty', 'faculty@plv.edu.ph');
   login.mockResolvedValue({ token });
   fetchUserProfile.mockResolvedValue({
     status: 'Success',
     data: { id: 7, email: 'faculty@plv.edu.ph', fullName: 'Test Faculty', role: 'faculty', status: 'APPROVED' },
   });
-  window.confirm.mockReturnValue(true);
   window.history.replaceState({}, '', '/login');
 
   render(<App />);
@@ -153,9 +153,11 @@ test('clears the shared account session only after logout is confirmed', async (
   await screen.findByText(/faculty portal for faculty@plv.edu.ph/i);
 
   fireEvent.click(screen.getByRole('button', { name: /^logout$/i }));
+  const confirmButton = await screen.findByRole('button', { name: /^log out$/i });
+  fireEvent.click(confirmButton);
+  fireEvent.click(confirmButton);
 
   await waitFor(() => expect(window.location.pathname).toBe('/login'));
-  expect(window.confirm).toHaveBeenCalledWith('Are you sure you want to log out?');
   expect(sessionStorage.getItem('blockgo.auth.token')).toBeNull();
   expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
 });

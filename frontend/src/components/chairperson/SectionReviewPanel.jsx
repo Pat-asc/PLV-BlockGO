@@ -5,6 +5,7 @@ import {
   getReviewStatusLabel,
 } from "../../utils/chairpersonHelpers";
 import { getGradeEquivalent } from "../../utils/gradingHelpers";
+import Modal from "../../services/Modal";
 
 const formatLogDate = (value) => {
   if (!value) return "--";
@@ -372,106 +373,39 @@ function SectionReviewPanel({
         </div>
       </div>
 
-      {approveConfirmationOpen && (
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/50 p-4"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !isApproving) {
-              setApproveConfirmationOpen(false);
-            }
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="approve-grades-title"
-            aria-describedby="approve-grades-description"
-            className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"
-          >
-            <h3 id="approve-grades-title" className="text-xl font-bold text-[#003366]">
-              Approve section grades?
-            </h3>
-            <p id="approve-grades-description" className="mt-3 text-sm leading-6 text-slate-600">
-              Are you sure you want to approve these grades? Once approved, they will move to the Finalize queue for final review before they become visible to students and the Registrar.
-            </p>
-            {approveError && (
-              <p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-                {approveError}
-              </p>
-            )}
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setApproveConfirmationOpen(false)}
-                disabled={isApproving}
-                className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmApprove}
-                disabled={isApproving}
-                className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
-              >
-                {isApproving ? "Approving…" : "Approve Grades"}
-              </button>
-            </div>
-          </div>
+      <Modal
+        isOpen={approveConfirmationOpen}
+        onClose={() => { if (!isApproving) setApproveConfirmationOpen(false); }}
+        title="Approve Grades"
+        description="Are you sure you want to approve these grades? Once approved, they will move to the Finalize Queue for final review."
+        closeOnBackdrop={!isApproving}
+        closeOnEscape={!isApproving}
+      >
+        {approveError && (
+          <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{approveError}</p>
+        )}
+        <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <button type="button" onClick={() => setApproveConfirmationOpen(false)} disabled={isApproving} className="min-h-11 rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+          <button type="button" onClick={confirmApprove} disabled={isApproving} className="min-h-11 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400">{isApproving ? "Approving…" : "Approve Grades"}</button>
         </div>
-      )}
+      </Modal>
 
-      {finalizeConfirmationOpen && (
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/50 p-4"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !isFinalizing) {
-              setFinalizeConfirmationOpen(false);
-            }
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="finalize-grades-title"
-            aria-describedby="finalize-grades-description"
-            className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"
-          >
-            <h3 id="finalize-grades-title" className="text-xl font-bold text-[#003366]">
-              Finalize section grades?
-            </h3>
-            <p id="finalize-grades-description" className="mt-3 text-sm leading-6 text-slate-600">
-              Are you sure you want to finalize these grades? Once finalized, they will become visible to the student and available to the Registrar.
-            </p>
-            {finalizeError && (
-              <p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-                {finalizeError}
-              </p>
-            )}
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setFinalizeConfirmationOpen(false)}
-                disabled={isFinalizing}
-                className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmFinalize}
-                disabled={isFinalizing}
-                className="rounded-xl bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
-              >
-                {isFinalizing ? "Finalizingâ€¦" : "Finalize Grades"}
-              </button>
-            </div>
-          </div>
+      <Modal
+        isOpen={finalizeConfirmationOpen}
+        onClose={() => { if (!isFinalizing) setFinalizeConfirmationOpen(false); }}
+        title="Finalize Grades"
+        description="Are you sure you want to finalize these grades? Once finalized, they will become visible to the student and available to the Registrar."
+        closeOnBackdrop={!isFinalizing}
+        closeOnEscape={!isFinalizing}
+      >
+        {finalizeError && (
+          <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{finalizeError}</p>
+        )}
+        <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <button type="button" onClick={() => setFinalizeConfirmationOpen(false)} disabled={isFinalizing} className="min-h-11 rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+          <button type="button" onClick={confirmFinalize} disabled={isFinalizing} className="min-h-11 rounded-xl bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400">{isFinalizing ? "Finalizing…" : "Finalize Grades"}</button>
         </div>
-      )}
-
+      </Modal>
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h3 className="text-lg font-bold text-[#003366]">Decision Log</h3>
         

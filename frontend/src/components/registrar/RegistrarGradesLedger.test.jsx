@@ -4,10 +4,15 @@ import '@testing-library/jest-dom';
 import RegistrarGradesLedger from './RegistrarGradesLedger';
 import { buildLedgerHierarchy, canonicalizeLedgerPrograms, filterLedgerRecords } from '../../utils/registrarGradesLedger';
 import { fetchAcademicPrograms, fetchAllGrades } from '../../services/api';
+import { showSystemNotification } from '../../services/NotificationContext';
 
 jest.mock('../../services/api', () => ({
   fetchAcademicPrograms: jest.fn(),
   fetchAllGrades: jest.fn(),
+}));
+jest.mock('../../services/NotificationContext', () => ({
+  ...jest.requireActual('../../services/NotificationContext'),
+  showSystemNotification: jest.fn(),
 }));
 
 const record = (overrides = {}) => ({
@@ -272,15 +277,13 @@ test('PDF export 4 - Section export includes all subjects using exact section an
 
 test('PDF export 5 - empty filtered export is blocked with the requested message', async () => {
   const onExport = jest.fn();
-  const alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {});
   fetchAllGrades.mockResolvedValue({ data: [record()] });
   render(<RegistrarGradesLedger loggedInEmail="registrar@plv.edu.ph" onExport={onExport} />);
   await screen.findByRole('option', { name: /BECE/ });
   fireEvent.change(screen.getByLabelText('Program'), { target: { value: '2' } });
   fireEvent.click(screen.getByRole('button', { name: 'Export all filtered grade records PDF' }));
   expect(onExport).not.toHaveBeenCalled();
-  expect(alertSpy).toHaveBeenCalledWith('No finalized grade records are available for this export.');
-  alertSpy.mockRestore();
+  expect(showSystemNotification).toHaveBeenCalledWith('No finalized grade records are available for this export.');
 });
 
 test('section grouping 3 - the same section label with different academic_section_id stays separate', () => {

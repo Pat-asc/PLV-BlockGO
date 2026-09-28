@@ -1,3 +1,4 @@
+import { showSystemNotification } from '../../services/NotificationContext';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchAcademicPrograms, fetchAllGrades } from '../../services/api';
 import { buildLedgerHierarchy, canonicalizeLedgerPrograms, filterLedgerRecords, getLedgerFilterOptions } from '../../utils/registrarGradesLedger';
@@ -202,7 +203,7 @@ const RegistrarGradesLedger = ({ loggedInEmail, onViewIpfs, onExport }) => {
   const requestExport = (scope = { type: 'all' }) => {
     const scopedRecords = selectLedgerExportRecords(filteredRecords, scope);
     if (scopedRecords.length === 0) {
-      window.alert('No finalized grade records are available for this export.');
+      showSystemNotification('No finalized grade records are available for this export.');
       return;
     }
     onExport?.(scopedRecords, filters, scope);

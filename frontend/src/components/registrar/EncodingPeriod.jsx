@@ -1,3 +1,5 @@
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useEffect, useState } from "react";
 import { getSystemSetting, updateSystemSetting } from "../../services/api";
 
@@ -95,7 +97,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
   };
 
   const handleResetSeason = async () => {
-    const shouldReset = window.confirm(
+    const shouldReset = await requestSystemConfirmation(
       `Open ${schoolYear} ${semester} ${term} as a new encoding context? Current faculty assignments will be deactivated, while historical grades and saved sections remain intact.`
     );
 
@@ -108,7 +110,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
       setStatusMessage(
         "Encoding season reset successfully. Faculty assigned sections were cleared, saved sections were kept, and the encoding period was closed."
       );
-      alert(
+      showSystemNotification(
         "Encoding season has been reset. Faculty assigned sections are now cleared, saved sections were kept, and the encoding period is now closed."
       );
     } catch (error) {

@@ -1,3 +1,4 @@
+import { showSystemNotification } from '../../services/NotificationContext';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   STUDENT_BATCHES_KEY,
@@ -190,12 +191,12 @@ function StudentListImport({ selectedProgram = "", onImportComplete }) {
 
   const handleDownloadTemplate = () => {
     if (!selectedProgram || !selectedBatchYear) {
-      alert("Please complete the department and batch year first.");
+      showSystemNotification("Please complete the department and batch year first.");
       return;
     }
 
     if (Number(selectedBatchYear) < CURRENT_YEAR) {
-      alert(`Batch year cannot be earlier than ${CURRENT_YEAR}.`);
+      showSystemNotification(`Batch year cannot be earlier than ${CURRENT_YEAR}.`);
       return;
     }
 
@@ -224,27 +225,27 @@ function StudentListImport({ selectedProgram = "", onImportComplete }) {
 
   const handleImport = () => {
     if (!selectedProgram || !selectedBatchYear) {
-      alert("Please complete the department and batch year first.");
+      showSystemNotification("Please complete the department and batch year first.");
       return;
     }
 
     if (!/^\d{4}$/.test(selectedBatchYear)) {
-      alert("Batch year must be a 4-digit year.");
+      showSystemNotification("Batch year must be a 4-digit year.");
       return;
     }
 
     if (Number(selectedBatchYear) < CURRENT_YEAR) {
-      alert(`Batch year cannot be earlier than ${CURRENT_YEAR}.`);
+      showSystemNotification(`Batch year cannot be earlier than ${CURRENT_YEAR}.`);
       return;
     }
 
     if (!selectedFile) {
-      alert("Please choose the Excel CSV file first.");
+      showSystemNotification("Please choose the Excel CSV file first.");
       return;
     }
 
     if (!selectedFile.name.toLowerCase().endsWith(".csv")) {
-      alert("Please upload the Excel CSV template in .csv format.");
+      showSystemNotification("Please upload the Excel CSV template in .csv format.");
       return;
     }
 
@@ -254,14 +255,14 @@ function StudentListImport({ selectedProgram = "", onImportComplete }) {
       const text = event.target?.result;
 
       if (!text) {
-        alert("Unable to read file.");
+        showSystemNotification("Unable to read file.");
         return;
       }
 
       const parsedStudents = parseStudentIdSpreadsheet(text);
 
       if (parsedStudents.length === 0) {
-        alert(
+        showSystemNotification(
           "The file must contain Student ID, Sex, Last Name, First Name, and Middle Initial columns with valid rows."
         );
         return;
@@ -316,7 +317,7 @@ function StudentListImport({ selectedProgram = "", onImportComplete }) {
       onImportComplete?.(updatedBatches);
 
       setSelectedFile(null);
-      alert("Student list imported for registrar sectioning successfully.");
+      showSystemNotification("Student list imported for registrar sectioning successfully.");
     };
 
     reader.readAsText(selectedFile);
