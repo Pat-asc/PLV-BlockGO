@@ -478,9 +478,11 @@ export const fetchChairpersonGradeRecords = async (invokerId = 'chairperson') =>
     return await fetchAllGrades(invokerId);
 };
 
-export const approveGrade = async (recordId, invokerId) => {
-    return await fetchWithAuth(`/Grades/approve/${encodeURIComponent(recordId)}?invokerId=${encodeURIComponent(invokerId)}`, {
-        method: 'POST'
+export const approveGrade = async (recordIds, invokerId) => {
+    const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
+    return await fetchWithAuth(`/Grades/approve?invokerId=${encodeURIComponent(invokerId)}`, {
+        method: 'POST',
+        body: JSON.stringify({ recordIds: ids })
     });
 };
 

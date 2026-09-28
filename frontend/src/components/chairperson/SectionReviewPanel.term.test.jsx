@@ -49,6 +49,53 @@ test('finals review renders preserved Midterm and active Finals values', () => {
   expect(screen.getByText('90')).toBeInTheDocument();
 });
 
+test('approval requires confirmation and cancel makes no request', () => {
+  const onApprove = jest.fn();
+  render(<SectionReviewPanel {...{
+    selectedSection: section, activeTerm: 'midterm',
+    onSendBack: jest.fn(), onApprove, onFinalize: jest.fn(), onViewIpfs: jest.fn(),
+  }} />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Approve Section' }));
+  expect(screen.getByRole('dialog', { name: 'Approve section grades?' })).toBeInTheDocument();
+  expect(onApprove).not.toHaveBeenCalled();
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+  expect(onApprove).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+test('approval confirmation calls approval exactly once and disables repeat submission while busy', async () => {
+  let resolveApprove;
+  const onApprove = jest.fn(() => new Promise((resolve) => { resolveApprove = resolve; }));
+  render(<SectionReviewPanel {...{
+    selectedSection: section, activeTerm: 'midterm',
+    onSendBack: jest.fn(), onApprove, onFinalize: jest.fn(), onViewIpfs: jest.fn(),
+  }} />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Approve Section' }));
+  const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve Grades' });
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+  expect(onApprove).toHaveBeenCalledTimes(1);
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: /Approving/ })).toBeDisabled();
+
+  resolveApprove();
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+});
+
+test('failed approval remains retryable and shows a safe error', async () => {
+  const onApprove = jest.fn().mockRejectedValueOnce(new Error('Approval state could not be verified.'));
+  render(<SectionReviewPanel {...{
+    selectedSection: section, activeTerm: 'midterm',
+    onSendBack: jest.fn(), onApprove, onFinalize: jest.fn(), onViewIpfs: jest.fn(),
+  }} />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Approve Section' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve Grades' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Approval state could not be verified.');
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve Grades' })).toBeEnabled();
+});
+
 test('finalization requires confirmation and cancel makes no request', () => {
   const onFinalize = jest.fn();
   render(<SectionReviewPanel {...{

@@ -1,4 +1,4 @@
-import { batchUploadGrades, fetchRegistrarFinalizationQueue } from './api';
+import { approveGrade, batchUploadGrades, fetchRegistrarFinalizationQueue } from './api';
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -92,4 +92,12 @@ test('Chairperson finalization queue uses the current-cycle backend queue', asyn
   await fetchRegistrarFinalizationQueue();
 
   expect(global.fetch.mock.calls[0][0]).toContain('/Grades/finalization-queue');
+});
+
+test('Chairperson section approval sends all record IDs in one request', async () => {
+  await approveGrade(['grade-1', 'grade-2'], 'chair@plv.edu.ph');
+
+  expect(global.fetch).toHaveBeenCalledTimes(1);
+  expect(global.fetch.mock.calls[0][0]).toContain('/Grades/approve?');
+  expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ recordIds: ['grade-1', 'grade-2'] });
 });

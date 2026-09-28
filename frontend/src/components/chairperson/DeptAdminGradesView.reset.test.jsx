@@ -2,7 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import DeptAdminGradesView from './DeptAdminGradesView';
 import {
-  fetchAllGrades, fetchApprovedFaculties, fetchDepartmentSections,
+  approveGrade, fetchAllGrades, fetchApprovedFaculties, fetchDepartmentSections,
   fetchFacultySections, finalizeGrade, getSystemSetting,
 } from '../../services/api';
 
@@ -20,8 +20,11 @@ jest.mock('../faculty/FacultyStatusTable', () => ({ rows = [], viewMode, loadErr
     {rows[0] && <button type="button" onClick={() => onSelectSection(rows[0])}>Select first section</button>}
   </div>
 ));
-jest.mock('./SectionReviewPanel', () => ({ onFinalize }) => (
-  <button type="button" onClick={() => onFinalize('').catch(() => {})}>Finalize selected section</button>
+jest.mock('./SectionReviewPanel', () => ({ onApprove, onFinalize }) => (
+  <div>
+    <button type="button" onClick={() => onApprove('').catch(() => {})}>Approve selected section</button>
+    <button type="button" onClick={() => onFinalize('').catch(() => {})}>Finalize selected section</button>
+  </div>
 ));
 jest.mock('../../services/Modal', () => () => null);
 jest.mock('./ChairpersonSidebar', () => ({ setActiveTab }) => (
@@ -90,6 +93,53 @@ test('DepartmentApproved remains in Approved until ledger finalization succeeds'
   expect(screen.getByTestId('review-rows')).toHaveTextContent('forwarded:0');
 });
 
+test('approval sends one section request and moves the record to Finalize Queue, not Finalized', async () => {
+  const submitted = {
+    id: 'submitted-grade', assignment_cycle_id: '41', student_no: '26-0001', student_name: 'Student',
+    faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT', record_section: 'BSIT 1-1',
+    section: 'BSIT 1-1', subject_code: 'IT 101', school_year: '2026-2027', semester: 'FIRST',
+    term: 'midterm', status: 'SubmittedToChairperson', grade: JSON.stringify({ midterm: 85 }),
+  };
+  fetchAllGrades
+    .mockResolvedValueOnce({ data: [submitted] })
+    .mockResolvedValue({ data: [{ ...submitted, status: 'ChairpersonApproved' }] });
+  approveGrade.mockResolvedValue({ status: 'Success' });
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'For Review' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:1:submitted'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Approve selected section' }));
+
+  await waitFor(() => expect(approveGrade).toHaveBeenCalledTimes(1));
+  expect(approveGrade).toHaveBeenCalledWith(['submitted-grade'], 'chair@plv.edu.ph');
+  fireEvent.click(screen.getByRole('button', { name: 'Approved' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved'));
+  fireEvent.click(screen.getByRole('button', { name: 'Finalized' }));
+  expect(screen.getByTestId('review-rows')).toHaveTextContent('forwarded:0');
+});
+
+test('approval failure refreshes authoritative state and leaves the record in For Review', async () => {
+  const submitted = {
+    id: 'submitted-grade', assignment_cycle_id: '41', student_no: '26-0001', student_name: 'Student',
+    faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT', record_section: 'BSIT 1-1',
+    section: 'BSIT 1-1', subject_code: 'IT 101', school_year: '2026-2027', semester: 'FIRST',
+    term: 'midterm', status: 'SubmittedToChairperson', grade: JSON.stringify({ midterm: 85 }),
+  };
+  fetchAllGrades.mockResolvedValue({ data: [submitted] });
+  approveGrade.mockRejectedValue(new Error('Approval unavailable.'));
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'For Review' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:1:submitted'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Approve selected section' }));
+
+  await waitFor(() => expect(approveGrade).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(fetchAllGrades.mock.calls.length).toBeGreaterThan(1));
+  expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:1:submitted');
+});
+
 test('a Finalized record leaves For Review and remains in current Finalized tracking', async () => {
   fetchAllGrades.mockResolvedValue({ data: [{
     id: 'finalized-grade', assignment_cycle_id: '41', student_no: '26-0001',
@@ -136,4 +186,31 @@ test('finalization API failure reconciles and leaves the approved record availab
   await waitFor(() => expect(finalizeGrade).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(fetchAllGrades.mock.calls.length).toBeGreaterThan(1));
   expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved');
+});
+
+test('successful finalization removes the approved item and shows authoritative Finalized tracking', async () => {
+  const approvedRecord = {
+    id: 'approved-grade', assignment_cycle_id: '41', student_no: '26-0001', student_name: 'Student',
+    faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT', record_section: 'BSIT 1-1',
+    section: 'BSIT 1-1', subject_code: 'IT 101', school_year: '2026-2027', semester: 'FIRST',
+    term: 'midterm', status: 'ChairpersonApproved', grade: JSON.stringify({ midterm: 85 }),
+  };
+  fetchAllGrades
+    .mockResolvedValueOnce({ data: [approvedRecord] })
+    .mockResolvedValue({ data: [{
+      ...approvedRecord, status: 'Finalized', finalized_at: '2026-09-28T10:00:00Z',
+      finalized_by: 'chair@plv.edu.ph',
+    }] });
+  finalizeGrade.mockResolvedValue({ status: 'Success' });
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Approved' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Finalize selected section' }));
+
+  await waitFor(() => expect(finalizeGrade).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:0'));
+  fireEvent.click(screen.getByRole('button', { name: 'Finalized' }));
+  expect(screen.getByTestId('review-rows')).toHaveTextContent('forwarded:1:forwarded');
 });

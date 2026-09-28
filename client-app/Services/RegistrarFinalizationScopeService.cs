@@ -7,6 +7,8 @@ public static class RegistrarFinalizationScopeService
 {
     public static async Task<List<AcademicRecord>> GetCurrentApprovedAsync(
         NpgsqlConnection connection,
+        string activeTerm,
+        string activeSemester,
         CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(@"
@@ -22,9 +24,13 @@ public static class RegistrarFinalizationScopeService
              AND LOWER(TRIM(fs.school_year)) = LOWER(TRIM(pgr.school_year))
              AND LOWER(TRIM(fs.semester)) = LOWER(TRIM(pgr.semester))
              AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(pgr.subject_code))
-            WHERE LOWER(TRIM(pgr.status)) = 'departmentapproved'
+            WHERE LOWER(TRIM(pgr.status)) IN ('chairpersonapproved', 'departmentapproved')
+              AND LOWER(TRIM(pgr.semester)) = LOWER(TRIM(@semester))
+              AND LOWER(TRIM(pgr.term)) = LOWER(TRIM(@term))
             ORDER BY pgr.school_year, pgr.semester, pgr.course, pgr.section,
                      pgr.subject_code, pgr.student_no, pgr.id;", connection);
+        command.Parameters.AddWithValue("semester", activeSemester);
+        command.Parameters.AddWithValue("term", activeTerm);
 
         var records = new List<AcademicRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

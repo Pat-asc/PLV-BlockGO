@@ -24,20 +24,44 @@ function SectionReviewPanel({
   onViewIpfs,
 }) {
   const [draftNotes, setDraftNotes] = useState({});
+  const [approveConfirmationOpen, setApproveConfirmationOpen] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
+  const [approveError, setApproveError] = useState("");
   const [finalizeConfirmationOpen, setFinalizeConfirmationOpen] = useState(false);
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState("");
+  const approveInFlightRef = useRef(false);
   const finalizeInFlightRef = useRef(false);
   const note = selectedSection
     ? draftNotes[selectedSection.reviewKey] ?? selectedSection.reviewNote ?? ""
     : "";
 
   useEffect(() => {
+    setApproveConfirmationOpen(false);
+    setApproveError("");
+    approveInFlightRef.current = false;
+    setIsApproving(false);
     setFinalizeConfirmationOpen(false);
     setFinalizeError("");
     finalizeInFlightRef.current = false;
     setIsFinalizing(false);
   }, [selectedSection?.reviewKey]);
+
+  const confirmApprove = async () => {
+    if (approveInFlightRef.current) return;
+    approveInFlightRef.current = true;
+    setIsApproving(true);
+    setApproveError("");
+    try {
+      await onApprove(note);
+      setApproveConfirmationOpen(false);
+    } catch (error) {
+      setApproveError(error?.message || "Approval could not be completed. Please refresh and try again.");
+    } finally {
+      approveInFlightRef.current = false;
+      setIsApproving(false);
+    }
+  };
 
   const confirmFinalize = async () => {
     if (finalizeInFlightRef.current) return;
@@ -326,11 +350,14 @@ function SectionReviewPanel({
             Send Back to Faculty
           </button>
           <button
-            onClick={() => onApprove(note)}
-            disabled={selectedSection.reviewStatus === "forwarded"}
+            onClick={() => {
+              setApproveError("");
+              setApproveConfirmationOpen(true);
+            }}
+            disabled={selectedSection.reviewStatus !== "submitted" || isApproving}
             className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
-            Approve Section
+            {isApproving ? "Approving…" : "Approve Section"}
           </button>
           <button
             onClick={() => {
@@ -344,6 +371,56 @@ function SectionReviewPanel({
           </button>
         </div>
       </div>
+
+      {approveConfirmationOpen && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/50 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isApproving) {
+              setApproveConfirmationOpen(false);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="approve-grades-title"
+            aria-describedby="approve-grades-description"
+            className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"
+          >
+            <h3 id="approve-grades-title" className="text-xl font-bold text-[#003366]">
+              Approve section grades?
+            </h3>
+            <p id="approve-grades-description" className="mt-3 text-sm leading-6 text-slate-600">
+              Are you sure you want to approve these grades? Once approved, they will move to the Finalize queue for final review before they become visible to students and the Registrar.
+            </p>
+            {approveError && (
+              <p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+                {approveError}
+              </p>
+            )}
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setApproveConfirmationOpen(false)}
+                disabled={isApproving}
+                className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmApprove}
+                disabled={isApproving}
+                className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+              >
+                {isApproving ? "Approving…" : "Approve Grades"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {finalizeConfirmationOpen && (
         <div

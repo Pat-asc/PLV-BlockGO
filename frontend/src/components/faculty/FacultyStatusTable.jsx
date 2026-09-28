@@ -58,6 +58,7 @@ const getWorkflowLabel = (status = "") => {
   const normalized = String(status || "").toLowerCase();
 
   if (normalized === "returned") return "Returned to Faculty";
+  if (normalized === "approved") return "Ready to Finalize";
   if (normalized === "forwarded") return "Finalized";
   return "For Review";
 };
@@ -81,6 +82,7 @@ const getWorkflowState = (sections = []) => {
 
   if (statuses.some((status) => status === "forwarded")) return "forwarded";
   if (statuses.some((status) => status === "returned")) return "returned";
+  if (statuses.some((status) => status === "approved")) return "approved";
   return "submitted";
 };
 
@@ -211,7 +213,9 @@ function FacultyStatusTable({
     return (
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-6 py-5">
-          <h3 className="text-xl font-bold text-[#003366]">Faculty For Review</h3>
+          <h3 className="text-xl font-bold text-[#003366]">
+            {viewMode === "approved" ? "Finalize Queue" : "Faculty For Review"}
+          </h3>
           
         </div>
 
@@ -296,6 +300,9 @@ function FacultyStatusTable({
                                 <div className="min-w-0 flex-1">
                                   <p className="text-sm font-semibold text-slate-800">
                                     {section.sectionName}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {section.subjectCode || 'Unknown subject'} / {section.schoolYear || 'Unknown year'} / {section.semester || 'Unknown semester'} / {String(section.term || 'midterm').toUpperCase()}
                                   </p>
                                   {section.needsPriorityReview ? (
                                     <p className="mt-1 text-xs font-medium text-red-700">

@@ -108,6 +108,8 @@ app.get('/api/all-grades', authenticate, async (req, res) => {
                 .filter(Boolean).some((value) => [actor.username.toLowerCase(), base].includes(String(value).toLowerCase())));
         } else if (role === 'faculty') {
             grades = grades.filter((grade) => String(grade.faculty_id || grade.facultyId || '').toLowerCase() === actor.username.toLowerCase());
+        } else if (role === 'registrar') {
+            grades = grades.filter((grade) => String(grade.status || '').trim().toLowerCase() === 'finalized');
         } else if (role === 'department_admin') {
             const allowed = [actor.scope?.department, actor.scope?.programCode, actor.scope?.programName]
                 .filter(Boolean).map((value) => String(value).toUpperCase());
@@ -222,6 +224,10 @@ app.get('/api/get-grade/:id', authenticate, async (req, res) => {
                 return res.status(403).json({ error: 'Students may retrieve only their own grade records.' });
             }
         }
+        if (normalizeAuthRole(actor.dbRole) === 'registrar' &&
+            String(record.status || '').trim().toLowerCase() !== 'finalized') {
+            return res.status(404).json({ error: 'The finalized grade record was not found.' });
+        }
         res.json(record);
     } catch (error) {
         if (!actor) sendActorFailure(res, error, 'ReadGrade', req.params.id);
@@ -248,7 +254,7 @@ function submitRoute(path, roles, transaction, message, status = 200, withBody =
 }
 
 submitRoute('/api/update-grade', ['faculty', 'department_admin', 'registrar'], 'UpdateGrade', 'Grade updated', 200, true);
-submitRoute('/api/approve-grade/:id', ['department_admin', 'registrar'], 'ApproveGrade', 'Grade approved');
+submitRoute('/api/approve-grade/:id', ['department_admin'], 'ApproveGrade', 'Grade approved');
 submitRoute('/api/finalize-grade/:id', ['department_admin'], 'FinalizeRecord', 'Record finalized');
 submitRoute('/api/return-grade/:id', ['department_admin', 'registrar'], 'ReturnGrade', 'Record returned for revision');
 

@@ -35,11 +35,11 @@ Check(finalsPayload.Contains("\"midterm\":\"85\"") && finalsPayload.Contains("\"
 Check(new[] { "final", "finals", "FINAL", "FINALS" }.All(term =>
         GradeEncodingPeriodService.ParseOpen($"{{\"semester\":\"FIRST\",\"startDate\":\"2026-09-01\",\"endDate\":\"2026-09-30\",\"term\":\"{term}\"}}", new DateOnly(2026, 9, 22)).Term == "finals"),
     "Authoritative Finals aliases did not normalize."); Pass(73, "authoritative Finals casing normalization");
-Check(new[] { "SubmittedToChairperson", "ChairpersonApproved", "DepartmentApproved", "Finalized" }
-        .All(RegistrarGradeLedgerMetadataService.IsBrowsableStatus) &&
-      !new[] { "Draft", "Returned" }.Any(RegistrarGradeLedgerMetadataService.IsBrowsableStatus),
-    "Registrar ledger browsing statuses included editable rows or omitted submitted history.");
-Pass(82, "Registrar ledger status scope is historical and read-only");
+Check(RegistrarGradeLedgerMetadataService.IsBrowsableStatus("Finalized") &&
+      !new[] { "Draft", "SubmittedToChairperson", "Returned", "ChairpersonApproved", "DepartmentApproved" }
+          .Any(RegistrarGradeLedgerMetadataService.IsBrowsableStatus),
+    "Registrar ledger browsing exposed a grade before authoritative finalization.");
+Pass(82, "Registrar ledger visibility is Finalized-only");
 var studentAttempt = new StudentSubjectAttempt(
     10, "student@plv.edu.ph", "26-0042", "IT 101", "2026-2027", "FIRST", "BSIT 1-1", "104");
 var finalizedStudentGrade = new AcademicRecord
@@ -52,7 +52,7 @@ var visibleResolution = StudentSubjectGradeResolver.Resolve(studentAttempt, new[
 Check(visibleResolution.IsFinalized && visibleResolution.FinalizedGrade == 92m,
     "A Chairperson-finalized grade was not immediately visible to its exact student and assignment cycle.");
 Pass(92, "Chairperson Finalized grade is immediately student-visible");
-var hiddenWorkflowGrades = new[] { "Draft", "SubmittedToChairperson", "Returned", "DepartmentApproved" }
+var hiddenWorkflowGrades = new[] { "Draft", "SubmittedToChairperson", "Returned", "ChairpersonApproved", "DepartmentApproved" }
     .Select(status => new AcademicRecord
     {
         Id = $"hidden-{status}", StudentHash = "student@plv.edu.ph", StudentNo = "26-0042",
@@ -349,13 +349,14 @@ await Exec(@"INSERT INTO pending_grade_records
     (id,assignment_cycle_id,student_no,status,grade,student_hash,student_name,section,course,subject_code,semester,school_year,faculty_id,date,ipfs_cid,term)
     VALUES
     ('old-approved','102','26-0901','DepartmentApproved','90','old@example.edu','Old Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-1','2026-09-01','','finals'),
+    ('current-chair-approved','104','26-0900','ChairpersonApproved','90','chair-approved@example.edu','Chair Approved Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-3','2026-09-21','','finals'),
     ('current-approved','104','26-0902','DepartmentApproved','91','current@example.edu','Current Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-3','2026-09-21','','finals'),
     ('current-finalized','104','26-0903','Finalized','92','final@example.edu','Final Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-3','2026-09-21','','finals');");
 await Exec("INSERT INTO grade_assignment_cycles(record_id,assignment_cycle_id) VALUES('old-approved','102'),('current-finalized','104')");
-var approvedHistoryCount=await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-approved','current-finalized')");
-var finalizationQueue=await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db);
-Check(finalizationQueue.Select(record=>record.Id).SequenceEqual(new[]{"current-approved"}),
-    "Registrar finalization queue included inactive, historical, or non-DepartmentApproved records."); Pass(66,"Registrar finalization queue is current-cycle DepartmentApproved only");
+var approvedHistoryCount=await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-chair-approved','current-approved','current-finalized')");
+var finalizationQueue=await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST");
+Check(finalizationQueue.Select(record=>record.Id).SequenceEqual(new[]{"current-chair-approved","current-approved"}),
+    "Chairperson finalization queue omitted an approved status or included inactive/historical records."); Pass(66,"Chairperson finalization queue is current-cycle and includes both approved statuses");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='current-finalized'")==1,
     "Finalized history was removed while selecting the active queue."); Pass(67,"finalized history remains stored outside active queue");
 await Exec(@"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term)
@@ -369,8 +370,8 @@ await Exec("UPDATE facultysections SET is_active=FALSE WHERE is_active=TRUE");
 currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
 currentFinalizedIds=await ChairpersonReviewScopeService.GetCurrentFinalizedRecordIdsAsync(db,"FIRST");
 Check(currentReviewIds.Count==0 && currentFinalizedIds.Count==0,"Reset left old submissions or finalized rows in current tracking."); Pass(55,"reset empties current For Review and Finalized tracking");
-Check((await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db)).Count==0 &&
-      await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-approved','current-finalized')")==approvedHistoryCount,
+Check((await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST")).Count==0 &&
+      await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-chair-approved','current-approved','current-finalized')")==approvedHistoryCount,
     "Reset left an actionable finalization row or deleted grade history."); Pass(68,"reset empties finalization queue and preserves history");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review','final')")==3,
     "Reset deleted historical or finalized grades."); Pass(56,"reset preserves submitted and finalized history");

@@ -505,6 +505,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     const [activeEncodingTerm, setActiveEncodingTerm] = useState("midterm");
     const lastSectionSnapshotRef = useRef([]);
     const lastNotifiedSectionChangeRef = useRef('');
+    const approveInFlightRef = useRef(false);
     const finalizeInFlightRef = useRef(false);
 
     useEffect(() => {
@@ -1212,7 +1213,9 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     };
 
     const handleBulkApprove = async () => {
-        if (!selectedReviewSection) return;
+        if (!selectedReviewSection) throw new Error('Select a submitted section before approving.');
+        if (approveInFlightRef.current) return;
+        approveInFlightRef.current = true;
         try {
             const recordsToApprove = grades.filter(g => {
                 const facId = g.facultyId || g.faculty_id || g.FacultyId || 'Unknown';
@@ -1243,12 +1246,26 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     (status.includes('issued') || status.includes('submitted') || status === '')
                 );
             });
-            
-            for (const g of recordsToApprove) await approveGrade(g.id, loggedInEmail);
-            addNotification("Section approved successfully!", "success");
+
+            if (recordsToApprove.length === 0) {
+                throw new Error('No submitted grade records remain to approve. Refresh and verify the section status.');
+            }
+            await approveGrade(recordsToApprove.map((grade) => grade.id), loggedInEmail);
             setSelectedReviewSection(null);
-            loadGrades();
-        } catch(e) { addNotification(`Error approving section: ${e.message}`, "error"); }
+            const refreshed = await loadGrades();
+            addNotification(
+                refreshed
+                    ? "Section approved and moved to the Finalize queue."
+                    : "Section approved, but the tracking list could not be refreshed.",
+                refreshed ? "success" : "warning"
+            );
+        } catch(e) {
+            await loadGrades();
+            addNotification(`Error approving section: ${e.message}`, "error");
+            throw e;
+        } finally {
+            approveInFlightRef.current = false;
+        }
     };
 
     const handleBulkFinalize = async () => {

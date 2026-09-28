@@ -2525,52 +2525,139 @@ namespace BlockGo.Controllers
             }
         }
 
+        public sealed class ApproveGradesRequest
+        {
+            public List<string> RecordIds { get; set; } = new();
+        }
+
+        [HttpPost("approve")]
+        [Authorize(Roles = "department_admin")]
+        public async Task<IActionResult> ApproveGrades([FromBody] ApproveGradesRequest request)
+        {
+            var invokerId = AuthenticatedEmail();
+            try
+            {
+                return await ApproveGradeRecordsAsync(request?.RecordIds ?? new List<string>(), invokerId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Chairperson section approval failed for {Chairperson}", invokerId);
+                return StatusCode(500, new { status = "Error", message = "The grades could not be approved. Refresh the review queue before retrying." });
+            }
+        }
+
+        // Retained for compatibility with older clients. New Chairperson UI uses the
+        // atomic section endpoint above so one confirmation produces one request.
         [HttpPost("approve/{recordId}")]
         [Authorize(Roles = "department_admin")]
         public async Task<IActionResult> ApproveGrade(string recordId, [FromQuery] string invokerId)
         {
             invokerId = AuthenticatedEmail();
-            
             try
             {
-                using var conn = new NpgsqlConnection(_connectionString);
-                await conn.OpenAsync();
-                if (!await CanAccessGradeRecordAsync(conn, recordId, invokerId, "department_admin"))
+                return await ApproveGradeRecordsAsync(new[] { recordId }, invokerId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Chairperson grade approval failed for {RecordId}", recordId);
+                return StatusCode(500, new { status = "Error", message = "The grade could not be approved. Refresh the review queue before retrying." });
+            }
+        }
+
+        private async Task<IActionResult> ApproveGradeRecordsAsync(
+            IEnumerable<string> requestedRecordIds, string invokerId)
+        {
+            var recordIds = requestedRecordIds
+                .Where(recordId => !string.IsNullOrWhiteSpace(recordId))
+                .Select(recordId => recordId.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (recordIds.Length == 0)
+                return BadRequest(new { status = "Error", message = "At least one submitted grade record is required." });
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(HttpContext.RequestAborted);
+            await EnsurePendingGradeSchemaAsync(connection);
+
+            foreach (var recordId in recordIds)
+                if (!await CanAccessGradeRecordAsync(connection, recordId, invokerId, "department_admin"))
                     return Forbid();
-                using var cmd = new NpgsqlCommand(@"
-                    UPDATE pending_grade_records
+
+            var activePeriod = await GradeEncodingPeriodService.GetConfiguredAsync(
+                connection, cancellationToken: HttpContext.RequestAborted);
+            await using var transaction = await connection.BeginTransactionAsync(HttpContext.RequestAborted);
+
+            var statuses = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            await using (var statusCommand = new NpgsqlCommand(@"
+                SELECT id, status
+                FROM pending_grade_records
+                WHERE id = ANY(@recordIds)
+                FOR UPDATE;", connection, transaction))
+            {
+                statusCommand.Parameters.AddWithValue("recordIds", recordIds);
+                await using var reader = await statusCommand.ExecuteReaderAsync(HttpContext.RequestAborted);
+                while (await reader.ReadAsync(HttpContext.RequestAborted))
+                    statuses[reader.GetString(0)] = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+            }
+
+            if (statuses.Count != recordIds.Length)
+            {
+                await transaction.RollbackAsync(HttpContext.RequestAborted);
+                return NotFound(new { status = "Error", message = "One or more submitted grade records no longer exist. Refresh the review queue." });
+            }
+
+            var invalidStatus = statuses.FirstOrDefault(entry =>
+                !string.Equals(entry.Value, "SubmittedToChairperson", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(entry.Value, "Submitted", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(entry.Value, "ChairpersonApproved", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(entry.Value, "DepartmentApproved", StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrEmpty(invalidStatus.Key))
+            {
+                await transaction.RollbackAsync(HttpContext.RequestAborted);
+                return Conflict(new { status = "Error", message = $"A grade in {invalidStatus.Value} status cannot be approved. It must first be submitted by Faculty." });
+            }
+
+            var submittedCount = statuses.Count(entry =>
+                string.Equals(entry.Value, "SubmittedToChairperson", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(entry.Value, "Submitted", StringComparison.OrdinalIgnoreCase));
+            var approvedCount = 0;
+            if (submittedCount > 0)
+            {
+                await using var approveCommand = new NpgsqlCommand(@"
+                    UPDATE pending_grade_records pgr
                     SET status = 'ChairpersonApproved', date = @date
-                    WHERE id = @id
-                      AND LOWER(status) IN ('submittedtochairperson', 'submitted')
-                    RETURNING id", conn);
-                cmd.Parameters.AddWithValue("id", recordId);
-                cmd.Parameters.AddWithValue("date", DateTime.UtcNow.ToString("o"));
-                var res = await cmd.ExecuteScalarAsync();
-                
-                if (res != null) 
-                {
-                    await NotifyAcademicDataChangedAsync("grade_approved", null, invokerId);
-                    return Ok(new { status = "Success", message = "Grade approved by the Chairperson and ready for finalization." });
-                }
-
-                using (var statusCommand = new NpgsqlCommand("SELECT status FROM pending_grade_records WHERE id = @id", conn))
-                {
-                    statusCommand.Parameters.AddWithValue("id", recordId);
-                    var currentStatus = (await statusCommand.ExecuteScalarAsync())?.ToString();
-                    if (string.Equals(currentStatus, "ChairpersonApproved", StringComparison.OrdinalIgnoreCase))
-                        return Ok(new { status = "Success", message = "Grade was already approved by the Chairperson.", idempotent = true });
-                    if (!string.IsNullOrWhiteSpace(currentStatus))
-                        return Conflict(new { status = "Error", message = $"A grade in {currentStatus} status cannot be approved. It must first be submitted by Faculty." });
-                }
-
-                await _blockchainService.ApproveGradeAsync(recordId, invokerId);
-                await NotifyAcademicDataChangedAsync("grade_approved", null, invokerId);
-                return Ok(new { status = "Success", message = "Grade approved by Department successfully (Ledger)." });
+                    FROM facultysections fs
+                    WHERE pgr.id = ANY(@recordIds)
+                      AND LOWER(pgr.status) IN ('submittedtochairperson', 'submitted')
+                      AND fs.id::text = pgr.assignment_cycle_id
+                      AND fs.is_active = TRUE
+                      AND LOWER(TRIM(fs.school_year)) = LOWER(TRIM(pgr.school_year))
+                      AND LOWER(TRIM(fs.semester)) = LOWER(TRIM(pgr.semester))
+                      AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(pgr.subject_code))
+                      AND LOWER(TRIM(pgr.semester)) = LOWER(TRIM(@semester))
+                      AND LOWER(TRIM(pgr.term)) = LOWER(TRIM(@term));", connection, transaction);
+                approveCommand.Parameters.AddWithValue("recordIds", recordIds);
+                approveCommand.Parameters.AddWithValue("date", DateTime.UtcNow.ToString("o"));
+                approveCommand.Parameters.AddWithValue("semester", activePeriod.Semester);
+                approveCommand.Parameters.AddWithValue("term", activePeriod.Term);
+                approvedCount = await approveCommand.ExecuteNonQueryAsync(HttpContext.RequestAborted);
             }
-            catch (Exception ex) 
-            { 
-                return StatusCode(500, new { status = "Error", message = ex.Message }); 
+
+            if (approvedCount != submittedCount)
+            {
+                await transaction.RollbackAsync(HttpContext.RequestAborted);
+                return Conflict(new { status = "Error", message = "The section is no longer in the current review queue. No grades were approved; refresh and try again." });
             }
+
+            await transaction.CommitAsync(HttpContext.RequestAborted);
+            await NotifyAcademicDataChangedAsync("grade_approved", null, invokerId);
+            return Ok(new
+            {
+                status = "Success",
+                message = "Grades approved by the Chairperson and ready for finalization.",
+                approvedCount,
+                idempotent = submittedCount == 0
+            });
         }
 
         [HttpPost("finalize/{recordId}")]
@@ -2748,14 +2835,20 @@ namespace BlockGo.Controllers
                 await using var connection = new NpgsqlConnection(_connectionString);
                 await connection.OpenAsync(HttpContext.RequestAborted);
                 await EnsurePendingGradeSchemaAsync(connection);
+                var activePeriod = await GradeEncodingPeriodService.GetConfiguredAsync(
+                    connection, cancellationToken: HttpContext.RequestAborted);
                 var records = await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(
-                    connection, HttpContext.RequestAborted);
-                return Ok(new { status = "Success", data = records });
+                    connection, activePeriod.Term, activePeriod.Semester, HttpContext.RequestAborted);
+                var authorizedRecords = new List<AcademicRecord>();
+                foreach (var record in records)
+                    if (await CanAccessGradeRecordAsync(connection, record.Id, AuthenticatedEmail(), "department_admin"))
+                        authorizedRecords.Add(record);
+                return Ok(new { status = "Success", data = authorizedRecords });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to load the current Chairperson finalization queue");
-                return StatusCode(500, new { status = "Error", message = ex.Message });
+                return StatusCode(500, new { status = "Error", message = "The Finalize queue is temporarily unavailable." });
             }
         }
 

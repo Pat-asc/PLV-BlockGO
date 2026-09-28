@@ -42,6 +42,16 @@ test('shows finalized tracking metadata and opens the selected record', () => {
   expect(onSelectSection).toHaveBeenCalledWith(finalized);
 });
 
+test('labels approved sections as the Finalize Queue instead of finalized', () => {
+  const approved = section({ reviewStatus: 'approved' });
+  render(<FacultyStatusTable rows={[approved]} allRows={[approved]} viewMode="approved" />);
+  expect(screen.getByText('Finalize Queue')).toBeInTheDocument();
+  expect(screen.getByText('Ready to Finalize')).toBeInTheDocument();
+  expect(screen.queryByText('Finalized Grades')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Review Encoded' }));
+  expect(screen.getByText('IT 101 / 2026-2027 / FIRST / FINALS')).toBeInTheDocument();
+});
+
 test('shows an empty current-season finalized state after reset filtering', () => {
   render(<FacultyStatusTable rows={[]} allRows={[]} viewMode="forwarded" />);
   expect(screen.getByText(/No finalized submissions exist in the current encoding season/i)).toBeInTheDocument();
