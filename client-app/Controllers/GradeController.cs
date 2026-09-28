@@ -2739,7 +2739,7 @@ namespace BlockGo.Controllers
                     
                     AcademicRecord? stagedLedgerRecord = null;
                     try {
-                        var existing = await _blockchainService.GetGradeAsync(recordId, facId);
+                        var existing = await _blockchainService.GetGradeAsync(recordId, invokerId);
                         stagedLedgerRecord = JsonSerializer.Deserialize<AcademicRecord>(existing, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                     } catch (LedgerGradeNotFoundException) {
                         _logger.LogInformation("Grade {RecordId} has not yet been issued to Fabric; issuing from approved staging", recordId);
@@ -2766,7 +2766,7 @@ namespace BlockGo.Controllers
                         {
                             _logger.LogWarning("Grade {RecordId} was issued concurrently; reading its committed ledger state before continuing", recordId);
                         }
-                        var issuedJson = await _blockchainService.GetGradeAsync(recordId, facId);
+                        var issuedJson = await _blockchainService.GetGradeAsync(recordId, invokerId);
                         stagedLedgerRecord = JsonSerializer.Deserialize<AcademicRecord>(issuedJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                         if (stagedLedgerRecord == null || !GradeLedgerMatch.IsSameGrade(pendingRecord, stagedLedgerRecord))
                             return Conflict(new { status = "Error", message = "The issued Fabric record could not be verified against the approved staged grade." });
