@@ -62,7 +62,24 @@ async function ensureIdentity(username, password, role) {
     const academicScope = await authoritativeAcademicScope(username, normalized);
     const wallet = await getWallet(normalized);
     const existing = await wallet.get(username);
-    if (existing) return { created: false, mspId: existing.mspId };
+    if (existing) {
+        if (normalized === 'faculty' || normalized === 'department_admin') {
+            const refreshed = await forceUpdateAndEnroll(
+                username,
+                password,
+                normalized,
+                academicScope
+            );
+            await invalidateLedgerIdentity(username);
+            return {
+                created: false,
+                refreshed: true,
+                mspId: refreshed.identity.mspId
+            };
+        }
+
+        return { created: false, mspId: existing.mspId };
+    }
     try {
         const enrolled = await enrollIdentity(username, password, normalized);
         return { created: true, mspId: enrolled.identity.mspId };
