@@ -17,7 +17,7 @@ import { downloadTemplateButtonClass } from "../shared/downloadButtonStyles";
 import { pushAssignmentsSharedState } from "../../utils/sharedClientState";
 
 const SEMESTER_OPTIONS = ["1st Semester", "2nd Semester", "Summer"];
-const DAY_OPTIONS = [
+export const DAY_OPTIONS = [
   "Monday",
   "Tuesday",
   "Wednesday",

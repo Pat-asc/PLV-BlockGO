@@ -19,6 +19,7 @@ public static class FacultyBulkAssignmentService
         int AcademicSectionId,
         string SchoolYear,
         string Semester,
+        string Schedule,
         bool AlreadyAssigned)
     {
         public string AssignmentCycleId => Id.ToString();
@@ -35,6 +36,7 @@ public static class FacultyBulkAssignmentService
         if (string.IsNullOrWhiteSpace(request.SubjectCode)) throw new ArgumentException("Subject not found: subjectCode is required.");
         var schoolYear = NormalizeSchoolYear(request.SchoolYear);
         var semester = NormalizeSemester(request.Semester);
+        var schedule = NormalizeSchedule(request.Schedule);
 
         string programCode;
         await using (var scope = new NpgsqlCommand(@"
@@ -123,9 +125,9 @@ public static class FacultyBulkAssignmentService
             await using (var insert = new NpgsqlCommand(@"
                 INSERT INTO facultysections
                     (user_id, department, section, year_level, subject,
-                     academic_section_id, school_year, semester, is_active)
+                     academic_section_id, school_year, semester, schedule, is_active)
                 VALUES (@facultyUserId, @programName, @section, @yearLevel, @subjectCode,
-                        @academicSectionId, @schoolYear, @semester, TRUE)
+                        @academicSectionId, @schoolYear, @semester, @schedule, TRUE)
                 ON CONFLICT DO NOTHING
                 RETURNING id;", connection, transaction))
             {
@@ -137,6 +139,7 @@ public static class FacultyBulkAssignmentService
                 insert.Parameters.AddWithValue("academicSectionId", request.AcademicSectionId);
                 insert.Parameters.AddWithValue("schoolYear", schoolYear);
                 insert.Parameters.AddWithValue("semester", semester);
+                insert.Parameters.AddWithValue("schedule", schedule);
                 insertedId = await insert.ExecuteScalarAsync(cancellationToken);
             }
 
@@ -161,13 +164,22 @@ public static class FacultyBulkAssignmentService
                 insertedId = await existing.ExecuteScalarAsync(cancellationToken);
                 if (insertedId is null)
                     throw new InvalidOperationException("Assignment conflicts with an existing faculty load.");
+
+                if (!string.IsNullOrWhiteSpace(schedule))
+                {
+                    await using var updateSchedule = new NpgsqlCommand(@"
+                        UPDATE facultysections SET schedule = @schedule WHERE id = @id;", connection, transaction);
+                    updateSchedule.Parameters.AddWithValue("schedule", schedule);
+                    updateSchedule.Parameters.AddWithValue("id", Convert.ToInt32(insertedId));
+                    await updateSchedule.ExecuteNonQueryAsync(cancellationToken);
+                }
             }
 
             await transaction.CommitAsync(cancellationToken);
             return new SavedAssignment(
                 Convert.ToInt32(insertedId), request.FacultyUserId, facultyEmail, facultyName,
                 programName, programCode, sectionLabel, yearLevel, subjectCode,
-                request.AcademicSectionId, schoolYear, semester, alreadyAssigned);
+                request.AcademicSectionId, schoolYear, semester, schedule, alreadyAssigned);
         }
         catch
         {
@@ -196,5 +208,13 @@ public static class FacultyBulkAssignmentService
             "" => throw new ArgumentException("Missing semester."),
             _ => throw new ArgumentException("Semester must be First, Second, or Midyear.")
         };
+    }
+
+    private static string NormalizeSchedule(string? value)
+    {
+        var normalized = Regex.Replace((value ?? string.Empty).Trim(), @"\s+", " ");
+        if (normalized.Length > 160)
+            throw new ArgumentException("Schedule must not exceed 160 characters.");
+        return normalized;
     }
 }

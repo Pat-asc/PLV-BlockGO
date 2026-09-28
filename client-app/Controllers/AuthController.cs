@@ -111,6 +111,9 @@ namespace Client_app.Controllers
                         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='facultysections' AND column_name='semester') THEN
                             ALTER TABLE facultysections ADD COLUMN semester VARCHAR(20);
                         END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='facultysections' AND column_name='schedule') THEN
+                            ALTER TABLE facultysections ADD COLUMN schedule VARCHAR(160);
+                        END IF;
                         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='facultysections' AND column_name='is_active') THEN
                             ALTER TABLE facultysections ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE;
                         END IF;
@@ -1779,7 +1782,7 @@ namespace Client_app.Controllers
                 using (var cmd = new NpgsqlCommand(@"
                     SELECT u.id, fp.full_name, u.email, fp.department, fp.section, fp.year_level 
                     FROM Users u JOIN FacultyProfiles fp ON u.id = fp.user_id 
-                    WHERE u.role = 'faculty' AND u.status = 'APPROVED' AND u.is_active = TRUE
+                    WHERE LOWER(TRIM(u.role)) = 'faculty' AND LOWER(TRIM(u.status)) = 'approved' AND u.is_active = TRUE
                       AND (
                         @isRegistrar = TRUE OR EXISTS (
                           SELECT 1
@@ -1792,12 +1795,7 @@ namespace Client_app.Controllers
                             AND p.is_active = TRUE
                         )
                       )
-                    UNION
-                    SELECT u.id, ap.full_name, u.email, ap.department, 'Unassigned' as section, 'Unassigned' as year_level 
-                    FROM Users u JOIN AdminProfiles ap ON u.id = ap.user_id 
-                    WHERE LOWER(REPLACE(REPLACE(u.role, ' ', '_'), '-', '_')) IN ('department_admin', 'dept_admin', 'deptadmin', 'department', 'admin', 'chairperson') 
-                      AND u.status = 'APPROVED' AND u.is_active = TRUE
-                      AND @isRegistrar = TRUE", conn))
+                    ", conn))
                 {
                     cmd.Parameters.AddWithValue("isRegistrar", User.IsInRole("registrar"));
                     cmd.Parameters.AddWithValue("actorEmail", actorEmail);
@@ -1833,6 +1831,22 @@ namespace Client_app.Controllers
             await connection.OpenAsync();
             if (!await CanManageAcademicProgramAsync(connection, department, HttpContext.RequestAborted))
                 return Forbid();
+            string programCode;
+            string programName;
+            await using (var programCommand = new NpgsqlCommand(@"
+                SELECT program_code, program_name
+                FROM academic_programs
+                WHERE is_active = TRUE
+                  AND LOWER(@department) IN (LOWER(program_code), LOWER(program_name))
+                LIMIT 1;", connection))
+            {
+                programCommand.Parameters.AddWithValue("department", department.Trim());
+                await using var programReader = await programCommand.ExecuteReaderAsync();
+                if (!await programReader.ReadAsync())
+                    return NotFound(new { status = "Error", message = "Active academic program was not found." });
+                programCode = programReader.GetString(0);
+                programName = programReader.GetString(1);
+            }
             var sections = new List<object>();
             await using (var command = new NpgsqlCommand(@"
                 SELECT s.id, p.program_code, p.program_name, s.year_level, s.section_num
@@ -1900,9 +1914,41 @@ namespace Client_app.Controllers
                     });
                 }
             }
+            var assignments = new List<object>();
+            await using (var command = new NpgsqlCommand(@"
+                SELECT fs.id, fs.user_id, u.email, fp.full_name, fs.department, fs.section,
+                       fs.year_level, fs.subject, fs.academic_section_id, fs.school_year,
+                       fs.semester, COALESCE(fs.schedule, '')
+                FROM facultysections fs
+                JOIN users u ON u.id = fs.user_id
+                JOIN facultyprofiles fp ON fp.user_id = u.id
+                WHERE fs.is_active = TRUE
+                  AND LOWER(u.role) = 'faculty'
+                  AND LOWER(u.status) = 'approved'
+                  AND u.is_active = TRUE
+                  AND LOWER(fs.department) IN (LOWER(@programCode), LOWER(@programName))
+                ORDER BY fp.full_name, fs.section, fs.subject;", connection))
+            {
+                command.Parameters.AddWithValue("programCode", programCode);
+                command.Parameters.AddWithValue("programName", programName);
+                await using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                    assignments.Add(new
+                    {
+                        id = reader.GetInt32(0), assignmentCycleId = reader.GetInt32(0).ToString(),
+                        facultyUserId = reader.GetInt32(1), facultyEmail = reader.GetString(2), facultyName = reader.GetString(3),
+                        program = reader.GetString(4), sectionName = reader.GetString(5), yearLevel = reader.GetString(6),
+                        subjectCode = reader.IsDBNull(7) ? "" : reader.GetString(7),
+                        academicSectionId = reader.IsDBNull(8) ? (int?)null : reader.GetInt32(8),
+                        schoolYear = reader.IsDBNull(9) ? "" : reader.GetString(9),
+                        semester = reader.IsDBNull(10) ? "" : reader.GetString(10),
+                        schedule = reader.GetString(11)
+                    });
+            }
             return Ok(new
             {
-                status = "Success", sections, subjects, enrollmentPeriods,
+                status = "Success", program = new { code = programCode, name = programName },
+                sections, subjects, enrollmentPeriods, assignments,
                 schoolYears = schoolYears.OrderByDescending(value => value),
                 semesterAliases = new Dictionary<string, string[]>
                 {
@@ -1929,7 +1975,8 @@ namespace Client_app.Controllers
                         SubjectCode = request.Subject ?? string.Empty,
                         AcademicSectionId = request.AcademicSectionId,
                         SchoolYear = request.SchoolYear,
-                        Semester = request.Semester
+                        Semester = request.Semester,
+                        Schedule = request.Schedule
                     },
                     (program, token) => CanManageAcademicProgramAsync(conn, program, token),
                     HttpContext.RequestAborted);
@@ -1958,7 +2005,8 @@ namespace Client_app.Controllers
                         subject = saved.SubjectCode,
                         academicSectionId = saved.AcademicSectionId,
                         schoolYear = saved.SchoolYear,
-                        semester = saved.Semester
+                        semester = saved.Semester,
+                        schedule = saved.Schedule
                     }
                 });
             }
@@ -2072,7 +2120,8 @@ namespace Client_app.Controllers
                             subjectCode = saved.SubjectCode,
                             academicSectionId = saved.AcademicSectionId,
                             schoolYear = saved.SchoolYear,
-                            semester = saved.Semester
+                            semester = saved.Semester,
+                            schedule = saved.Schedule
                         }
                     });
                 }
@@ -2164,6 +2213,8 @@ namespace Client_app.Controllers
                     var academicSectionIdInput = Value("academic_section_id", "academic section id", "section_id");
                     var schoolYearInput = Value("school_year");
                     var semesterInput = Value("semester");
+                    var schedule = string.Join(" | ", new[] { Value("day", "days"), Value("time", "schedule", "sched") }
+                        .Where(value => !string.IsNullOrWhiteSpace(value)));
 
                     try
                     {
@@ -2258,9 +2309,9 @@ namespace Client_app.Controllers
                         await using (var insert = new NpgsqlCommand(@"
                             INSERT INTO facultysections
                                 (user_id, department, section, year_level, subject,
-                                 academic_section_id, school_year, semester, is_active)
+                                 academic_section_id, school_year, semester, schedule, is_active)
                             VALUES (@facultyId, @program, @section, @yearLevel, @subject,
-                                    @academicSectionId, @schoolYear, @semester, TRUE)
+                                    @academicSectionId, @schoolYear, @semester, @schedule, TRUE)
                             ON CONFLICT DO NOTHING;", connection, transaction))
                         {
                             insert.Parameters.AddWithValue("facultyId", facultyUserId);
@@ -2271,6 +2322,7 @@ namespace Client_app.Controllers
                             insert.Parameters.AddWithValue("academicSectionId", academicSectionId);
                             insert.Parameters.AddWithValue("schoolYear", schoolYear);
                             insert.Parameters.AddWithValue("semester", semester);
+                            insert.Parameters.AddWithValue("schedule", schedule);
                             inserted = await insert.ExecuteNonQueryAsync(cancellationToken);
                         }
 
@@ -2523,7 +2575,8 @@ namespace Client_app.Controllers
                                 ELSE CONCAT(p.program_code, ' ', s.year_level, '-', s.section_num) END,
                            fs.id, fs.assigned_at,
                            CASE WHEN fs.academic_section_id IS NOT NULL AND fs.school_year IS NOT NULL AND fs.semester IS NOT NULL
-                                THEN 'EXACT' ELSE 'UNRESOLVED_LEGACY' END
+                                THEN 'EXACT' ELSE 'UNRESOLVED_LEGACY' END,
+                           COALESCE(fs.schedule, '')
                     FROM FacultySections fs 
                     JOIN Users u ON fs.user_id = u.id 
                     LEFT JOIN academicsections s ON s.id = fs.academic_section_id
@@ -2552,7 +2605,8 @@ namespace Client_app.Controllers
                         canonicalSection = reader.IsDBNull(7) ? null : reader.GetString(7),
                         assignmentCycleId = reader.GetInt32(8).ToString(),
                         assignedAt = reader.IsDBNull(9) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(9),
-                        periodResolution = reader.GetString(10)
+                        periodResolution = reader.GetString(10),
+                        schedule = reader.GetString(11)
                     });
                 }
 

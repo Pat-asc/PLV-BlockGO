@@ -2868,7 +2868,7 @@ function RegistrarStudentSectioning({
                 <button type="button" onClick={handleFinalizeEnrollment}
                   disabled={!selectedBatch || !sectionPlans.length || savingSections}
                   className="h-8 whitespace-nowrap rounded-md bg-emerald-700 px-3 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
-                  Review
+                  Finalize
                 </button>
               </div>
 

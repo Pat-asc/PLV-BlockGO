@@ -13,5 +13,6 @@ namespace Client_app.Models
         public int AcademicSectionId { get; set; }
         public string SchoolYear { get; set; } = string.Empty;
         public string Semester { get; set; } = string.Empty;
+        public string Schedule { get; set; } = string.Empty;
     }
 }

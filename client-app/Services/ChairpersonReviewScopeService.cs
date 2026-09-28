@@ -23,6 +23,23 @@ public static class ChairpersonReviewScopeService
             new[] { "submittedtochairperson", "chairpersonapproved", "departmentapproved" }, cancellationToken);
     }
 
+    public static async Task<HashSet<string>> GetCurrentFinalizedRecordIdsAsync(
+        NpgsqlConnection connection, string activeSemester,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(@"
+            SELECT mapping.record_id
+            FROM grade_assignment_cycles mapping
+            JOIN facultysections fs ON fs.id::text = mapping.assignment_cycle_id
+            WHERE fs.is_active = TRUE
+              AND LOWER(TRIM(fs.semester)) = LOWER(TRIM(@semester));", connection);
+        command.Parameters.AddWithValue("semester", activeSemester);
+        var recordIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) recordIds.Add(reader.GetString(0));
+        return recordIds;
+    }
+
     private static async Task<HashSet<string>> GetCurrentRecordIdsAsync(
         NpgsqlConnection connection, string activeTerm, string activeSemester, string[] statuses,
         CancellationToken cancellationToken)

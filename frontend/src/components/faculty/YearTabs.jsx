@@ -29,15 +29,17 @@ const YearTabs = ({ activeTab, setActiveTab, sections, className = "" }) => {
   }, [activeTab, setActiveTab, tabData]);
 
   return (
-    <div className={`flex min-w-0 gap-4 overflow-x-auto py-2 ${className}`}>
+    <div role="tablist" aria-label="Academic year filters" className={`grid w-full min-w-0 grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-3 py-2 ${className}`}>
       {tabData.map((tab) => (
         <div
+          role="tab"
+          aria-selected={activeTab === tab.label}
           key={tab.label}
           onClick={() => setActiveTab(tab.label)}
-         className={`min-w-[150px] p-4 rounded-2xl cursor-pointer shadow-md transition-all duration-300 transform ${
+         className={`min-w-0 p-4 rounded-2xl cursor-pointer shadow-md transition-all duration-300 ${
   activeTab === tab.label
-    ? "bg-[#003366] text-white scale-105"
-    : "bg-white hover:scale-105 hover:-translate-y-1 hover:shadow-xl"
+    ? "bg-[#003366] text-white"
+    : "bg-white hover:-translate-y-1 hover:shadow-xl"
 }`}
         >
           <div className="flex justify-between items-center mb-2">

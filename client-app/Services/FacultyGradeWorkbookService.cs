@@ -35,9 +35,9 @@ public static class FacultyGradeWorkbookService
             var row = index + 2;
             ws.Cell(row, 1).Value = students[index].StudentNo;
             ws.Cell(row, 2).Value = students[index].FullName;
-            ws.Cell(row, 7).FormulaA1 = $"ROUND((C{row}*20%)+(D{row}*10%)+(E{row}*10%)+(F{row}*60%),2)";
-            ws.Cell(row, 12).FormulaA1 = $"ROUND((H{row}*20%)+(I{row}*10%)+(J{row}*10%)+(K{row}*60%),2)";
-            ws.Cell(row, 13).FormulaA1 = $"ROUND(AVERAGE(G{row},L{row}),2)";
+            ws.Cell(row, 7).FormulaA1 = $"IF(COUNT(C{row}:F{row})<4,\"\",ROUND((C{row}*20%)+(D{row}*10%)+(E{row}*10%)+(F{row}*60%),2))";
+            ws.Cell(row, 12).FormulaA1 = $"IF(COUNT(H{row}:K{row})<4,\"\",ROUND((H{row}*20%)+(I{row}*10%)+(J{row}*10%)+(K{row}*60%),2))";
+            ws.Cell(row, 13).FormulaA1 = $"IF(OR(G{row}=\"\",L{row}=\"\"),\"\",ROUND(AVERAGE(G{row},L{row}),2))";
             ws.Cell(row, 14).Value = assignment.Subject;
             ws.Cell(row, 15).Value = assignment.CanonicalSection;
             ws.Cell(row, 16).Value = assignment.SchoolYear;

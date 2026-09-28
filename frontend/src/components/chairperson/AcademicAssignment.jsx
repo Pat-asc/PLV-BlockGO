@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from "react";
-import FacultyLoading from "./FacultyLoading";
-import { programOptions } from "../../data/registrarData";
+import React, { useEffect, useMemo, useState } from "react";
+import FacultyLoading, { DAY_OPTIONS } from "./FacultyLoading";
 import { fetchApprovedFaculties, fetchCurriculums, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend } from "../../services/api";
 import { pushAssignmentsSharedState } from "../../utils/sharedClientState";
 import "./SubjectAssignment.css";
@@ -19,13 +18,12 @@ function Heading({ icon, title }) { return <div className="sa-heading"><span cla
 export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   const [faculty, setFaculty] = useState([]);
   const [curricula, setCurricula] = useState([]);
-  const [assignmentOptions, setAssignmentOptions] = useState({ sections: [], subjects: [], enrollmentPeriods: [], schoolYears: [] });
+  const [assignmentOptions, setAssignmentOptions] = useState({ sections: [], subjects: [], enrollmentPeriods: [], schoolYears: [], assignments: [] });
   const [loading, setLoading] = useState(true);
   const [professor, setProfessor] = useState("");
   const [lookup, setLookup] = useState("");
   const [professorListOpen, setProfessorListOpen] = useState(false);
-  const availablePrograms = programOptions.filter((item) => item.name === chairpersonDepartment || item.code === chairpersonDepartment);
-  const [program, setProgram] = useState(availablePrograms[0]?.code || "");
+  const [program, setProgram] = useState("");
   const [year, setYear] = useState("3rd Year");
   const [term, setTerm] = useState("SECOND");
   const [academicSectionFilter, setAcademicSectionFilter] = useState("all");
@@ -44,15 +42,56 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
       if (!active) return;
       if (people.status === "fulfilled") setFaculty(people.value.faculties || []);
       if (courses.status === "fulfilled") setCurricula(courses.value.data || []);
-      if (options.status === "fulfilled") setAssignmentOptions(options.value || { sections: [], subjects: [], enrollmentPeriods: [], schoolYears: [] });
+      if (options.status === "fulfilled") {
+        const nextOptions = options.value || { sections: [], subjects: [], enrollmentPeriods: [], schoolYears: [], assignments: [] };
+        setAssignmentOptions(nextOptions);
+        const serverAssignments = (nextOptions.assignments || []).map((item) => ({
+          ...item,
+          facultyId: String(item.facultyUserId || item.facultyId || ""),
+          facultyName: item.facultyName || item.facultyEmail || "",
+          semesterCode: item.semester,
+          semester: terms[item.semester] || item.semester,
+          sectionName: item.sectionName || item.section,
+          units: String(item.units || 0),
+        }));
+        if (serverAssignments.length) {
+          const serverIds = new Set(serverAssignments.map((item) => String(item.id)));
+          const nextSaved = [...read("registrarAssignments").filter((item) => !serverIds.has(String(item.id))), ...serverAssignments];
+          localStorage.setItem("registrarAssignments", JSON.stringify(nextSaved));
+          setSaved(nextSaved);
+        }
+      }
       if (people.status === "rejected" || courses.status === "rejected" || options.status === "rejected") setNotice("Some data could not be loaded. Refresh the page to retry.");
       setLoading(false);
     });
     return () => { active = false; };
   }, [chairpersonDepartment]);
+  const availablePrograms = useMemo(() => {
+    const candidates = [
+      assignmentOptions.program,
+      ...(assignmentOptions.sections || []).map((item) => ({ code: item.programCode, name: item.department })),
+    ].filter((item) => item?.code && item?.name);
+    return candidates.filter((item, index, items) =>
+      items.findIndex((candidate) => candidate.code === item.code) === index
+    );
+  }, [assignmentOptions]);
+  useEffect(() => {
+    if (availablePrograms.length && !availablePrograms.some((item) => item.code === program)) {
+      setProgram(availablePrograms[0].code);
+    }
+  }, [availablePrograms, program]);
+  useEffect(() => {
+    const persistedSchedules = {};
+    (assignmentOptions.assignments || []).forEach((item) => {
+      const day = String(item.schedule || "").split("|")[0].trim();
+      if (!DAY_OPTIONS.includes(day)) return;
+      persistedSchedules[`${item.facultyUserId || item.facultyId}|${item.academicSectionId}|${item.schoolYear}`] = day;
+    });
+    setSchedules((current) => ({ ...persistedSchedules, ...current }));
+  }, [assignmentOptions.assignments]);
   const departmentFaculty = faculty.filter((person) => (person.department || person.program) === chairpersonDepartment || (person.department || person.program) === program);
   const selectedProfessor = departmentFaculty.find((person) => idOf(person) === professor);
-  const programName = programOptions.find((item) => item.code === program)?.name || program;
+  const programName = availablePrograms.find((item) => item.code === program)?.name || chairpersonDepartment || program;
   const curriculum = curricula.find((item) => item.programCode === program && item.status === "PUBLISHED");
   const canonicalSubjects = assignmentOptions.subjects?.length ? assignmentOptions.subjects : (curriculum?.subjects || []);
   const subjects = canonicalSubjects.filter((item) => Number(item.yearLevel) === years.indexOf(year) + 1 && item.semester === term);
@@ -153,7 +192,7 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     {mode === "bulk" ? <><label className="sa-program">Academic Program<select value={program} onChange={(event) => setProgram(event.target.value)}>{availablePrograms.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label><FacultyLoading key={program} chairpersonDepartment={programName} assignmentMode="bulk"/></> : <>
     {selectedProfessor && (<section className="sa-card sa-assigned"><div className="sa-assigned-header"><Heading icon="cap" title={`Assigned to ${nameOf(selectedProfessor) || "Selected Professor"}`} /><div className="sa-totals"><div><Icon type="book"/><span>Total Assignments<strong>{professorDraft.length}</strong></span></div><div><Icon type="cap"/><span>Total Units<strong>{pendingUnits}</strong></span></div></div></div><div className="sa-table-scroll"><table><thead><tr><th>Subject Code</th><th>Subject Title</th><th>Section</th><th>Units</th><th>Schedule</th><th>Action</th></tr></thead><tbody>{rows.map((item) => <tr key={`${item.assignmentState}-${item.id || identity(item)}`}><td>{item.subjectCode}</td><td>{item.subjectTitle}</td><td>{item.sectionName}</td><td>{item.units}</td><td>{[item.day, item.schedule].filter(Boolean).join(" ") || "Not set"}</td><td>{item.assignmentState === "pending" ? <button type="button" className="sa-remove" aria-label={`Remove ${item.subjectCode} ${item.sectionName}`} onClick={() => setDraft((current) => current.filter((row) => row.id !== item.id))}><Icon type="trash"/></button> : <span className="sa-saved">Saved</span>}</td></tr>)}{!rows.length && <tr><td colSpan="6" className="sa-empty">{selectedProfessor ? "No assignments yet." : "Choose a professor to see their assignments."}</td></tr>}</tbody></table></div><footer><button type="button" className="sa-clear" disabled={saving || !professorDraft.length} onClick={clearProfessorSelection}>♧ &nbsp; Clear Selection</button><span>{professorDraft.length > 0 ? `${professorDraft.length} pending assignment${professorDraft.length > 1 ? "s" : ""}` : savedRows.length > 0 ? `${savedRows.length} saved assignment${savedRows.length > 1 ? "s" : ""}` : ""}</span><button type="button" className="sa-save" disabled={!professorDraft.length || saving} onClick={save}><Icon type="save"/>{saving ? "Saving…" : "Save Assignments"}</button></footer></section>)}
     <div className="sa-columns"><section className="sa-card"><Heading icon="book" title="Available Subjects" /><div className="sa-filters"><label>Academic Program<select value={program} onChange={(event) => { setProgram(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{availablePrograms.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label><label>Year Level<select value={year} onChange={(event) => { setYear(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{years.map((item) => <option key={item}>{item}</option>)}</select></label><label>Semester<select value={term} onChange={(event) => { setTerm(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{Object.entries(terms).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label>Section Filter<select aria-label="Section Filter" value={academicSectionFilter} onChange={(event) => setAcademicSectionFilter(event.target.value)}><option value="all">All Sections</option>{sectionFilterOptions.map((item) => <option key={item.academicSectionId} value={String(item.academicSectionId)}>{item.section}</option>)}</select></label></div><div className="sa-search"><Icon type="search"/><input aria-label="Search subjects" placeholder="Search subjects by code or title..." value={query} onChange={(event) => setQuery(event.target.value)}/></div><div className="sa-table-scroll"><table><thead><tr><th></th><th>Subject Code</th><th>Subject Title</th><th>Units</th></tr></thead><tbody>{visibleSubjects.map((item) => <tr key={item.subjectCode} className={subjectCode === item.subjectCode ? "selected" : ""}><td><input type="radio" name="subject" aria-label={`Select ${item.subjectCode}`} checked={subjectCode === item.subjectCode} onChange={() => setSubjectCode(item.subjectCode)}/></td><td><button className="sa-text-button" onClick={() => setSubjectCode(item.subjectCode)}>{item.subjectCode}</button></td><td>{item.subjectTitle}</td><td>{item.units}</td></tr>)}{!visibleSubjects.length && <tr><td colSpan="4" className="sa-empty">{loading ? "Loading subjects…" : !curriculum ? "No published curriculum for this program." : "No subjects match these filters."}</td></tr>}</tbody></table></div><p className="sa-footnote">Showing {visibleSubjects.length} of {subjects.length} subjects</p></section>
-    <section className="sa-card"><Heading title={`Available Sections${subject ? ` for ${subject.subjectCode}` : ""}`} /><div className="sa-table-scroll"><table><thead><tr><th>Section</th><th>Year Level</th><th>Schedule</th><th>Action</th></tr></thead><tbody>{subject && sections.map((section, index) => { const scheduleKey = scheduleKeyFor(section); return <tr key={`${section.academicSectionId}-${section.schoolYear}`}><td className="sa-section-name">{section.section}<small>{section.schoolYear}</small></td><td>{section.yearLevel}</td><td><input className="sa-schedule" aria-label={`Schedule for ${section.section}`} placeholder="Set schedule" value={schedules[scheduleKey] || ""} onChange={(event) => setSchedules({ ...schedules, [scheduleKey]: event.target.value })}/></td><td><button type="button" className="sa-assign" disabled={!selectedProfessor || saving} onClick={() => add(section, index)}>＋ Assign</button></td></tr>; })}{(!subject || !sections.length) && <tr><td colSpan="4" className="sa-empty">{!subject ? "No subject selected." : "No sections created for this program and year level."}</td></tr>}</tbody></table></div><div className="sa-info sa-selected"><span>ⓘ</span><div><strong>Selected Subject: {subject ? `${subject.subjectCode} – ${subject.subjectTitle}` : "None"}</strong></div></div></section></div>
+    <section className="sa-card"><Heading title={`Available Sections${subject ? ` for ${subject.subjectCode}` : ""}`} /><div className="sa-table-scroll"><table><thead><tr><th>Section</th><th>Year Level</th><th>Schedule</th><th>Action</th></tr></thead><tbody>{subject && sections.map((section, index) => { const scheduleKey = scheduleKeyFor(section); return <tr key={`${section.academicSectionId}-${section.schoolYear}`}><td className="sa-section-name">{section.section}<small>{section.schoolYear}</small></td><td>{section.yearLevel}</td><td><select className="sa-schedule" aria-label={`Schedule for ${section.section}`} value={schedules[scheduleKey] || ""} onChange={(event) => setSchedules({ ...schedules, [scheduleKey]: event.target.value })}><option value="">Choose day</option>{DAY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></td><td><button type="button" className="sa-assign" disabled={!selectedProfessor || saving} onClick={() => add(section, index)}>＋ Assign</button></td></tr>; })}{(!subject || !sections.length) && <tr><td colSpan="4" className="sa-empty">{!subject ? "No subject selected." : "No sections created for this program and year level."}</td></tr>}</tbody></table></div><div className="sa-info sa-selected"><span>ⓘ</span><div><strong>Selected Subject: {subject ? `${subject.subjectCode} – ${subject.subjectTitle}` : "None"}</strong></div></div></section></div>
 </>}
   </div>;
 }

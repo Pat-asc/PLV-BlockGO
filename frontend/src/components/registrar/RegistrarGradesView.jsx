@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { fetchAllGrades, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason } from '../../services/api';
+import { fetchAllGrades, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason, fetchAcademicPrograms } from '../../services/api';
 import RegistrarHeader from './RegistrarHeader';
 import RegistrarSidebar from './RegistrarSidebar';
 import RegistrarDashboard from './RegistrarDashboard';
@@ -12,7 +12,7 @@ import RegistrarStudentSectioning from './RegistrarStudentSectioning';
 import RegistrarSectionsCreated from './RegistrarSectionsCreated';
 import StaffAccountCreation from './StaffAccountCreation';
 import CurriculumManagement from './CurriculumManagement';
-import { programOptions, programs } from '../../data/registrarData';
+import { programOptions as fallbackProgramOptions } from '../../data/registrarData';
 import RegistrarSupportTickets from './RegistrarSupportTickets';
 import StudentEnrollmentManagement from './StudentEnrollmentManagement';
 import PasswordManagement from './PasswordManagement';
@@ -52,13 +52,17 @@ const RegistrarGradesView = ({
     const [adminAssignments, setAdminAssignments] = useState({});
     const [approvedFaculties, setApprovedFaculties] = useState([]);
     const [facultyAssignments, setFacultyAssignments] = useState({});
+    const [academicPrograms, setAcademicPrograms] = useState(fallbackProgramOptions);
 
     const [activeSemester, setActiveSemester] = useState('2nd Semester');
     const [filterDept, setFilterDept] = useState('All');
     const [filterYear, setFilterYear] = useState('All');
     const [filterSection, setFilterSection] = useState('All');
 
-    const departments = programs;
+    const departments = useMemo(
+        () => academicPrograms.map((program) => program.name).filter(Boolean),
+        [academicPrograms]
+    );
     const [sectioningDepartment, setSectioningDepartment] = useState(departments[0]);
 
     const [ipfsModalOpen, setIpfsModalOpen] = useState(false);
@@ -261,14 +265,36 @@ const RegistrarGradesView = ({
         } catch (error) { console.error('Error loading students:', error); }
     }, []);
 
+    const loadAcademicPrograms = useCallback(async () => {
+        try {
+            const response = await fetchAcademicPrograms();
+            const activePrograms = (response?.data || []).map((program) => ({
+                id: program.programId,
+                code: program.programCode,
+                name: program.programName,
+            })).filter((program) => program.code && program.name);
+            if (activePrograms.length) setAcademicPrograms(activePrograms);
+        } catch (error) {
+            console.error('Error loading active academic programs:', error);
+        }
+    }, []);
+
+    useEffect(() => { loadAcademicPrograms(); }, [loadAcademicPrograms]);
+
+    useEffect(() => {
+        if (departments.length && !departments.includes(sectioningDepartment)) {
+            setSectioningDepartment(departments[0]);
+        }
+    }, [departments, sectioningDepartment]);
+
     useEffect(() => {
         setStudentAssignments((current) => {
             const next = { ...current };
 
             approvedStudents.forEach((student) => {
-                const importedDepartment = programs.includes(student.department)
+                const importedDepartment = departments.includes(student.department)
                     ? student.department
-                    : programOptions.find((program) =>
+                    : academicPrograms.find((program) =>
                         String(program.code).toLowerCase() === String(student.programCode || student.department || '').toLowerCase()
                     )?.name || '';
                 const importedYear = String(student.yearLevel || '').match(/[1-4]/)?.[0] || '';
@@ -285,7 +311,7 @@ const RegistrarGradesView = ({
 
             return next;
         });
-    }, [approvedStudents]);
+    }, [academicPrograms, approvedStudents, departments]);
 
     const loadApprovedAdmins = useCallback(async () => {
         try {
@@ -344,12 +370,13 @@ const RegistrarGradesView = ({
             loadApprovedStudents();
             loadApprovedAdmins();
             loadApprovedFaculties();
+            loadAcademicPrograms();
             if (mainTab === 'Requests') loadRequests();
         };
 
         window.addEventListener('blockgo:academic-data-changed', handleAcademicDataChanged);
         return () => window.removeEventListener('blockgo:academic-data-changed', handleAcademicDataChanged);
-    }, [mainTab, loadGrades, loadRequests, loadApprovedStudents, loadApprovedAdmins, loadApprovedFaculties]);
+    }, [mainTab, loadGrades, loadRequests, loadApprovedStudents, loadApprovedAdmins, loadApprovedFaculties, loadAcademicPrograms]);
 
     useEffect(() => {
         if (mainTab === 'assigning') {

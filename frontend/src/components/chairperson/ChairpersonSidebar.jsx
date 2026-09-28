@@ -6,6 +6,7 @@ const icons = {
   assignment: <><path d="m2 8 10-5 10 5-10 5zM6 10v7l6 3 6-3v-7M22 8v7" /></>,
   curriculum: <><path d="M12 5v16M3 3h5a4 4 0 0 1 4 2 4 4 0 0 1 4-2h5v16h-5a4 4 0 0 0-4 2 4 4 0 0 0-4-2H3z" /></>,
   forReview: <><path d="M14 3H5v18h14V8zM14 3v5h5m-11 6 3 3 5-6" /></>,
+  forwarded: <><path d="M20 6 9 17l-5-5" /><path d="M4 3h16v18H4z" /></>,
 };
 
 function ChairpersonSidebar({ activeTab, setActiveTab }) {
@@ -15,6 +16,7 @@ function ChairpersonSidebar({ activeTab, setActiveTab }) {
     { id: "assignment", label: "Academic Assignment" },
     { id: "curriculum", label: "Curriculum Builder" },
     { id: "forReview", label: "For Review" },
+    { id: "forwarded", label: "Finalized" },
   ];
 
   return (
