@@ -77,11 +77,11 @@ export const validateGradeUpload = async (file) => {
   const extension = String(file?.name || '').toLowerCase().split('.').pop();
   if (extension === 'csv') return validateCsvUpload(file);
   if (!file || file.size === 0) return 'A non-empty CSV or XLSX grade file is required.';
-  if (extension !== 'xlsx') return 'Only CSV or XLSX grade files are allowed.';
+  if (extension !== 'xlsx') return 'Unsupported file format. Please upload an XLSX or CSV grading template.';
   if (file.size >= MAX_CSV_FILE_BYTES) return 'The selected grade file must be less than 10 MB.';
 
   const contentType = String(file.type || '').toLowerCase().split(';')[0];
-  if (!allowedWorkbookTypes.has(contentType)) return 'Only CSV or XLSX grade files are allowed.';
+  if (!allowedWorkbookTypes.has(contentType)) return 'Unsupported file format. Please upload an XLSX or CSV grading template.';
 
   const bytes = await readBlobBytes(file.slice(0, 4));
   return bytes.length === 4 && bytes[0] === 0x50 && bytes[1] === 0x4b &&

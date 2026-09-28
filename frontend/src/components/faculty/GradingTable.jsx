@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import BulkUploadModal from "./BulkUploadModal";
 import { exportGradingSheet } from "../../utils/exportGradingSheet";
 import StudentRow from "./StudentRow";
+import BackButton from "../shared/BackButton";
 import {
   computeFinal,
   formatName,
@@ -140,14 +141,13 @@ const GradingTable = ({
 
   return (
     <div className="px-4 pb-10 pt-6 md:px-6">
-      <button
+      <BackButton
         onClick={onBack}
-        className="mb-4 flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-2xl font-bold leading-none text-[#003366] shadow-sm transition hover:bg-slate-50"
+        className="mb-4"
+        label="Back to Sections"
         aria-label="Back to sections"
         title="Back to sections"
-      >
-        {"<"}
-      </button>
+      />
 
       <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-md">
         <div className="flex flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between">

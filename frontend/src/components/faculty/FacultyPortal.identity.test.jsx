@@ -1,7 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import FacultyPortal from './FacultyPortal';
-import { batchUploadGrades, fetchFacultySections, fetchFacultyStudents, fetchAllGrades, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
+import { batchUploadGrades, downloadGradingSheet, fetchFacultySections, fetchFacultyStudents, fetchAllGrades, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
 import { showSystemNotification } from '../../services/NotificationContext';
 
 jest.mock('../../services/api', () => ({
@@ -37,6 +37,7 @@ beforeEach(() => {
   issueGrade.mockResolvedValue({ status: 'Success' });
   submitSectionGrades.mockResolvedValue({ status: 'Success' });
   batchUploadGrades.mockResolvedValue({ status: 'Success', totalProcessed: 1, successful: 1 });
+  downloadGradingSheet.mockResolvedValue(undefined);
 });
 
 const openSection = async () => {
@@ -169,6 +170,20 @@ test('Bulk Upload sends FacultySections.id instead of academicSectionId', async 
     section: 'BSIT 1-1',
   })));
   expect(batchUploadGrades.mock.calls[0][1].facultySectionId).not.toBe(45);
+});
+
+test('offers XLSX and CSV templates for the same Faculty assignment', async () => {
+  await openSection();
+  expect(screen.getByText('Accepted formats: XLSX, CSV')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Excel Template' }));
+  fireEvent.click(screen.getByRole('button', { name: 'CSV Template' }));
+
+  await waitFor(() => expect(downloadGradingSheet).toHaveBeenCalledTimes(2));
+  const suggestedName = downloadGradingSheet.mock.calls[0][1];
+  expect(suggestedName).toMatch(/_grading_sheet$/);
+  expect(downloadGradingSheet).toHaveBeenNthCalledWith(1, '77', suggestedName, 'xlsx');
+  expect(downloadGradingSheet).toHaveBeenNthCalledWith(2, '77', suggestedName, 'csv');
 });
 
 test('successful Bulk Upload reports exact context and an editable Draft without claiming an IPFS commit', async () => {

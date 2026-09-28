@@ -4,6 +4,7 @@ import { fetchAcademicPrograms, fetchAllGrades } from '../../services/api';
 import { buildLedgerHierarchy, canonicalizeLedgerPrograms, filterLedgerRecords, getLedgerFilterOptions } from '../../utils/registrarGradesLedger';
 import { selectLedgerExportRecords } from '../../utils/registrarGradesLedgerPdf';
 import SearchField from '../shared/SearchField';
+import StatusBadge from '../shared/StatusBadge';
 
 const PAGE_SIZE = 25;
 const displayValue = (value) => (value === null || value === undefined || String(value).trim() === '' ? '--' : String(value));
@@ -63,7 +64,7 @@ const SubjectCard = ({ subject, onViewIpfs }) => {
               {subject.students.length} student{subject.students.length === 1 ? '' : 's'}
             </span>
             {subject.statuses.map((status) => (
-              <span key={status} className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-bold uppercase text-emerald-800">{status}</span>
+              <StatusBadge key={status} status={status} />
             ))}
             <ChevronIcon expanded={open} className="text-slate-500" />
           </div>
@@ -98,7 +99,7 @@ const SubjectCard = ({ subject, onViewIpfs }) => {
                         <td className="p-3">{displayValue(student.gradePayload?.midterm)}</td>
                         <td className="p-3">{displayValue(student.gradePayload?.finals ?? student.gradePayload?.final)}</td>
                         <td className="p-3 font-bold text-[#003366]">{displayValue(student.gradePayload?.finalAverage ?? student.gradePayload?.grade)}</td>
-                        <td className="p-3"><span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-700">{student.status || 'N/A'}</span></td>
+                        <td className="p-3"><StatusBadge status={student.status || 'Unavailable'} /></td>
                         <td className="p-3 text-xs text-slate-600">{displayDate(student)}</td>
                         <td className="p-3">
                           {(student.ipfs_cid || student.IpfsCID) && onViewIpfs ? (

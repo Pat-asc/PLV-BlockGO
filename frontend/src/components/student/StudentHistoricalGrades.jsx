@@ -1,16 +1,42 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { getGradeEquivalent } from '../../utils/gradingHelpers';
+import StatusBadge from '../shared/StatusBadge';
 
+const VIEW_KEY = 'blockgo.student.grades.view';
 const yearLabels = { 1: '1st Year', 2: '2nd Year', 3: '3rd Year', 4: '4th Year' };
-const semesterOrder = ['1st Semester', 'First Semester', '2nd Semester', 'Second Semester', 'Midyear', 'Summer'];
+const semesterOrder = ['1st Semester', 'First Semester', 'FIRST', '2nd Semester', 'Second Semester', 'SECOND', 'Midyear', 'MIDYEAR', 'Summer'];
 
 const displayEquivalent = (grade) => {
-  const numericGrade = Number(grade.finalAverage || grade.grade);
+  const numericGrade = Number(grade.finalAverage || grade.finalGrade || grade.grade);
   if (!Number.isFinite(numericGrade)) return '—';
   return numericGrade > 5 ? getGradeEquivalent(numericGrade) : numericGrade.toFixed(2);
 };
 
+const mergeTerms = (grades) => {
+  const records = new Map();
+  grades.forEach((grade, index) => {
+    const key = grade.recordId || `${grade.subjectCode}-${index}`;
+    const current = records.get(key) || { ...grade, midtermGrade: '—', finalGrade: '—' };
+    const term = String(grade.term || '').toLowerCase();
+    if (term.includes('mid')) current.midtermGrade = grade.grade || '—';
+    else current.finalGrade = grade.grade || '—';
+    current.finalAverage = grade.finalAverage || current.finalAverage || grade.grade;
+    records.set(key, current);
+  });
+  return [...records.values()];
+};
+
 const StudentHistoricalGrades = ({ grades = [], loading = false, error = '', emptyMessage = '' }) => {
+  const [view, setView] = useState(() => {
+    try { return sessionStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'cards'; }
+    catch { return 'cards'; }
+  });
+
+  const selectView = (nextView) => {
+    setView(nextView);
+    try { sessionStorage.setItem(VIEW_KEY, nextView); } catch { /* storage may be unavailable */ }
+  };
+
   const groupedGrades = useMemo(() => {
     const schoolYears = new Map();
     grades.forEach((grade) => {
@@ -29,39 +55,36 @@ const StudentHistoricalGrades = ({ grades = [], loading = false, error = '', emp
       .sort(([left], [right]) => String(right).localeCompare(String(left), undefined, { numeric: true }))
       .map(([schoolYear, semesters]) => ({
         schoolYear,
-        semesters: [...semesters.entries()].sort(([left], [right]) => semesterRank(left) - semesterRank(right)),
+        semesters: [...semesters.entries()]
+          .sort(([left], [right]) => semesterRank(left) - semesterRank(right))
+          .map(([semester, rows]) => [semester, mergeTerms(rows)]),
       }));
   }, [grades]);
 
-  if (loading) return <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500">Loading your finalized grade history…</div>;
-
-  if (error) return <section className="rounded-2xl border border-red-200 bg-white p-4 shadow-sm sm:p-6"><h2 className="text-xl font-bold text-[#003366]">My Grades</h2><div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-700">{error}</div></section>;
-
-  if (grades.length === 0) return <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6"><h2 className="text-xl font-bold text-[#003366]">My Grades</h2><div className="mt-5 rounded-xl border border-dashed border-slate-300 p-8 text-center text-slate-500">{emptyMessage || 'There are currently no grade records available.'}</div></section>;
+  if (loading) return <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">Loading grades…</div>;
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-      <h2 className="mb-5 text-xl font-bold text-[#003366]">My Grades</h2>
-      {groupedGrades.map(({ schoolYear, semesters }) => {
+      <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div><p className="text-xs font-bold uppercase tracking-wider text-blue-700">Student Records</p><h2 className="text-xl font-bold text-[#003366]">My Grades</h2><p className="mt-1 text-sm text-slate-500">Only finalized grades released by the Registrar appear here.</p></div>
+        <div className="inline-flex rounded-lg border border-slate-300 bg-slate-50 p-1" aria-label="Grade view">
+          {['cards', 'table'].map((option) => <button key={option} type="button" onClick={() => selectView(option)} aria-pressed={view === option} className={`rounded-md px-3 py-1.5 text-sm font-semibold capitalize transition ${view === option ? 'bg-[#003366] text-white shadow-sm' : 'text-slate-600 hover:bg-white'}`}>{option === 'cards' ? 'Cards' : 'Table'}</button>)}
+        </div>
+      </header>
+
+      {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-800">{error}</div> : null}
+      {!error && grades.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-slate-500">{emptyMessage || 'No released grades are available for this term yet.'}</div> : null}
+
+      {!error && grades.length > 0 ? groupedGrades.map(({ schoolYear, semesters }) => {
         const headingId = `school-year-${schoolYear.replace(/[^a-z0-9]/gi, '-')}`;
         return <section key={schoolYear} className="mb-8 last:mb-0" aria-labelledby={headingId}>
           <h3 id={headingId} className="mb-4 border-b border-blue-100 pb-2 text-lg font-bold text-[#003366]">School Year {schoolYear}</h3>
           {semesters.map(([semester, semesterGrades]) => <div key={`${schoolYear}-${semester}`} className="mb-7 last:mb-0">
             <h4 className="mb-3 text-base font-bold text-slate-800">{semester}</h4>
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
-              <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr>
-                  <th className="px-4 py-3">Subject</th><th className="px-4 py-3">Professor</th><th className="px-4 py-3">Units</th><th className="px-4 py-3">Year Level</th><th className="px-4 py-3">Term</th><th className="px-4 py-3">Grade</th><th className="px-4 py-3">Equivalent</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Transaction</th>
-                </tr></thead>
-                <tbody className="divide-y divide-slate-100">{semesterGrades.map((grade, index) => <tr key={`${grade.recordId}-${grade.term}-${index}`} className="hover:bg-slate-50">
-                  <td className="px-4 py-3"><span className="block font-bold text-[#003366]">{grade.subjectCode}</span><span className="text-slate-600">{grade.subjectTitle}</span></td>
-                  <td className="px-4 py-3 text-slate-700">{grade.professor || 'Not recorded'}</td><td className="px-4 py-3">{grade.units || '—'}</td><td className="px-4 py-3">{yearLabels[Number(grade.yearLevel)] || grade.yearLevel || '—'}</td><td className="px-4 py-3 capitalize">{grade.term}</td><td className="px-4 py-3 font-bold">{grade.grade || '—'}</td><td className="px-4 py-3 font-bold text-[#003366]">{displayEquivalent(grade)}</td><td className="px-4 py-3"><span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">{grade.status}</span></td><td className="max-w-[180px] truncate px-4 py-3 font-mono text-xs" title={grade.transactionHash || grade.transactionId}>{grade.transactionHash || grade.transactionId || 'Legacy record'}</td>
-                </tr>)}</tbody>
-              </table>
-            </div>
+            {view === 'cards' ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{semesterGrades.map((grade, index) => <article key={`${grade.recordId}-${index}`} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-bold text-[#003366]">{grade.subjectCode}</p><h5 className="mt-0.5 text-sm font-semibold text-slate-800">{grade.subjectTitle}</h5></div><StatusBadge status={grade.status || 'Finalized'} /></div><div className="mt-4 grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3"><div><p className="text-xs font-semibold text-slate-500">Midterm</p><p className="mt-1 text-lg font-bold text-slate-800">{grade.midtermGrade}</p></div><div><p className="text-xs font-semibold text-slate-500">Final Grade</p><p className="mt-1 text-lg font-bold text-[#003366]">{displayEquivalent(grade)}</p></div></div><dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-xs font-semibold text-slate-500">Units</dt><dd className="mt-0.5 text-slate-800">{grade.units || '—'}</dd></div><div><dt className="text-xs font-semibold text-slate-500">Year Level</dt><dd className="mt-0.5 text-slate-800">{yearLabels[Number(grade.yearLevel)] || grade.yearLevel || '—'}</dd></div><div className="col-span-2"><dt className="text-xs font-semibold text-slate-500">Faculty</dt><dd className="mt-0.5 text-slate-800">{grade.professor || 'Not recorded'}</dd></div></dl></article>)}</div> : <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="min-w-full divide-y divide-slate-200 text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Subject Code</th><th className="px-4 py-3">Subject Name</th><th className="px-4 py-3">Units</th><th className="px-4 py-3">Midterm</th><th className="px-4 py-3">Final Grade</th><th className="px-4 py-3">Faculty</th><th className="px-4 py-3">Status</th></tr></thead><tbody className="divide-y divide-slate-100">{semesterGrades.map((grade, index) => <tr key={`${grade.recordId}-${index}`} className="hover:bg-slate-50"><td className="whitespace-nowrap px-4 py-3 font-bold text-[#003366]">{grade.subjectCode}</td><td className="px-4 py-3 text-slate-700">{grade.subjectTitle}</td><td className="px-4 py-3">{grade.units || '—'}</td><td className="px-4 py-3 font-semibold">{grade.midtermGrade}</td><td className="px-4 py-3 font-bold text-[#003366]">{displayEquivalent(grade)}</td><td className="px-4 py-3 text-slate-700">{grade.professor || 'Not recorded'}</td><td className="px-4 py-3"><StatusBadge status={grade.status || 'Finalized'} /></td></tr>)}</tbody></table></div>}
           </div>)}
         </section>;
-      })}
+      }) : null}
     </section>
   );
 };

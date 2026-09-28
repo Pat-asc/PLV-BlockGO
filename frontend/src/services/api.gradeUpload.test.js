@@ -1,4 +1,4 @@
-import { approveGrade, batchUploadGrades, fetchRegistrarFinalizationQueue } from './api';
+import { approveGrade, batchUploadGrades, downloadGradingSheet, fetchGradeReleaseCandidates, fetchRegistrarFinalizationQueue, releaseStudentGrades } from './api';
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -88,10 +88,41 @@ test('draft overwrite confirmation is explicit in multipart data', async () => {
   expect(options.body.get('confirmOverwrite')).toBe('true');
 });
 
+test.each(['xlsx', 'csv'])('template download requests and names the selected %s format', async (format) => {
+  global.fetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['template']) });
+  window.URL.createObjectURL = jest.fn(() => 'blob:grade-template');
+  window.URL.revokeObjectURL = jest.fn();
+  const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+  await downloadGradingSheet(77, 'BSIT_1-1_grading_sheet', format);
+
+  expect(global.fetch.mock.calls[0][0]).toContain('/GradeTemplate/faculty-section/77/download?format=' + format);
+  expect(click).toHaveBeenCalledTimes(1);
+  expect(click.mock.instances[0].download).toBe(`BSIT_1-1_grading_sheet.${format}`);
+  click.mockRestore();
+});
+
+test('template download rejects an unsupported format before making a request', async () => {
+  await expect(downloadGradingSheet(77, 'template', 'xls')).rejects.toThrow('Unsupported template format');
+  expect(global.fetch).not.toHaveBeenCalled();
+});
+
 test('Chairperson finalization queue uses the current-cycle backend queue', async () => {
   await fetchRegistrarFinalizationQueue();
 
   expect(global.fetch.mock.calls[0][0]).toContain('/Grades/finalization-queue');
+});
+
+test('Registrar grade release APIs use the visibility endpoints and preserve the student period', async () => {
+  await fetchGradeReleaseCandidates();
+  expect(global.fetch.mock.calls[0][0]).toContain('/Grades/release-candidates');
+
+  const payload = { studentIdentifier: 'student@plv.edu.ph', schoolYear: '2026-2027', semester: 'FIRST', term: 'finals' };
+  await releaseStudentGrades(payload);
+  const [url, options] = global.fetch.mock.calls[1];
+  expect(url).toContain('/Grades/release-student');
+  expect(options.method).toBe('POST');
+  expect(JSON.parse(options.body)).toEqual(payload);
 });
 
 test('Chairperson section approval sends all record IDs in one request', async () => {

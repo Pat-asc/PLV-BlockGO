@@ -171,6 +171,11 @@ export const updateStudentProfile = async (profileData) => {
 export const fetchStudentHistoricalGrades = async () => fetchWithAuth('/Student/grades');
 export const fetchStudentCurrentSubjects = async () => fetchWithAuth('/Student/subjects');
 export const fetchStudentBlockchainTransactions = async () => fetchWithAuth('/Student/blockchain-transactions');
+export const fetchGradeReleaseCandidates = async () => fetchWithAuth('/Grades/release-candidates');
+export const releaseStudentGrades = async (payload) => fetchWithAuth('/Grades/release-student', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+});
 
 // ==================== MANAGED ACCOUNTS ====================
 export const createStaffAccount = async (account) => fetchWithAuth('/AccountManagement/staff', {
@@ -935,10 +940,14 @@ export const searchRegistrarRecords = async (params = {}) => {
     return await fetchWithAuth(`/registrar/Search${query ? `?${query}` : ''}`);
 };
 
-export const downloadGradingSheet = async (facultySectionId, suggestedName = 'Faculty_Grade_Template') => {
+export const downloadGradingSheet = async (facultySectionId, suggestedName = 'Faculty_Grade_Template', format = 'xlsx') => {
+    const normalizedFormat = String(format || '').toLowerCase();
+    if (!['xlsx', 'csv'].includes(normalizedFormat)) {
+        throw new Error('Unsupported template format. Choose XLSX or CSV.');
+    }
     const baseUrl = getBaseUrl('/GradeTemplate');
     const token = getAuthToken();
-    const endpoint = `/GradeTemplate/faculty-section/${encodeURIComponent(facultySectionId)}/download`;
+    const endpoint = `/GradeTemplate/faculty-section/${encodeURIComponent(facultySectionId)}/download?format=${encodeURIComponent(normalizedFormat)}`;
     
     const response = await fetch(`${baseUrl}${endpoint}`, {
         method: 'GET',
@@ -956,7 +965,7 @@ export const downloadGradingSheet = async (facultySectionId, suggestedName = 'Fa
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${suggestedName}.csv`;
+    a.download = `${suggestedName}.${normalizedFormat}`;
     document.body.appendChild(a);
     a.click();
     a.remove();

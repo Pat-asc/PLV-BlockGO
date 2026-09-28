@@ -48,10 +48,16 @@ var finalizedStudentGrade = new AcademicRecord
     SubjectCode = "IT 101", SchoolYear = "2026-2027", Semester = "FIRST",
     Section = "BSIT 1-1", AssignmentCycleId = "104", Status = "Finalized", Grade = "92"
 };
-var visibleResolution = StudentSubjectGradeResolver.Resolve(studentAttempt, new[] { finalizedStudentGrade });
+var releasedGradeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "finalized-visible" };
+var releasedFinalizedGrades = new[] { finalizedStudentGrade }
+    .Where(record => GradeReleasePolicy.IsVisibleToStudent(record, releasedGradeIds));
+var visibleResolution = StudentSubjectGradeResolver.Resolve(studentAttempt, releasedFinalizedGrades);
 Check(visibleResolution.IsFinalized && visibleResolution.FinalizedGrade == 92m,
-    "A Chairperson-finalized grade was not immediately visible to its exact student and assignment cycle.");
-Pass(92, "Chairperson Finalized grade is immediately student-visible");
+    "A released Chairperson-finalized grade was not visible to its exact student and assignment cycle.");
+Pass(92, "released Chairperson Finalized grade is student-visible");
+Check(!GradeReleasePolicy.IsVisibleToStudent(finalizedStudentGrade, new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
+    "An unreleased Finalized grade became student-visible.");
+Pass(111, "unreleased Finalized grade remains hidden from students");
 var hiddenWorkflowGrades = new[] { "Draft", "SubmittedToChairperson", "Returned", "ChairpersonApproved", "DepartmentApproved" }
     .Select(status => new AcademicRecord
     {
@@ -62,6 +68,14 @@ var hiddenWorkflowGrades = new[] { "Draft", "SubmittedToChairperson", "Returned"
 Check(!StudentSubjectGradeResolver.Resolve(studentAttempt, hiddenWorkflowGrades).IsFinalized,
     "A non-finalized workflow grade became student-visible.");
 Pass(93, "non-finalized workflow grades remain hidden from students");
+Check(hiddenWorkflowGrades.All(record => !GradeReleasePolicy.IsVisibleToStudent(record,
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { record.Id })),
+    "A released but non-finalized workflow grade became student-visible.");
+Pass(112, "release metadata cannot expose non-finalized grades");
+Check(GradeReleasePolicy.MatchesReleaseContext(finalizedStudentGrade, "26-0042", "2026-2027", "FIRST", "finals")
+      && !GradeReleasePolicy.MatchesReleaseContext(finalizedStudentGrade, "26-0042", "2026-2027", "SECOND", "finals"),
+    "Registrar grade release matching crossed student academic periods.");
+Pass(113, "Registrar release context is student and period scoped");
 var closedRejected = false;
 try { GradeEncodingPeriodService.ParseOpen("{\"semester\":\"FIRST\",\"startDate\":\"2026-10-01\",\"endDate\":\"2026-10-31\",\"term\":\"midterm\"}", new DateOnly(2026, 9, 22)); }
 catch (GradeEncodingPeriodException) { closedRejected = true; }
@@ -74,6 +88,33 @@ var canonical = new List<FacultyAssignmentRosterService.RosterStudent> {
     new(3,5,"26-0003","Student C","c@plv.edu.ph",1,1,"2026-2027","FIRST","ENROLLED")
 };
 var bytes = FacultyGradeWorkbookService.Build(assignment, canonical);
+var csvBytes = FacultyGradeWorkbookService.BuildCsv(assignment, canonical);
+var csvText = new System.Text.UTF8Encoding(true).GetString(csvBytes).TrimStart('\uFEFF');
+var csvHeader = csvText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)[0];
+Check(FacultyGradeWorkbookService.Headers.All(header => csvHeader.Contains($"\"{header}\"", StringComparison.Ordinal)) &&
+      csvText.Contains("\"26-0001\"") && csvText.Contains("\"IT 101\"") && csvText.Contains("\"2026-2027\""),
+    "CSV template does not match the XLSX grading headers and assignment roster context.");
+Pass(106, "CSV and XLSX templates share headers and authoritative assignment context");
+await using (var validCsvStream = new MemoryStream(csvBytes))
+{
+    var validCsv = new FormFile(validCsvStream, 0, csvBytes.Length, "file", "grades.csv")
+    {
+        Headers = new HeaderDictionary(), ContentType = "text/csv"
+    };
+    Check(await CsvUploadValidator.ValidateGradeWorkbookAsync(validCsv) is null,
+        "A generated CSV grading template was rejected by upload validation.");
+}
+Pass(107, "CSV grade upload validation accepts generated template");
+await using (var unsupportedStream = new MemoryStream("not supported"u8.ToArray()))
+{
+    var unsupported = new FormFile(unsupportedStream, 0, unsupportedStream.Length, "file", "grades.xls")
+    {
+        Headers = new HeaderDictionary(), ContentType = "application/vnd.ms-excel"
+    };
+    Check((await CsvUploadValidator.ValidateGradeWorkbookAsync(unsupported))?.Contains("Unsupported file format") == true,
+        "An unsupported legacy XLS grade file was accepted.");
+}
+Pass(108, "grade upload rejects unsupported formats");
 await using (var validWorkbookStream = new MemoryStream(bytes))
 {
     var validWorkbook = new FormFile(validWorkbookStream, 0, bytes.Length, "file", "grades.xlsx")

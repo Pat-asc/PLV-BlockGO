@@ -29,6 +29,7 @@ function RegistrarSidebar({
 }) {
   const managementTabs = [
     "monitoring",
+    "gradeRelease",
     "grades",
     "transcript",
     "assigning",

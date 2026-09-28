@@ -1,6 +1,7 @@
 import { showSystemNotification } from '../../services/NotificationContext';
 import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import BackButton from "../shared/BackButton";
 import {
   AVAILABLE_YEAR_LEVELS,
   STUDENT_BATCHES_KEY,
@@ -3052,9 +3053,7 @@ function RegistrarStudentSectioning({
                   </div>
                 </div>
 
-                <button type="button" onClick={() => setIsRosterView(false)} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold text-[#003366] hover:bg-slate-50">
-                  <span aria-hidden="true">←</span> Back to Section Creator
-                </button>
+                <BackButton onClick={() => setIsRosterView(false)} label="Back to Section Creator" />
               </div>
 
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">

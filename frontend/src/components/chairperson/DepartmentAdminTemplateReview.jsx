@@ -3,6 +3,7 @@ import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useState, useEffect, useCallback } from 'react';
 import plvlogo from '../assets/plvlogo.png';
 import { fetchDepartmentTemplates, reviewTemplate } from '../../services/api';
+import BackButton from '../shared/BackButton';
 
 const DepartmentAdminTemplateReview = ({ adminData, onLogout }) => {
   const [templates, setTemplates] = useState([]);
@@ -189,7 +190,7 @@ const DepartmentAdminTemplateReview = ({ adminData, onLogout }) => {
       ) : (
         /* ── TEMPLATE DETAILS VIEW ── */
         <div className="grading-view">
-          <button className="back-btn" onClick={() => setActiveTemplate(null)}>← Back to Templates</button>
+          <BackButton onClick={() => setActiveTemplate(null)} label="Back to Templates" className="mb-4" />
 
           <div className="table-container">
             <div className="table-header-custom">

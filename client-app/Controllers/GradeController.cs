@@ -75,27 +75,243 @@ namespace BlockGo.Controllers
             });
         }
 
-        private Task NotifyGradeFinalizedAsync(AcademicRecord record, string actor)
+        private async Task<List<AcademicRecord>> LoadFinalizedLedgerRecordsAsync(string actor)
         {
-            if (string.IsNullOrWhiteSpace(record.StudentHash)) return Task.CompletedTask;
-            return _chatHubContext.Clients.Group($"private_{record.StudentHash}").SendAsync("GradeFinalized", new
+            var ledgerJson = await _blockchainService.GetAllGradesAsync(actor);
+            using var document = JsonDocument.Parse(ledgerJson);
+            var data = document.RootElement.TryGetProperty("data", out var nested)
+                ? nested
+                : document.RootElement;
+
+            if (data.ValueKind != JsonValueKind.Array) return new List<AcademicRecord>();
+
+            return (JsonSerializer.Deserialize<List<AcademicRecord>>(
+                        data.GetRawText(),
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? new List<AcademicRecord>())
+                .Where(record => !string.IsNullOrWhiteSpace(record.Id)
+                    && string.Equals(record.Status?.Trim(), "Finalized", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        private static bool MatchesGradeReleaseContext(AcademicRecord record, ReleaseStudentGradesRequest request)
+            => GradeReleasePolicy.MatchesReleaseContext(record, request.StudentIdentifier, request.SchoolYear, request.Semester, request.Term);
+
+        [HttpGet("release-candidates")]
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> GetGradeReleaseCandidates(CancellationToken cancellationToken)
+        {
+            try
             {
-                Type = "grade_finalized",
-                Title = "Grade finalized",
-                Message = $"Your grade for {record.SubjectCode} has been finalized and recorded on the ledger.",
-                RecordId = record.Id,
-                SubjectCode = record.SubjectCode,
-                Status = "Finalized",
-                TransactionId = record.TransactionId,
-                TransactionHash = string.IsNullOrWhiteSpace(record.TransactionHash) ? record.TransactionId : record.TransactionHash,
-                Actor = actor,
-                OccurredAt = DateTimeOffset.UtcNow
-            });
+                var records = await LoadFinalizedLedgerRecordsAsync(AuthenticatedEmail());
+                var recordIds = records.Select(record => record.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                var released = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+
+                if (recordIds.Length > 0)
+                {
+                    await using var connection = new NpgsqlConnection(_connectionString);
+                    await connection.OpenAsync(cancellationToken);
+                    await using var command = new NpgsqlCommand(@"
+                        SELECT record_id, released_at
+                        FROM grade_releases
+                        WHERE record_id = ANY(@recordIds);", connection);
+                    command.Parameters.AddWithValue("recordIds", recordIds);
+                    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                    while (await reader.ReadAsync(cancellationToken))
+                        released[reader.GetString(0)] = reader.GetFieldValue<DateTimeOffset>(1);
+                }
+
+                var candidates = records
+                    .Where(record => !string.IsNullOrWhiteSpace(GradeReleasePolicy.StudentIdentifier(record)))
+                    .GroupBy(record => new
+                    {
+                        StudentIdentifier = GradeReleasePolicy.StudentIdentifier(record),
+                        SchoolYear = record.SchoolYear?.Trim() ?? string.Empty,
+                        Semester = record.Semester?.Trim() ?? string.Empty,
+                        Term = GradeReleasePolicy.Term(record)
+                    })
+                    .Select(group =>
+                    {
+                        var first = group.First();
+                        var subjectRecords = group
+                            .OrderBy(record => record.SubjectCode, StringComparer.OrdinalIgnoreCase)
+                            .Select(record => new
+                            {
+                                recordId = record.Id,
+                                subjectCode = record.SubjectCode,
+                                subjectTitle = record.SubjectTitle,
+                                grade = record.Grade,
+                                units = record.Units,
+                                faculty = string.IsNullOrWhiteSpace(record.ProfessorName) ? record.FacultyId : record.ProfessorName,
+                                status = record.Status
+                            }).ToArray();
+                        var releaseDates = group
+                            .Where(record => released.ContainsKey(record.Id))
+                            .Select(record => released[record.Id])
+                            .ToArray();
+                        var isReleased = subjectRecords.Length > 0 && releaseDates.Length == subjectRecords.Length;
+                        return new
+                        {
+                            studentIdentifier = group.Key.StudentIdentifier,
+                            studentId = string.IsNullOrWhiteSpace(first.StudentNo) ? first.StudentId : first.StudentNo,
+                            studentName = first.StudentName,
+                            program = string.IsNullOrWhiteSpace(first.Program) ? first.Course : first.Program,
+                            yearLevel = first.YearLevel,
+                            section = first.Section,
+                            schoolYear = group.Key.SchoolYear,
+                            semester = group.Key.Semester,
+                            term = group.Key.Term,
+                            releaseStatus = isReleased ? "Released" : "Ready for Release",
+                            releasedAt = isReleased ? releaseDates.Max() : (DateTimeOffset?)null,
+                            subjects = subjectRecords
+                        };
+                    })
+                    .OrderBy(candidate => candidate.studentName, StringComparer.OrdinalIgnoreCase)
+                    .ThenByDescending(candidate => candidate.schoolYear, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
+                return Ok(new { status = "Success", data = candidates });
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Registrar grade release candidates could not be loaded.");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    status = "Unavailable",
+                    message = "Grade release information is temporarily unavailable."
+                });
+            }
+        }
+
+        [HttpPost("release-student")]
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> ReleaseStudentGrades(
+            [FromBody] ReleaseStudentGradesRequest request,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(request.StudentIdentifier)
+                || string.IsNullOrWhiteSpace(request.SchoolYear)
+                || string.IsNullOrWhiteSpace(request.Semester)
+                || string.IsNullOrWhiteSpace(request.Term))
+            {
+                return BadRequest(new { status = "Error", message = "Student and academic period are required." });
+            }
+
+            var actor = AuthenticatedEmail();
+            try
+            {
+                // Re-read Fabric at command time. The client cannot make a non-finalized record eligible.
+                var eligible = (await LoadFinalizedLedgerRecordsAsync(actor))
+                    .Where(record => MatchesGradeReleaseContext(record, request))
+                    .GroupBy(record => record.Id, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.Last())
+                    .ToArray();
+                if (eligible.Length == 0)
+                {
+                    return BadRequest(new
+                    {
+                        status = "Error",
+                        message = "No finalized grades are ready for release for this student and period."
+                    });
+                }
+
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(cancellationToken);
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                var inserted = 0;
+                foreach (var record in eligible)
+                {
+                    await using var command = new NpgsqlCommand(@"
+                        INSERT INTO grade_releases
+                            (record_id, student_identifier, school_year, semester, term, released_by)
+                        VALUES
+                            (@recordId, @studentIdentifier, @schoolYear, @semester, @term,
+                             (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1))
+                        ON CONFLICT (record_id) DO NOTHING;", connection, transaction);
+                    command.Parameters.AddWithValue("recordId", record.Id);
+                    command.Parameters.AddWithValue("studentIdentifier", request.StudentIdentifier.Trim());
+                    command.Parameters.AddWithValue("schoolYear", request.SchoolYear.Trim());
+                    command.Parameters.AddWithValue("semester", request.Semester.Trim());
+                    command.Parameters.AddWithValue("term", request.Term.Trim().ToLowerInvariant());
+                    command.Parameters.AddWithValue("actor", actor);
+                    inserted += await command.ExecuteNonQueryAsync(cancellationToken);
+                }
+
+                await _auditLog.LogAsync(
+                    actor,
+                    "registrar",
+                    "STUDENT_GRADES_RELEASED",
+                    "grade_release",
+                    $"{request.StudentIdentifier}:{request.SchoolYear}:{request.Semester}:{request.Term}",
+                    newValues: new { request.StudentIdentifier, request.SchoolYear, request.Semester, request.Term, RecordIds = eligible.Select(record => record.Id), Inserted = inserted },
+                    description: $"Released {eligible.Length} finalized grade record(s) for student visibility.",
+                    ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    connection: connection,
+                    transaction: transaction,
+                    cancellationToken: cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+
+                await NotifyAcademicDataChangedAsync("student_grades_released", null, actor);
+                await _chatHubContext.Clients.Group($"private_{request.StudentIdentifier.Trim()}").SendAsync("GradeReleased", new
+                {
+                    Type = "grade_released",
+                    Title = "Grades released",
+                    Message = "Your finalized grades are now available in the Student Portal.",
+                    request.SchoolYear,
+                    request.Semester,
+                    request.Term
+                }, cancellationToken);
+                if (request.StudentIdentifier.Contains('@'))
+                {
+                    try
+                    {
+                        var subject = "PLV Academic Update: Grades Released";
+                        var htmlBody = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;'><h2 style='color: #003366;'>Pamantasan ng Lungsod ng Valenzuela</h2><p>Hello,</p><p>Your finalized grades have been released by the Registrar and are now available in the Student Portal.</p></div>";
+                        await _emailService.SendEmailAsync(request.StudentIdentifier.Trim(), subject, htmlBody, true);
+                    }
+                    catch (Exception emailException)
+                    {
+                        _logger.LogWarning(emailException, "Grade release was committed, but the student email notification could not be delivered.");
+                    }
+                }
+
+                return Ok(new
+                {
+                    status = "Success",
+                    message = inserted == 0 ? "These finalized grades were already released." : "Finalized grades released successfully.",
+                    releasedRecords = eligible.Length
+                });
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Finalized grades could not be released for the requested student period.");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    status = "Unavailable",
+                    message = "Finalized grades could not be released right now. Please try again."
+                });
+            }
         }
 
         public class FlagRequest
         {
             public bool IsFlagged { get; set; }
+        }
+
+        public sealed class ReleaseStudentGradesRequest
+        {
+            public string StudentIdentifier { get; set; } = string.Empty;
+            public string SchoolYear { get; set; } = string.Empty;
+            public string Semester { get; set; } = string.Empty;
+            public string Term { get; set; } = string.Empty;
         }
 
         public class AcademicStatusRequest
@@ -1317,6 +1533,38 @@ namespace BlockGo.Controllers
                                     return null;
                                 }
 
+                                foreach (var key in new[] {
+                                    "quizzes_20", "assignments_10", "attendance_10", "midterm_exam_60", "midterm_grade",
+                                    "final_quizzes_20", "final_assignments_10", "final_attendance_10", "final_exam_60",
+                                    "final_grade", "final_rating"
+                                })
+                                {
+                                    var value = GetVal(key);
+                                    if (string.IsNullOrWhiteSpace(value)) continue;
+                                    if (!decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var number) ||
+                                        number is < 0 or > 100)
+                                        return BadRequest(new {
+                                            status = "ValidationError",
+                                            message = $"Row {lineNum} — '{key.Replace('_', ' ')}' must be a number from 0 to 100."
+                                        });
+                                }
+
+                                string? WeightedGrade(string quiz, string assignment, string attendance, string exam)
+                                {
+                                    static bool Number(string? value, out decimal result) =>
+                                        decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out result);
+                                    return Number(GetVal(quiz), out var q) && Number(GetVal(assignment), out var a) &&
+                                           Number(GetVal(attendance), out var at) && Number(GetVal(exam), out var ex)
+                                        ? FacultyGradeWorkbookService.WeightedGrade(q, a, at, ex)
+                                            .ToString("0.00", CultureInfo.InvariantCulture)
+                                        : null;
+                                }
+
+                                var computedMidterm = WeightedGrade(
+                                    "quizzes_20", "assignments_10", "attendance_10", "midterm_exam_60");
+                                var computedFinals = WeightedGrade(
+                                    "final_quizzes_20", "final_assignments_10", "final_attendance_10", "final_exam_60");
+
                                 var sId = GetVal("student_id", "student_no", "id_number", "student_number");
                                 if (string.IsNullOrEmpty(sId))
                                 {
@@ -1332,12 +1580,12 @@ namespace BlockGo.Controllers
                                     StudentId = sId ?? "",
                                     StudentName = GetVal("student_name", "student", "full_name", "name") ?? "",
                                     Section = !string.IsNullOrWhiteSpace(section) ? section : (GetVal("section", "class_section", "sec") ?? ""),
-                                Grade = GradeEncodingPeriodService.ProjectIncomingGradePayload(
-                                    BuildUploadedGradePayload(
-                                        GetUploadedTermGrade(GetVal, term),
-                                        GetUploadedMidtermGrade(GetVal, term),
-                                        GetUploadedFinalGrade(GetVal, term),
-                                        term), null, term),
+                                    Grade = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+                                        BuildUploadedGradePayload(
+                                            GetUploadedTermGrade(GetVal, term),
+                                            computedMidterm ?? GetUploadedMidtermGrade(GetVal, term),
+                                            computedFinals ?? GetUploadedFinalGrade(GetVal, term),
+                                            term), null, term),
                                     SubjectCode = GetVal("subject_code", "course_code", "code", "subject") ?? course ?? "Unknown",
                                     SubjectName = GetVal("subject_name", "descriptive_title", "course") ?? course ?? "Unknown",
                                     Course = GetVal("course", "department", "program") ?? course ?? "Unknown",
@@ -2791,8 +3039,6 @@ namespace BlockGo.Controllers
 
                     try
                     {
-                        await NotifyGradeFinalizedAsync(finalizedRecord, invokerId);
-                        NotifyStudentOfFinalization(recordId, invokerId);
                         await NotifyAcademicDataChangedAsync("grade_finalized", pendingRecord.Course, invokerId);
                     }
                     catch (Exception notificationException)
@@ -2851,21 +3097,6 @@ namespace BlockGo.Controllers
                 _logger.LogError(ex, "Failed to load the current Chairperson finalization queue");
                 return StatusCode(500, new { status = "Error", message = "The Finalize queue is temporarily unavailable." });
             }
-        }
-
-        private void NotifyStudentOfFinalization(string recordId, string invokerId)
-        {
-            _ = Task.Run(async () => {
-                try {
-                    var recJson = await _blockchainService.GetGradeAsync(recordId, invokerId);
-                    var finRec = JsonSerializer.Deserialize<AcademicRecord>(recJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                    if (finRec != null && !string.IsNullOrEmpty(finRec.StudentHash) && finRec.StudentHash.Contains("@")) {
-                        var subj = "PLV Academic Update: Grade Finalized";
-                        var htmlBody = $"<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;'><h2 style='color: #003366;'>Pamantasan ng Lungsod ng Valenzuela</h2><p>Hello,</p><p>Your grade for subject <strong>{finRec.SubjectCode}</strong> has been officially finalized and permanently recorded to the academic ledger.</p><p>It is now available in the Student Portal.</p></div>";
-                        await _emailService.SendEmailAsync(finRec.StudentHash, subj, htmlBody, true);
-                    }
-                } catch (Exception ex) { _logger.LogWarning(ex, "Failed to send finalization notification to student."); }
-            });
         }
 
         public class SubmitFinalsRequest

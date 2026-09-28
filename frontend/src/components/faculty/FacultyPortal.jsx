@@ -9,6 +9,7 @@ import ProgramCard from './ProgramCard';
 import FacultyCurriculumPanel from './FacultyCurriculumPanel';
 import { calculateFinalAverage, getGradeEquivalent } from '../../utils/gradingHelpers';
 import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from '../../utils/studentAcademicHelpers';
+import BackButton from '../shared/BackButton';
 
 const normalizeYearLabel = (value) => {
   const raw = String(value || '').trim();
@@ -909,11 +910,15 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     }
   };
 
-  const handleDownloadTemporaryGradingSheet = async (sectionName) => {
+  const handleDownloadTemporaryGradingSheet = async (sectionName, format) => {
     const sectionData = sections[sectionName];
     if (!sectionData?.facultySectionId) return;
     const safeSectionName = String(sectionName || "section").replace(/[^a-zA-Z0-9-]/g, "_");
-    await downloadGradingSheet(sectionData.facultySectionId, `${safeSectionName}_grading_sheet`);
+    try {
+      await downloadGradingSheet(sectionData.facultySectionId, `${safeSectionName}_grading_sheet`, format);
+    } catch (error) {
+      showSystemNotification(error.message || 'The grading template could not be downloaded.');
+    }
   };
 
   const handleFileUpload = async (sectionName, e) => {
@@ -1124,13 +1129,11 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           onLogout={onLogout}
         />
         <main className="w-full px-4 py-5 md:px-6">
-          <button
-            type="button"
+          <BackButton
             onClick={() => setPortalView('grades')}
-            className="mb-5 rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white"
-          >
-            Back to Grade Encoding
-          </button>
+            className="mb-5"
+            label="Back to Grade Encoding"
+          />
           <FacultyCurriculumPanel />
         </main>
       </div>
@@ -1267,14 +1270,13 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         </div>
       ) : (
         <div className="animate-in fade-in duration-300 py-6">
-          <button
-            className="mb-6 inline-flex items-center rounded-xl bg-yellow-400 px-5 py-3 text-sm font-bold text-[#003366] shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-yellow-500 hover:shadow-md"
+          <BackButton
+            className="mb-6"
             onClick={() => setActiveSection(null)}
             aria-label="Back to section"
             title="Back to section"
-          >
-            Back to Sections
-          </button>
+            label="Back to Sections"
+          />
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="flex flex-col items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 p-6 md:flex-row md:items-center">
@@ -1317,13 +1319,23 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                       </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleDownloadTemporaryGradingSheet(activeSection)}
-                      className="rounded-lg border border-[#003366] bg-white px-4 py-2.5 text-sm font-bold text-[#003366] transition hover:bg-slate-50"
-                    >
-                      Grading Sheet Template
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2" aria-label="Grading sheet templates">
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadTemporaryGradingSheet(activeSection, 'xlsx')}
+                        className="rounded-lg border border-[#003366] bg-white px-3 py-2.5 text-sm font-bold text-[#003366] transition hover:bg-slate-50"
+                      >
+                        Excel Template
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadTemporaryGradingSheet(activeSection, 'csv')}
+                        className="rounded-lg border border-[#003366] bg-white px-3 py-2.5 text-sm font-bold text-[#003366] transition hover:bg-slate-50"
+                      >
+                        CSV Template
+                      </button>
+                      <span className="text-xs font-medium text-slate-500">Accepted formats: XLSX, CSV</span>
+                    </div>
                   </>
                 )}
                 {isSubmittedToChairperson && (

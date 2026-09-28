@@ -1,6 +1,7 @@
 import { showSystemNotification } from '../../services/NotificationContext';
 import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useEffect, useMemo, useState } from "react";
+import BackButton from "../shared/BackButton";
 import {
   AVAILABLE_YEAR_LEVELS,
   STUDENT_BATCHES_KEY,
@@ -915,7 +916,7 @@ function RegistrarSectionsCreated() {
             </aside>
 
             <div className="space-y-5">
-              <button type="button" onClick={() => setShowRoster(false)} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-[#003366] hover:bg-slate-50">← Back to Sections Created</button>
+              <BackButton onClick={() => setShowRoster(false)} label="Back to Sections Created" />
               <div className="hidden">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>

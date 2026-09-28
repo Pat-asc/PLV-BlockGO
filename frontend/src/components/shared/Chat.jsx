@@ -6,6 +6,7 @@ import * as signalR from '@microsoft/signalr';
 import { getChatHubUrl } from '../../services/api';
 import { getAuthToken } from '../../services/authSession';
 import { pullSharedClientState } from '../../utils/sharedClientState';
+import BackButton from './BackButton';
 
 const roleKeyFromRoleString = (role) => {
   const r = (role || '').toLowerCase();
@@ -562,6 +563,11 @@ const Chat = ({
     conn.on('GradeFinalized', (payload) => {
       console.log('[Chat] GradeFinalized:', payload);
       window.dispatchEvent(new CustomEvent('blockgo:grade-finalized', { detail: payload }));
+    });
+
+    conn.on('GradeReleased', (payload) => {
+      console.log('[Chat] GradeReleased:', payload);
+      window.dispatchEvent(new CustomEvent('blockgo:grade-released', { detail: payload }));
     });
 
     conn.on('GradeReturned', (payload) => {
@@ -1303,22 +1309,20 @@ const Chat = ({
   return (
     <>
     <div
-      className={`fixed bottom-5 right-5 z-[1000] flex flex-col overflow-hidden rounded-2xl font-sans shadow-2xl transition-colors ${
-        isChatDarkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-900'
+      className={`fixed bottom-3 right-3 z-[1000] flex max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl border font-sans shadow-2xl transition-colors sm:bottom-5 sm:right-5 ${
+        isChatDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'
       }`}
       style={{ width: chatBoxWidth, height: chatBoxHeight }}
     >
       <div className={`relative flex items-center justify-between border-b p-5 ${isChatDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
         <div className="flex min-w-0 items-center gap-2">
           {(isAnyConversationSelected || isCreatingGroup) && !isSettingsOpen && (
-            <button
-              type="button"
+            <BackButton
               onClick={backToConversationList}
-              className={`flex h-9 shrink-0 items-center rounded-full px-3 text-sm font-bold transition ${isChatDarkMode ? 'bg-slate-800 text-slate-200 hover:bg-slate-700' : 'bg-slate-100 text-[#0866ff] hover:bg-blue-50'}`}
+              label="Back"
+              className={isChatDarkMode ? 'text-slate-200 hover:bg-slate-800 hover:text-white' : ''}
               title="Back to conversations"
-            >
-              Back
-            </button>
+            />
           )}
           <div className="min-w-0">
           <h3 className={`m-0 text-lg font-bold ${isChatDarkMode ? 'text-white' : 'text-[#003366]'}`}>
@@ -1790,13 +1794,13 @@ const Chat = ({
           }}
           onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
           placeholder={selectedGroupId ? `Message ${selectedGroup?.name || 'group'}...` : 'Type a message...'}
-          className={`flex-1 rounded-full border px-4 py-2 text-sm outline-none focus:border-[#0866ff] focus:ring-1 focus:ring-[#0866ff]/20 ${isChatDarkMode ? 'border-slate-600 bg-slate-800 text-white placeholder:text-slate-500' : 'border-slate-300 bg-slate-50'}`}
+          className={`min-w-0 flex-1 rounded-xl border px-4 py-2.5 text-sm outline-none focus:border-[#003366] focus:ring-2 focus:ring-blue-100 ${isChatDarkMode ? 'border-slate-600 bg-slate-800 text-white placeholder:text-slate-500' : 'border-slate-300 bg-slate-50'}`}
         />
 
         <button
           onClick={sendMessage}
           disabled={!newMessage.trim() || !isAnyConversationSelected}
-          className="shrink-0 rounded-full bg-[#0866ff] px-5 py-2 text-sm font-bold text-white transition hover:bg-[#0758db] disabled:cursor-not-allowed disabled:opacity-50"
+          className="shrink-0 rounded-xl bg-[#003366] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#00264d] disabled:cursor-not-allowed disabled:opacity-50"
         >
           Send
         </button>

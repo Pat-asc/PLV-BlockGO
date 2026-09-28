@@ -162,7 +162,7 @@ test('clears the shared account session once after system logout confirmation', 
   expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
 });
 
-test('shows the student a real-time finalized-grade notification', async () => {
+test('shows the student a real-time released-grade notification', async () => {
   const token = tokenFor('student', 'student@plv.edu.ph');
   sessionStorage.setItem('blockgo.auth.token', token);
   sessionStorage.setItem('blockgo.auth.role', 'student');
@@ -173,11 +173,11 @@ test('shows the student a real-time finalized-grade notification', async () => {
 
   render(<App />);
   await screen.findByText(/student portal for student@plv.edu.ph/i);
-  fireEvent(window, new CustomEvent('blockgo:grade-finalized', {
-    detail: { Message: 'Your grade for IT 101 has been finalized and recorded on the ledger.' },
+  fireEvent(window, new CustomEvent('blockgo:grade-released', {
+    detail: { Message: 'Your finalized grades are now available in the Student Portal.' },
   }));
 
-  expect(await screen.findByText(/grade for IT 101 has been finalized/i)).toBeInTheDocument();
+  expect(await screen.findByText(/finalized grades are now available/i)).toBeInTheDocument();
 });
 
 test('shows Faculty the real-time correction note when a grade is returned', async () => {

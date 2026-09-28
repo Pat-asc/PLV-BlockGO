@@ -12,6 +12,7 @@ import StudentSectioning from './StudentSectioning';
 import AcademicAssignment from './AcademicAssignment';
 import { getGradeEquivalent } from '../../utils/gradingHelpers';
 import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from '../../utils/studentAcademicHelpers';
+import BackButton from '../shared/BackButton';
 
 const getRecordGrade = (record) => record?.grade || record?.Grade || '';
 
@@ -1635,9 +1636,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                             ) : (
                                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
                                     <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-                                        <button onClick={() => setSelectedMySection(null)} className="flex items-center gap-2 text-sm font-bold text-[#003366] hover:underline">
-                                            ← Back to Classes
-                                        </button>
+                                        <BackButton onClick={() => setSelectedMySection(null)} label="Back to Classes" />
                                         <button onClick={handleUnassignSection} className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-bold text-red-600 transition hover:bg-red-100">
                                             Unassign Class
                                         </button>

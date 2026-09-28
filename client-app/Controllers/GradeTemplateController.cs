@@ -118,8 +118,14 @@ namespace Client_app.Controllers
         }
 
         [HttpGet("faculty-section/{facultySectionId:int}/download")]
-        public async Task<IActionResult> DownloadGradingSheet(int facultySectionId)
+        public async Task<IActionResult> DownloadGradingSheet(
+            int facultySectionId,
+            [FromQuery] string format = "xlsx")
         {
+            var normalizedFormat = (format ?? string.Empty).Trim().ToLowerInvariant();
+            if (normalizedFormat is not ("xlsx" or "csv"))
+                return BadRequest(new { status = "Error", message = "Unsupported template format. Choose XLSX or CSV." });
+
             try
             {
                 using var conn = new NpgsqlConnection(_readConnectionString);
@@ -140,10 +146,16 @@ namespace Client_app.Controllers
                 var students = await FacultyAssignmentRosterService.GetRosterAsync(
                     conn, assignment, HttpContext.RequestAborted);
 
-                var content = FacultyGradeWorkbookService.BuildCsv(assignment, students);
                 string safeSection = string.Join("_", assignment.CanonicalSection.Split(Path.GetInvalidFileNameChars()));
-                return File(content, "text/csv; charset=utf-8",
-                    $"{assignment.Subject}_{safeSection}_{assignment.SchoolYear}_{assignment.Semester}.csv");
+                var fileStem = $"{assignment.Subject}_{safeSection}_{assignment.SchoolYear}_{assignment.Semester}";
+                if (normalizedFormat == "csv")
+                {
+                    var csv = FacultyGradeWorkbookService.BuildCsv(assignment, students);
+                    return File(csv, "text/csv; charset=utf-8", $"{fileStem}.csv");
+                }
+
+                var workbook = FacultyGradeWorkbookService.Build(assignment, students);
+                return File(workbook, FacultyGradeWorkbookService.ContentType, $"{fileStem}.xlsx");
             }
             catch (FacultyAssignmentRosterService.RosterDataIntegrityException ex)
             {
@@ -154,9 +166,9 @@ namespace Client_app.Controllers
                     internalStudentId = ex.StudentUserId
                 });
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode(500, new { status = "Error", message = $"CSV generation failed: {ex.Message}" });
+                return StatusCode(500, new { status = "Error", message = "The grading template could not be generated." });
             }
         }
     }

@@ -235,10 +235,10 @@ function AppContent() {
   }, [addNotification]);
 
   useEffect(() => {
-    const handleGradeFinalized = (event) => {
+    const handleGradeReleased = (event) => {
       if (normalizeAppRole(user?.role) !== 'student') return;
       const payload = event.detail || {};
-      addNotification(payload.Message || payload.message || 'A grade has been finalized and recorded on the ledger.', 'notice');
+      addNotification(payload.Message || payload.message || 'Your finalized grades are now available in the Student Portal.', 'notice');
     };
     const handleGradeReturned = (event) => {
       if (normalizeAppRole(user?.role) !== 'faculty') return;
@@ -247,10 +247,10 @@ function AppContent() {
       addNotification(note ? `A grade was returned for correction: ${note}` : 'A grade was returned for correction.', 'notice');
     };
 
-    window.addEventListener('blockgo:grade-finalized', handleGradeFinalized);
+    window.addEventListener('blockgo:grade-released', handleGradeReleased);
     window.addEventListener('blockgo:grade-returned', handleGradeReturned);
     return () => {
-      window.removeEventListener('blockgo:grade-finalized', handleGradeFinalized);
+      window.removeEventListener('blockgo:grade-released', handleGradeReleased);
       window.removeEventListener('blockgo:grade-returned', handleGradeReturned);
     };
   }, [addNotification, user?.role]);

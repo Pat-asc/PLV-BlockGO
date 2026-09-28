@@ -214,7 +214,7 @@ namespace Client_app.Controllers
             var finalizedRecords = new List<AcademicRecord>();
             try
             {
-                finalizedRecords = await LoadLedgerFinalizedRecordsAsync(email, studentNo);
+                finalizedRecords = await LoadLedgerFinalizedRecordsAsync(email, studentNo, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -319,7 +319,7 @@ namespace Client_app.Controllers
             var studentNo = await LoadStudentNumberAsync(email, cancellationToken);
             try
             {
-                records = await LoadLedgerFinalizedRecordsAsync(email, studentNo);
+                records = await LoadLedgerFinalizedRecordsAsync(email, studentNo, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -348,6 +348,7 @@ namespace Client_app.Controllers
                                COALESCE(grade.transaction_hash, '') AS transaction_hash,
                                COALESCE(grade.recorded_at::text, '') AS recorded_at
                         FROM pending_grade_records grade
+                        JOIN grade_releases release ON release.record_id = grade.id
                         JOIN users student ON LOWER(student.email) = LOWER(@email)
                           AND LOWER(student.role) = 'student'
                         JOIN studentprofiles sp ON sp.user_id = student.id
@@ -358,6 +359,7 @@ namespace Client_app.Controllers
                         LEFT JOIN grade_assignment_cycles cycle ON cycle.record_id = grade.id
                         WHERE LOWER(grade.student_hash) = LOWER(student.email)
                           AND LOWER(grade.student_no) = LOWER(sp.student_no)
+                          AND LOWER(release.student_identifier) IN (LOWER(student.email), LOWER(sp.student_no))
                           AND LOWER(grade.status) = 'finalized'
                         ORDER BY grade.school_year DESC, grade.semester DESC, grade.subject_code ASC", conn);
                     dbCmd.Parameters.AddWithValue("email", email.Trim());
@@ -475,7 +477,7 @@ namespace Client_app.Controllers
                 {
                     status = "Success",
                     data = orderedGrades,
-                    message = orderedGrades.Length == 0 ? "There are currently no grade records available." : null
+                    message = orderedGrades.Length == 0 ? "No released grades are available for this term yet." : null
                 });
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -489,14 +491,14 @@ namespace Client_app.Controllers
                 {
                     status = "Success",
                     data = Array.Empty<object>(),
-                    message = "There are currently no grade records available."
+                    message = "No released grades are available for this term yet."
                 });
             }
         }
 
         [HttpGet("blockchain-transactions")]
         [Authorize(Roles = "student")]
-        public async Task<IActionResult> GetBlockchainTransactions()
+        public async Task<IActionResult> GetBlockchainTransactions(CancellationToken cancellationToken)
         {
             var email = User.Identity?.Name;
             if (string.IsNullOrWhiteSpace(email)) return Unauthorized();
@@ -504,6 +506,8 @@ namespace Client_app.Controllers
             var safeTransactions = new List<object>();
             try
             {
+                var studentNo = await LoadStudentNumberAsync(email, cancellationToken);
+                var releasedRecordIds = await LoadReleasedRecordIdsAsync(email, studentNo, cancellationToken);
                 var responseJson = await _blockchain.GetStudentTransactionsAsync(email);
                 using var responseDocument = JsonDocument.Parse(responseJson);
                 var data = responseDocument.RootElement.TryGetProperty("data", out var dataElement)
@@ -515,7 +519,11 @@ namespace Client_app.Controllers
                     {
                         if (!transaction.TryGetProperty("record", out var recordElement)) continue;
                         var record = JsonSerializer.Deserialize<AcademicRecord>(recordElement.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                        if (record is null || !string.Equals(record.StudentHash, email, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (record is null
+                            || !StudentSubjectGradeResolver.MatchesStudent(record, email, studentNo)
+                            || !string.Equals(record.Status?.Trim(), "Finalized", StringComparison.OrdinalIgnoreCase)
+                            || string.IsNullOrWhiteSpace(record.Id)
+                            || !releasedRecordIds.Contains(record.Id)) continue;
 
                         var transactionId = GetJsonString(transaction, "transaction_id");
                         safeTransactions.Add(new
@@ -671,19 +679,47 @@ namespace Client_app.Controllers
         private async Task<List<AcademicRecord>> LoadFinalizedRecordsAsync(string email)
         {
             var studentNo = await LoadStudentNumberAsync(email, CancellationToken.None);
-            return await LoadLedgerFinalizedRecordsAsync(email, studentNo);
+            return await LoadLedgerFinalizedRecordsAsync(email, studentNo, CancellationToken.None);
         }
 
-        private async Task<List<AcademicRecord>> LoadLedgerFinalizedRecordsAsync(string email, string studentNo)
+        private async Task<List<AcademicRecord>> LoadLedgerFinalizedRecordsAsync(
+            string email,
+            string studentNo,
+            CancellationToken cancellationToken)
         {
+            var releasedRecordIds = await LoadReleasedRecordIdsAsync(email, studentNo, cancellationToken);
+            if (releasedRecordIds.Count == 0) return new List<AcademicRecord>();
+
             var responseJson = await _blockchain.GetAllGradesAsync(email);
             using var document = JsonDocument.Parse(responseJson);
             var data = document.RootElement.TryGetProperty("data", out var nested) ? nested : document.RootElement;
             return (JsonSerializer.Deserialize<List<AcademicRecord>>(data.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                     ?? new List<AcademicRecord>())
                 .Where(record => StudentSubjectGradeResolver.MatchesStudent(record, email, studentNo)
-                    && string.Equals(record.Status?.Trim(), "Finalized", StringComparison.OrdinalIgnoreCase))
+                    && GradeReleasePolicy.IsVisibleToStudent(record, releasedRecordIds))
                 .ToList();
+        }
+
+        private async Task<HashSet<string>> LoadReleasedRecordIdsAsync(
+            string email,
+            string studentNo,
+            CancellationToken cancellationToken)
+        {
+            var released = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var identifiers = new[] { email.Trim(), email.Split('@')[0].Trim(), studentNo?.Trim() ?? string.Empty }
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new NpgsqlCommand(@"
+                SELECT record_id
+                FROM grade_releases
+                WHERE LOWER(student_identifier) = ANY(@identifiers);", connection);
+            command.Parameters.AddWithValue("identifiers", identifiers.Select(value => value.ToLowerInvariant()).ToArray());
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) released.Add(reader.GetString(0));
+            return released;
         }
 
         private async Task<string> LoadStudentNumberAsync(string email, CancellationToken cancellationToken)
