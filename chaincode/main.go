@@ -15,36 +15,37 @@ import (
 )
 
 type AcademicRecord struct {
-	ID              string  `json:"id"`
-	StudentHash     string  `json:"student_hash"`
-	StudentID       string  `json:"student_id"`
-	StudentNo       string  `json:"student_no"`
-	StudentName     string  `json:"student_name"`
-	Section         string  `json:"section"`
-	YearLevel       string  `json:"year_level"`
-	Course          string  `json:"course"`
-	Program         string  `json:"program"`
-	SubjectCode     string  `json:"subject_code"`
-	SubjectTitle    string  `json:"subject_title"`
-	Units           float64 `json:"units,omitempty"`
-	Grade           string  `json:"grade"`
-	Semester        string  `json:"semester"`
-	SchoolYear      string  `json:"school_year"`
-	Term            string  `json:"term"`
-	FacultyID       string  `json:"faculty_id"`
-	ProfessorName   string  `json:"professor_name"`
-	Date            string  `json:"date"`
-	Timestamp       string  `json:"timestamp"`
-	SubmittedBy     string  `json:"submitted_by"`
-	TransactionID   string  `json:"transaction_id"`
-	TransactionHash string  `json:"transaction_hash"`
-	IpfsCID         string  `json:"ipfs_cid"`
-	University      string  `json:"university"`
-	Status          string  `json:"status"`
-	Note            string  `json:"note"`
-	Version         int     `json:"version"`
-	FinalizedBy     string  `json:"finalized_by,omitempty"`
-	FinalizedAt     string  `json:"finalized_at,omitempty"`
+	ID                string  `json:"id"`
+	StudentHash       string  `json:"student_hash"`
+	StudentID         string  `json:"student_id"`
+	StudentNo         string  `json:"student_no"`
+	StudentName       string  `json:"student_name"`
+	Section           string  `json:"section"`
+	YearLevel         string  `json:"year_level"`
+	Course            string  `json:"course"`
+	Program           string  `json:"program"`
+	SubjectCode       string  `json:"subject_code"`
+	SubjectTitle      string  `json:"subject_title"`
+	Units             float64 `json:"units,omitempty"`
+	Grade             string  `json:"grade"`
+	Semester          string  `json:"semester"`
+	SchoolYear        string  `json:"school_year"`
+	Term              string  `json:"term"`
+	FacultyID         string  `json:"faculty_id"`
+	ProfessorName     string  `json:"professor_name"`
+	Date              string  `json:"date"`
+	Timestamp         string  `json:"timestamp"`
+	SubmittedBy       string  `json:"submitted_by"`
+	TransactionID     string  `json:"transaction_id"`
+	TransactionHash   string  `json:"transaction_hash"`
+	IpfsCID           string  `json:"ipfs_cid"`
+	University        string  `json:"university"`
+	Status            string  `json:"status"`
+	Note              string  `json:"note"`
+	Version           int     `json:"version"`
+	FinalizedBy       string  `json:"finalized_by,omitempty"`
+	FinalizedAt       string  `json:"finalized_at,omitempty"`
+	AssignmentCycleID string  `json:"assignment_cycle_id,omitempty"`
 }
 
 type AuditRecord struct {
@@ -84,6 +85,15 @@ func roleMatchesMSP(mspID string, role string) bool {
 		(mspID == "DepartmentMSP" && (role == "department_admin" || role == "deptAdmin"))
 }
 
+func isDepartmentAdminIdentity(mspID string, role string) bool {
+	return mspID == "DepartmentMSP" && (role == "department_admin" || role == "deptAdmin")
+}
+
+func departmentScopeAllows(department string, hasDepartment bool, record AcademicRecord) bool {
+	return hasDepartment && (strings.EqualFold(strings.TrimSpace(department), strings.TrimSpace(record.Program)) ||
+		strings.EqualFold(strings.TrimSpace(department), strings.TrimSpace(record.Course)))
+}
+
 func authorizeGradeReader(stub shim.ChaincodeStubInterface) (string, *pb.Response) {
 	mspID, err := cid.GetMSPID(stub)
 	if err != nil {
@@ -107,8 +117,7 @@ func academicScopeAllows(stub shim.ChaincodeStubInterface, role string, record A
 		return true
 	}
 	department, hasDepartment := getSafeAttribute(stub, "academic.department")
-	if !hasDepartment || (!strings.EqualFold(strings.TrimSpace(department), strings.TrimSpace(record.Program)) &&
-		!strings.EqualFold(strings.TrimSpace(department), strings.TrimSpace(record.Course))) {
+	if !departmentScopeAllows(department, hasDepartment, record) {
 		return false
 	}
 	if role != "faculty" {
@@ -124,6 +133,32 @@ func academicScopeAllows(stub shim.ChaincodeStubInterface, role string, record A
 		}
 	}
 	return false
+}
+
+func transitionToDepartmentApproved(record *AcademicRecord) (bool, error) {
+	if record.Status == statusDepartmentApproved {
+		return false, nil
+	}
+	if record.Status != statusIssued && record.Status != statusCorrected {
+		return false, fmt.Errorf("invalid grade transition: only issued or corrected grades can be department-approved")
+	}
+	record.Status = statusDepartmentApproved
+	record.Version++
+	return true, nil
+}
+
+func transitionToFinalized(record *AcademicRecord, actor string, finalizedAt time.Time) (bool, error) {
+	if record.Status == statusFinalized {
+		return false, nil
+	}
+	if record.Status != statusDepartmentApproved {
+		return false, fmt.Errorf("invalid grade transition: Chairperson may finalize only department-approved grades")
+	}
+	record.Status = statusFinalized
+	record.FinalizedBy = actor
+	record.FinalizedAt = finalizedAt.Format(time.RFC3339Nano)
+	record.Version++
+	return true, nil
 }
 
 func getTransactionDate(stub shim.ChaincodeStubInterface) string {
@@ -581,7 +616,7 @@ func (cc *SmartContract) approveGrade(stub shim.ChaincodeStubInterface, args []s
 		return shim.Error("ABAC Denied: User role attribute not found.")
 	}
 
-	isDeptAdmin := mspID == "DepartmentMSP" && (role == "department_admin" || role == "deptAdmin")
+	isDeptAdmin := isDepartmentAdminIdentity(mspID, role)
 	if !isDeptAdmin {
 		return shim.Error("OBAC/ABAC Denied: Only an authorized Chairperson can approve grades.")
 	}
@@ -601,15 +636,13 @@ func (cc *SmartContract) approveGrade(stub shim.ChaincodeStubInterface, args []s
 	if isDeptAdmin && !academicScopeAllows(stub, role, record) {
 		return shim.Error("ABAC Denied: Grade is outside the Chairperson's authoritative department scope")
 	}
-	if record.Status == statusDepartmentApproved {
+	changed, transitionErr := transitionToDepartmentApproved(&record)
+	if transitionErr != nil {
+		return shim.Error(transitionErr.Error())
+	}
+	if !changed {
 		return shim.Success(recordJSON)
 	}
-	if record.Status != statusIssued && record.Status != statusCorrected {
-		return shim.Error("Invalid grade transition: only issued or corrected grades can be department-approved")
-	}
-
-	record.Status = statusDepartmentApproved
-	record.Version++
 	stampRecord(stub, &record, getClientCommonName(stub))
 	updatedJSON, _ := json.Marshal(record)
 	if err := stub.PutState(args[0], updatedJSON); err != nil {
@@ -631,7 +664,7 @@ func (cc *SmartContract) finalizeRecord(stub shim.ChaincodeStubInterface, args [
 		return shim.Error("ABAC Denied: User role attribute not found.")
 	}
 
-	isDeptAdmin := mspID == "DepartmentMSP" && (role == "department_admin" || role == "deptAdmin")
+	isDeptAdmin := isDepartmentAdminIdentity(mspID, role)
 
 	if !isDeptAdmin {
 		return shim.Error("OBAC/ABAC Denied: Only an authorized Chairperson can finalize records to the ledger.")
@@ -652,18 +685,15 @@ func (cc *SmartContract) finalizeRecord(stub shim.ChaincodeStubInterface, args [
 	if !academicScopeAllows(stub, role, record) {
 		return shim.Error("ABAC Denied: Grade is outside the Chairperson's authoritative department scope")
 	}
-	if record.Status == statusFinalized {
+	actor := getClientCommonName(stub)
+	changed, transitionErr := transitionToFinalized(&record, actor, getTransactionTime(stub))
+	if transitionErr != nil {
+		return shim.Error(transitionErr.Error())
+	}
+	if !changed {
 		return shim.Success(recordJSON)
 	}
-	if record.Status != statusDepartmentApproved {
-		return shim.Error("Invalid grade transition: Chairperson may finalize only department-approved grades")
-	}
-
-	record.Status = statusFinalized
-	record.FinalizedBy = getClientCommonName(stub)
-	record.FinalizedAt = getTransactionTime(stub).Format(time.RFC3339Nano)
-	record.Version++
-	stampRecord(stub, &record, getClientCommonName(stub))
+	stampRecord(stub, &record, actor)
 	updatedJSON, _ := json.Marshal(record)
 	if err := stub.PutState(args[0], updatedJSON); err != nil {
 		return shim.Error(fmt.Sprintf("Failed to update state database: %v", err))

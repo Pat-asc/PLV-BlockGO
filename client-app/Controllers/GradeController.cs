@@ -2691,7 +2691,7 @@ namespace BlockGo.Controllers
                     SELECT id, student_hash, student_no, student_name, section, course, subject_code, grade,
                            semester, school_year, faculty_id, date, ipfs_cid, note,
                            subject_title, professor_name, program, term, units, submitted_by, recorded_at,
-                           status
+                           status, assignment_cycle_id
                     FROM pending_grade_records WHERE id = @id", conn);
                 cmd.Parameters.AddWithValue("id", recordId);
                 
@@ -2724,6 +2724,7 @@ namespace BlockGo.Controllers
                             SubmittedBy = reader.IsDBNull(19) ? "" : reader.GetString(19),
                             Timestamp = reader.IsDBNull(20) ? "" : reader.GetFieldValue<DateTimeOffset>(20).ToString("O"),
                             Status = reader.IsDBNull(21) ? "" : reader.GetString(21),
+                            AssignmentCycleId = reader.IsDBNull(22) ? "" : reader.GetString(22),
                             University = "PLV",
                             Version = 1
                         };
