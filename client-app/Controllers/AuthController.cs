@@ -1887,7 +1887,26 @@ namespace Client_app.Controllers
                     });
             }
             var enrollmentPeriods = new List<object>();
-            var schoolYears = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { CurrentSchoolYear() };
+            string? activeSchoolYear = null;
+            string? activeSemester = null;
+            await using (var activePeriodCommand = new NpgsqlCommand(@"
+                SELECT school_year, semester
+                FROM academic_periods
+                WHERE status = 'ACTIVE'
+                ORDER BY opened_at DESC
+                LIMIT 1;", connection))
+            await using (var activePeriodReader = await activePeriodCommand.ExecuteReaderAsync())
+            {
+                if (await activePeriodReader.ReadAsync())
+                {
+                    activeSchoolYear = activePeriodReader.GetString(0);
+                    activeSemester = activePeriodReader.GetString(1);
+                }
+            }
+            var schoolYears = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                activeSchoolYear ?? CurrentSchoolYear()
+            };
             await using (var command = new NpgsqlCommand(@"
                 SELECT DISTINCT se.school_year, se.semester, se.year_level,
                        COALESCE(se.section, CONCAT(se.year_level, '-', s.section_num)),
@@ -1904,7 +1923,7 @@ namespace Client_app.Controllers
                 while (await reader.ReadAsync())
                 {
                     var semester = NormalizeEnrollmentSemester(reader.GetString(1));
-                    schoolYears.Add(reader.GetString(0));
+                    if (activeSchoolYear is null) schoolYears.Add(reader.GetString(0));
                     enrollmentPeriods.Add(new
                     {
                         schoolYear = reader.GetString(0), semester,
@@ -1922,11 +1941,28 @@ namespace Client_app.Controllers
                 FROM facultysections fs
                 JOIN users u ON u.id = fs.user_id
                 JOIN facultyprofiles fp ON fp.user_id = u.id
+                JOIN academicsections s ON s.id = fs.academic_section_id AND s.is_active = TRUE
+                JOIN academic_programs p
+                  ON LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name))
+                 AND p.is_active = TRUE
+                JOIN academic_periods ap
+                  ON ap.status = 'ACTIVE'
+                 AND ap.school_year = fs.school_year
+                 AND ap.semester = fs.semester
                 WHERE fs.is_active = TRUE
                   AND LOWER(u.role) = 'faculty'
                   AND LOWER(u.status) = 'approved'
                   AND u.is_active = TRUE
                   AND LOWER(fs.department) IN (LOWER(@programCode), LOWER(@programName))
+                  AND EXISTS (
+                      SELECT 1
+                      FROM curriculum_subjects cs
+                      JOIN curriculums c ON c.curriculum_id = cs.curriculum_id AND c.status = 'PUBLISHED'
+                      WHERE c.program_id = p.program_id
+                        AND cs.year_level = s.year_level
+                        AND cs.semester = fs.semester
+                        AND LOWER(cs.subject_code) = LOWER(fs.subject)
+                  )
                 ORDER BY fp.full_name, fs.section, fs.subject;", connection))
             {
                 command.Parameters.AddWithValue("programCode", programCode);
@@ -1935,7 +1971,8 @@ namespace Client_app.Controllers
                 while (await reader.ReadAsync())
                     assignments.Add(new
                     {
-                        id = reader.GetInt32(0), assignmentCycleId = reader.GetInt32(0).ToString(),
+                        id = reader.GetInt32(0), facultySectionId = reader.GetInt32(0),
+                        facultyAssignmentId = reader.GetInt32(0), assignmentCycleId = reader.GetInt32(0).ToString(),
                         facultyUserId = reader.GetInt32(1), facultyEmail = reader.GetString(2), facultyName = reader.GetString(3),
                         program = reader.GetString(4), sectionName = reader.GetString(5), yearLevel = reader.GetString(6),
                         subjectCode = reader.IsDBNull(7) ? "" : reader.GetString(7),
@@ -1949,6 +1986,7 @@ namespace Client_app.Controllers
             {
                 status = "Success", program = new { code = programCode, name = programName },
                 sections, subjects, enrollmentPeriods, assignments,
+                activeAcademicPeriod = activeSchoolYear is null ? null : new { schoolYear = activeSchoolYear, semester = activeSemester },
                 schoolYears = schoolYears.OrderByDescending(value => value),
                 semesterAliases = new Dictionary<string, string[]>
                 {
@@ -1997,6 +2035,8 @@ namespace Client_app.Controllers
                     assignment = new
                     {
                         id = saved.Id,
+                        facultySectionId = saved.Id,
+                        facultyAssignmentId = saved.Id,
                         assignmentCycleId = saved.AssignmentCycleId,
                         facultyId = saved.FacultyUserId,
                         department = saved.Program,
@@ -2109,6 +2149,8 @@ namespace Client_app.Controllers
                         assignment = new
                         {
                             id = saved.Id,
+                            facultySectionId = saved.Id,
+                            facultyAssignmentId = saved.Id,
                             assignmentCycleId = saved.AssignmentCycleId,
                             facultyUserId = saved.FacultyUserId,
                             facultyEmail = saved.FacultyEmail,
@@ -2579,12 +2621,28 @@ namespace Client_app.Controllers
                            COALESCE(fs.schedule, '')
                     FROM FacultySections fs 
                     JOIN Users u ON fs.user_id = u.id 
-                    LEFT JOIN academicsections s ON s.id = fs.academic_section_id
-                    LEFT JOIN academic_programs p
+                    JOIN academicsections s ON s.id = fs.academic_section_id AND s.is_active = TRUE
+                    JOIN academic_programs p
                       ON LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name))
-                    WHERE LOWER(u.email) = LOWER(@email) AND u.status = 'APPROVED'
+                     AND p.is_active = TRUE
+                    JOIN academic_periods ap
+                      ON ap.status = 'ACTIVE'
+                     AND ap.school_year = fs.school_year
+                     AND ap.semester = fs.semester
+                    WHERE LOWER(u.email) = LOWER(@email)
+                      AND LOWER(u.role) = 'faculty'
+                      AND LOWER(u.status) = 'approved'
+                      AND u.is_active = TRUE
                       AND fs.is_active = TRUE
-                      AND (fs.academic_section_id IS NULL OR s.is_active = TRUE)
+                      AND EXISTS (
+                          SELECT 1
+                          FROM curriculum_subjects cs
+                          JOIN curriculums c ON c.curriculum_id = cs.curriculum_id AND c.status = 'PUBLISHED'
+                          WHERE c.program_id = p.program_id
+                            AND cs.year_level = s.year_level
+                            AND cs.semester = fs.semester
+                            AND LOWER(cs.subject_code) = LOWER(fs.subject)
+                      )
                     ORDER BY fs.department, fs.year_level, fs.section", conn);
                 
                 cmd.Parameters.AddWithValue("email", email);
@@ -2595,6 +2653,7 @@ namespace Client_app.Controllers
                     sections.Add(new {
                         id = reader.GetInt32(8),
                         facultySectionId = reader.GetInt32(8),
+                        facultyAssignmentId = reader.GetInt32(8),
                         department = reader.GetString(0),
                         section = reader.GetString(1),
                         yearLevel = reader.IsDBNull(2) ? "N/A" : reader.GetString(2),

@@ -124,9 +124,12 @@ test("Clear Selection removes four pending rows and resets pending totals withou
 });
 
 test("Clear Selection is disabled when the selected faculty has only saved assignments", async () => {
-  localStorage.setItem("registrarAssignments", JSON.stringify([
-    savedAssignment(), savedAssignment({ id: 71, subjectCode: "GE 101" }),
-  ]));
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems and Technologies", yearLevel: 3, semester: "SECOND", units: 3 }],
+    sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
+    schoolYears: ["2026-2027"], enrollmentPeriods: [],
+    assignments: [savedAssignment(), savedAssignment({ id: 71, subjectCode: "GE 101" })],
+  });
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   await selectFaculty();
 
@@ -138,9 +141,12 @@ test("Clear Selection is disabled when the selected faculty has only saved assig
 });
 
 test("Clear Selection removes pending rows but preserves mixed saved rows", async () => {
-  localStorage.setItem("registrarAssignments", JSON.stringify([
-    savedAssignment(), savedAssignment({ id: 71, subjectCode: "GE 101" }),
-  ]));
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems and Technologies", yearLevel: 3, semester: "SECOND", units: 3 }],
+    sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
+    schoolYears: ["2026-2027"], enrollmentPeriods: [],
+    assignments: [savedAssignment(), savedAssignment({ id: 71, subjectCode: "GE 101" })],
+  });
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   await selectFaculty();
   stageAssignment();
@@ -285,5 +291,49 @@ test("hydrates a persisted server schedule after reload", async () => {
   fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
   expect(screen.getByLabelText("Schedule for BSIT 3-1")).toHaveValue("Tuesday");
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))[0]).toMatchObject({ id: 77, schedule: "Tuesday" });
+});
+
+test("authoritative empty assignments remove stale current-cycle browser rows", async () => {
+  localStorage.setItem("registrarAssignments", JSON.stringify([savedAssignment()]));
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await selectFaculty();
+
+  await waitFor(() => expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toEqual([]));
+  expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+  expect(screen.getByText("No assignments yet.")).toBeInTheDocument();
+});
+
+test("encoding-season refresh removes a previously active assignment without a page reload", async () => {
+  const activeResponse = {
+    program: { code: "BSIT", name: "Bachelor of Science in Information Technology" },
+    subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems", yearLevel: 3, semester: "SECOND", units: 3 }],
+    sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
+    schoolYears: ["2026-2027"], enrollmentPeriods: [], assignments: [savedAssignment()],
+  };
+  fetchFacultyAssignmentOptions.mockResolvedValueOnce(activeResponse).mockResolvedValueOnce({ ...activeResponse, assignments: [] });
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await selectFaculty();
+  expect(await screen.findByText("Saved")).toBeInTheDocument();
+
+  window.dispatchEvent(new CustomEvent("blockgo:academic-data-changed", { detail: { reason: "encoding_season_reset" } }));
+
+  await waitFor(() => expect(screen.queryByText("Saved")).not.toBeInTheDocument());
+  expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toEqual([]);
+});
+
+test("failed reset refresh preserves the last confirmed current assignment", async () => {
+  const activeResponse = {
+    program: { code: "BSIT", name: "Bachelor of Science in Information Technology" },
+    subjects: [], sections: [], schoolYears: ["2026-2027"], enrollmentPeriods: [], assignments: [savedAssignment()],
+  };
+  fetchFacultyAssignmentOptions.mockResolvedValueOnce(activeResponse).mockRejectedValueOnce(new Error("offline"));
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await selectFaculty();
+  expect(await screen.findByText("Saved")).toBeInTheDocument();
+
+  window.dispatchEvent(new CustomEvent("blockgo:academic-data-changed", { detail: { reason: "encoding_season_reset" } }));
+
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("could not be refreshed"));
+  expect(screen.getByText("Saved")).toBeInTheDocument();
 });
 

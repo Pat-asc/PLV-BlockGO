@@ -46,19 +46,6 @@ const parseTimestamp = (value) => {
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 };
-const buildFacultyAssignmentLookupKey = ({
-  program = "",
-  sectionName = "",
-  subjectCode = "",
-  yearLevel = "",
-} = {}) =>
-  [
-    normalizeText(program),
-    normalizeText(sectionName),
-    normalizeText(subjectCode),
-    normalizeText(yearLevel),
-  ].join("|");
-
 const STUDENT_STATUS_ACTIVE = "active";
 const RETURNED_SECTION_STATUSES = ["returned", "rejected"];
 const LOCKED_SECTION_STATUSES = ["submitted", "approved", "forwarded", "finalized"];
@@ -360,14 +347,9 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           return {};
         }
       })();
-      const savedAssignmentsBySection = new Map(
+      const savedAssignmentsByFacultySectionId = new Map(
         savedAssignments.map((assignment) => [
-          buildFacultyAssignmentLookupKey({
-            program: assignment.program,
-            sectionName: assignment.sectionName,
-            subjectCode: assignment.subjectCode,
-            yearLevel: assignment.yearLevel,
-          }),
+          String(getFacultySectionId(assignment)),
           assignment,
         ])
       );
@@ -516,21 +498,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       );
 
       actualSections.forEach(sec => {
-        const matchedAssignment =
-          savedAssignmentsBySection.get(
-            buildFacultyAssignmentLookupKey({
-              program: sec.department,
-              sectionName: sec.section,
-              subjectCode: sec.subject,
-              yearLevel: sec.yearLevel,
-            })
-          ) ||
-          savedAssignments.find((assignment) =>
-            normalizeText(assignment.program) === normalizeText(sec.department) &&
-            normalizeText(assignment.sectionName) === normalizeText(sec.section) &&
-            normalizeText(assignment.subjectCode) === normalizeText(sec.subject)
-          ) ||
-          null;
+        const matchedAssignment = savedAssignmentsByFacultySectionId.get(String(getFacultySectionId(sec))) || null;
         // actualSections is the authoritative backend assignment list. Local
         // timestamps only enrich display data and must never hide a newly
         // recreated server-side assignment after a reset.

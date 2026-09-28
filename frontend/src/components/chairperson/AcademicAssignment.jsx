@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import FacultyLoading, { DAY_OPTIONS } from "./FacultyLoading";
 import { fetchApprovedFaculties, fetchCurriculums, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend } from "../../services/api";
 import { pushAssignmentsSharedState } from "../../utils/sharedClientState";
+import { reconcileActiveAssignmentCache } from "../../utils/facultyAssignmentState";
 import "./SubjectAssignment.css";
 
-const read = (key) => { try { const value = JSON.parse(localStorage.getItem(key)); return Array.isArray(value) ? value : []; } catch { return []; } };
 const nameOf = (person) => person?.fullname || person?.fullName || person?.name || person?.email || "";
 const idOf = (person) => String(person?.id || person?.email || "");
 const years = ["1st Year", "2nd Year", "3rd Year", "4th Year"];
@@ -31,11 +31,32 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   const [subjectCode, setSubjectCode] = useState("");
   const [mode, setMode] = useState("manual");
   const [draft, setDraft] = useState([]);
-  const [saved, setSaved] = useState(() => read("registrarAssignments"));
+  const [saved, setSaved] = useState([]);
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
 
   const [schedules, setSchedules] = useState({});
+  const applyAssignmentOptions = useCallback((nextOptions) => {
+    setAssignmentOptions(nextOptions);
+    if (nextOptions.activeAcademicPeriod?.semester) {
+      setTerm(nextOptions.activeAcademicPeriod.semester);
+    }
+    const reconciled = reconcileActiveAssignmentCache(nextOptions, chairpersonDepartment);
+    setSaved(reconciled.assignments);
+    if (reconciled.changed) pushAssignmentsSharedState();
+  }, [chairpersonDepartment]);
+
+  const refreshAssignments = useCallback(async (confirmedAssignments = []) => {
+    const fetchedOptions = await fetchFacultyAssignmentOptions(chairpersonDepartment);
+    const nextOptions = fetchedOptions
+      ? { ...fetchedOptions, assignments: [...(fetchedOptions.assignments || [])] }
+      : { sections: [], subjects: [], enrollmentPeriods: [], schoolYears: [], assignments: [] };
+    const returnedIds = new Set((nextOptions.assignments || []).map((item) => String(item.id)));
+    const missingConfirmed = confirmedAssignments.filter((item) => !returnedIds.has(String(item.id)));
+    if (missingConfirmed.length) nextOptions.assignments = [...(nextOptions.assignments || []), ...missingConfirmed];
+    applyAssignmentOptions(nextOptions);
+  }, [applyAssignmentOptions, chairpersonDepartment]);
+
   useEffect(() => {
     let active = true;
     Promise.allSettled([fetchApprovedFaculties(), fetchCurriculums(), fetchFacultyAssignmentOptions(chairpersonDepartment)]).then(([people, courses, options]) => {
@@ -44,28 +65,18 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
       if (courses.status === "fulfilled") setCurricula(courses.value.data || []);
       if (options.status === "fulfilled") {
         const nextOptions = options.value || { sections: [], subjects: [], enrollmentPeriods: [], schoolYears: [], assignments: [] };
-        setAssignmentOptions(nextOptions);
-        const serverAssignments = (nextOptions.assignments || []).map((item) => ({
-          ...item,
-          facultyId: String(item.facultyUserId || item.facultyId || ""),
-          facultyName: item.facultyName || item.facultyEmail || "",
-          semesterCode: item.semester,
-          semester: terms[item.semester] || item.semester,
-          sectionName: item.sectionName || item.section,
-          units: String(item.units || 0),
-        }));
-        if (serverAssignments.length) {
-          const serverIds = new Set(serverAssignments.map((item) => String(item.id)));
-          const nextSaved = [...read("registrarAssignments").filter((item) => !serverIds.has(String(item.id))), ...serverAssignments];
-          localStorage.setItem("registrarAssignments", JSON.stringify(nextSaved));
-          setSaved(nextSaved);
-        }
+        applyAssignmentOptions(nextOptions);
       }
       if (people.status === "rejected" || courses.status === "rejected" || options.status === "rejected") setNotice("Some data could not be loaded. Refresh the page to retry.");
       setLoading(false);
     });
     return () => { active = false; };
-  }, [chairpersonDepartment]);
+  }, [applyAssignmentOptions, chairpersonDepartment]);
+  useEffect(() => {
+    const handleAcademicDataChanged = () => refreshAssignments().catch(() => setNotice("Current assignments could not be refreshed. Please try again."));
+    window.addEventListener("blockgo:academic-data-changed", handleAcademicDataChanged);
+    return () => window.removeEventListener("blockgo:academic-data-changed", handleAcademicDataChanged);
+  }, [refreshAssignments]);
   const availablePrograms = useMemo(() => {
     const candidates = [
       assignmentOptions.program,
@@ -100,6 +111,10 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   const availableSchoolYears = assignmentOptions.schoolYears?.length
     ? assignmentOptions.schoolYears
     : [...new Set((assignmentOptions.enrollmentPeriods || []).map((period) => period.schoolYear))];
+  const activeSemester = assignmentOptions.activeAcademicPeriod?.semester || "";
+  const semesterOptions = activeSemester && terms[activeSemester]
+    ? [[activeSemester, terms[activeSemester]]]
+    : Object.entries(terms);
   const allSections = (assignmentOptions.sections || []).flatMap((academicSection) =>
     availableSchoolYears.map((schoolYear) => ({
       academicSectionId: academicSection.id,
@@ -146,8 +161,6 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     if (!professorDraft.length || saving) return;
     setSaving(true); setNotice("");
     try {
-      const latest = read("registrarAssignments");
-      if (professorDraft.some((item) => latest.some((other) => identity(other) === identity(item)))) throw new Error("An assignment was added elsewhere. Reload before saving to avoid duplicates.");
       const pending = [...professorDraft];
       const results = await Promise.allSettled(pending.map((item) => assignFacultyLoadToBackend(item)));
       const successfulEntries = pending.flatMap((item, index) => {
@@ -164,11 +177,12 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
       const successful = successfulEntries.map((entry) => entry.saved);
       const successfulClientIds = new Set(successfulEntries.map((entry) => entry.clientId));
       if (successful.length > 0) {
-        const next = [...latest, ...successful];
+        const next = [...saved, ...successful];
         localStorage.setItem("registrarAssignments", JSON.stringify(next));
         setSaved(next);
         setDraft((current) => current.filter((item) => !successfulClientIds.has(item.id)));
         await pushAssignmentsSharedState();
+        await refreshAssignments(successful);
       }
       const failed = results.find((result) => result.status === "rejected");
       setNotice(failed ? `Some assignments were not saved: ${failed.reason?.message || "The server rejected the assignment."}` : "Assignments saved successfully.");
@@ -188,10 +202,10 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     
     {notice && <div className="sa-info" role="status">{notice}</div>}
     <section className="sa-card sa-lookup"><div><Heading title="Professor Lookup" /><div className="sa-search"><Icon type="search"/><input aria-label="Search professors" onFocus={() => setProfessorListOpen(true)} onClick={() => setProfessorListOpen(true)} placeholder="Search professor by name or faculty ID..." value={lookup} onChange={(event) => setLookup(event.target.value)}/><button aria-label="Clear professor search" onClick={() => setLookup("")}>×</button></div><div className="sa-professors">{(professorListOpen || lookup || !selectedProfessor) && (departmentFaculty.filter((person) => `${nameOf(person)} ${idOf(person)}`.toLowerCase().includes(lookup.toLowerCase())).map((person) => <button key={idOf(person)} onClick={() => selectProfessor(person)}>{nameOf(person)} <small>{idOf(person)}</small></button>))}{loading && <p>Loading professors…</p>}{!loading && !departmentFaculty.length && <p>No approved professors available.</p>}</div></div><div className="sa-professor"><span className="sa-avatar">{nameOf(selectedProfessor).split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("") || <Icon/>}</span><div><h3>{nameOf(selectedProfessor) || "Select a professor"}</h3><p>Faculty ID: &nbsp; {professor || "—"}</p><p>Department: &nbsp; {selectedProfessor?.department || selectedProfessor?.program || "—"}</p></div><div className="sa-badge"><Icon type="cap"/><div><strong>{totalUnits} units</strong><small>{rows.length} assignments</small></div></div></div></section>
-    <div className="sa-tabs" role="group" aria-label="Assignment method"><button className={mode === "manual" ? "active" : ""} aria-pressed={mode === "manual"} onClick={() => { setMode("manual"); setSaved(read("registrarAssignments")); }}><Icon type="cap"/>Manual Assignment</button><button className={mode === "bulk" ? "active" : ""} aria-pressed={mode === "bulk"} disabled={draft.length > 0} onClick={() => setMode("bulk")}><Icon type="upload"/>Bulk Assignment</button><span>{draft.length ? "Save or clear pending assignments before switching modes." : ""}</span></div>
+    <div className="sa-tabs" role="group" aria-label="Assignment method"><button className={mode === "manual" ? "active" : ""} aria-pressed={mode === "manual"} onClick={() => { setMode("manual"); refreshAssignments().catch(() => setNotice("Current assignments could not be refreshed. Please try again.")); }}><Icon type="cap"/>Manual Assignment</button><button className={mode === "bulk" ? "active" : ""} aria-pressed={mode === "bulk"} disabled={draft.length > 0} onClick={() => setMode("bulk")}><Icon type="upload"/>Bulk Assignment</button><span>{draft.length ? "Save or clear pending assignments before switching modes." : ""}</span></div>
     {mode === "bulk" ? <><label className="sa-program">Academic Program<select value={program} onChange={(event) => setProgram(event.target.value)}>{availablePrograms.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label><FacultyLoading key={program} chairpersonDepartment={programName} assignmentMode="bulk"/></> : <>
     {selectedProfessor && (<section className="sa-card sa-assigned"><div className="sa-assigned-header"><Heading icon="cap" title={`Assigned to ${nameOf(selectedProfessor) || "Selected Professor"}`} /><div className="sa-totals"><div><Icon type="book"/><span>Total Assignments<strong>{professorDraft.length}</strong></span></div><div><Icon type="cap"/><span>Total Units<strong>{pendingUnits}</strong></span></div></div></div><div className="sa-table-scroll"><table><thead><tr><th>Subject Code</th><th>Subject Title</th><th>Section</th><th>Units</th><th>Schedule</th><th>Action</th></tr></thead><tbody>{rows.map((item) => <tr key={`${item.assignmentState}-${item.id || identity(item)}`}><td>{item.subjectCode}</td><td>{item.subjectTitle}</td><td>{item.sectionName}</td><td>{item.units}</td><td>{[item.day, item.schedule].filter(Boolean).join(" ") || "Not set"}</td><td>{item.assignmentState === "pending" ? <button type="button" className="sa-remove" aria-label={`Remove ${item.subjectCode} ${item.sectionName}`} onClick={() => setDraft((current) => current.filter((row) => row.id !== item.id))}><Icon type="trash"/></button> : <span className="sa-saved">Saved</span>}</td></tr>)}{!rows.length && <tr><td colSpan="6" className="sa-empty">{selectedProfessor ? "No assignments yet." : "Choose a professor to see their assignments."}</td></tr>}</tbody></table></div><footer><button type="button" className="sa-clear" disabled={saving || !professorDraft.length} onClick={clearProfessorSelection}>♧ &nbsp; Clear Selection</button><span>{professorDraft.length > 0 ? `${professorDraft.length} pending assignment${professorDraft.length > 1 ? "s" : ""}` : savedRows.length > 0 ? `${savedRows.length} saved assignment${savedRows.length > 1 ? "s" : ""}` : ""}</span><button type="button" className="sa-save" disabled={!professorDraft.length || saving} onClick={save}><Icon type="save"/>{saving ? "Saving…" : "Save Assignments"}</button></footer></section>)}
-    <div className="sa-columns"><section className="sa-card"><Heading icon="book" title="Available Subjects" /><div className="sa-filters"><label>Academic Program<select value={program} onChange={(event) => { setProgram(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{availablePrograms.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label><label>Year Level<select value={year} onChange={(event) => { setYear(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{years.map((item) => <option key={item}>{item}</option>)}</select></label><label>Semester<select value={term} onChange={(event) => { setTerm(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{Object.entries(terms).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label>Section Filter<select aria-label="Section Filter" value={academicSectionFilter} onChange={(event) => setAcademicSectionFilter(event.target.value)}><option value="all">All Sections</option>{sectionFilterOptions.map((item) => <option key={item.academicSectionId} value={String(item.academicSectionId)}>{item.section}</option>)}</select></label></div><div className="sa-search"><Icon type="search"/><input aria-label="Search subjects" placeholder="Search subjects by code or title..." value={query} onChange={(event) => setQuery(event.target.value)}/></div><div className="sa-table-scroll"><table><thead><tr><th></th><th>Subject Code</th><th>Subject Title</th><th>Units</th></tr></thead><tbody>{visibleSubjects.map((item) => <tr key={item.subjectCode} className={subjectCode === item.subjectCode ? "selected" : ""}><td><input type="radio" name="subject" aria-label={`Select ${item.subjectCode}`} checked={subjectCode === item.subjectCode} onChange={() => setSubjectCode(item.subjectCode)}/></td><td><button className="sa-text-button" onClick={() => setSubjectCode(item.subjectCode)}>{item.subjectCode}</button></td><td>{item.subjectTitle}</td><td>{item.units}</td></tr>)}{!visibleSubjects.length && <tr><td colSpan="4" className="sa-empty">{loading ? "Loading subjects…" : !curriculum ? "No published curriculum for this program." : "No subjects match these filters."}</td></tr>}</tbody></table></div><p className="sa-footnote">Showing {visibleSubjects.length} of {subjects.length} subjects</p></section>
+    <div className="sa-columns"><section className="sa-card"><Heading icon="book" title="Available Subjects" /><div className="sa-filters"><label>Academic Program<select value={program} onChange={(event) => { setProgram(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{availablePrograms.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label><label>Year Level<select value={year} onChange={(event) => { setYear(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{years.map((item) => <option key={item}>{item}</option>)}</select></label><label>Semester<select value={term} disabled={!!activeSemester} onChange={(event) => { setTerm(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{semesterOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label>Section Filter<select aria-label="Section Filter" value={academicSectionFilter} onChange={(event) => setAcademicSectionFilter(event.target.value)}><option value="all">All Sections</option>{sectionFilterOptions.map((item) => <option key={item.academicSectionId} value={String(item.academicSectionId)}>{item.section}</option>)}</select></label></div><div className="sa-search"><Icon type="search"/><input aria-label="Search subjects" placeholder="Search subjects by code or title..." value={query} onChange={(event) => setQuery(event.target.value)}/></div><div className="sa-table-scroll"><table><thead><tr><th></th><th>Subject Code</th><th>Subject Title</th><th>Units</th></tr></thead><tbody>{visibleSubjects.map((item) => <tr key={item.subjectCode} className={subjectCode === item.subjectCode ? "selected" : ""}><td><input type="radio" name="subject" aria-label={`Select ${item.subjectCode}`} checked={subjectCode === item.subjectCode} onChange={() => setSubjectCode(item.subjectCode)}/></td><td><button className="sa-text-button" onClick={() => setSubjectCode(item.subjectCode)}>{item.subjectCode}</button></td><td>{item.subjectTitle}</td><td>{item.units}</td></tr>)}{!visibleSubjects.length && <tr><td colSpan="4" className="sa-empty">{loading ? "Loading subjects…" : !curriculum ? "No published curriculum for this program." : "No subjects match these filters."}</td></tr>}</tbody></table></div><p className="sa-footnote">Showing {visibleSubjects.length} of {subjects.length} subjects</p></section>
     <section className="sa-card"><Heading title={`Available Sections${subject ? ` for ${subject.subjectCode}` : ""}`} /><div className="sa-table-scroll"><table><thead><tr><th>Section</th><th>Year Level</th><th>Schedule</th><th>Action</th></tr></thead><tbody>{subject && sections.map((section, index) => { const scheduleKey = scheduleKeyFor(section); return <tr key={`${section.academicSectionId}-${section.schoolYear}`}><td className="sa-section-name">{section.section}<small>{section.schoolYear}</small></td><td>{section.yearLevel}</td><td><select className="sa-schedule" aria-label={`Schedule for ${section.section}`} value={schedules[scheduleKey] || ""} onChange={(event) => setSchedules({ ...schedules, [scheduleKey]: event.target.value })}><option value="">Choose day</option>{DAY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></td><td><button type="button" className="sa-assign" disabled={!selectedProfessor || saving} onClick={() => add(section, index)}>＋ Assign</button></td></tr>; })}{(!subject || !sections.length) && <tr><td colSpan="4" className="sa-empty">{!subject ? "No subject selected." : "No sections created for this program and year level."}</td></tr>}</tbody></table></div><div className="sa-info sa-selected"><span>ⓘ</span><div><strong>Selected Subject: {subject ? `${subject.subjectCode} – ${subject.subjectTitle}` : "None"}</strong></div></div></section></div>
 </>}
   </div>;

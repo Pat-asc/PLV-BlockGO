@@ -1,9 +1,7 @@
 import { showSystemNotification } from '../../services/NotificationContext';
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AVAILABLE_YEAR_LEVELS,
-  STUDENT_BATCHES_KEY,
-  getDefaultSectionName,
   parseCsvRows,
   parseStudentIdSpreadsheet,
 } from "../../utils/studentSectioningHelpers";
@@ -16,6 +14,7 @@ import {
 } from "../../services/api";
 import { downloadTemplateButtonClass } from "../shared/downloadButtonStyles";
 import { pushAssignmentsSharedState } from "../../utils/sharedClientState";
+import { reconcileActiveAssignmentCache } from "../../utils/facultyAssignmentState";
 
 const SEMESTER_OPTIONS = ["1st Semester", "2nd Semester", "Summer"];
 export const DAY_OPTIONS = [
@@ -103,118 +102,54 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
   const [assignmentOptions, setAssignmentOptions] = useState({ sections: [], subjects: [], schoolYears: [] });
   const [isBulkSaving, setIsBulkSaving] = useState(false);
 
-  const [savedAssignments, setSavedAssignments] = useState(() => {
-    const saved = localStorage.getItem("registrarAssignments");
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [savedAssignments, setSavedAssignments] = useState([]);
 
-  useEffect(() => {
-    const handleSharedStateChanged = (event) => {
-      const keys = event.detail?.keys || [];
-      if (!keys.includes("registrarAssignments")) return;
-
-      try {
-        const saved = localStorage.getItem("registrarAssignments");
-        setSavedAssignments(saved ? JSON.parse(saved) : []);
-      } catch (error) {
-        console.warn("Failed to refresh assignments from shared state.", error);
-      }
-    };
-
-    window.addEventListener(
-      "blockgo:shared-client-state-changed",
-      handleSharedStateChanged
-    );
-
-    return () =>
-      window.removeEventListener(
-        "blockgo:shared-client-state-changed",
-        handleSharedStateChanged
-      );
-  }, []);
+  const loadAssignmentOptions = useCallback(async (confirmedAssignments = []) => {
+    if (!chairpersonDepartment) return;
+    const fetchedResponse = await fetchFacultyAssignmentOptions(chairpersonDepartment);
+    const response = fetchedResponse
+      ? { ...fetchedResponse, assignments: [...(fetchedResponse.assignments || [])] }
+      : {};
+    const returnedIds = new Set((response.assignments || []).map((item) => String(item.id)));
+    const missingConfirmed = confirmedAssignments.filter((item) => !returnedIds.has(String(item.id)));
+    if (missingConfirmed.length) response.assignments = [...(response.assignments || []), ...missingConfirmed];
+    setAssignmentOptions({
+      ...response,
+      sections: response.sections || [],
+      subjects: response.subjects || [],
+      schoolYears: response.schoolYears || [],
+      assignments: response.assignments || [],
+    });
+    const reconciled = reconcileActiveAssignmentCache(response, chairpersonDepartment);
+    setSavedAssignments(reconciled.assignments);
+    if (reconciled.changed) await pushAssignmentsSharedState();
+  }, [chairpersonDepartment]);
 
   useEffect(() => {
     let active = true;
-    const loadAssignmentOptions = async () => {
-      if (!chairpersonDepartment) return;
-      try {
-        const response = await fetchFacultyAssignmentOptions(chairpersonDepartment);
-        if (active) {
-          setAssignmentOptions({
-            sections: response.sections || [],
-            subjects: response.subjects || [],
-            schoolYears: response.schoolYears || [],
-          });
-        }
-      } catch (error) {
-        if (active) setFacultyLoadingErrors([error.message || "Unable to load authoritative assignment options."]);
-      }
+    loadAssignmentOptions().catch((error) => {
+      if (active) setFacultyLoadingErrors([error.message || "Unable to load authoritative assignment options."]);
+    });
+    const handleAcademicDataChanged = () => loadAssignmentOptions().catch((error) =>
+      setFacultyLoadingErrors([error.message || "Unable to refresh current assignments."]));
+    window.addEventListener("blockgo:academic-data-changed", handleAcademicDataChanged);
+    return () => {
+      active = false;
+      window.removeEventListener("blockgo:academic-data-changed", handleAcademicDataChanged);
     };
-    loadAssignmentOptions();
-    return () => { active = false; };
-  }, [chairpersonDepartment]);
+  }, [loadAssignmentOptions]);
 
-  const studentSections =
-    JSON.parse(localStorage.getItem("studentSections")) || [];
-  const studentBatches =
-    JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY)) || [];
-
-  const createdSections = studentBatches
-    .filter((batch) => batch.status !== "Promoted")
-    .flatMap((batch) =>
-      (batch.sectionPlans || []).map((section) => {
-        const sectionName =
-          section.sectionName ||
-          getDefaultSectionName(batch.program, section.sectionCode);
-        const yearLevel = section.yearLevel || "";
-
-        return {
-          key: [
-            batch.program,
-            yearLevel,
-            sectionName,
-            batch.batchYear,
-            batch.semester || "",
-          ].join("|"),
-          program: batch.program,
-          yearLevel,
-          section: sectionName,
-          schoolYear: batch.batchYear,
-          semester: batch.semester || "",
-          students: (batch.students || [])
-            .filter(
-              (student) =>
-                student.sectionCode === section.sectionCode &&
-                (student.yearLevel || yearLevel) === yearLevel
-            )
-            .map((student) => ({
-              studentId: student.studentId,
-              sex: student.sex || "",
-              firstName: student.firstName || "",
-              lastName: student.lastName || "",
-              middleInitial: student.middleInitial || "",
-              studentType: student.studentType || "Regular",
-              remarks: student.remarks || "",
-              repeatedSubjects: student.repeatedSubjects || "",
-              irregularSubjects: student.irregularSubjects || [],
-            })),
-        };
-      })
-    );
-  const sectionOptions = [
-    ...studentSections,
-    ...createdSections.filter(
-      (createdSection) =>
-        !studentSections.some(
-          (section) =>
-            section.program === createdSection.program &&
-            section.yearLevel === createdSection.yearLevel &&
-            section.section === createdSection.section &&
-            section.schoolYear === createdSection.schoolYear &&
-            (section.semester || "") === (createdSection.semester || "")
-        )
-    ),
-  ];
+  const sectionOptions = (assignmentOptions.sections || []).flatMap((section) =>
+    (assignmentOptions.schoolYears || []).map((schoolYear) => ({
+      academicSectionId: section.id,
+      program: section.department,
+      yearLevel: `${section.yearLevel}${Number(section.yearLevel) === 1 ? "st" : Number(section.yearLevel) === 2 ? "nd" : Number(section.yearLevel) === 3 ? "rd" : "th"} Year`,
+      section: `${section.programCode} ${section.section}`,
+      schoolYear,
+      semester: "",
+      students: [],
+    }))
+  );
 
   const selectedProgram = chairpersonDepartment;
 
@@ -323,6 +258,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
         facultyEmail: selectedFaculty.email,
         facultyName: getFacultyDisplayName(selectedFaculty),
         program: selectedProgram,
+        academicSectionId: selectedSection.academicSectionId,
         sectionName: selectedSection.section,
         yearLevel: selectedSection.yearLevel,
         subjectCode: subjectCode.trim(),
@@ -349,6 +285,9 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       const savedAssignment = {
         ...newAssignment,
         id: serverResult.assignment?.id,
+        facultySectionId: serverResult.assignment?.id,
+        facultyAssignmentId: serverResult.assignment?.id,
+        assignmentCycleId: serverResult.assignment?.assignmentCycleId || String(serverResult.assignment?.id || ""),
         academicSectionId: serverResult.assignment?.academicSectionId,
       };
       const updatedAssignments = [...savedAssignments, savedAssignment];
@@ -357,7 +296,8 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
         "registrarAssignments",
         JSON.stringify(updatedAssignments)
       );
-      pushAssignmentsSharedState();
+      await pushAssignmentsSharedState();
+      await loadAssignmentOptions([savedAssignment]);
       showSystemNotification("Section distributed to faculty successfully.");
       resetForm();
     };
@@ -706,6 +646,8 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
         importedAssignments.push({
           ...item,
           id: result.assignment.id,
+          facultySectionId: result.assignment.id,
+          facultyAssignmentId: result.assignment.id,
           assignmentCycleId: result.assignment.assignmentCycleId,
           facultyId: result.assignment.facultyUserId,
           facultyUserId: result.assignment.facultyUserId,
@@ -732,6 +674,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
         setSavedAssignments(updatedAssignments);
         localStorage.setItem("registrarAssignments", JSON.stringify(updatedAssignments));
         await pushAssignmentsSharedState();
+        await loadAssignmentOptions(importedAssignments);
       }
 
       setFacultyLoadingPreview(failedAssignments);
@@ -776,7 +719,8 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       "registrarAssignments",
       JSON.stringify(updatedAssignments)
     );
-    pushAssignmentsSharedState();
+    await pushAssignmentsSharedState();
+    await loadAssignmentOptions();
   };
 
   const assignmentRows = useMemo(

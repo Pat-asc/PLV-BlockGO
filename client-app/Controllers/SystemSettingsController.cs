@@ -236,7 +236,8 @@ namespace Client_app.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { status = "Error", message = $"Failed to reset season: {ex.Message}" });
+                _logger.LogError(ex, "Encoding season reset failed for {User}", User.Identity?.Name ?? "unknown");
+                return StatusCode(500, new { status = "Error", message = "Encoding season could not be reset. Current faculty assignments were not changed." });
             }
         }
     }

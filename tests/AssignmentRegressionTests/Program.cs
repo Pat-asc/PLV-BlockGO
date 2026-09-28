@@ -146,7 +146,7 @@ Check(fullCoverage == (0, 0) && incompleteCoverage == (1, 1), "Roster coverage c
 Pass(42, "submit-to-Chairperson roster coverage");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=103;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -366,7 +366,12 @@ var currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedReco
 var currentFinalizedIds=await ChairpersonReviewScopeService.GetCurrentFinalizedRecordIdsAsync(db,"FIRST");
 Check(currentReviewIds.SetEquals(new[]{"current-review"}) && currentFinalizedIds.SetEquals(new[]{"current-finalized"}),
     "Current Chairperson tracking mixed active and historical assignment cycles."); Pass(54,"Chairperson review and Finalized tracking contain only active-cycle records");
-await Exec("UPDATE facultysections SET is_active=FALSE WHERE is_active=TRUE");
+var assignmentHistoryCountBeforeReset=await Count("SELECT COUNT(*) FROM facultysections");
+await Exec("UPDATE facultysections SET is_active=FALSE,deactivated_at=CURRENT_TIMESTAMP,deactivated_by='registrar@plv.edu.ph' WHERE is_active=TRUE");
+Check(await Count("SELECT COUNT(*) FROM facultysections WHERE is_active=TRUE")==0 &&
+      await Count("SELECT COUNT(*) FROM facultysections WHERE deactivated_at IS NOT NULL AND deactivated_by='registrar@plv.edu.ph'")>0 &&
+      await Count("SELECT COUNT(*) FROM facultysections")==assignmentHistoryCountBeforeReset,
+    "Reset did not deactivate assignments with audit metadata or deleted assignment history."); Pass(104,"reset deactivates assignments and preserves assignment history");
 currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
 currentFinalizedIds=await ChairpersonReviewScopeService.GetCurrentFinalizedRecordIdsAsync(db,"FIRST");
 Check(currentReviewIds.Count==0 && currentFinalizedIds.Count==0,"Reset left old submissions or finalized rows in current tracking."); Pass(55,"reset empties current For Review and Finalized tracking");
@@ -376,6 +381,9 @@ Check((await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"final
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review','final')")==3,
     "Reset deleted historical or finalized grades."); Pass(56,"reset preserves submitted and finalized history");
 await Exec("INSERT INTO facultysections VALUES(106,1,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL,NULL); INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term) VALUES('new-review','106','26-0001','SubmittedToChairperson','{}','IT 101','2026-2027','FIRST','finals')");
+Check(await Count("SELECT COUNT(*) FROM facultysections WHERE id=106 AND is_active=TRUE")==1 &&
+      await Count("SELECT COUNT(*) FROM facultysections WHERE id<>106 AND academic_section_id=1 AND subject='IT 101' AND is_active=FALSE")>0,
+    "An inactive prior assignment blocked the same exact assignment in the new cycle."); Pass(105,"inactive prior assignment does not block a new cycle");
 currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
 Check(currentReviewIds.SetEquals(new[]{"new-review"}) && await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review')")==2,
     "New cycle did not isolate its submission from preserved old cycles."); Pass(57,"new-cycle submission is the only current review record");
