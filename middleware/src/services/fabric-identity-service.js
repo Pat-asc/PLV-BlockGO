@@ -39,6 +39,60 @@ async function forceUpdateAndEnroll(username, password, role, academicScope = {}
     return enrollIdentity(username, password, role);
 }
 
+async function refreshExistingIdentity(username, role, academicScope = {}) {
+    const normalized = normalizeAuthRole(role);
+    const config = await ensureAdminEnrolled(normalized);
+    const wallet = await getWallet(config.role);
+    const existing = await wallet.get(username);
+
+    if (!existing) {
+        throw new Error(`Fabric identity '${username}' is missing from the ${normalized} wallet.`);
+    }
+
+    if (existing.type !== 'X.509' || existing.mspId !== config.mspId) {
+        throw new Error(`Fabric identity '${username}' has an unexpected MSP or identity type; refusing automatic refresh.`);
+    }
+
+    const registrar = await adminUser(config, wallet);
+    const payload = registrationPayload(username, '', normalized, academicScope);
+
+    // Update CA-side authorization attributes without changing the
+    // existing user's enrollment secret.
+    await config.client.newIdentityService().update(username, {
+        type: payload.role,
+        max_enrollments: -1,
+        attrs: payload.attrs
+    }, registrar);
+
+    // Authenticate the refresh with the existing Fabric certificate/key.
+    // This avoids assuming that the application password is also the
+    // Fabric CA enrollment secret.
+    const provider = wallet.getProviderRegistry().getProvider(existing.type);
+    const currentUser = await provider.getUserContext(existing, username);
+
+    const attrReqs = payload.attrs.map(({ name }) => ({
+        name,
+        optional: false
+    }));
+
+    const reenrollment = await config.client.reenroll(currentUser, attrReqs);
+
+    await wallet.put(username, {
+        credentials: {
+            certificate: reenrollment.certificate,
+            privateKey: reenrollment.key.toBytes()
+        },
+        mspId: config.mspId,
+        type: 'X.509'
+    });
+
+    return {
+        wallet,
+        identity: await wallet.get(username),
+        config
+    };
+}
+
 async function authoritativeAcademicScope(username, role) {
     const normalized = normalizeAuthRole(role);
     if (normalized === 'faculty') {
@@ -64,9 +118,8 @@ async function ensureIdentity(username, password, role) {
     const existing = await wallet.get(username);
     if (existing) {
         if (normalized === 'faculty' || normalized === 'department_admin') {
-            const refreshed = await forceUpdateAndEnroll(
+            const refreshed = await refreshExistingIdentity(
                 username,
-                password,
                 normalized,
                 academicScope
             );
