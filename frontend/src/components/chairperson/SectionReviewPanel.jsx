@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   computeGradeStatus,
   getReviewStatusClasses,
@@ -24,9 +24,36 @@ function SectionReviewPanel({
   onViewIpfs,
 }) {
   const [draftNotes, setDraftNotes] = useState({});
+  const [finalizeConfirmationOpen, setFinalizeConfirmationOpen] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState("");
+  const finalizeInFlightRef = useRef(false);
   const note = selectedSection
     ? draftNotes[selectedSection.reviewKey] ?? selectedSection.reviewNote ?? ""
     : "";
+
+  useEffect(() => {
+    setFinalizeConfirmationOpen(false);
+    setFinalizeError("");
+    finalizeInFlightRef.current = false;
+    setIsFinalizing(false);
+  }, [selectedSection?.reviewKey]);
+
+  const confirmFinalize = async () => {
+    if (finalizeInFlightRef.current) return;
+    finalizeInFlightRef.current = true;
+    setIsFinalizing(true);
+    setFinalizeError("");
+    try {
+      await onFinalize(note);
+      setFinalizeConfirmationOpen(false);
+    } catch (error) {
+      setFinalizeError(error?.message || "Finalization could not be completed. Please try again.");
+    } finally {
+      finalizeInFlightRef.current = false;
+      setIsFinalizing(false);
+    }
+  };
 
   const rows = useMemo(() => {
     if (!selectedSection) return [];
@@ -306,14 +333,67 @@ function SectionReviewPanel({
             Approve Section
           </button>
           <button
-            onClick={() => onFinalize(note)}
-            disabled={selectedSection.reviewStatus !== "approved"}
+            onClick={() => {
+              setFinalizeError("");
+              setFinalizeConfirmationOpen(true);
+            }}
+            disabled={selectedSection.reviewStatus !== "approved" || isFinalizing}
             className="rounded-xl bg-[#003366] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#00264d] disabled:cursor-not-allowed disabled:bg-slate-300"
           >
-            Finalize Grades
+            {isFinalizing ? "Finalizingâ€¦" : "Finalize Grades"}
           </button>
         </div>
       </div>
+
+      {finalizeConfirmationOpen && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/50 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isFinalizing) {
+              setFinalizeConfirmationOpen(false);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="finalize-grades-title"
+            aria-describedby="finalize-grades-description"
+            className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"
+          >
+            <h3 id="finalize-grades-title" className="text-xl font-bold text-[#003366]">
+              Finalize section grades?
+            </h3>
+            <p id="finalize-grades-description" className="mt-3 text-sm leading-6 text-slate-600">
+              Are you sure you want to finalize these grades? Once finalized, they will become visible to the student and available to the Registrar.
+            </p>
+            {finalizeError && (
+              <p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+                {finalizeError}
+              </p>
+            )}
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setFinalizeConfirmationOpen(false)}
+                disabled={isFinalizing}
+                className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmFinalize}
+                disabled={isFinalizing}
+                className="rounded-xl bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+              >
+                {isFinalizing ? "Finalizingâ€¦" : "Finalize Grades"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h3 className="text-lg font-bold text-[#003366]">Decision Log</h3>

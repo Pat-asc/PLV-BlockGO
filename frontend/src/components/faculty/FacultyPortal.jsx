@@ -5,7 +5,7 @@ import FacultyHeader from './FacultyHeader';
 import YearTabs from './YearTabs';
 import ProgramCard from './ProgramCard';
 import FacultyCurriculumPanel from './FacultyCurriculumPanel';
-import { getGradeEquivalent } from '../../utils/gradingHelpers';
+import { calculateFinalAverage, getGradeEquivalent } from '../../utils/gradingHelpers';
 import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from '../../utils/studentAcademicHelpers';
 
 const normalizeYearLabel = (value) => {
@@ -176,21 +176,8 @@ const hasEncodedGradeForTerm = (student = {}, term = "midterm") =>
     ? hasEncodedGrade(student.finals)
     : hasEncodedGrade(student.midterm);
 
-const computeFinalAverage = (student = {}) => {
-  if (!hasEncodedGrade(student.midterm) || !hasEncodedGrade(student.finals)) {
-    return null;
-  }
-
-  const mid = Number(student.midterm);
-  const fin = Number(student.finals);
-
-  if (Number.isNaN(mid) || Number.isNaN(fin)) return null;
-
-  return (mid + fin) / 2;
-};
-
 const getAcademicStatus = (student = {}) => {
-  const finalAverage = computeFinalAverage(student);
+  const finalAverage = calculateFinalAverage(student);
   if (finalAverage === null) return "-";
   return finalAverage >= 75 ? "Passed" : "Failed";
 };
@@ -653,7 +640,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           canonicalSection: sec.canonicalSection || matchedAssignment?.sectionName || sec.section || sectionKey,
           academicSectionId: sec.academicSectionId || null,
           units: matchedAssignment?.units || "Not Available",
-          schedule: getOptionalAssignmentValue(matchedAssignment?.schedule),
+          schedule: getOptionalAssignmentValue(sec.schedule || matchedAssignment?.schedule),
           day: getOptionalAssignmentValue(matchedAssignment?.day),
           date: getOptionalAssignmentValue(matchedAssignment?.date),
           schoolYear: sec.schoolYear || "Not Available",
@@ -819,18 +806,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
   const formatDate = (date) =>
     date ? date.toLocaleDateString('en-US', { month: 'long', day: '2-digit', year: 'numeric' }) : 'not set';
-
-  const calculateFinalAverage = (stu) => {
-    if (!hasEncodedGrade(stu.midterm) || !hasEncodedGrade(stu.finals)) {
-      return null;
-    }
-
-    const mid = Number(stu.midterm);
-    const fin = Number(stu.finals);
-
-    if (Number.isNaN(mid) || Number.isNaN(fin)) return null;
-    return (mid + fin) / 2;
-  };
 
   const validateGrade = (value) => {
     const num = parseFloat(value);
@@ -1362,7 +1337,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                       <input
                         type="file"
                         aria-label="Bulk upload grades workbook"
-                        accept=".csv,text/csv"
+                        accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                         onChange={(e) => handleFileUpload(activeSection, e)}
                         disabled={uploadingSection === activeSection || isClosed}

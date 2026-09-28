@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import DeptAdminGradesView from './DeptAdminGradesView';
 import {
   fetchAllGrades, fetchApprovedFaculties, fetchDepartmentSections,
-  fetchFacultySections, getSystemSetting,
+  fetchFacultySections, finalizeGrade, getSystemSetting,
 } from '../../services/api';
 
 jest.mock('../../services/NotificationContext', () => ({
@@ -14,13 +14,22 @@ jest.mock('./ChairpersonOverview', () => () => null);
 jest.mock('./CurriculumBuilder', () => () => null);
 jest.mock('./StudentSectioning', () => () => null);
 jest.mock('./AcademicAssignment', () => () => null);
-jest.mock('../faculty/FacultyStatusTable', () => ({ rows = [] }) => (
-  <div data-testid="review-rows">{rows.length}</div>
+jest.mock('../faculty/FacultyStatusTable', () => ({ rows = [], viewMode, loadError, onSelectSection }) => (
+  <div data-testid="review-rows">
+    {viewMode}:{rows.length}:{rows.map((row) => row.reviewStatus).join(',')}:{loadError}
+    {rows[0] && <button type="button" onClick={() => onSelectSection(rows[0])}>Select first section</button>}
+  </div>
 ));
-jest.mock('./SectionReviewPanel', () => () => null);
+jest.mock('./SectionReviewPanel', () => ({ onFinalize }) => (
+  <button type="button" onClick={() => onFinalize('').catch(() => {})}>Finalize selected section</button>
+));
 jest.mock('../../services/Modal', () => () => null);
 jest.mock('./ChairpersonSidebar', () => ({ setActiveTab }) => (
-  <button type="button" onClick={() => setActiveTab('forReview')}>For Review</button>
+  <div>
+    <button type="button" onClick={() => setActiveTab('forReview')}>For Review</button>
+    <button type="button" onClick={() => setActiveTab('approved')}>Approved</button>
+    <button type="button" onClick={() => setActiveTab('forwarded')}>Finalized</button>
+  </div>
 ));
 jest.mock('../../services/api', () => ({
   fetchAllGrades: jest.fn(), approveGrade: jest.fn(), finalizeGrade: jest.fn(), returnGrade: jest.fn(),
@@ -54,7 +63,7 @@ test('encoding-season reset clears and refetches Chairperson For Review without 
 
   render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
   fireEvent.click(screen.getByRole('button', { name: 'For Review' }));
-  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('1'));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:1'));
 
   fireEvent(window, new CustomEvent('blockgo:system-setting-changed', { detail: {
     key: 'encoding_period',
@@ -62,5 +71,69 @@ test('encoding-season reset clears and refetches Chairperson For Review without 
   } }));
 
   await waitFor(() => expect(fetchAllGrades).toHaveBeenCalledTimes(2));
-  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('0'));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:0'));
+});
+
+test('DepartmentApproved remains in Approved until ledger finalization succeeds', async () => {
+  fetchAllGrades.mockResolvedValue({ data: [{
+    id: 'approved-grade', assignment_cycle_id: '41', student_no: '26-0001',
+    student_name: 'Student', faculty_id: 'faculty@plv.edu.ph', department: 'BSIT',
+    course: 'BSIT', record_section: 'BSIT 1-1', section: 'BSIT 1-1', subject_code: 'IT 101',
+    school_year: '2026-2027', semester: 'FIRST', status: 'DepartmentApproved',
+    grade: JSON.stringify({ midterm: 85 }),
+  }] });
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Approved' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved'));
+  fireEvent.click(screen.getByRole('button', { name: 'Finalized' }));
+  expect(screen.getByTestId('review-rows')).toHaveTextContent('forwarded:0');
+});
+
+test('a Finalized record leaves For Review and remains in current Finalized tracking', async () => {
+  fetchAllGrades.mockResolvedValue({ data: [{
+    id: 'finalized-grade', assignment_cycle_id: '41', student_no: '26-0001',
+    student_name: 'Student', faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT',
+    record_section: 'BSIT 1-1', section: 'BSIT 1-1', subject_code: 'IT 101',
+    school_year: '2026-2027', semester: 'FIRST', term: 'midterm', status: 'Finalized',
+    finalized_at: '2026-09-28T10:00:00Z', finalized_by: 'chair@plv.edu.ph',
+    grade: JSON.stringify({ midterm: 85 }),
+  }] });
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'For Review' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:0'));
+  fireEvent.click(screen.getByRole('button', { name: 'Finalized' }));
+  expect(screen.getByTestId('review-rows')).toHaveTextContent('forwarded:1:forwarded');
+});
+
+test('Finalized tracking reports load failure instead of a false empty state', async () => {
+  const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+  fetchAllGrades.mockRejectedValue(new Error('service unavailable'));
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Finalized' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('Unable to load finalized grades'));
+  consoleError.mockRestore();
+});
+
+test('finalization API failure reconciles and leaves the approved record available', async () => {
+  const approvedRecord = {
+    id: 'approved-grade', assignment_cycle_id: '41', student_no: '26-0001', student_name: 'Student',
+    faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT', record_section: 'BSIT 1-1',
+    section: 'BSIT 1-1', subject_code: 'IT 101', school_year: '2026-2027', semester: 'FIRST',
+    status: 'DepartmentApproved', grade: JSON.stringify({ midterm: 85 }),
+  };
+  fetchAllGrades.mockResolvedValue({ data: [approvedRecord] });
+  finalizeGrade.mockRejectedValue(new Error('Ledger unavailable.'));
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Approved' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Finalize selected section' }));
+
+  await waitFor(() => expect(finalizeGrade).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(fetchAllGrades.mock.calls.length).toBeGreaterThan(1));
+  expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved');
 });

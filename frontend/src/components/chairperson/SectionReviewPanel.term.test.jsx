@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import SectionReviewPanel from './SectionReviewPanel';
 
 const section = {
@@ -47,4 +47,51 @@ test('finals review renders preserved Midterm and active Finals values', () => {
   expect(screen.getByRole('columnheader', { name: 'Final Grade' })).toBeInTheDocument();
   expect(screen.getByText('85')).toBeInTheDocument();
   expect(screen.getByText('90')).toBeInTheDocument();
+});
+
+test('finalization requires confirmation and cancel makes no request', () => {
+  const onFinalize = jest.fn();
+  render(<SectionReviewPanel {...{
+    selectedSection: { ...section, reviewStatus: 'approved' }, activeTerm: 'finals',
+    onSendBack: jest.fn(), onApprove: jest.fn(), onFinalize, onViewIpfs: jest.fn(),
+  }} />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Finalize Grades' }));
+  expect(screen.getByRole('dialog', { name: 'Finalize section grades?' })).toBeInTheDocument();
+  expect(onFinalize).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(onFinalize).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+test('confirmation calls finalization exactly once and disables repeat submission while busy', async () => {
+  let resolveFinalize;
+  const onFinalize = jest.fn(() => new Promise((resolve) => { resolveFinalize = resolve; }));
+  render(<SectionReviewPanel {...{
+    selectedSection: { ...section, reviewStatus: 'approved' }, activeTerm: 'finals',
+    onSendBack: jest.fn(), onApprove: jest.fn(), onFinalize, onViewIpfs: jest.fn(),
+  }} />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Finalize Grades' }));
+  const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Finalize Grades' });
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+  expect(onFinalize).toHaveBeenCalledTimes(1);
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: /Finalizing/ })).toBeDisabled();
+
+  resolveFinalize();
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+});
+
+test('failed finalization remains retryable and shows a safe error', async () => {
+  const onFinalize = jest.fn().mockRejectedValueOnce(new Error('Ledger verification failed.'));
+  render(<SectionReviewPanel {...{
+    selectedSection: { ...section, reviewStatus: 'approved' }, activeTerm: 'finals',
+    onSendBack: jest.fn(), onApprove: jest.fn(), onFinalize, onViewIpfs: jest.fn(),
+  }} />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Finalize Grades' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Finalize Grades' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Ledger verification failed.');
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Finalize Grades' })).toBeEnabled();
 });

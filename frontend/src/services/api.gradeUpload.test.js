@@ -64,6 +64,20 @@ test('finals bulk upload sends the canonical term with the complete multipart id
   expect(options.body.get('section')).toBe('BSIT 1-1');
 });
 
+test('bulk grade upload accepts XLSX and preserves canonical Finals context', async () => {
+  const workbook = new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1])], 'finals.xlsx', {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  await batchUploadGrades(workbook, {
+    facultySectionId: 77, academicSectionId: 12, subjectCode: 'IT 101',
+    section: 'BSIT 1-1', schoolYear: '2026-2027', semester: 'FIRST', term: 'finals',
+  });
+
+  const [, options] = global.fetch.mock.calls[0];
+  expect(options.body.get('file')).toBe(workbook);
+  expect(options.body.get('term')).toBe('finals');
+});
+
 test('draft overwrite confirmation is explicit in multipart data', async () => {
   await batchUploadGrades(new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', { type: 'text/csv' }), {
     facultySectionId: 77, academicSectionId: 12, subjectCode: 'IT 101',

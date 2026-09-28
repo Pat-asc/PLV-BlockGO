@@ -1,4 +1,4 @@
-import { MAX_CSV_FILE_BYTES, validateCsvUpload } from './csvUploadValidation';
+import { MAX_CSV_FILE_BYTES, validateCsvUpload, validateGradeUpload } from './csvUploadValidation';
 
 const csv = (content = 'Student ID,Name\n26-0001,Adrian', name = 'students.csv', type = 'text/csv') =>
   new File([content], name, { type });
@@ -20,4 +20,10 @@ test('rejects non-CSV extensions and declared types', async () => {
 test('rejects executable, ZIP/XLSX, PDF, and malformed text renamed to CSV', async () => {
   expect(await validateCsvUpload(csv(new Uint8Array([0x4d, 0x5a, 0, 0]), 'renamed.csv', 'application/octet-stream'))).toMatch(/valid CSV text/);
   expect(await validateCsvUpload(csv('not a delimited header', 'renamed.csv', 'text/plain'))).toMatch(/header row/);
+});
+
+test('grade uploads accept a signed XLSX workbook and reject a renamed non-workbook', async () => {
+  const type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  expect(await validateGradeUpload(new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1])], 'grades.xlsx', { type }))).toBe('');
+  expect(await validateGradeUpload(new File(['plain text'], 'grades.xlsx', { type }))).toMatch(/valid XLSX workbook/);
 });

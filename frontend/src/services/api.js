@@ -1,5 +1,5 @@
 import { expireAuthSession, getAuthToken } from './authSession';
-import { assertValidCsvUpload } from '../utils/csvUploadValidation';
+import { assertValidCsvUpload, assertValidGradeUpload } from '../utils/csvUploadValidation';
 
 const getBaseUrl = (endpoint) => {
     if (process.env.REACT_APP_API_BASE_URL) {
@@ -347,7 +347,7 @@ export const batchIssueGradeToBlockchain = async (grades = []) => {
 };
 
 export const batchUploadGrades = async (file, context = {}) => {
-    await assertValidCsvUpload(file);
+    await assertValidGradeUpload(file);
     const {
         semester = '', schoolYear = '', course = '', facultyId = '', term = '', section = '',
         facultySectionId, academicSectionId, subjectCode = '', confirmOverwrite = false,
@@ -592,6 +592,7 @@ export const assignFacultyLoadToBackend = async (assignmentData) => {
         Subject: assignmentData.subjectCode || assignmentData.subject || '',
         SchoolYear: assignmentData.schoolYear || '',
         Semester: assignmentData.semesterCode || assignmentData.semester || '',
+        Schedule: [assignmentData.day, assignmentData.schedule].filter(Boolean).join(' | '),
     });
 };
 
@@ -606,6 +607,7 @@ export const bulkAssignFacultyLoads = async (assignments) => {
                 academicSectionId: Number(assignment.academicSectionId),
                 schoolYear: assignment.schoolYear || '',
                 semester: assignment.semesterCode || assignment.semester || '',
+                schedule: [assignment.day, assignment.schedule].filter(Boolean).join(' | '),
             })),
         }),
     });

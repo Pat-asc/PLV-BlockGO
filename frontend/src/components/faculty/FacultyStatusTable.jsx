@@ -84,6 +84,17 @@ const getWorkflowState = (sections = []) => {
   return "submitted";
 };
 
+const getAcademicSectionIdentity = (section = {}) => [
+  section.academicSectionId || String(section.sectionName || "").replace(/\([^)]*\)/g, "").trim().toLowerCase(),
+  String(section.schoolYear || "").trim().toLowerCase(),
+  String(section.semester || "").trim().toLowerCase(),
+].join("|");
+
+const formatTrackingDate = (value) => {
+  const parsed = value ? new Date(value) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed.toLocaleString() : "Not available";
+};
+
 function FacultyStatusTable({
   rows,
   allRows = [],
@@ -91,6 +102,7 @@ function FacultyStatusTable({
   onSelectSection,
   onViewIpfs,
   viewMode = "default",
+  loadError = "",
 }) {
   const [expandedFacultyId, setExpandedFacultyId] = useState(null);
   const facultyRows = useMemo(() => {
@@ -125,9 +137,10 @@ function FacultyStatusTable({
       .map((faculty) => {
         const allFacultySections =
           allSectionsByFaculty.get(faculty.facultyId || faculty.facultyName)?.sections || [];
-        const submittedCount = allFacultySections.filter(
-          (section) => section.reviewStatus && section.reviewStatus !== "pending"
-        ).length;
+        const uniqueAssignedSections = new Set(allFacultySections.map(getAcademicSectionIdentity));
+        const uniqueSubmittedSections = new Set(allFacultySections
+          .filter((section) => section.reviewStatus && section.reviewStatus !== "pending")
+          .map(getAcademicSectionIdentity));
         const sectionsWithPriority = faculty.sections.map((section) => {
           const prioritySummary = getSectionPrioritySummary(section);
           return {
@@ -147,8 +160,8 @@ function FacultyStatusTable({
             right.priorityScore - left.priorityScore ||
             String(left.sectionName || "").localeCompare(String(right.sectionName || ""))
           ),
-          totalAssignedSections: allFacultySections.length,
-          submittedSections: submittedCount,
+          totalAssignedSections: uniqueAssignedSections.size,
+          submittedSections: uniqueSubmittedSections.size,
           workflowState: getWorkflowState(faculty.sections),
           facultyPriorityCount,
         };
@@ -158,6 +171,41 @@ function FacultyStatusTable({
         String(left.facultyName || "").localeCompare(String(right.facultyName || ""))
       );
   }, [allRows, rows]);
+
+  if (viewMode === "forwarded") {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-6 py-5">
+          <h3 className="text-xl font-bold text-[#003366]">Finalized Grades</h3>
+          <p className="mt-1 text-sm text-slate-500">Current encoding season and active assignment cycles only.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-[1050px] w-full">
+            <thead><tr className="bg-[#003366] text-white">
+              {['Faculty', 'Subject', 'Section', 'School Year', 'Semester', 'Term', 'Finalized At', 'Finalized By', 'Status', 'Action'].map((label) =>
+                <th key={label} className="px-4 py-3 text-left text-xs font-bold">{label}</th>)}
+            </tr></thead>
+            <tbody>{loadError ? (
+              <tr><td colSpan="10" role="alert" className="px-6 py-10 text-center text-sm font-medium text-red-700">{loadError}</td></tr>
+            ) : rows.length ? rows.map((section) => (
+              <tr key={section.reviewKey} className="border-b border-slate-200">
+                <td className="px-4 py-3 text-sm font-semibold">{section.facultyName}</td>
+                <td className="px-4 py-3 text-sm">{section.subjectCode}</td>
+                <td className="px-4 py-3 text-sm">{section.sectionName}</td>
+                <td className="px-4 py-3 text-sm">{section.schoolYear}</td>
+                <td className="px-4 py-3 text-sm">{section.semester}</td>
+                <td className="px-4 py-3 text-sm capitalize">{section.term}</td>
+                <td className="px-4 py-3 text-sm">{formatTrackingDate(section.finalizedAt)}</td>
+                <td className="px-4 py-3 text-sm">{section.finalizedBy || 'Chairperson'}</td>
+                <td className="px-4 py-3"><span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">Finalized</span></td>
+                <td className="px-4 py-3"><button type="button" onClick={() => onSelectSection?.(section)} className="rounded-lg bg-[#003366] px-3 py-2 text-xs font-semibold text-white">View Details</button></td>
+              </tr>
+            )) : <tr><td colSpan="10" className="px-6 py-10 text-center text-sm text-slate-500">No finalized submissions exist in the current encoding season.</td></tr>}</tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
 
   if (viewMode !== "default") {
     return (

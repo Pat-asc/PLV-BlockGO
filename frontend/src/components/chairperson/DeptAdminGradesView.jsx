@@ -469,6 +469,7 @@ const getDepartmentSectionSnapshot = (department = '') => {
 
 const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole = '', department = '', onLogout }) => {
     const [grades, setGrades] = useState([]);
+    const [gradesLoadError, setGradesLoadError] = useState('');
     
     const { addNotification } = useNotification();
     const [mainTab, setMainTab] = useState('grades'); 
@@ -499,6 +500,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     const [activeEncodingTerm, setActiveEncodingTerm] = useState("midterm");
     const lastSectionSnapshotRef = useRef([]);
     const lastNotifiedSectionChangeRef = useRef('');
+    const finalizeInFlightRef = useRef(false);
 
     useEffect(() => {
         const fetchThreshold = async () => {
@@ -685,8 +687,13 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     department: resolvedDepartmentName,
                     sectionName,
                     subjectCode: resolvedSubjectCode,
+                    academicSectionId: g.academic_section_id || g.academicSectionId || matchedAssignment?.academicSectionId || null,
+                    assignmentCycleId: g.assignment_cycle_id || g.assignmentCycleId || matchedAssignment?.id || '',
                     schoolYear,
                     semester,
+                    term: g.term || g.Term || activeEncodingTerm,
+                    finalizedAt: g.finalized_at || g.finalizedAt || g.timestamp || g.date || '',
+                    finalizedBy: g.finalized_by || g.finalizedBy || '',
                     totalStudents: 0,
                     encodedCount: 0,
                     progress: 0,
@@ -706,17 +713,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             if (!groups[key].ipfsCid && (g.ipfs_cid || g.IpfsCID || g.ipfsCid)) {
                 groups[key].ipfsCid = g.ipfs_cid || g.IpfsCID || g.ipfsCid;
             }
-            groups[key].totalStudents += 1;
-
             const parsedGrade = parseStoredGrade(getRecordGrade(g));
             const gradeVal = parsedGrade.finalAverage;
-            if (
-                hasEncodedValue(parsedGrade.midterm) ||
-                hasEncodedValue(parsedGrade.finals) ||
-                hasEncodedValue(gradeVal)
-            ) {
-                groups[key].encodedCount += 1;
-            }
             if (g.date || g.Date) {
                 const currentEarliest = groups[key].earliestEncodedAt ? new Date(groups[key].earliestEncodedAt).getTime() : Number.POSITIVE_INFINITY;
                 const incomingDate = new Date(g.date || g.Date).getTime();
@@ -738,8 +736,17 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             const studentKey = studentNumber || getRecordStudentKey(g) || 'Unknown';
             const studentName = resolvedStudentIdentity.studentName || getRecordStudentName(g);
             const { firstName, lastName } = splitStudentName(studentName);
+            const previousGrade = groups[key].grades[studentKey] || {};
+            const mergedGrade = {
+                midterm: parsedGrade.midterm || previousGrade.midterm || '-',
+                finals: parsedGrade.finals || previousGrade.finals || '-',
+                finalAverage: gradeVal || previousGrade.finalAverage || '-',
+                standing: parsedGrade.standing || previousGrade.standing || g.remarks || g.Remarks || 'active',
+                flagged: parsedGrade.flagged || previousGrade.flagged || g.flagged || g.Flagged === true || String(g.flagged).toLowerCase() === "true"
+            };
 
             if (!groups[key].students.some((student) => String(student.studentId) === String(studentKey))) {
+                groups[key].totalStudents += 1;
                 groups[key].students.push({
                     studentId: studentKey,
                     studentNo: studentNumber,
@@ -748,13 +755,12 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     firstName,
                 });
             }
-            groups[key].grades[studentKey] = {
-                midterm: parsedGrade.midterm || '-',
-                finals: parsedGrade.finals || '-',
-                finalAverage: gradeVal || '-',
-                standing: parsedGrade.standing || g.remarks || g.Remarks || 'active',
-                flagged: parsedGrade.flagged || g.flagged || g.Flagged === true || String(g.flagged).toLowerCase() === "true"
-            };
+            groups[key].grades[studentKey] = mergedGrade;
+            groups[key].encodedCount = Object.values(groups[key].grades).filter((grade) =>
+                activeEncodingTerm === 'finals'
+                    ? hasEncodedValue(grade.finals) && grade.finals !== '-'
+                    : hasEncodedValue(grade.midterm) && grade.midterm !== '-'
+            ).length;
             groups[key].rawStudentEntries.push({
                 studentKey,
                 studentNumber,
@@ -763,8 +769,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             });
             
             let normalizedReviewStatus = 'pending';
-            if (status.includes('finalized') || status.includes('forwarded') || status.includes('departmentapproved')) normalizedReviewStatus = 'forwarded';
-            else if (status.includes('chairpersonapproved') || status === 'approved') normalizedReviewStatus = 'approved';
+            if (status.includes('finalized') || status.includes('forwarded')) normalizedReviewStatus = 'forwarded';
+            else if (status.includes('departmentapproved') || status.includes('chairpersonapproved') || status === 'approved') normalizedReviewStatus = 'approved';
             else if (status.includes('issued') || status.includes('submitted') || status === '') normalizedReviewStatus = 'submitted';
             else if (status.includes('returned') || status.includes('rejected')) normalizedReviewStatus = 'returned';
 
@@ -892,7 +898,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             g.facultyEncodingStatus = g.progress === 100 ? 'Completed' : 'In Progress';
             return g;
         });
-    }, [departmentFaculties, grades]);
+    }, [activeEncodingTerm, departmentFaculties, grades]);
 
     useEffect(() => {
         if (!selectedReviewSection?.reviewKey) return;
@@ -945,10 +951,13 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             ipfsCid: backfilledIpfsCid,
         };
 
-        if (
-            latestSelectedSection !== selectedReviewSection ||
-            nextSelectedSection.ipfsCid !== selectedReviewSection.ipfsCid
-        ) {
+        const selectionChanged =
+            latestSelectedSection.reviewStatus !== selectedReviewSection.reviewStatus ||
+            latestSelectedSection.latestStatusTimestamp !== selectedReviewSection.latestStatusTimestamp ||
+            latestSelectedSection.encodedCount !== selectedReviewSection.encodedCount ||
+            latestSelectedSection.finalizedAt !== selectedReviewSection.finalizedAt ||
+            nextSelectedSection.ipfsCid !== selectedReviewSection.ipfsCid;
+        if (selectionChanged) {
             setSelectedReviewSection(nextSelectedSection);
         }
     }, [facultyRows, grades, selectedReviewSection]);
@@ -957,10 +966,17 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
         try {
             const response = await fetchAllGrades(loggedInEmail);
             setGrades(Array.isArray(response) ? response : (response.data || []));
+            setGradesLoadError('');
+            return true;
         } catch (error) {
-            console.error(`Could not fetch blockchain data: ${error.message}`);
+            console.error('Could not load Chairperson grade tracking.', {
+                department,
+                message: error.message,
+            });
+            setGradesLoadError('Unable to load finalized grades. Please try again.');
+            return false;
         }
-    }, [loggedInEmail]);
+    }, [department, loggedInEmail]);
 
     useEffect(() => { loadGrades(); }, [loadGrades]);
 
@@ -1227,7 +1243,9 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     };
 
     const handleBulkFinalize = async () => {
-        if (!selectedReviewSection) return;
+        if (!selectedReviewSection) throw new Error('Select an approved section before finalizing.');
+        if (finalizeInFlightRef.current) return;
+        finalizeInFlightRef.current = true;
         try {
             const recordsToForward = grades.filter(g => {
                 const facId = g.facultyId || g.faculty_id || g.FacultyId || 'Unknown';
@@ -1253,15 +1271,29 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     normalizeText(subjectCode) === normalizeText(selectedReviewSection.subjectCode) &&
                     normalizeText(schoolYear) === normalizeText(selectedReviewSection.schoolYear) &&
                     normalizeText(semester) === normalizeText(selectedReviewSection.semester) &&
-                    (status.includes('issued') || status.includes('submitted') || status.includes('approve'))
+                    status.includes('approve')
                 );
             });
 
+            if (recordsToForward.length === 0) {
+                throw new Error('No approved grade records remain to finalize. The section may already be finalized; refresh and try again.');
+            }
             for (const g of recordsToForward) await finalizeGrade(g.id, loggedInEmail);
-            addNotification("Section finalized and verified on the ledger successfully!", "success");
             setSelectedReviewSection(null);
-            loadGrades();
-        } catch(e) { addNotification(`Error finalizing section: ${e.message}`, "error"); }
+            const refreshed = await loadGrades();
+            addNotification(
+                refreshed
+                    ? "Section finalized and verified on the ledger successfully!"
+                    : "Section finalized, but the tracking list could not be refreshed.",
+                refreshed ? "success" : "warning"
+            );
+        } catch(e) {
+            await loadGrades();
+            addNotification(`Error finalizing section: ${e.message}`, "error");
+            throw e;
+        } finally {
+            finalizeInFlightRef.current = false;
+        }
     };
 
     const handleBulkReturn = async (notes) => {
@@ -1529,6 +1561,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                 onSelectSection={setSelectedReviewSection}
                                 onViewIpfs={handleViewIpfs}
                                 viewMode={activeChairTab}
+                                loadError={activeChairTab === 'forwarded' ? gradesLoadError : ''}
                             />
                             {selectedReviewSection && (
                                 <SectionReviewPanel 
@@ -1630,7 +1663,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                                 <div className="relative overflow-hidden">
                                                     <input 
                                                         type="file" 
-                                                        accept=".csv,text/csv"
+                                                        accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                                                         onChange={(e) => setUploadFile(e.target.files[0])}
                                                         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                                                     />
