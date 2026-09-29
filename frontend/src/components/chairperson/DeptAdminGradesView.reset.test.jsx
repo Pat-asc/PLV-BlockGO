@@ -30,9 +30,11 @@ jest.mock('./SectionReviewPanel', () => ({ onApprove, onFinalize }) => (
 jest.mock('../../services/Modal', () => () => null);
 jest.mock('./ChairpersonSidebar', () => ({ setActiveTab }) => (
   <div>
+    <button type="button" onClick={() => setActiveTab('grades')}>Dashboard</button>
     <button type="button" onClick={() => setActiveTab('forReview')}>For Review</button>
     <button type="button" onClick={() => setActiveTab('approved')}>Approved</button>
     <button type="button" onClick={() => setActiveTab('forwarded')}>Finalized</button>
+    <button type="button" onClick={() => setActiveTab('myClasses')}>My Classes</button>
   </div>
 ));
 jest.mock('../../services/api', () => ({
@@ -94,12 +96,44 @@ test('one realtime section event creates one notification and its listener is cl
   expect(mockAddNotification).toHaveBeenCalledWith(
     'Registrar created a new section in BSIT.',
     'success',
-    { eventKey: 'academic|section_created|bsit|registrar@plv.edu.ph|2026-09-29T01:00:00Z' }
+    { eventKey: 'burst|section_created||bsit|registrar@plv.edu.ph' }
   );
   view.unmount();
   mockAddNotification.mockClear();
   fireEvent(window, event);
   expect(mockAddNotification).not.toHaveBeenCalled();
+
+  const { unmount: unmountRemounted } = render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  await waitFor(() => expect(fetchAllGrades.mock.calls.length).toBeGreaterThan(1));
+  mockAddNotification.mockClear();
+  fireEvent(window, event);
+  expect(mockAddNotification).toHaveBeenCalledTimes(1);
+  unmountRemounted();
+});
+
+test('mount, unsupported My Classes, repeated events, and tab changes never request Faculty assignments', async () => {
+  fetchAllGrades.mockResolvedValue({ data: [] });
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  await waitFor(() => expect(fetchDepartmentSections).toHaveBeenCalledTimes(1));
+  const initialGradeCalls = fetchAllGrades.mock.calls.length;
+  const initialFacultyCalls = fetchApprovedFaculties.mock.calls.length;
+  const event = new CustomEvent('blockgo:academic-data-changed', { detail: {
+    reason: 'section_created', department: 'BSIT', actor: 'registrar@plv.edu.ph', changedAt: 'request-count-event',
+  } });
+
+  for (let index = 0; index < 20; index += 1) fireEvent(window, event);
+  await waitFor(() => expect(fetchDepartmentSections).toHaveBeenCalledTimes(2));
+  expect(fetchAllGrades).toHaveBeenCalledTimes(initialGradeCalls);
+  expect(fetchApprovedFaculties).toHaveBeenCalledTimes(initialFacultyCalls);
+  expect(mockAddNotification).toHaveBeenCalledTimes(1);
+
+  for (let index = 0; index < 10; index += 1) {
+    fireEvent.click(screen.getByRole('button', { name: 'My Classes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }));
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'My Classes' }));
+  expect(await screen.findByText(/Teaching assignments are available from a Faculty account/)).toBeInTheDocument();
+  expect(fetchFacultySections).not.toHaveBeenCalled();
 });
 
 test('DepartmentApproved remains in Approved until ledger finalization succeeds', async () => {

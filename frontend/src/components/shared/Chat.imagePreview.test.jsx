@@ -1,6 +1,7 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import Chat from './Chat';
+import { pullSharedClientState } from '../../utils/sharedClientState';
 
 const mockHandlers = {};
 const mockConnection = {
@@ -28,6 +29,7 @@ beforeEach(() => {
   mockConnection.start.mockResolvedValue();
   mockConnection.stop.mockResolvedValue();
   mockConnection.invoke.mockResolvedValue([]);
+  pullSharedClientState.mockResolvedValue();
   window.HTMLElement.prototype.scrollIntoView = jest.fn();
   Object.keys(mockHandlers).forEach((event) => delete mockHandlers[event]);
 });
@@ -46,4 +48,25 @@ test('image preview is centered in a viewport overlay outside the clipped chat w
   expect(screen.getAllByAltText('Screenshot.png')[1]).toHaveClass('mx-auto', 'object-contain');
   fireEvent.click(close);
   expect(screen.queryByTitle('Close image preview')).not.toBeInTheDocument();
+});
+
+test('twenty identical academic events cause one pull and one local event', async () => {
+  const listener = jest.fn();
+  window.addEventListener('blockgo:academic-data-changed', listener);
+  const view = render(<Chat userEmail="chair@plv.edu.ph" userRole="department_admin" isOpen />);
+  await waitFor(() => expect(mockHandlers.AcademicDataChanged).toBeDefined());
+  await waitFor(() => expect(mockConnection.start).toHaveBeenCalled());
+  pullSharedClientState.mockClear();
+  const payload = { reason: 'section_created', department: 'BSIT', actor: 'registrar@plv.edu.ph', changedAt: '2026-09-29T01:00:00Z' };
+
+  await act(async () => {
+    for (let index = 0; index < 20; index += 1) mockHandlers.AcademicDataChanged(payload);
+    await Promise.resolve();
+  });
+
+  expect(pullSharedClientState).toHaveBeenCalledTimes(1);
+  expect(listener).toHaveBeenCalledTimes(1);
+  view.unmount();
+  window.removeEventListener('blockgo:academic-data-changed', listener);
+  expect(mockConnection.stop).toHaveBeenCalledTimes(1);
 });

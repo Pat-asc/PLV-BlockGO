@@ -6,7 +6,10 @@ import * as signalR from '@microsoft/signalr';
 import { getChatHubUrl } from '../../services/api';
 import { getAuthToken } from '../../services/authSession';
 import { pullSharedClientState } from '../../utils/sharedClientState';
+import { createAcademicEventGuard } from '../../utils/academicEventGuard';
 import BackButton from './BackButton';
+
+const acceptAcademicEvent = createAcademicEventGuard();
 
 const roleKeyFromRoleString = (role) => {
   const r = (role || '').toLowerCase();
@@ -552,6 +555,7 @@ const Chat = ({
     });
 
     conn.on('AcademicDataChanged', (payload) => {
+      if (!acceptAcademicEvent(payload)) return;
       console.log('[Chat] AcademicDataChanged:', payload);
       pullSharedClientState()
         .catch((error) => console.warn('[Chat] Shared state pull failed:', error))

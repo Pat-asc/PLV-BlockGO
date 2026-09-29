@@ -44,14 +44,6 @@ const storeLocalValue = (key, value) => {
   );
 };
 
-const hasMeaningfulLocalValue = (value) => {
-  if (value === null || value === undefined) return false;
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === "object") return Object.keys(value).length > 0;
-  if (typeof value === "string") return value.trim().length > 0;
-  return true;
-};
-
 export const pushSharedClientState = async (keys = SHARED_CLIENT_STATE_KEYS) => {
   await Promise.all(
     keys.map(async (key) => {
@@ -81,19 +73,7 @@ export const pullSharedClientState = async (keys = SHARED_CLIENT_STATE_KEYS) => 
   const results = await Promise.allSettled(
     keys.map(async (key) => {
       const response = await fetchSharedClientState(key);
-      const localValue = parseLocalValue(key);
-      if (
-        response?.value === null ||
-        response?.value === undefined ||
-        (!hasMeaningfulLocalValue(response.value) &&
-          hasMeaningfulLocalValue(localValue))
-      ) {
-        if (hasMeaningfulLocalValue(localValue)) {
-          await saveSharedClientState(key, localValue);
-          return key;
-        }
-        return null;
-      }
+      if (response?.value === null || response?.value === undefined) return null;
       storeLocalValue(key, response.value);
       return key;
     })
