@@ -333,7 +333,7 @@ const RegistrarGradesView = ({
     const handleResetEncodingSeason = useCallback(async (academicContext) => {
         try {
             const response = await resetEncodingSeason(academicContext);
-            const resetEncodingPeriod = JSON.stringify({ ...academicContext });
+            const resetEncodingPeriod = response.encodingPeriod;
             localStorage.removeItem('registrarAssignments');
             localStorage.setItem('encodingPeriod', resetEncodingPeriod);
             localStorage.setItem('facultyLoadResetAt', new Date().toISOString());

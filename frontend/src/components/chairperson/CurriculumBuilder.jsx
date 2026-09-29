@@ -44,7 +44,7 @@ const CurriculumBuilder = ({ department = '' }) => {
       const normalized = department.trim().toLowerCase();
       const owned = normalized ? allPrograms.filter((item) => item.programName.toLowerCase() === normalized || item.programCode.toLowerCase() === normalized) : allPrograms;
       setPrograms(owned); setCurricula(allCurricula);
-      setSelectedId((current) => current || String(allCurricula[0]?.curriculumId || ''));
+      setSelectedId((current) => current === null ? null : current || String(allCurricula[0]?.curriculumId || ''));
       setCurriculumForm((current) => ({ ...current, programCode: current.programCode || owned[0]?.programCode || '' }));
     } catch (error) {
       if (isLocalMode) {
@@ -74,6 +74,20 @@ const CurriculumBuilder = ({ department = '' }) => {
     setSubjectForm((current) => ({ ...current, prerequisite: next.join('; ') }));
   };
   const updateSelected = (field, value) => setCurricula((current) => current.map((item) => item.curriculumId === selected.curriculumId ? { ...item, [field]: value } : item));
+
+  const startNewCurriculum = () => {
+    setSelectedId(null);
+    setCurriculumForm(emptyCurriculum);
+    setSubjectForm(emptySubject);
+    setEditingId(null);
+    setUploadName('');
+    setIsDraggingFile(false);
+    setPrerequisiteOpen(false);
+    setPrerequisiteSearch('');
+    setPreview(false);
+    setNotice(null);
+    if (fileRef.current) fileRef.current.value = '';
+  };
 
   const create = async (event) => {
     event.preventDefault(); setSaving(true); setNotice(null);
@@ -120,7 +134,7 @@ const CurriculumBuilder = ({ department = '' }) => {
     if (!editable || selected.status !== 'DRAFT') return setNotice({ type: 'error', message: 'Save the curriculum before submitting it.' });
     if (!await requestSystemConfirmation('Submit this curriculum to the Registrar for review?')) return;
     if (isLocalMode) { saveLocalCurriculum({ ...selected, status: 'PENDING_APPROVAL' }); setNotice({ type: 'success', message: 'Curriculum submitted for review locally.' }); return; }
-    setSaving(true); try { await submitCurriculum(selected.curriculumId); await load(); setNotice({ type: 'success', message: 'Curriculum submitted for Registrar review.' }); }
+    setSaving(true); try { await submitCurriculum(selected.curriculumId); startNewCurriculum(); await load(); setNotice({ type: 'success', message: 'Curriculum submitted for Registrar review. You can create another checklist.' }); }
     catch (error) { setNotice({ type: 'error', message: error.message }); } finally { setSaving(false); }
   };
 
@@ -193,8 +207,9 @@ const CurriculumBuilder = ({ department = '' }) => {
     {notice && <div className={`flex justify-between rounded-lg border px-4 py-3 text-sm ${notice.type === 'error' ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}><span>{notice.message}</span><button onClick={() => setNotice(null)}>×</button></div>}
     <div className="flex border-b border-slate-200">{[['manual', 'Create Manually'], ['bulk', 'Bulk Upload']].map(([id, label]) => <button key={id} onClick={() => setMode(id)} className={`border-b-2 px-4 py-2 text-xs font-semibold ${mode === id ? 'border-blue-700 text-blue-700' : 'border-transparent text-slate-600'}`}>{label}</button>)}</div>
 
+    <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-slate-600">{selected ? `${selected.programCode} · ${selected.curriculumVersion} (${selected.status})` : 'New curriculum checklist'}</span>{selected && <button type="button" disabled={saving} onClick={startNewCurriculum} className="rounded-lg border border-blue-700 px-3 py-2 text-xs font-bold text-blue-700 disabled:opacity-50">Create New Checklist</button>}</div>
+      {!selected && <form onSubmit={create} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><h2 className="mb-3 font-bold">Curriculum Information</h2><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5"><select aria-label="Program for new curriculum" required value={curriculumForm.programCode} onChange={(e) => setCurriculumForm({ ...curriculumForm, programCode: e.target.value })} className={inputClass}><option value="">Select program</option>{programs.map((item) => <option key={item.programId} value={item.programCode}>{item.programCode} — {item.programName}</option>)}</select>{[['curriculumCode', 'Curriculum Code'], ['curriculumName', 'Curriculum Name'], ['curriculumVersion', 'Version'], ['schoolYear', 'School Year']].map(([field, placeholder]) => <input key={field} required placeholder={placeholder} value={curriculumForm[field]} onChange={(e) => setCurriculumForm({ ...curriculumForm, [field]: e.target.value })} className={inputClass} />)}</div><button disabled={saving} className="mt-3 rounded-lg bg-[#073b82] px-4 py-2 text-xs font-bold text-white">Create Curriculum</button></form>}
     {mode === 'manual' ? <>
-      {!selected && <form onSubmit={create} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><h2 className="mb-3 font-bold">Curriculum Information</h2><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5"><select required value={curriculumForm.programCode} onChange={(e) => setCurriculumForm({ ...curriculumForm, programCode: e.target.value })} className={inputClass}><option value="">Select program</option>{programs.map((item) => <option key={item.programId} value={item.programCode}>{item.programCode} — {item.programName}</option>)}</select>{[['curriculumCode', 'Curriculum Code'], ['curriculumName', 'Curriculum Name'], ['curriculumVersion', 'Version'], ['schoolYear', 'School Year']].map(([field, placeholder]) => <input key={field} required placeholder={placeholder} value={curriculumForm[field]} onChange={(e) => setCurriculumForm({ ...curriculumForm, [field]: e.target.value })} className={inputClass} />)}</div><button disabled={saving} className="mt-3 rounded-lg bg-[#073b82] px-4 py-2 text-xs font-bold text-white">Create Curriculum</button></form>}
       {selected && <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><h2 className="font-bold">▧ Curriculum Information</h2>{curricula.length > 1 && <select value={selectedId} onChange={(e) => setSelectedId(e.target.value)} className={`${inputClass} mt-0 min-w-40`}>{curricula.map((item) => <option key={item.curriculumId} value={item.curriculumId}>{item.curriculumVersion}</option>)}</select>}</div><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">{[['programCode', 'Program'], ['curriculumCode', 'Curriculum Code'], ['curriculumName', 'Curriculum Name'], ['curriculumVersion', 'Version'], ['schoolYear', 'School Year']].map(([field, label]) => <label key={field} className="text-xs text-slate-600">{label}<input disabled={!editable || field === 'programCode'} value={selected[field] || ''} onChange={(e) => updateSelected(field, e.target.value)} className={inputClass} /></label>)}</div>{selected.registrarComment && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><strong>Registrar comment:</strong> {selected.registrarComment}</p>}
       {editable && <form onSubmit={saveSubject} className="mt-5 border-t border-slate-200 pt-4">
         <h3 className="mb-3 font-bold">▧ {editingId ? 'Edit Subject' : 'Add Subject'}</h3>
@@ -221,7 +236,7 @@ const CurriculumBuilder = ({ department = '' }) => {
     </> : <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-bold">Bulk Upload Curriculum</h2>
-        {curricula.length > 1 && <select aria-label="Curriculum version for bulk upload" value={selectedId} onChange={(e) => setSelectedId(e.target.value)} className={`${inputClass} mt-0 min-w-48`}>{curricula.map((item) => <option key={item.curriculumId} value={item.curriculumId}>{item.curriculumVersion} ({item.status})</option>)}</select>}
+        {curricula.length > 0 && <select aria-label="Curriculum version for bulk upload" value={selectedId || ''} onChange={(e) => { setSelectedId(e.target.value || null); setUploadName(''); }} className={`${inputClass} mt-0 min-w-48`}><option value="">New checklist</option>{curricula.map((item) => <option key={item.curriculumId} value={item.curriculumId}>{item.programCode} · {item.curriculumVersion} ({item.status})</option>)}</select>}
       </div>
       <div className="mt-4 grid gap-5 lg:grid-cols-[1.2fr_.8fr]">
         <div>

@@ -300,7 +300,8 @@ namespace Client_app.Controllers
                     message = "Encoding season reset. Current faculty assignments were deactivated; grade workflow history, finalized ledger records, and saved sections were preserved.",
                     deactivatedAssignmentCount,
                     clearedDraftGradeCount = 0,
-                    academicContext = new { schoolYear, semester, term }
+                    academicContext = new { schoolYear, semester, term },
+                    encodingPeriod = resetEncodingPeriod
                 });
             }
             catch (ArgumentException ex)

@@ -44,7 +44,7 @@ function App() {
   const handleResetEncodingSeason = async (academicContext) => {
     const response = await resetEncodingSeason(academicContext);
 
-    const resetEncodingPeriod = JSON.stringify({ ...academicContext });
+    const resetEncodingPeriod = response.encodingPeriod;
 
     localStorage.removeItem("blockgo-allGrades");
     localStorage.removeItem(CHAIRPERSON_REVIEW_KEY);

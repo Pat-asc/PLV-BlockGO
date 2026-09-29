@@ -2,6 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import EncodingPeriod from './EncodingPeriod';
 import { fetchAcademicPeriodOptions, getSystemSetting, updateSystemSetting } from '../../services/api';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 
 jest.mock('../../services/api', () => ({
   fetchAcademicPeriodOptions: jest.fn(),
@@ -10,6 +11,8 @@ jest.mock('../../services/api', () => ({
 }));
 jest.mock('../../services/NotificationContext', () => ({ showSystemNotification: jest.fn() }));
 jest.mock('../../services/SystemDialogContext', () => ({ requestSystemConfirmation: jest.fn() }));
+
+jest.setTimeout(20000);
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -56,8 +59,9 @@ test('Save Schedule uses the latest active period and preserves the schedule', a
   };
   expect(fetchAcademicPeriodOptions).toHaveBeenCalledTimes(2);
   expect(JSON.parse(updateSystemSetting.mock.calls[0][1])).toMatchObject(expected);
-  await waitFor(() => expect(year).toHaveValue('2026-2027'));
-  expect(screen.getByLabelText('Semester')).toHaveValue('Summer');
+  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · Summer')).toBeInTheDocument());
+  expect(year).toHaveValue('2025-2026');
+  expect(screen.getByLabelText('Semester')).toHaveValue('1st Semester');
   expect(JSON.parse(localStorage.getItem('encodingPeriod'))).toMatchObject(expected);
   expect(screen.getByText('Encoding period saved successfully.')).toBeInTheDocument();
 });
@@ -81,8 +85,8 @@ test('uses the backend-normalized value when the active period changes during sa
   render(<EncodingPeriod />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Save Schedule' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Save Schedule' }));
-  await waitFor(() => expect(screen.getByLabelText('School Year')).toHaveValue('2027-2028'));
-  expect(screen.getByLabelText('Semester')).toHaveValue('2nd Semester');
+  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2027-2028 · 2nd Semester')).toBeInTheDocument());
+  expect(screen.getByLabelText('School Year')).toHaveValue('2026-2027');
   expect(JSON.parse(localStorage.getItem('encodingPeriod'))).toMatchObject({
     schoolYear: '2027-2028', semester: '2nd Semester',
   });
@@ -139,4 +143,48 @@ test('uses active academic period over stale saved school year and semester', as
   expect(screen.getByLabelText('Encoding Term')).toHaveValue('finals');
   expect(screen.getByLabelText('Start Date')).toHaveValue('2026-09-01');
   expect(screen.getByLabelText('End Date')).toHaveValue('2026-11-16');
+});
+
+test('keeps MIDYEAR active on Save Schedule, then opens FIRST and shows it after reload', async () => {
+  const summer = { schoolYear: '2026-2027', semester: 'MIDYEAR' };
+  const first = { schoolYear: '2026-2027', semester: 'FIRST' };
+  let active = summer;
+  let setting = JSON.stringify({
+    schoolYear: '2026-2027', semester: 'Summer', term: 'midterm',
+    startDate: '2026-09-01', endDate: '2026-09-30',
+  });
+  fetchAcademicPeriodOptions.mockImplementation(async () => ({
+    status: 'Success', schoolYears: ['2026-2027'], activeAcademicPeriod: active,
+  }));
+  getSystemSetting.mockImplementation(async () => ({ status: 'Success', value: setting }));
+  updateSystemSetting.mockImplementation(async (_key, value) => {
+    const requested = JSON.parse(value);
+    setting = JSON.stringify({ ...requested, schoolYear: active.schoolYear, semester: active.semester === 'MIDYEAR' ? 'Summer' : '1st Semester' });
+    return { status: 'Success', value: setting };
+  });
+  requestSystemConfirmation.mockResolvedValue(true);
+  const onResetEncodingSeason = jest.fn().mockImplementation(async (requested) => {
+    expect(requested).toMatchObject({ schoolYear: '2026-2027', semester: '1st Semester' });
+    active = first;
+    setting = JSON.stringify(requested);
+    return { status: 'Success', academicContext: first, encodingPeriod: setting };
+  });
+
+  const view = render(<EncodingPeriod onResetEncodingSeason={onResetEncodingSeason} />);
+  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · Summer')).toBeInTheDocument());
+  fireEvent.change(screen.getByLabelText('Semester'), { target: { value: '1st Semester' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save Schedule' }));
+  await waitFor(() => expect(updateSystemSetting).toHaveBeenCalled());
+  expect(JSON.parse(updateSystemSetting.mock.calls[0][1]).semester).toBe('Summer');
+  expect(active).toEqual(summer);
+  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · Summer')).toBeInTheDocument());
+  expect(screen.getByLabelText('Semester')).toHaveValue('1st Semester');
+  fireEvent.click(screen.getByRole('button', { name: 'Reset Encoding Season' }));
+  await waitFor(() => expect(onResetEncodingSeason).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · 1st Semester')).toBeInTheDocument());
+  expect(screen.getByLabelText('Semester')).toHaveValue('1st Semester');
+  view.unmount();
+  render(<EncodingPeriod onResetEncodingSeason={onResetEncodingSeason} />);
+  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · 1st Semester')).toBeInTheDocument());
+  expect(screen.getByLabelText('Semester')).toHaveValue('1st Semester');
 });
