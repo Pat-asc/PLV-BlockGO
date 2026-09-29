@@ -17,7 +17,8 @@ beforeEach(() => {
   fetchFacultyAssignmentOptions.mockResolvedValue({
     subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems and Technologies", yearLevel: 3, semester: "SECOND", units: 3 }],
     sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
-    schoolYears: ["2026-2027"], enrollmentPeriods: []
+    schoolYears: ["2026-2027"], enrollmentPeriods: [],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
   });
   assignFacultyLoadToBackend.mockResolvedValue({ status: "Success", assignment: { id: 77, academicSectionId: 31 } });
   localStorage.setItem("studentSections", JSON.stringify([{ program: "Bachelor of Science in Information Technology", yearLevel: "3rd Year", section: "IT 3A", schoolYear: "2026", semester: "2nd Semester", students: [] }]));
@@ -106,6 +107,28 @@ test("renders Assigned Sections before Subject Assigning", async () => {
   const assigned = screen.getByRole("heading", { name: "Assigned Sections" });
   const assigning = screen.getByRole("heading", { name: "Subject Assigning" });
   expect(assigned.compareDocumentPosition(assigning) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("shows the authoritative period and explicit period columns", async () => {
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  expect(await screen.findByLabelText("Current academic period")).toHaveTextContent("2026-2027 · 2nd Semester");
+  expect(screen.getByRole("columnheader", { name: "School Year" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Semester" })).toBeInTheDocument();
+});
+
+test("uses the backend-returned authoritative period after saving", async () => {
+  assignFacultyLoadToBackend.mockResolvedValue({
+    status: "Success",
+    assignment: { id: 77, academicSectionId: 31, schoolYear: "2027-2028", semester: "FIRST" },
+  });
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await selectFaculty();
+  stageAssignment();
+  fireEvent.click(screen.getByRole("button", { name: "Save Assignments" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Assignments saved successfully"));
+  expect(JSON.parse(localStorage.getItem("registrarAssignments"))[0]).toMatchObject({
+    schoolYear: "2027-2028", semesterCode: "FIRST", semester: "1st Semester",
+  });
 });
 
 test("rejects an end time that is not after the start time", async () => {

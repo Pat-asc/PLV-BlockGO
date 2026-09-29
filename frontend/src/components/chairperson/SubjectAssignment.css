@@ -51,6 +51,9 @@
 .sa-schedule{width:100%;min-width:104px;padding:6px;background:#fff;border:1px solid #d8e2f1;border-radius:6px;font-size:12px;color:#334155}
 .sa-assign{background:#facc15;padding:6px 11px;border-radius:6px;white-space:nowrap;font-size:12px;font-weight:700;color:#003366}
 .sa-info{display:flex;align-items:center;gap:12px;background:#eaf3ff;border:1px solid #dcecff;color:#2165e2;border-radius:6px;padding:12px;font-size:12px;margin-bottom:10px}
+.sa-current-period{justify-content:space-between;border-color:#bfdbfe;background:#eff6ff;color:#1e3a8a}
+.sa-current-period span{font-weight:650}
+.sa-current-period strong{font-size:14px;color:#003366}
 .sa-selected{margin-top:16px;margin-bottom:0;font-size:12px}
 .sa-selected>span{font-size:23px}
 .sa-selected p{color:#748bb6;margin-top:3px}

@@ -34,8 +34,6 @@ public static class FacultyBulkAssignmentService
         if (request.FacultyUserId <= 0) throw new ArgumentException("Faculty not found: a valid facultyUserId is required.");
         if (request.AcademicSectionId <= 0) throw new ArgumentException("Academic section not found: a valid academicSectionId is required.");
         if (string.IsNullOrWhiteSpace(request.SubjectCode)) throw new ArgumentException("Subject not found: subjectCode is required.");
-        var schoolYear = NormalizeSchoolYear(request.SchoolYear);
-        var semester = NormalizeSemester(request.Semester);
         var schedule = NormalizeSchedule(request.Schedule);
 
         string programCode;
@@ -58,6 +56,23 @@ public static class FacultyBulkAssignmentService
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         try
         {
+            string schoolYear;
+            string semester;
+            await using (var period = new NpgsqlCommand(@"
+                SELECT school_year, semester
+                FROM academic_periods
+                WHERE status = 'ACTIVE'
+                ORDER BY opened_at DESC
+                LIMIT 1
+                FOR SHARE;", connection, transaction))
+            await using (var reader = await period.ExecuteReaderAsync(cancellationToken))
+            {
+                if (!await reader.ReadAsync(cancellationToken))
+                    throw new ArgumentException("No authoritative active academic period is configured. Ask the Registrar to open the academic period before assigning faculty loads.");
+                schoolYear = NormalizeSchoolYear(reader.GetString(0));
+                semester = NormalizeSemester(reader.GetString(1));
+            }
+
             int yearLevel;
             int sectionNumber;
             string programName;
