@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import StatusBadge from "../shared/StatusBadge";
 
 const PRIORITY_STANDINGS = new Set([
   "d",
@@ -61,20 +62,6 @@ const getWorkflowLabel = (status = "") => {
   if (normalized === "approved") return "Ready to Finalize";
   if (normalized === "forwarded") return "Finalized";
   return "For Review";
-};
-
-const getWorkflowClasses = (status = "") => {
-  const normalized = String(status || "").toLowerCase();
-
-  if (normalized === "returned") {
-    return "bg-red-100 text-red-700";
-  }
-
-  if (normalized === "forwarded") {
-    return "bg-emerald-100 text-emerald-700";
-  }
-
-  return "bg-amber-100 text-amber-800";
 };
 
 const getWorkflowState = (sections = []) => {
@@ -199,7 +186,7 @@ function FacultyStatusTable({
                 <td className="px-4 py-3 text-sm capitalize">{section.term}</td>
                 <td className="px-4 py-3 text-sm">{formatTrackingDate(section.finalizedAt)}</td>
                 <td className="px-4 py-3 text-sm">{section.finalizedBy || 'Chairperson'}</td>
-                <td className="px-4 py-3"><span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">Finalized</span></td>
+                <td className="px-4 py-3"><StatusBadge status="Finalized" /></td>
                 <td className="px-4 py-3"><button type="button" onClick={() => onSelectSection?.(section)} className="rounded-lg bg-[#003366] px-3 py-2 text-xs font-semibold text-white">View Details</button></td>
               </tr>
             )) : <tr><td colSpan="10" className="px-6 py-10 text-center text-sm text-slate-500">No finalized submissions exist in the current encoding season.</td></tr>}</tbody>
@@ -213,9 +200,8 @@ function FacultyStatusTable({
     return (
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-6 py-5">
-          <h3 className="text-xl font-bold text-[#003366]">
-            {viewMode === "approved" ? "Finalize Queue" : "Faculty For Review"}
-          </h3>
+          <h3 className="text-xl font-bold text-[#003366]">{viewMode === "approved" ? "Finalize Queue" : viewMode === "returned" ? "Returned Sections" : "Faculty For Review"}</h3>
+          <p className="mt-1 text-sm text-slate-500">{viewMode === "approved" ? "Approved submissions ready for final ledger processing." : viewMode === "returned" ? "Submissions sent back to faculty for correction." : "Submitted sections waiting for chairperson review."}</p>
           
         </div>
 
@@ -250,13 +236,7 @@ function FacultyStatusTable({
                         </span>
                       </td>
                       <td className="px-6 py-5">
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-bold ${getWorkflowClasses(
-                            faculty.workflowState
-                          )}`}
-                        >
-                          {getWorkflowLabel(faculty.workflowState)}
-                        </span>
+                        <StatusBadge status={faculty.workflowState} label={getWorkflowLabel(faculty.workflowState)} />
                       </td>
                       <td className="px-6 py-5">
                         <button
@@ -266,7 +246,7 @@ function FacultyStatusTable({
                             setExpandedFacultyId(isClosingCurrentFaculty ? null : faculty.facultyId);
                             onSelectSection?.(null);
                           }}
-                          className="rounded-xl bg-[#003366] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#00264d]"
+                          className="rounded-lg bg-[#003366] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#00264d]"
                         >
                           Review Encoded
                         </button>
@@ -317,7 +297,7 @@ function FacultyStatusTable({
                                       isActive ? null : section
                                     )
                                   }
-                                  className={`rounded-xl px-4 py-2 text-sm font-semibold text-white transition ${
+                                  className={`rounded-lg px-3 py-2 text-sm font-semibold text-white transition ${
                                     section.needsPriorityReview
                                       ? "bg-red-600 hover:bg-red-700"
                                       : "bg-[#003366] hover:bg-[#00264d]"
@@ -338,7 +318,7 @@ function FacultyStatusTable({
               ) : (
                 <tr>
                   <td colSpan="4" className="px-6 py-10 text-center text-sm text-slate-500">
-                    No faculty submissions found for review.
+                    {viewMode === 'returned' ? 'No returned sections require correction.' : viewMode === 'approved' ? 'No approved sections are ready to finalize.' : 'No faculty submissions found for review.'}
                   </td>
                 </tr>
               )}

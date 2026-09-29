@@ -8,6 +8,8 @@ test('exposes the intermediate Finalize Queue between review and finalized track
 
   const labels = screen.getAllByRole('button').map((button) => button.textContent.trim());
   expect(labels.indexOf('For Review')).toBeLessThan(labels.indexOf('Finalize Queue'));
+  expect(labels.indexOf('For Review')).toBeLessThan(labels.indexOf('Returned'));
+  expect(labels.indexOf('Returned')).toBeLessThan(labels.indexOf('Finalize Queue'));
   expect(labels.indexOf('Finalize Queue')).toBeLessThan(labels.indexOf('Finalized'));
 
   fireEvent.click(screen.getByRole('button', { name: 'Finalize Queue' }));

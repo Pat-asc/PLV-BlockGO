@@ -1,11 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  computeGradeStatus,
-  getReviewStatusClasses,
-  getReviewStatusLabel,
-} from "../../utils/chairpersonHelpers";
+import { computeGradeStatus, getReviewStatusClasses, getReviewStatusLabel } from "../../utils/chairpersonHelpers";
 import { getGradeEquivalent } from "../../utils/gradingHelpers";
 import Modal from "../../services/Modal";
+import BackButton from "../shared/BackButton";
+import StatusBadge from "../shared/StatusBadge";
 
 const formatLogDate = (value) => {
   if (!value) return "--";
@@ -23,6 +21,7 @@ function SectionReviewPanel({
   onApprove,
   onFinalize,
   onViewIpfs,
+  onBack,
 }) {
   const [draftNotes, setDraftNotes] = useState({});
   const [approveConfirmationOpen, setApproveConfirmationOpen] = useState(false);
@@ -166,8 +165,9 @@ function SectionReviewPanel({
   }
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-2xl border border-blue-200 bg-blue-50 p-6 shadow-sm">
+    <div className="space-y-4">
+      {onBack ? <BackButton onClick={onBack} label="Back to Sections" /> : null}
+      <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h3 className="text-lg font-bold text-blue-900">
@@ -195,7 +195,7 @@ function SectionReviewPanel({
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h3 className="text-xl font-bold text-[#003366]">Section Review Details</h3>
@@ -205,16 +205,16 @@ function SectionReviewPanel({
             </p>
           </div>
 
-          <span
+          <StatusBadge status={selectedSection.reviewStatus}
             className={`inline-flex w-fit rounded-full px-4 py-2 text-sm font-semibold ${getReviewStatusClasses(
               selectedSection.reviewStatus
             )}`}
           >
             {getReviewStatusLabel(selectedSection.reviewStatus)}
-          </span>
+          </StatusBadge>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+        <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
           <div className="rounded-xl bg-slate-50 p-4">
             <p className="text-sm text-slate-500">Department</p>
             <p className="mt-1 font-semibold text-slate-800">{selectedSection.department}</p>
@@ -267,7 +267,7 @@ function SectionReviewPanel({
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
             <h3 className="text-lg font-bold text-[#003366]">Submitted Grades</h3>
@@ -321,7 +321,7 @@ function SectionReviewPanel({
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <h3 className="text-lg font-bold text-[#003366]">Chairperson Decision</h3>
         
 
@@ -342,11 +342,11 @@ function SectionReviewPanel({
           />
         </div>
 
-        <div className="mt-6 flex flex-col gap-3 md:flex-row">
+        <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <button
             onClick={() => onSendBack(note)}
             disabled={!note.trim() || selectedSection.reviewStatus === "forwarded"}
-            className="rounded-xl bg-red-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-red-600 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="min-h-10 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             Send Back to Faculty
           </button>
@@ -356,7 +356,7 @@ function SectionReviewPanel({
               setApproveConfirmationOpen(true);
             }}
             disabled={selectedSection.reviewStatus !== "submitted" || isApproving}
-            className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="min-h-10 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             {isApproving ? "Approving…" : "Approve Section"}
           </button>
@@ -366,7 +366,7 @@ function SectionReviewPanel({
               setFinalizeConfirmationOpen(true);
             }}
             disabled={selectedSection.reviewStatus !== "approved" || isFinalizing}
-            className="rounded-xl bg-[#003366] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#00264d] disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="min-h-10 rounded-lg bg-[#003366] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#00264d] disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             {isFinalizing ? "Finalizingâ€¦" : "Finalize Grades"}
           </button>
@@ -406,7 +406,7 @@ function SectionReviewPanel({
           <button type="button" onClick={confirmFinalize} disabled={isFinalizing} className="min-h-11 rounded-xl bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400">{isFinalizing ? "Finalizing…" : "Finalize Grades"}</button>
         </div>
       </Modal>
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <h3 className="text-lg font-bold text-[#003366]">Decision Log</h3>
         
 
@@ -418,13 +418,13 @@ function SectionReviewPanel({
                 className="rounded-xl border border-slate-200 bg-slate-50 p-4"
               >
                 <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <span
+                  <StatusBadge status={log.status}
                     className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-semibold ${getReviewStatusClasses(
                       log.status
                     )}`}
                   >
                     {getReviewStatusLabel(log.status)}
-                  </span>
+                  </StatusBadge>
                   <p className="text-xs text-slate-500">
                     {formatLogDate(log.timestamp)}
                   </p>

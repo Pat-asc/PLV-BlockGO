@@ -10,6 +10,7 @@ import FacultyCurriculumPanel from './FacultyCurriculumPanel';
 import { calculateFinalAverage, getGradeEquivalent } from '../../utils/gradingHelpers';
 import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from '../../utils/studentAcademicHelpers';
 import BackButton from '../shared/BackButton';
+import StatusBadge from '../shared/StatusBadge';
 
 const normalizeYearLabel = (value) => {
   const raw = String(value || '').trim();
@@ -1206,7 +1207,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
       {!activeSection ? (
         <div className="py-4">
-          <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_440px] xl:items-center">
+          <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-center">
             <YearTabs
               activeTab={activeTab}
               setActiveTab={setActiveTab}
@@ -1215,20 +1216,24 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             />
 
             <div className="relative w-full xl:justify-self-end">
-              <input type="text" placeholder="Search for a section..." className="w-full rounded-xl border border-slate-300 py-3 pl-10 pr-4 outline-none focus:border-[#003366] focus:ring-2 focus:ring-[#003366]/20" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+              <label htmlFor="faculty-section-search" className="sr-only">Search assigned sections</label>
+              <input id="faculty-section-search" type="search" placeholder="Search section or subject…" className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-4 text-sm outline-none focus:border-[#003366] focus:ring-2 focus:ring-[#003366]/20" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {isLoadingData ? (
-              <div className="col-span-full py-10 text-center text-slate-500">Loading assigned sections and enrolled students...</div>
+              <div className="col-span-full rounded-xl border border-slate-200 bg-white py-10 text-center text-slate-500 shadow-sm" role="status"><div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-[#003366]" /><p className="mt-3 text-sm font-medium">Loading assigned sections and enrolled students…</p></div>
             ) : Object.keys(sections).length === 0 ? (
-              <div className="col-span-full py-10 text-center text-slate-500">No active sections are currently assigned to your account.</div>
+              <div className="col-span-full rounded-xl border border-dashed border-slate-300 bg-white py-10 text-center text-slate-500">No active sections are currently assigned to your account.</div>
             ) : (
               Object.entries(sections)
               .filter(([name, data]) => {
                 const matchesTab = data.year === activeTab;
-                const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase());
+                const searchValue = searchQuery.trim().toLowerCase();
+                const matchesSearch = !searchValue || [name, data.subjectCode, data.subjectTitle, data.sectionCourse]
+                  .some((value) => String(value || '').toLowerCase().includes(searchValue));
                 return matchesTab && matchesSearch;
               })
               .map(([sectionName, sectionData]) => {
@@ -1279,27 +1284,11 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           />
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-col items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 p-6 md:flex-row md:items-center">
-              <div>
-                <h3 className="inline text-xl font-bold text-[#003366]">Section: {activeSection}</h3>
+            <div className="flex flex-col items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 p-4 sm:p-5 lg:flex-row lg:items-center">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-xl font-bold text-[#003366]">Section: {activeSection}</h3>
                 {currentStatus && (
-                  <span className={`ml-3 rounded-full px-3 py-1 text-xs font-bold ${
-                    currentStatus === 'draft' ? 'bg-yellow-100 text-yellow-800' :
-                    currentStatus === 'returned' ? 'bg-red-100 text-red-700' :
-                    currentStatus === 'submitted' ? 'bg-blue-100 text-blue-800' :
-                    currentStatus === 'approved' ? 'bg-emerald-100 text-emerald-800' :
-                    'bg-green-100 text-green-800'
-                  }`}>
-                    {currentStatus === 'draft'
-                      ? 'Draft Saved'
-                      : currentStatus === 'returned'
-                      ? 'Returned'
-                      : currentStatus === 'submitted'
-                      ? 'Submitted'
-                      : currentStatus === 'approved'
-                      ? 'Approved'
-                      : 'Finalized'}
-                  </span>
+                  <StatusBadge status={currentStatus} label={currentStatus === 'draft' ? 'Draft Saved' : currentStatus === 'forwarded' ? 'Finalized' : undefined} />
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-3">

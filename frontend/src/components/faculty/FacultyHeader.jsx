@@ -31,8 +31,8 @@ const FacultyHeader = ({ facultyData, totalSections, onLogout }) => {
         className="w-full border-b-2 border-yellow-400 bg-[#001b55] shadow-sm"
         style={{ backgroundImage: "linear-gradient(118deg, transparent 0 48%, rgba(10,48,122,.72) 48.2% 62%, transparent 62.2%), linear-gradient(142deg, transparent 0 68%, rgba(0,43,112,.85) 68.2% 83%, transparent 83.2%), linear-gradient(105deg, #00113f 0%, #002469 54%, #001748 100%)" }}
       >
-        <div className="flex w-full items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10">
               <img
                 src={plvlogo}
@@ -42,14 +42,14 @@ const FacultyHeader = ({ facultyData, totalSections, onLogout }) => {
             </div>
 
             <div className="leading-tight">
-              <p className="text-sm text-white/80">Faculty Portal</p>
-              <h1 className="text-xl font-bold text-white">
+              <p className="text-xs font-medium uppercase tracking-wide text-white/70 sm:text-sm sm:normal-case sm:tracking-normal">Faculty Portal</p>
+              <h1 className="truncate text-base font-bold text-white sm:text-xl">
                 Welcome, {facultyName}
               </h1>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <div className="hidden rounded-xl bg-white/10 px-4 py-2 text-right md:block">
               <p className="text-xs text-white/70">Semester</p>
               <p className="text-sm font-semibold text-white">{semester}</p>
@@ -58,8 +58,9 @@ const FacultyHeader = ({ facultyData, totalSections, onLogout }) => {
             <SettingsMenu />
 
             <button
+              type="button"
               onClick={onLogout}
-              className="rounded-xl border border-yellow-400 bg-transparent px-5 py-2 text-sm font-semibold text-yellow-400 transition hover:bg-yellow-400 hover:text-[#003366]"
+              className="h-10 rounded-lg border border-yellow-400 bg-transparent px-3 text-sm font-semibold text-yellow-400 transition hover:bg-yellow-400 hover:text-[#003366] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#001b55] sm:px-4"
             >
               Logout
             </button>
@@ -67,23 +68,23 @@ const FacultyHeader = ({ facultyData, totalSections, onLogout }) => {
         </div>
       </header>
 
-      <div className="mt-5 px-4 md:px-6">
-        <div className="rounded-xl bg-[#003366] p-4 text-white shadow-sm md:p-6">
+      <div className="mt-4 px-4 md:px-6">
+        <div className="rounded-xl border border-blue-900/10 bg-[#003366] p-4 text-white shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
-              <h2 className="text-2xl font-bold leading-tight md:text-3xl">
+              <h2 className="text-lg font-bold leading-tight md:text-xl">
                 Prof. {facultyName}
               </h2>
-              <p className="mt-2 text-sm opacity-90">{department}</p>
+              <p className="mt-1 text-sm text-white/80">{department}</p>
             </div>
 
             <div className="flex flex-wrap gap-3 md:gap-4">
-              <div className="min-w-[120px] rounded-lg bg-white/20 px-4 py-3 text-center">
+              <div className="min-w-[110px] rounded-lg bg-white/10 px-3 py-2 text-center">
                 <span className="block text-xs">Sections</span>
                 <div className="text-lg font-bold">{totalSections ?? 0}</div>
               </div>
 
-              <div className="min-w-[140px] rounded-lg bg-yellow-400 px-4 py-3 text-center font-bold text-[#003366]">
+              <div className="min-w-[130px] rounded-lg bg-yellow-400 px-3 py-2 text-center font-bold text-[#003366]">
                 <span className="block text-xs">Classification</span>
                 <div className="text-lg">{classification}</div>
               </div>

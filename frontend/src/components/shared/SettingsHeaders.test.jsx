@@ -22,8 +22,8 @@ const portalHeaders = [
   ['Student', <StudentNavbar onLogout={() => {}} onOpenSettings={() => {}} />],
 ];
 
-test.each(portalHeaders)('%s header exposes the shared Settings action', (_role, header) => {
+test.each(portalHeaders)('%s header exposes exactly one shared Settings action', (_role, header) => {
   render(header);
-  expect(screen.getByRole('button', { name: /^Settings$/i })).toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: /^Settings$/i })).toHaveLength(1);
   cleanup();
 });

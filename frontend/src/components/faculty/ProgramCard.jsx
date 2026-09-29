@@ -1,141 +1,82 @@
-import React from "react";
-import ReviewStatusBanner from "../chairperson/ReviewStatusBanner";
+import React from 'react';
+import StatusBadge from '../shared/StatusBadge';
 
 const ProgramCard = ({
   sectionName,
   sectionData,
   onClick,
   progress = 0,
-  reviewStatus = "pending",
-  reviewNote = "",
+  reviewStatus = 'pending',
+  reviewNote = '',
   onSubmit,
 }) => {
   const totalStudents = sectionData.students?.length || 0;
-  const displaySchedule = sectionData.schedule || "Not Available";
-  const displayDay = sectionData.day || "Not Available";
+  const displaySchedule = [sectionData.day, sectionData.schedule].filter((value) => value && value !== 'Not Available').join(' · ') || 'Schedule not available';
   const isStarted = progress > 0;
   const isCompleted = progress >= 100;
-  const isReturned = reviewStatus === "returned";
-  const isSubmitted = reviewStatus === "submitted";
-  const isApproved = reviewStatus === "approved";
-  const isForwarded = reviewStatus === "forwarded";
+  const isReturned = reviewStatus === 'returned';
+  const isSubmitted = reviewStatus === 'submitted';
+  const isApproved = reviewStatus === 'approved';
+  const isForwarded = reviewStatus === 'forwarded';
 
-  const getSubmitLabel = () => {
-    if (isForwarded) return "Finalized by Chairperson";
-    if (isApproved) return "Approved by Chairperson";
-    if (isSubmitted) return "Submitted to Chairperson";
-    if (isReturned) return "Resubmit to Chairperson";
-    return "Submit to Chairperson";
-  };
+  const workflowStatus = isReturned
+    ? 'Returned'
+    : isForwarded
+      ? 'Finalized'
+      : isApproved
+        ? 'Approved'
+        : isSubmitted
+          ? 'Submitted'
+          : isCompleted
+            ? 'Completed'
+            : isStarted
+              ? 'In Progress'
+              : 'Draft';
+
+  const submitLabel = isForwarded
+    ? 'Finalized by Chairperson'
+    : isApproved
+      ? 'Approved by Chairperson'
+      : isSubmitted
+        ? 'Submitted to Chairperson'
+        : isReturned
+          ? 'Resubmit to Chairperson'
+          : 'Submit to Chairperson';
 
   return (
-    <div
-      onClick={onClick}
-      className="cursor-pointer rounded-3xl bg-white p-6 shadow-md transition hover:-translate-y-1 hover:shadow-xl"
-    >
-      <div className="mb-3 flex items-center justify-between">
-        <span className="rounded-xl bg-blue-50 px-3 py-1 text-xs font-bold text-blue-500">
-          {sectionData.subjectCode}
-        </span>
-
-        <div className="flex items-center gap-2">
-          <span
-            className={`h-2.5 w-2.5 rounded-full ${
-              isCompleted ? "bg-emerald-500" : isStarted ? "bg-yellow-500" : "bg-red-500"
-            }`}
-          />
-
-          <span
-            className={`text-xs font-bold ${
-              isCompleted
-                ? "text-emerald-600"
-                : isStarted
-                ? "text-yellow-600"
-                : "text-red-600"
-            }`}
-          >
-            {isCompleted ? "Completed" : isStarted ? "In Progress" : "Not Started"}
-          </span>
+    <article className="flex h-full flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-extrabold tracking-wide text-blue-700">{sectionData.subjectCode || 'Subject'}</p>
+          <h2 className="mt-1 line-clamp-2 text-base font-bold leading-5 text-slate-900">{sectionData.subjectTitle || 'Untitled subject'}</h2>
         </div>
+        <StatusBadge status={workflowStatus} />
       </div>
 
-      <h2 className="mb-3 text-lg font-extrabold text-slate-800">
-        {sectionData.subjectTitle}
-      </h2>
-
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-y border-slate-100 py-3 text-sm">
         <span className="font-bold text-[#003366]">{sectionName}</span>
-        <span className="rounded-lg bg-violet-50 px-3 py-1 text-xs text-violet-700">
-          {sectionData.sectionCourse}
-        </span>
+        {sectionData.sectionCourse ? <span className="text-slate-500">{sectionData.sectionCourse}</span> : null}
+        <span className="text-slate-500">{sectionData.units || 0} Units</span>
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-2 text-xs">
-        <span className="rounded-lg bg-slate-100 px-3 py-1">Units: {sectionData.units}</span>
-        <span className="rounded-lg bg-slate-100 px-3 py-1">{displaySchedule}</span>
-        <span className="rounded-lg bg-slate-100 px-3 py-1">{displayDay}</span>
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+        <div className="col-span-2"><dt className="text-slate-500">Schedule</dt><dd className="mt-0.5 font-medium text-slate-700">{displaySchedule}</dd></div>
+        <div><dt className="text-slate-500">Students</dt><dd className="mt-0.5 font-semibold text-slate-800">{totalStudents}</dd></div>
+        <div><dt className="text-slate-500">Academic Period</dt><dd className="mt-0.5 font-semibold text-slate-800">{sectionData.schoolYear || '—'} · {sectionData.semester || '—'}</dd></div>
+      </dl>
+
+      <div className="mt-4">
+        <div className="mb-1.5 flex items-center justify-between text-xs"><span className="font-semibold uppercase tracking-wide text-slate-500">Encoding progress</span><span className="font-bold text-[#003366]">{progress}%</span></div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${isCompleted ? 'bg-emerald-500' : isStarted ? 'bg-yellow-400' : 'bg-slate-300'}`} style={{ width: `${progress}%` }} /></div>
       </div>
 
-      <hr className="my-3 border-slate-200" />
+      {isReturned && reviewNote ? <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700"><span className="font-bold">Chairperson note:</span> {reviewNote}</div> : null}
 
-      <div className="mb-4 flex justify-between text-sm text-slate-500">
-        <span>Students: {totalStudents}</span>
-        <span>SY: {sectionData.schoolYear || "--"}</span>
-        <span>{sectionData.semester}</span>
+      <div className="mt-auto flex flex-col gap-2 pt-4 sm:flex-row">
+        <button type="button" onClick={onClick} className="h-10 flex-1 rounded-lg bg-[#003366] px-3 text-sm font-bold text-white transition hover:bg-[#00264d]">{isStarted ? 'View Grades' : 'Encode Now'}</button>
+        <button type="button" onClick={onSubmit} disabled={!isCompleted || isSubmitted || isApproved || isForwarded} className="h-10 flex-1 rounded-lg border border-emerald-300 bg-white px-3 text-sm font-bold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">{submitLabel}</button>
       </div>
-
-      <div className="mb-4">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Encoding Progress
-          </span>
-
-          <span
-            className={`text-sm font-bold ${
-              isCompleted ? "text-emerald-600" : isStarted ? "text-yellow-600" : "text-red-600"
-            }`}
-          >
-            {progress}%
-          </span>
-        </div>
-
-        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-          <div
-            className={`h-2 rounded-full ${
-              isCompleted ? "bg-emerald-500" : isStarted ? "bg-yellow-500" : "bg-red-500"
-            }`}
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      </div>
-
-      <ReviewStatusBanner reviewStatus={reviewStatus} reviewNote={reviewNote} />
-
-      <div className="mt-4 flex flex-col gap-3">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onClick();
-          }}
-          className="h-12 rounded-xl bg-[#003366] font-bold text-white transition hover:bg-[#002244]"
-        >
-          {isStarted ? "View Grades" : "Encode Now"}
-        </button>
-
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSubmit?.();
-          }}
-          disabled={!isCompleted || isSubmitted || isApproved || isForwarded}
-          className="h-12 rounded-xl border border-green-200 bg-green-50 font-bold text-green-700 transition hover:bg-green-500 hover:text-white disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-        >
-          {getSubmitLabel()}
-        </button>
-      </div>
-    </div>
+    </article>
   );
 };
 

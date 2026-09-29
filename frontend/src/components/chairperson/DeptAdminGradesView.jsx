@@ -1570,11 +1570,11 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     const activeChairTab = mainTab;
 
     return (
-        <div className="flex h-screen w-full flex-col bg-slate-50 font-sans fixed inset-0 z-[100] overflow-auto">
+        <div className="fixed inset-0 z-[100] flex h-screen w-full flex-col overflow-auto bg-slate-50 font-sans">
             <ChairpersonHeader chairpersonData={{ name: loggedInName, department, semester: activeSemester }} departmentCount={deptMetrics.totalFaculty} onLogout={onLogout} />
-            <div className="flex flex-col md:flex-row flex-1 overflow-hidden p-4 md:p-6 gap-6">
+            <div className="flex flex-1 flex-col gap-4 overflow-hidden p-3 sm:p-4 lg:flex-row lg:gap-6 lg:p-6">
                 <ChairpersonSidebar activeTab={activeChairTab === 'grades' ? 'dashboard' : activeChairTab} setActiveTab={setMainTab} />
-                <main className="flex-1 overflow-y-auto pr-2">
+                <main className="min-w-0 flex-1 overflow-y-auto lg:pr-2">
                     {(activeChairTab === 'dashboard' || activeChairTab === 'grades') && <ChairpersonOverview metrics={deptMetrics} />}
                         {['forReview', 'returned', 'approved', 'forwarded', 'flagged'].includes(activeChairTab) && (
                         <div className="flex flex-col gap-6">
@@ -1602,6 +1602,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                     onFinalize={handleBulkFinalize}
                                     onSendBack={(notes) => handleBulkReturn(notes)} 
                                     onViewIpfs={handleViewIpfs}
+                                    onBack={() => setSelectedReviewSection(null)}
                                 />
                             )}
                         </div>

@@ -35,15 +35,15 @@ function ChairpersonOverview({ metrics }) {
   ];
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
       {cards.map((card) => (
         <div
           key={card.title}
-          className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
         >
-          <p className="text-sm font-medium text-slate-500">{card.title}</p>
-          <h3 className="mt-2 text-3xl font-bold text-[#003366]">{card.value}</h3>
-          <p className="mt-2 text-sm text-slate-400">{card.subtitle}</p>
+          <p className="text-xs font-semibold text-slate-500 sm:text-sm">{card.title}</p>
+          <h3 className="mt-1 text-2xl font-bold text-[#003366] sm:text-3xl">{card.value}</h3>
+          <p className="mt-1 hidden text-xs text-slate-400 sm:block">{card.subtitle}</p>
         </div>
       ))}
     </div>
