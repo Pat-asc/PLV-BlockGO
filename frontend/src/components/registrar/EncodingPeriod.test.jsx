@@ -54,3 +54,42 @@ test('keeps semester, term, and encoding dates functional', async () => {
     semester: '1st Semester', term: 'finals', startDate: '2026-10-01', endDate: '2026-10-31',
   });
 });
+
+test('uses active academic period over stale saved school year and semester', async () => {
+  getSystemSetting.mockResolvedValue({
+    status: 'Success',
+    value: JSON.stringify({
+      schoolYear: '2025-2026',
+      semester: '1st Semester',
+      startDate: '2026-09-01',
+      endDate: '2026-11-16',
+      term: 'finals',
+    }),
+  });
+
+  fetchAcademicPeriodOptions.mockResolvedValue({
+    status: 'Success',
+    schoolYears: ['2026-2027', '2025-2026'],
+    currentSchoolYear: '2026-2027',
+    activeAcademicPeriod: {
+      schoolYear: '2026-2027',
+      semester: 'MIDYEAR',
+    },
+  });
+
+  render(<EncodingPeriod />);
+
+  const year = await screen.findByRole('combobox', { name: 'School Year' });
+
+  await waitFor(() => {
+    expect(year).toHaveValue('2026-2027');
+  });
+
+  await waitFor(() => {
+    expect(screen.getByLabelText('Semester')).toHaveValue('Summer');
+  });
+
+  expect(screen.getByLabelText('Encoding Term')).toHaveValue('finals');
+  expect(screen.getByLabelText('Start Date')).toHaveValue('2026-09-01');
+  expect(screen.getByLabelText('End Date')).toHaveValue('2026-11-16');
+});

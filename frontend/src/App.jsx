@@ -6,6 +6,7 @@ import RegistrarPortal from "./pages/RegistrarPortal";
 import ChairpersonPortal from "./pages/ChairpersonPortal";
 import { CHAIRPERSON_REVIEW_KEY } from "./utils/chairpersonHelpers";
 import { getPublishedGradesForStudent } from "./utils/publishedGradesHelpers";
+import { resetEncodingSeason } from "./services/api";
 
 function App() {
   const [userRole, setUserRole] = useState(localStorage.getItem("userRole"));
@@ -40,11 +41,34 @@ function App() {
     setUserRole(null);
   };
 
-  const handleResetEncodingSeason = () => {
+  const handleResetEncodingSeason = async (academicContext) => {
+    const response = await resetEncodingSeason(academicContext);
+
+    const resetEncodingPeriod = JSON.stringify({ ...academicContext });
+
     localStorage.removeItem("blockgo-allGrades");
     localStorage.removeItem(CHAIRPERSON_REVIEW_KEY);
     localStorage.removeItem("registrarAssignments");
+    localStorage.setItem("encodingPeriod", resetEncodingPeriod);
+    localStorage.setItem("facultyLoadResetAt", new Date().toISOString());
+
+    window.dispatchEvent(
+      new CustomEvent("blockgo:system-setting-changed", {
+        detail: {
+          key: "encoding_period",
+          value: resetEncodingPeriod,
+        },
+      })
+    );
+
+    window.dispatchEvent(
+      new CustomEvent("blockgo:faculty-load-reset", {
+        detail: { clearedAt: new Date().toISOString() },
+      })
+    );
+
     setAllGrades({});
+    return response;
   };
 
   const studentData = {

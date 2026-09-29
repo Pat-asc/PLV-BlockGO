@@ -37,21 +37,68 @@ function EncodingPeriod({ onResetEncodingSeason }) {
         ]);
         const options = optionsResult.status === "fulfilled" ? optionsResult.value : null;
         const res = settingResult.status === "fulfilled" ? settingResult.value : null;
-        let selectedSchoolYear = options?.activeAcademicPeriod?.schoolYear || options?.currentSchoolYear || fallbackSchoolYear;
+        const activeAcademicPeriod = options?.activeAcademicPeriod || null;
+        let selectedSchoolYear =
+          activeAcademicPeriod?.schoolYear ||
+          options?.currentSchoolYear ||
+          fallbackSchoolYear;
+
         let parsedSavedPeriod = null;
+
+        const toSemesterDisplay = (value) => {
+          const normalized = String(value || "").trim().toUpperCase();
+
+          if (normalized === "FIRST" || normalized === "1ST SEMESTER") {
+            return "1st Semester";
+          }
+
+          if (normalized === "SECOND" || normalized === "2ND SEMESTER") {
+            return "2nd Semester";
+          }
+
+          if (
+            normalized === "MIDYEAR" ||
+            normalized === "SUMMER" ||
+            normalized === "SUMMER / MIDYEAR"
+          ) {
+            return "Summer";
+          }
+
+          return "";
+        };
+
         if (res?.status === "Success" && res.value) {
           parsedSavedPeriod = JSON.parse(res.value);
-          selectedSchoolYear = parsedSavedPeriod?.schoolYear || selectedSchoolYear;
-          setPeriod({
-            schoolYear: selectedSchoolYear,
-            semester: parsedSavedPeriod?.semester || "2nd Semester",
+
+          const authoritativeSemester =
+            toSemesterDisplay(activeAcademicPeriod?.semester) ||
+            parsedSavedPeriod?.semester ||
+            "2nd Semester";
+
+          const resolvedPeriod = {
+            schoolYear:
+              activeAcademicPeriod?.schoolYear ||
+              parsedSavedPeriod?.schoolYear ||
+              selectedSchoolYear,
+            semester: authoritativeSemester,
             startDate: parsedSavedPeriod?.startDate || "",
             endDate: parsedSavedPeriod?.endDate || "",
             term: parsedSavedPeriod?.term || "midterm",
-          });
-          setSavedPeriod(parsedSavedPeriod);
+          };
+
+          selectedSchoolYear = resolvedPeriod.schoolYear;
+
+          setPeriod(resolvedPeriod);
+          setSavedPeriod(resolvedPeriod);
         } else {
-          setPeriod((current) => ({ ...current, schoolYear: selectedSchoolYear }));
+          setPeriod((current) => ({
+            ...current,
+            schoolYear: selectedSchoolYear,
+            semester:
+              toSemesterDisplay(activeAcademicPeriod?.semester) ||
+              current.semester,
+          }));
+
           setStatusMessage("No saved encoding period yet.");
         }
         setSchoolYears([...new Set([
@@ -135,7 +182,11 @@ function EncodingPeriod({ onResetEncodingSeason }) {
 
     try {
       setIsResettingSeason(true);
-      await onResetEncodingSeason?.(period);
+      if (typeof onResetEncodingSeason !== "function") {
+        throw new Error("Encoding season reset is unavailable. Please refresh the page and try again.");
+      }
+
+      await onResetEncodingSeason(period);
       setSavedPeriod(period);
       setStatusMessage(
         "Encoding season reset successfully. Faculty assigned sections were cleared, saved sections were kept, and the encoding period was closed."
