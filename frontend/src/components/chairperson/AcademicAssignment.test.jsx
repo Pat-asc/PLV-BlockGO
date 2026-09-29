@@ -150,6 +150,11 @@ test("blocks faculty assignment when section enrollment period differs from acti
       yearLevel: 3,
       section: "3-1",
       academicSectionId: 31,
+    }, {
+      schoolYear: "2025-2026",
+      semester: "FIRST",
+      yearLevel: 3,
+      academicSectionId: 31,
     }],
     activeAcademicPeriod: {
       schoolYear: "2025-2026",
@@ -174,13 +179,14 @@ test("blocks faculty assignment when section enrollment period differs from acti
     screen.getByLabelText("Current academic period")
   ).toHaveTextContent("2025-2026 · 1st Semester");
 
-  expect(screen.getByText("2026-2027")).toBeInTheDocument();
+  expect(screen.getByText("2026-2027 · 1st Semester")).toBeInTheDocument();
 
-  const mismatchButton = screen.getByRole("button", {
+  const mismatchButtons = screen.getAllByRole("button", {
     name: "Period mismatch",
   });
 
-  expect(mismatchButton).toBeDisabled();
+  expect(mismatchButtons).toHaveLength(2);
+  mismatchButtons.forEach((button) => expect(button).toBeDisabled());
 
   expect(
     screen.getByRole("button", { name: "Save Assignments" })
@@ -235,6 +241,7 @@ test("Clear Selection removes four pending rows and resets pending totals withou
     subjects,
     sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
     schoolYears: ["2026-2027"], enrollmentPeriods: [],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
   });
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   await selectFaculty();
@@ -256,6 +263,7 @@ test("Clear Selection is disabled when the selected faculty has only saved assig
     subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems and Technologies", yearLevel: 3, semester: "SECOND", units: 3 }],
     sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
     schoolYears: ["2026-2027"], enrollmentPeriods: [],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
     assignments: [savedAssignment(), savedAssignment({ id: 71, subjectCode: "GE 101" })],
   });
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
@@ -273,6 +281,7 @@ test("Clear Selection removes pending rows but preserves mixed saved rows", asyn
     subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems and Technologies", yearLevel: 3, semester: "SECOND", units: 3 }],
     sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
     schoolYears: ["2026-2027"], enrollmentPeriods: [],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
     assignments: [savedAssignment(), savedAssignment({ id: 71, subjectCode: "GE 101" })],
   });
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
@@ -300,6 +309,7 @@ test("Clear Selection is isolated to the currently selected faculty", async () =
     ],
     sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
     schoolYears: ["2026-2027"], enrollmentPeriods: [],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
   });
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   await selectFaculty();
@@ -382,6 +392,7 @@ test("filters manual assignment rows by exact academicSectionId and restores all
       { id: 32, department: "Bachelor of Science in Information Technology", programCode: "BECE", yearLevel: 3, section: "3-1" },
     ],
     schoolYears: ["2026-2027"], enrollmentPeriods: [],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
   });
   assignFacultyLoadToBackend.mockResolvedValue({ status: "Success", assignment: { id: 88, academicSectionId: 32 } });
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
@@ -411,6 +422,7 @@ test("hydrates a persisted server schedule after reload", async () => {
     subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems", yearLevel: 3, semester: "SECOND", units: 3 }],
     sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
     schoolYears: ["2026-2027"], enrollmentPeriods: [],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
     assignments: [{ id: 77, facultyUserId: 1, facultyName: "Carlos Reyes", program: "Bachelor of Science in Information Technology", sectionName: "BSIT 3-1", yearLevel: "3", subjectCode: "IT 321", academicSectionId: 31, schoolYear: "2026-2027", semester: "SECOND", schedule: "Tuesday" }],
   });
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);

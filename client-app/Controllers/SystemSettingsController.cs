@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.SignalR;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Client_app.Services;
 
 namespace Client_app.Controllers
 {
@@ -155,125 +156,40 @@ namespace Client_app.Controllers
                 using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
 
-                // academic_periods is the authority for school year and semester.
-                // The encoding-period setting may control Midterm/Finals and schedule dates,
-                // but it must never silently move to another school year or semester.
+                var storedValue = req.Value ?? string.Empty;
                 if (string.Equals(req.Key?.Trim(), "encoding_period", StringComparison.OrdinalIgnoreCase))
                 {
-                    string requestedSchoolYear;
-                    string requestedSemester;
-                    var settingValue = req.Value ?? string.Empty;
-
                     try
                     {
-                        using var document = JsonDocument.Parse(settingValue);
-
-                        if (document.RootElement.ValueKind != JsonValueKind.Object)
-                            return BadRequest(new
-                            {
-                                status = "Error",
-                                message = "Encoding period setting must be a valid JSON object."
-                            });
-
-                        var root = document.RootElement;
-
-                        requestedSchoolYear =
-                            root.TryGetProperty("schoolYear", out var schoolYearElement)
-                                ? schoolYearElement.GetString()?.Trim() ?? string.Empty
-                                : string.Empty;
-
-                        var requestedSemesterRaw =
-                            root.TryGetProperty("semester", out var semesterElement)
-                                ? semesterElement.GetString()?.Trim() ?? string.Empty
-                                : string.Empty;
-
-                        requestedSemester = requestedSemesterRaw.ToUpperInvariant() switch
-                        {
-                            "1ST SEMESTER" or "FIRST" => "FIRST",
-                            "2ND SEMESTER" or "SECOND" => "SECOND",
-                            "SUMMER" or "SUMMER / MIDYEAR" or "MIDYEAR" => "MIDYEAR",
-                            _ => string.Empty
-                        };
-
+                        storedValue = await EncodingPeriodSettingService.SaveAsync(
+                            conn, storedValue, HttpContext.RequestAborted);
                     }
-                    catch (JsonException)
+                    catch (ArgumentException ex)
                     {
-                        return BadRequest(new
-                        {
-                            status = "Error",
-                            message = "Encoding period setting contains invalid JSON."
-                        });
+                        return BadRequest(new { status = "Error", message = ex.Message });
                     }
-
-                    if (string.IsNullOrWhiteSpace(requestedSchoolYear) ||
-                        string.IsNullOrWhiteSpace(requestedSemester))
+                    catch (EncodingPeriodSettingService.NoActiveAcademicPeriodException ex)
                     {
-                        return BadRequest(new
-                        {
-                            status = "Error",
-                            message = "A valid school year and semester are required."
-                        });
-                    }
-
-                    await using var authorityCommand = new NpgsqlCommand(@"
-                        SELECT school_year, semester
-                        FROM academic_periods
-                        WHERE UPPER(status) = 'ACTIVE'
-                        ORDER BY opened_at DESC
-                        LIMIT 1;", conn);
-
-                    await using var authorityReader =
-                        await authorityCommand.ExecuteReaderAsync(HttpContext.RequestAborted);
-
-                    if (!await authorityReader.ReadAsync(HttpContext.RequestAborted))
-                    {
-                        return Conflict(new
-                        {
-                            status = "Error",
-                            message = "No active academic period exists. Use Reset Encoding Season to open an academic period before saving the schedule."
-                        });
-                    }
-
-                    var activeSchoolYear = authorityReader.GetString(0).Trim();
-                    var activeSemester = authorityReader.GetString(1).Trim().ToUpperInvariant();
-
-                    await authorityReader.DisposeAsync();
-
-                    if (!string.Equals(requestedSchoolYear, activeSchoolYear, StringComparison.OrdinalIgnoreCase) ||
-                        !string.Equals(requestedSemester, activeSemester, StringComparison.OrdinalIgnoreCase))
-                    {
-                        var activeSemesterDisplay = activeSemester switch
-                        {
-                            "FIRST" => "1st Semester",
-                            "SECOND" => "2nd Semester",
-                            "MIDYEAR" => "Summer",
-                            _ => activeSemester
-                        };
-
-                        return Conflict(new
-                        {
-                            status = "Error",
-                            message =
-                                $"Save Schedule cannot change the active academic period. " +
-                                $"The active period is {activeSchoolYear} · {activeSemesterDisplay}. " +
-                                "Use Reset Encoding Season to change the school year or semester."
-                        });
+                        return Conflict(new { status = "Error", message = ex.Message });
                     }
                 }
 
-                using var cmd = new NpgsqlCommand(@"
-                    INSERT INTO SystemSettings (key, value) VALUES (@k, @v) 
-                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", conn);
-                cmd.Parameters.AddWithValue("k", req.Key ?? string.Empty);
-                cmd.Parameters.AddWithValue("v", req.Value ?? string.Empty);
-                await cmd.ExecuteNonQueryAsync();
+                else
+                {
+                    using var cmd = new NpgsqlCommand(@"
+                        INSERT INTO SystemSettings (key, value) VALUES (@k, @v)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", conn);
+                    cmd.Parameters.AddWithValue("k", req.Key ?? string.Empty);
+                    cmd.Parameters.AddWithValue("v", storedValue);
+                    await cmd.ExecuteNonQueryAsync();
+                }
                 await _chatHubContext.Clients.All.SendAsync("SystemSettingChanged", new
                 {
                     Key = req.Key,
-                    Value = req.Value ?? string.Empty,
+                    Value = storedValue,
                     UpdatedAt = DateTime.UtcNow
                 });
-                return Ok(new { status = "Success" });
+                return Ok(new { status = "Success", value = storedValue });
             }
             catch (Exception ex)
             {

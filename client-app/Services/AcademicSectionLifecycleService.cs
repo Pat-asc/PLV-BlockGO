@@ -13,10 +13,11 @@ public static class AcademicSectionLifecycleService
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         try
         {
-            string department;
-            int yearLevel;
-            int sectionNumber;
-            bool isActive;
+            string department = string.Empty;
+            int yearLevel = 0;
+            int sectionNumber = 0;
+            bool isActive = false;
+            bool sectionFound;
             await using (var section = new NpgsqlCommand(@"
                 SELECT department, year_level, section_num, is_active
                 FROM academicsections
@@ -25,15 +26,20 @@ public static class AcademicSectionLifecycleService
             {
                 section.Parameters.AddWithValue("id", sectionId);
                 await using var reader = await section.ExecuteReaderAsync(cancellationToken);
-                if (!await reader.ReadAsync(cancellationToken))
+                sectionFound = await reader.ReadAsync(cancellationToken);
+                if (sectionFound)
                 {
-                    await transaction.RollbackAsync(cancellationToken);
-                    return null;
+                    department = reader.GetString(0);
+                    yearLevel = reader.GetInt32(1);
+                    sectionNumber = reader.GetInt32(2);
+                    isActive = reader.GetBoolean(3);
                 }
-                department = reader.GetString(0);
-                yearLevel = reader.GetInt32(1);
-                sectionNumber = reader.GetInt32(2);
-                isActive = reader.GetBoolean(3);
+            }
+
+            if (!sectionFound)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return null;
             }
 
             if (!isActive)
@@ -67,9 +73,6 @@ public static class AcademicSectionLifecycleService
                 return new("deleted", department, yearLevel, sectionNumber);
             }
 
-            // Planning assignments are mutable and must not remain attached to a
-            // section removed from current workflows. Finalized enrollment rows
-            // remain linked so their historical section identity is preserved.
             await using (var unassignPlanning = new NpgsqlCommand(@"
                 UPDATE student_enrollments
                 SET academic_section_id = NULL, section = NULL, updated_at = CURRENT_TIMESTAMP

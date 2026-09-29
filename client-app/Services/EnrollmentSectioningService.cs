@@ -124,6 +124,9 @@ public static class EnrollmentSectioningService
             maxCapacity = reader.GetInt32(4);
         }
 
+        await AcademicSectionPeriodGuard.ThrowIfConflictingFacultyAssignmentAsync(
+            connection, transaction, sectionId, schoolYear, semester);
+
         await using var countCommand = new NpgsqlCommand(@"
             SELECT COUNT(*) FROM student_enrollments
             WHERE academic_section_id = @sectionId AND school_year = @schoolYear

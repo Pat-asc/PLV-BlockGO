@@ -4,6 +4,14 @@ import React, { useEffect, useState } from "react";
 import { fetchAcademicPeriodOptions, getSystemSetting, updateSystemSetting } from "../../services/api";
 import StatusBadge from "../shared/StatusBadge";
 
+const toSemesterDisplay = (value) => {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "FIRST" || normalized === "1ST SEMESTER") return "1st Semester";
+  if (normalized === "SECOND" || normalized === "2ND SEMESTER") return "2nd Semester";
+  if (["MIDYEAR", "SUMMER", "SUMMER / MIDYEAR"].includes(normalized)) return "Summer";
+  return "";
+};
+
 function EncodingPeriod({ onResetEncodingSeason }) {
   const today = new Date();
   const currentYear = today.getMonth() >= 5 ? today.getFullYear() : today.getFullYear() - 1;
@@ -44,28 +52,6 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           fallbackSchoolYear;
 
         let parsedSavedPeriod = null;
-
-        const toSemesterDisplay = (value) => {
-          const normalized = String(value || "").trim().toUpperCase();
-
-          if (normalized === "FIRST" || normalized === "1ST SEMESTER") {
-            return "1st Semester";
-          }
-
-          if (normalized === "SECOND" || normalized === "2ND SEMESTER") {
-            return "2nd Semester";
-          }
-
-          if (
-            normalized === "MIDYEAR" ||
-            normalized === "SUMMER" ||
-            normalized === "SUMMER / MIDYEAR"
-          ) {
-            return "Summer";
-          }
-
-          return "";
-        };
 
         if (res?.status === "Success" && res.value) {
           parsedSavedPeriod = JSON.parse(res.value);
@@ -148,24 +134,34 @@ function EncodingPeriod({ onResetEncodingSeason }) {
   };
 
   const handleSave = async () => {
-    const encodingData = {
-      ...period,
-    };
-
     try {
       setIsSaving(true);
-      await updateSystemSetting("encoding_period", JSON.stringify(encodingData));
-      localStorage.setItem("encodingPeriod", JSON.stringify(encodingData));
+      const options = await fetchAcademicPeriodOptions();
+      const activeAcademicPeriod = options?.activeAcademicPeriod;
+      const activeSemester = toSemesterDisplay(activeAcademicPeriod?.semester);
+      if (!activeAcademicPeriod?.schoolYear || !activeSemester) {
+        throw new Error("An academic period must be opened before saving the schedule. Use Reset Encoding Season to open one.");
+      }
+      const encodingData = {
+        ...period,
+        schoolYear: activeAcademicPeriod.schoolYear,
+        semester: activeSemester,
+      };
+      const response = await updateSystemSetting("encoding_period", JSON.stringify(encodingData));
+      const savedData = response?.value ? JSON.parse(response.value) : encodingData;
+      setPeriod(savedData);
+      setSchoolYears((current) => [...new Set([savedData.schoolYear, ...current])]);
+      localStorage.setItem("encodingPeriod", JSON.stringify(savedData));
       window.dispatchEvent(
         new CustomEvent("blockgo:system-setting-changed", {
           detail: {
             key: "encoding_period",
-            value: JSON.stringify(encodingData),
+            value: JSON.stringify(savedData),
           },
         })
       );
       setStatusMessage("Encoding period saved successfully.");
-      setSavedPeriod(encodingData);
+      setSavedPeriod(savedData);
     } catch (error) {
       setStatusMessage(error.message || "Failed to save encoding period.");
     } finally {

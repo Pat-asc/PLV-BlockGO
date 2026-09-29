@@ -538,6 +538,10 @@ namespace Client_app.Controllers
             string? nstpOption = null,
             CancellationToken cancellationToken = default)
         {
+            if (academicSectionId.HasValue)
+                await AcademicSectionPeriodGuard.ThrowIfConflictingFacultyAssignmentAsync(
+                    connection, transaction, academicSectionId.Value, schoolYear, semester, cancellationToken);
+
             await using var command = new NpgsqlCommand(@"
                 INSERT INTO student_enrollments
                     (student_user_id, student_no, program_id, curriculum_id, academic_section_id,
@@ -2274,6 +2278,21 @@ namespace Client_app.Controllers
                         }
 
                         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                        await using (var activePeriod = new NpgsqlCommand(@"
+                            SELECT school_year, semester
+                            FROM academic_periods
+                            WHERE status = 'ACTIVE'
+                            ORDER BY opened_at DESC
+                            LIMIT 1
+                            FOR SHARE;", connection, transaction))
+                        await using (var periodReader = await activePeriod.ExecuteReaderAsync(cancellationToken))
+                        {
+                            if (!await periodReader.ReadAsync(cancellationToken))
+                                throw new ArgumentException("No active academic period exists. Ask the Registrar to open one before assigning faculty loads.");
+                            if (!string.Equals(schoolYear, periodReader.GetString(0), StringComparison.OrdinalIgnoreCase) ||
+                                !string.Equals(semester, periodReader.GetString(1), StringComparison.OrdinalIgnoreCase))
+                                throw new ArgumentException("Faculty assignment period does not match the active academic period.");
+                        }
                         int facultyUserId;
                         string facultyEmail;
                         await using (var faculty = new NpgsqlCommand(@"
@@ -2320,7 +2339,8 @@ namespace Client_app.Controllers
                                     AND subject.semester = @semester
                                     AND LOWER(subject.subject_code) = LOWER(@subject)
                               )
-                            LIMIT 1;", connection, transaction))
+                            LIMIT 1
+                            FOR UPDATE OF section;", connection, transaction))
                         {
                             assignment.Parameters.AddWithValue("academicSectionId", academicSectionId);
                             assignment.Parameters.AddWithValue("programId", program.Id);
@@ -2335,6 +2355,25 @@ namespace Client_app.Controllers
                             sectionNumber = assignmentReader.GetInt32(3);
                         }
                         var section = $"{canonicalProgramCode} {yearLevel}-{sectionNumber}";
+
+                        await using (var enrollmentPeriod = new NpgsqlCommand(@"
+                            SELECT school_year, semester
+                            FROM student_enrollments
+                            WHERE academic_section_id = @academicSectionId
+                              AND UPPER(BTRIM(status)) = 'ENROLLED'
+                              AND (school_year <> @schoolYear OR semester <> @semester)
+                            LIMIT 1
+                            FOR SHARE;", connection, transaction))
+                        {
+                            enrollmentPeriod.Parameters.AddWithValue("academicSectionId", academicSectionId);
+                            enrollmentPeriod.Parameters.AddWithValue("schoolYear", schoolYear);
+                            enrollmentPeriod.Parameters.AddWithValue("semester", semester);
+                            await using var periodReader = await enrollmentPeriod.ExecuteReaderAsync(cancellationToken);
+                            if (await periodReader.ReadAsync(cancellationToken))
+                                throw new ArgumentException(
+                                    $"Section enrollment belongs to {periodReader.GetString(0)} {periodReader.GetString(1)}, " +
+                                    $"but the active academic period is {schoolYear} {semester}.");
+                        }
 
                         await using (var profile = new NpgsqlCommand(@"
                             UPDATE facultyprofiles

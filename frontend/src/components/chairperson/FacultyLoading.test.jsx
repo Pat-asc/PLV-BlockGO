@@ -29,6 +29,8 @@ const options = {
     { subjectCode: "IT 102", subjectTitle: "Programming 1", yearLevel: 1, semester: "FIRST", units: 3 },
   ],
   schoolYears: ["2026-2027"],
+  activeAcademicPeriod: { schoolYear: "2026-2027", semester: "FIRST" },
+  enrollmentPeriods: [],
 };
 
 const faculty = [
@@ -164,6 +166,22 @@ test("rejects an unknown numeric Academic Section ID", async () => {
   );
 
   expect(screen.getByText(/academic section ID "999" does not exist/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save Assignments" })).toBeDisabled();
+  expect(bulkAssignFacultyLoads).not.toHaveBeenCalled();
+});
+
+test("shows the enrolled period and blocks a mismatched bulk assignment", async () => {
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    ...options,
+    enrollmentPeriods: [{ academicSectionId: 42, schoolYear: "2025-2026", semester: "FIRST" }],
+  });
+  render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
+  await waitFor(() => expect(fetchFacultyAssignmentOptions).toHaveBeenCalled());
+  await uploadCsv(
+    "Faculty Email,Subject Code,Academic Section ID,Section,School Year,Semester\n" +
+    "a@plv.edu.ph,IT 101,42,BSIT 1-1,2026-2027,FIRST"
+  );
+  expect(screen.getByText(/section enrollment belongs to 2025-2026 FIRST/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save Assignments" })).toBeDisabled();
   expect(bulkAssignFacultyLoads).not.toHaveBeenCalled();
 });

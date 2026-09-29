@@ -93,7 +93,7 @@ public static class FacultyBulkAssignmentService
                 JOIN academic_programs p
                   ON LOWER(section.department) IN (LOWER(p.program_code), LOWER(p.program_name))
                 WHERE section.id = @academicSectionId AND section.is_active = TRUE AND p.is_active = TRUE
-                FOR SHARE OF section;", connection, transaction))
+                FOR UPDATE OF section;", connection, transaction))
             {
                 section.Parameters.AddWithValue("academicSectionId", request.AcademicSectionId);
                 await using var reader = await section.ExecuteReaderAsync(cancellationToken);
@@ -102,6 +102,26 @@ public static class FacultyBulkAssignmentService
                 sectionNumber = reader.GetInt32(1);
                 programName = reader.GetString(2);
                 programCode = reader.GetString(3);
+            }
+
+            await using (var enrollment = new NpgsqlCommand(@"
+                SELECT school_year, semester
+                FROM student_enrollments
+                WHERE academic_section_id = @academicSectionId
+                  AND UPPER(BTRIM(status)) = 'ENROLLED'
+                  AND (school_year <> @schoolYear OR semester <> @semester)
+                LIMIT 1
+                FOR SHARE;", connection, transaction))
+            {
+                enrollment.Parameters.AddWithValue("academicSectionId", request.AcademicSectionId);
+                enrollment.Parameters.AddWithValue("schoolYear", schoolYear);
+                enrollment.Parameters.AddWithValue("semester", semester);
+                await using var reader = await enrollment.ExecuteReaderAsync(cancellationToken);
+                if (await reader.ReadAsync(cancellationToken))
+                    throw new ArgumentException(
+                        $"Section enrollment belongs to {reader.GetString(0)} {reader.GetString(1)}, " +
+                        $"but the active academic period is {schoolYear} {semester}. " +
+                        "Use a section enrolled in the active academic period.");
             }
 
             var subjectCode = request.SubjectCode.Trim();

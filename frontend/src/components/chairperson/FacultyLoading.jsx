@@ -133,17 +133,28 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     };
   }, [loadAssignmentOptions]);
 
-  const sectionOptions = (assignmentOptions.sections || []).flatMap((section) =>
-    (assignmentOptions.schoolYears || []).map((schoolYear) => ({
+  const activePeriod = assignmentOptions.activeAcademicPeriod;
+  const sectionOptions = (assignmentOptions.sections || []).flatMap((section) => {
+    const enrolledPeriods = (assignmentOptions.enrollmentPeriods || []).filter(
+      (period) => String(period.academicSectionId) === String(section.id)
+    );
+    const periods = enrolledPeriods.length ? enrolledPeriods : activePeriod ? [activePeriod] : [];
+    const hasConflictingEnrollment = enrolledPeriods.some(
+      (period) => period.schoolYear !== activePeriod?.schoolYear || period.semester !== activePeriod?.semester
+    );
+    return periods.map((period) => ({
+      key: `${section.id}|${period.schoolYear}|${period.semester}`,
       academicSectionId: section.id,
       program: section.department,
       yearLevel: `${section.yearLevel}${Number(section.yearLevel) === 1 ? "st" : Number(section.yearLevel) === 2 ? "nd" : Number(section.yearLevel) === 3 ? "rd" : "th"} Year`,
       section: `${section.programCode} ${section.section}`,
-      schoolYear,
-      semester: "",
+      schoolYear: period.schoolYear,
+      semester: period.semester,
+      periodMatchesActive: !hasConflictingEnrollment &&
+        period.schoolYear === activePeriod?.schoolYear && period.semester === activePeriod?.semester,
       students: [],
-    }))
-  );
+    }));
+  });
 
   const selectedProgram = chairpersonDepartment;
 
@@ -184,7 +195,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
   );
 
   const selectedSection = filteredSections.find(
-    (section) => section.section === selectedSectionName
+    (section) => section.key === selectedSectionName
   );
 
   const selectedDaysText = scheduleDay;
@@ -221,6 +232,14 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       return;
     }
 
+    if (!selectedSection.periodMatchesActive || normalizeSemesterCode(semester) !== selectedSection.semester) {
+      showSystemNotification(
+        `Section enrollment belongs to ${selectedSection.schoolYear} ${selectedSection.semester}. ` +
+        "Choose a section and semester in the active academic period."
+      );
+      return;
+    }
+
     if (!selectedFaculty) {
       showSystemNotification("Selected faculty was not found.");
       return;
@@ -235,7 +254,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       const alreadyExists = savedAssignments.some(
         (item) =>
           String(item.facultyId) === String(selectedFacultyId) &&
-          item.sectionName === selectedSectionName &&
+          item.academicSectionId === selectedSection.academicSectionId &&
           item.schoolYear === selectedSection.schoolYear &&
           normalizeText(item.semester) === normalizeText(semester) &&
           normalizeText(item.subjectCode) === normalizeText(subjectCode)
@@ -479,6 +498,22 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
 
       if (!/^\d{4}-\d{4}$/.test(rowSchoolYear)) {
         errors.push(`Row ${rowNumber}: school year must use YYYY-YYYY.`);
+        return;
+      }
+
+      if (!activePeriod || rowSchoolYear !== activePeriod.schoolYear || semesterCode !== activePeriod.semester) {
+        errors.push(`Row ${rowNumber}: assignment period does not match the active academic period.`);
+        return;
+      }
+      const conflictingEnrollment = (assignmentOptions.enrollmentPeriods || []).find(
+        (period) => String(period.academicSectionId) === String(section.id) &&
+          (period.schoolYear !== activePeriod.schoolYear || period.semester !== activePeriod.semester)
+      );
+      if (conflictingEnrollment) {
+        errors.push(
+          `Row ${rowNumber}: section enrollment belongs to ${conflictingEnrollment.schoolYear} ` +
+          `${conflictingEnrollment.semester}; active period is ${activePeriod.schoolYear} ${activePeriod.semester}.`
+        );
         return;
       }
 
@@ -954,11 +989,9 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
               <option value="">Choose section</option>
               {filteredSections.length ? (
                 filteredSections.map((section, index) => (
-                  <option
-                    key={`${section.section}-${section.schoolYear}-${index}`}
-                    value={section.section}
-                  >
-                    {section.section} - {section.yearLevel}
+                  <option key={`${section.key}-${index}`} value={section.key}>
+                    {section.section} - {section.yearLevel} - {section.schoolYear} {section.semester}
+                    {section.periodMatchesActive ? "" : " (Period mismatch)"}
                   </option>
                 ))
               ) : (
