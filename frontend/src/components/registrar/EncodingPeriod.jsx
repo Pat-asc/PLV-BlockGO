@@ -1,12 +1,15 @@
 import { showSystemNotification } from '../../services/NotificationContext';
 import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useEffect, useState } from "react";
-import { getSystemSetting, updateSystemSetting } from "../../services/api";
+import { fetchAcademicPeriodOptions, getSystemSetting, updateSystemSetting } from "../../services/api";
+import StatusBadge from "../shared/StatusBadge";
 
 function EncodingPeriod({ onResetEncodingSeason }) {
-  const currentYear = new Date().getFullYear();
+  const today = new Date();
+  const currentYear = today.getMonth() >= 5 ? today.getFullYear() : today.getFullYear() - 1;
+  const fallbackSchoolYear = `${currentYear}-${currentYear + 1}`;
   const [period, setPeriod] = useState({
-    schoolYear: `${currentYear}-${currentYear + 1}`,
+    schoolYear: fallbackSchoolYear,
     semester: "2nd Semester",
     startDate: "",
     endDate: "",
@@ -14,6 +17,10 @@ function EncodingPeriod({ onResetEncodingSeason }) {
   });
   const [statusMessage, setStatusMessage] = useState("");
   const [isResettingSeason, setIsResettingSeason] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [schoolYears, setSchoolYears] = useState([fallbackSchoolYear]);
   const [savedPeriod, setSavedPeriod] = useState(null);
 
   const isSuccessStatusMessage =
@@ -24,27 +31,47 @@ function EncodingPeriod({ onResetEncodingSeason }) {
   useEffect(() => {
     const loadSavedPeriod = async () => {
       try {
-        const res = await getSystemSetting("encoding_period");
-        if (res.status === "Success" && res.value) {
-          const savedPeriod = JSON.parse(res.value);
+        const [settingResult, optionsResult] = await Promise.allSettled([
+          getSystemSetting("encoding_period"),
+          fetchAcademicPeriodOptions(),
+        ]);
+        const options = optionsResult.status === "fulfilled" ? optionsResult.value : null;
+        const res = settingResult.status === "fulfilled" ? settingResult.value : null;
+        let selectedSchoolYear = options?.activeAcademicPeriod?.schoolYear || options?.currentSchoolYear || fallbackSchoolYear;
+        let parsedSavedPeriod = null;
+        if (res?.status === "Success" && res.value) {
+          parsedSavedPeriod = JSON.parse(res.value);
+          selectedSchoolYear = parsedSavedPeriod?.schoolYear || selectedSchoolYear;
           setPeriod({
-            schoolYear: savedPeriod?.schoolYear || `${currentYear}-${currentYear + 1}`,
-            semester: savedPeriod?.semester || "2nd Semester",
-            startDate: savedPeriod?.startDate || "",
-            endDate: savedPeriod?.endDate || "",
-            term: savedPeriod?.term || "midterm",
+            schoolYear: selectedSchoolYear,
+            semester: parsedSavedPeriod?.semester || "2nd Semester",
+            startDate: parsedSavedPeriod?.startDate || "",
+            endDate: parsedSavedPeriod?.endDate || "",
+            term: parsedSavedPeriod?.term || "midterm",
           });
-          setSavedPeriod(savedPeriod);
+          setSavedPeriod(parsedSavedPeriod);
         } else {
+          setPeriod((current) => ({ ...current, schoolYear: selectedSchoolYear }));
           setStatusMessage("No saved encoding period yet.");
         }
+        setSchoolYears([...new Set([
+          selectedSchoolYear,
+          ...(options?.schoolYears || []),
+          parsedSavedPeriod?.schoolYear,
+          fallbackSchoolYear,
+        ].filter(Boolean))]);
+        if (optionsResult.status === "rejected") {
+          setLoadError("Available school years could not be refreshed. The current year remains available.");
+        }
       } catch (error) {
-        setStatusMessage("No saved encoding period yet.");
+        setLoadError("The encoding period could not be loaded. Please refresh and try again.");
+      } finally {
+        setIsLoading(false);
       }
     };
 
     loadSavedPeriod();
-  }, []);
+  }, [fallbackSchoolYear]);
 
   const { schoolYear, semester, startDate, endDate, term } = period;
 
@@ -79,6 +106,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
     };
 
     try {
+      setIsSaving(true);
       await updateSystemSetting("encoding_period", JSON.stringify(encodingData));
       localStorage.setItem("encodingPeriod", JSON.stringify(encodingData));
       window.dispatchEvent(
@@ -93,6 +121,8 @@ function EncodingPeriod({ onResetEncodingSeason }) {
       setSavedPeriod(encodingData);
     } catch (error) {
       setStatusMessage(error.message || "Failed to save encoding period.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -146,18 +176,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
         <div className="flex items-center justify-between gap-4">
           <h3 className="text-base font-bold text-slate-900">Encoding Period Control</h3>
 
-          <span
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold ${
-              getBannerStatus() === "Open"
-                ? "border-green-200 bg-green-50 text-green-700"
-                : getBannerStatus() === "Urgent"
-                ? "border-amber-200 bg-amber-50 text-amber-700"
-                : "border-red-200 bg-red-50 text-red-600"
-            }`}
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-current" />
-            {getBannerStatus()}
-          </span>
+          <StatusBadge status={getBannerStatus()} />
         </div>
 
         {(statusMessage || !savedPeriod) && (
@@ -172,21 +191,25 @@ function EncodingPeriod({ onResetEncodingSeason }) {
             <span>{statusMessage || "No saved encoding period yet."}</span>
           </div>
         )}
+        {loadError && <div role="alert" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{loadError}</div>}
 
         <div className="mt-3 grid grid-cols-1 items-end gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto_1fr]">
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700">School Year</label>
-            <input
+            <select
+              aria-label="School Year"
               value={schoolYear}
               onChange={(event) => updatePeriod("schoolYear", event.target.value)}
-              placeholder="2026-2027"
-              pattern="\d{4}-\d{4}"
+              disabled={isLoading}
               className="h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
-            />
+            >
+              {isLoading ? <option value={schoolYear}>Loading school years…</option> : schoolYears.map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700">Semester</label>
             <select
+              aria-label="Semester"
               value={semester}
               onChange={(e) => updatePeriod("semester", e.target.value)}
               className="h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
@@ -200,6 +223,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700">Encoding Term</label>
             <select
+              aria-label="Encoding Term"
               value={term}
               onChange={(e) => updatePeriod("term", e.target.value)}
               className="h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
@@ -212,6 +236,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700">Start Date</label>
             <input
+              aria-label="Start Date"
               type="date"
               value={startDate}
               onChange={(e) => updatePeriod("startDate", e.target.value)}
@@ -225,6 +250,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700">End Date</label>
             <input
+              aria-label="End Date"
               type="date"
               value={endDate}
               onChange={(e) => updatePeriod("endDate", e.target.value)}
@@ -238,16 +264,17 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           <button
             type="button"
             onClick={handleSave}
+            disabled={isLoading || isSaving}
             className="inline-flex items-center gap-1.5 rounded-md bg-[#0b3478] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#08285e]"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4"><path d="M5 3h12l2 2v16H5z"/><path d="M8 3v6h8V3M8 21v-7h8v7"/></svg>
-            Save Schedule
+            {isSaving ? "Saving…" : "Save Schedule"}
           </button>
 
           <button
             type="button"
             onClick={handleResetSeason}
-            disabled={isResettingSeason}
+            disabled={isLoading || isResettingSeason}
             className="inline-flex items-center gap-1.5 rounded-md border border-red-400 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M20 7v5h-5"/><path d="M19 12a7 7 0 1 1-2-5"/></svg>
@@ -290,9 +317,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
 
           <div className="p-3">
             <p className="text-[10px] text-slate-500">Faculty Banner Status</p>
-            <span className={`mt-1.5 inline-flex rounded-full px-2 py-1 text-[10px] font-semibold ${getBannerStatus(savedPeriod || {}) === "Open" ? "bg-green-100 text-green-700" : getBannerStatus(savedPeriod || {}) === "Urgent" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-600"}`}>
-              {getBannerStatus(savedPeriod || {})}
-            </span>
+            <div className="mt-1.5"><StatusBadge status={getBannerStatus(savedPeriod || {})} /></div>
           </div>
         </div>
       </section>

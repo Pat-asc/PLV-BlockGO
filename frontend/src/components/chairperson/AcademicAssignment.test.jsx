@@ -55,7 +55,9 @@ test("stages assignments, prevents duplicates, and persists only on Save", async
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   fireEvent.click(await screen.findByRole("button", { name: /Carlos Reyes/ }));
   fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
-  fireEvent.change(screen.getByLabelText("Schedule for BSIT 3-1"), { target: { value: "Monday" } });
+  fireEvent.change(screen.getByLabelText("Day for BSIT 3-1"), { target: { value: "Monday" } });
+  fireEvent.change(screen.getByLabelText("Start time for BSIT 3-1"), { target: { value: "08:00" } });
+  fireEvent.change(screen.getByLabelText("End time for BSIT 3-1"), { target: { value: "10:00" } });
   fireEvent.click(screen.getByRole("button", { name: "＋ Assign" }));
   expect(localStorage.getItem("registrarAssignments")).toBeNull();
   expect(screen.getByText("1 pending assignment")).toBeInTheDocument();
@@ -65,8 +67,8 @@ test("stages assignments, prevents duplicates, and persists only on Save", async
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Assignments saved successfully"));
   const saved = JSON.parse(localStorage.getItem("registrarAssignments"));
   expect(saved).toHaveLength(1);
-  expect(saved[0]).toMatchObject({ facultyId: "1", subjectCode: "IT 321", sectionName: "BSIT 3-1", schedule: "Monday" });
-  expect(assignFacultyLoadToBackend).toHaveBeenCalledWith(expect.objectContaining({ schedule: "Monday" }));
+  expect(saved[0]).toMatchObject({ facultyId: "1", subjectCode: "IT 321", sectionName: "BSIT 3-1", schedule: "Monday | 08:00-10:00" });
+  expect(assignFacultyLoadToBackend).toHaveBeenCalledWith(expect.objectContaining({ schedule: "Monday | 08:00-10:00" }));
   expect(assignFacultyLoadToBackend).toHaveBeenCalledTimes(1);
 });
 test("saves only the selected professor's pending load", async () => {
@@ -97,6 +99,36 @@ test("allows removing a pending assignment without saving", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Remove IT 321 BSIT 3-1" }));
   expect(screen.getByRole("button", { name: "Save Assignments" })).toBeDisabled();
   expect(localStorage.getItem("registrarAssignments")).toBeNull();
+});
+test("renders Assigned Sections before Subject Assigning", async () => {
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await screen.findByRole("button", { name: /Carlos Reyes/ });
+  const assigned = screen.getByRole("heading", { name: "Assigned Sections" });
+  const assigning = screen.getByRole("heading", { name: "Subject Assigning" });
+  expect(assigned.compareDocumentPosition(assigning) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("rejects an end time that is not after the start time", async () => {
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await selectFaculty();
+  fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
+  fireEvent.change(screen.getByLabelText("Day for BSIT 3-1"), { target: { value: "Monday" } });
+  fireEvent.change(screen.getByLabelText("Start time for BSIT 3-1"), { target: { value: "10:00" } });
+  fireEvent.change(screen.getByLabelText("End time for BSIT 3-1"), { target: { value: "09:00" } });
+  fireEvent.click(screen.getByRole("button", { name: /Assign$/ }));
+  expect(screen.getByRole("status")).toHaveTextContent("Start time must be before end time");
+  expect(screen.getByRole("button", { name: "Save Assignments" })).toBeDisabled();
+});
+
+test("accepts and displays a readable day and time range", async () => {
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await selectFaculty();
+  fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
+  fireEvent.change(screen.getByLabelText("Day for BSIT 3-1"), { target: { value: "Monday" } });
+  fireEvent.change(screen.getByLabelText("Start time for BSIT 3-1"), { target: { value: "08:00" } });
+  fireEvent.change(screen.getByLabelText("End time for BSIT 3-1"), { target: { value: "10:00" } });
+  fireEvent.click(screen.getByRole("button", { name: /Assign$/ }));
+  expect(screen.getByText("Monday • 8:00 AM–10:00 AM")).toBeInTheDocument();
 });
 
 test("Clear Selection removes four pending rows and resets pending totals without an API call", async () => {
@@ -194,13 +226,13 @@ test("Clear Selection removes temporary schedule state and allows a fresh select
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   await selectFaculty();
   stageAssignment();
-  const schedule = screen.getByLabelText("Schedule for BSIT 3-1");
+  const schedule = screen.getByLabelText("Day for BSIT 3-1");
   fireEvent.change(schedule, { target: { value: "Saturday" } });
   fireEvent.click(screen.getByRole("button", { name: /Clear Selection/ }));
 
   stageAssignment();
   expect(screen.getByText("1 pending assignment")).toBeInTheDocument();
-  expect(screen.getByLabelText("Schedule for BSIT 3-1")).toHaveValue("");
+  expect(screen.getByLabelText("Day for BSIT 3-1")).toHaveValue("");
 });
 
 test("successful Save clears the temporary row and Clear cannot remove the persisted assignment", async () => {
@@ -260,11 +292,11 @@ test("filters manual assignment rows by exact academicSectionId and restores all
   await selectFaculty();
   fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
 
-  expect(screen.getByLabelText("Schedule for BSIT 3-1")).toBeInTheDocument();
-  expect(screen.getByLabelText("Schedule for BECE 3-1")).toBeInTheDocument();
+  expect(screen.getByLabelText("Day for BSIT 3-1")).toBeInTheDocument();
+  expect(screen.getByLabelText("Day for BECE 3-1")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Section Filter"), { target: { value: "32" } });
-  expect(screen.queryByLabelText("Schedule for BSIT 3-1")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Schedule for BECE 3-1")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Day for BSIT 3-1")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Day for BECE 3-1")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /Assign$/ }));
   fireEvent.click(screen.getByRole("button", { name: "Save Assignments" }));
@@ -273,8 +305,8 @@ test("filters manual assignment rows by exact academicSectionId and restores all
   ));
 
   fireEvent.change(screen.getByLabelText("Section Filter"), { target: { value: "all" } });
-  expect(screen.getByLabelText("Schedule for BSIT 3-1")).toBeInTheDocument();
-  expect(screen.getByLabelText("Schedule for BECE 3-1")).toBeInTheDocument();
+  expect(screen.getByLabelText("Day for BSIT 3-1")).toBeInTheDocument();
+  expect(screen.getByLabelText("Day for BECE 3-1")).toBeInTheDocument();
 });
 
 test("hydrates a persisted server schedule after reload", async () => {
@@ -289,7 +321,7 @@ test("hydrates a persisted server schedule after reload", async () => {
   await selectFaculty();
   expect(await screen.findByText("Tuesday")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
-  expect(screen.getByLabelText("Schedule for BSIT 3-1")).toHaveValue("Tuesday");
+  expect(screen.getByLabelText("Day for BSIT 3-1")).toHaveValue("Tuesday");
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))[0]).toMatchObject({ id: 77, schedule: "Tuesday" });
 });
 

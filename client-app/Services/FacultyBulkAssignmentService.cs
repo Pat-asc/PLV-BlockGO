@@ -147,7 +147,7 @@ public static class FacultyBulkAssignmentService
             if (alreadyAssigned)
             {
                 await using var existing = new NpgsqlCommand(@"
-                    SELECT id
+                    SELECT id, COALESCE(schedule, '')
                     FROM facultysections
                     WHERE user_id = @facultyUserId
                       AND academic_section_id = @academicSectionId
@@ -161,18 +161,11 @@ public static class FacultyBulkAssignmentService
                 existing.Parameters.AddWithValue("schoolYear", schoolYear);
                 existing.Parameters.AddWithValue("semester", semester);
                 existing.Parameters.AddWithValue("subjectCode", subjectCode);
-                insertedId = await existing.ExecuteScalarAsync(cancellationToken);
-                if (insertedId is null)
+                await using var existingReader = await existing.ExecuteReaderAsync(cancellationToken);
+                if (!await existingReader.ReadAsync(cancellationToken))
                     throw new InvalidOperationException("Assignment conflicts with an existing faculty load.");
-
-                if (!string.IsNullOrWhiteSpace(schedule))
-                {
-                    await using var updateSchedule = new NpgsqlCommand(@"
-                        UPDATE facultysections SET schedule = @schedule WHERE id = @id;", connection, transaction);
-                    updateSchedule.Parameters.AddWithValue("schedule", schedule);
-                    updateSchedule.Parameters.AddWithValue("id", Convert.ToInt32(insertedId));
-                    await updateSchedule.ExecuteNonQueryAsync(cancellationToken);
-                }
+                insertedId = existingReader.GetInt32(0);
+                schedule = existingReader.GetString(1);
             }
 
             await transaction.CommitAsync(cancellationToken);

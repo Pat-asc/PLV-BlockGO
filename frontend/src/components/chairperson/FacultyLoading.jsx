@@ -15,16 +15,10 @@ import {
 import { downloadTemplateButtonClass } from "../shared/downloadButtonStyles";
 import { pushAssignmentsSharedState } from "../../utils/sharedClientState";
 import { reconcileActiveAssignmentCache } from "../../utils/facultyAssignmentState";
+import { DAY_OPTIONS, formatFacultySchedule } from "../../utils/facultySchedule";
 
 const SEMESTER_OPTIONS = ["1st Semester", "2nd Semester", "Summer"];
-export const DAY_OPTIONS = [
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
+export { DAY_OPTIONS } from "../../utils/facultySchedule";
 
 const normalizeText = (value = "") => String(value).trim().toLowerCase();
 const normalizeHeader = (value = "") =>
@@ -875,8 +869,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
                         <td className="px-4 py-3">{item.units || "--"}</td>
                         <td className="px-4 py-3">{item.semester || "--"}</td>
                         <td className="px-4 py-3">
-                          {[item.day, item.schedule].filter(Boolean).join(" | ") ||
-                            "--"}
+                          {formatFacultySchedule(item.schedule, item.day)}
                         </td>
                         <td className="px-4 py-3">
                           {item.error ? (
@@ -1151,7 +1144,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
                     <td className="px-4 py-3">{item.units || "--"}</td>
                     <td className="px-4 py-3">{item.semester || "--"}</td>
                     <td className="px-4 py-3">{item.date || "--"}</td>
-                    <td className="px-4 py-3">{item.schedule || "--"}</td>
+                    <td className="px-4 py-3">{formatFacultySchedule(item.schedule, item.day)}</td>
                     <td className="px-4 py-3">{item.day || "--"}</td>
                     <td className="px-4 py-3">
                       <button

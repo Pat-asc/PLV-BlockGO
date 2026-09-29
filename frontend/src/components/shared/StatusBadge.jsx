@@ -20,6 +20,11 @@ const styles = {
   'verification required': 'border-amber-200 bg-amber-50 text-amber-900',
   failed: 'border-red-200 bg-red-50 text-red-800',
   unavailable: 'border-slate-300 bg-slate-100 text-slate-700',
+  open: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  urgent: 'border-amber-200 bg-amber-50 text-amber-900',
+  closed: 'border-red-200 bg-red-50 text-red-800',
+  'closed (not started yet)': 'border-slate-300 bg-slate-100 text-slate-700',
+  'not set': 'border-slate-300 bg-slate-100 text-slate-700',
 };
 
 const StatusBadge = ({ status = 'Unavailable', label: providedLabel, children, className = '' }) => {

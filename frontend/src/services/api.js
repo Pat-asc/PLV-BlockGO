@@ -1,5 +1,6 @@
 import { expireAuthSession, getAuthToken } from './authSession';
 import { assertValidCsvUpload, assertValidGradeUpload } from '../utils/csvUploadValidation';
+import { serializeAssignmentSchedule } from '../utils/facultySchedule';
 
 const getBaseUrl = (endpoint) => {
     if (process.env.REACT_APP_API_BASE_URL) {
@@ -599,7 +600,7 @@ export const assignFacultyLoadToBackend = async (assignmentData) => {
         Subject: assignmentData.subjectCode || assignmentData.subject || '',
         SchoolYear: assignmentData.schoolYear || '',
         Semester: assignmentData.semesterCode || assignmentData.semester || '',
-        Schedule: [assignmentData.day, assignmentData.schedule].filter(Boolean).join(' | '),
+        Schedule: serializeAssignmentSchedule(assignmentData),
     });
 };
 
@@ -614,7 +615,7 @@ export const bulkAssignFacultyLoads = async (assignments) => {
                 academicSectionId: Number(assignment.academicSectionId),
                 schoolYear: assignment.schoolYear || '',
                 semester: assignment.semesterCode || assignment.semester || '',
-                schedule: [assignment.day, assignment.schedule].filter(Boolean).join(' | '),
+                schedule: serializeAssignmentSchedule(assignment),
             })),
         }),
     });
@@ -873,6 +874,10 @@ export const reviewTemplate = async (id, status) => {
 
 export const getSystemSetting = async (key) => {
     return await fetchWithAuth(`/SystemSettings/${encodeURIComponent(key)}`);
+};
+
+export const fetchAcademicPeriodOptions = async () => {
+    return await fetchWithAuth('/SystemSettings/academic-period-options');
 };
 
 export const updateSystemSetting = async (key, value) => {

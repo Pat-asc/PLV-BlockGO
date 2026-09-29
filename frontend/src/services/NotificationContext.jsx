@@ -1,4 +1,4 @@
-import React, { createContext, useState, useCallback, useContext } from 'react';
+import React, { createContext, useState, useCallback, useContext, useRef } from 'react';
 
 const NotificationContext = createContext({
     addNotification: (message, type) => console.warn("NotificationProvider missing! Message:", message)
@@ -13,9 +13,9 @@ const inferNotificationType = (message) => {
     return 'notice';
 };
 
-export const showSystemNotification = (message, type) => {
+export const showSystemNotification = (message, type, options) => {
     const resolvedType = type || inferNotificationType(message);
-    if (externalNotificationHandler) externalNotificationHandler(String(message || ''), resolvedType);
+    if (externalNotificationHandler) externalNotificationHandler(String(message || ''), resolvedType, options);
     else console.warn('NotificationProvider missing! Message:', message);
 };
 
@@ -50,23 +50,44 @@ const Notification = ({ message, type, createdAt, onDismiss }) => {
 
 export const NotificationProvider = ({ children }) => {
     const [notifications, setNotifications] = useState([]);
+    const nextIdRef = useRef(0);
+    const seenEventKeysRef = useRef(new Set());
+    const seenEventOrderRef = useRef([]);
+    const timersRef = useRef(new Map());
 
-    const addNotification = useCallback((message, type = 'success') => {
-        const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const addNotification = useCallback((message, type = 'success', options = {}) => {
+        const eventKey = typeof options === 'string' ? options : options?.eventKey;
+        if (eventKey && seenEventKeysRef.current.has(eventKey)) return;
+        if (eventKey) {
+            seenEventKeysRef.current.add(eventKey);
+            seenEventOrderRef.current.push(eventKey);
+            if (seenEventOrderRef.current.length > 500) {
+                seenEventKeysRef.current.delete(seenEventOrderRef.current.shift());
+            }
+        }
+        nextIdRef.current += 1;
+        const id = `notification-${nextIdRef.current}`;
         setNotifications((prev) => [...prev, { id, message, type, createdAt: Date.now() }].slice(-4));
-        setTimeout(() => {
+        const timer = window.setTimeout(() => {
             setNotifications((prev) => prev.filter((notification) => notification.id !== id));
+            timersRef.current.delete(id);
         }, type === 'notice' ? 10000 : 5000);
+        timersRef.current.set(id, timer);
     }, []);
 
     React.useEffect(() => {
+        const timers = timersRef.current;
         externalNotificationHandler = addNotification;
         return () => {
             if (externalNotificationHandler === addNotification) externalNotificationHandler = null;
+            timers.forEach((timer) => window.clearTimeout(timer));
+            timers.clear();
         };
     }, [addNotification]);
 
     const dismissNotification = (id) => {
+        window.clearTimeout(timersRef.current.get(id));
+        timersRef.current.delete(id);
         setNotifications((prev) => prev.filter((notification) => notification.id !== id));
     };
 

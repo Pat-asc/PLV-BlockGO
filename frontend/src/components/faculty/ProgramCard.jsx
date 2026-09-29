@@ -1,5 +1,6 @@
 import React from 'react';
 import StatusBadge from '../shared/StatusBadge';
+import { formatFacultySchedule } from '../../utils/facultySchedule';
 
 const ProgramCard = ({
   sectionName,
@@ -11,7 +12,10 @@ const ProgramCard = ({
   onSubmit,
 }) => {
   const totalStudents = sectionData.students?.length || 0;
-  const displaySchedule = [sectionData.day, sectionData.schedule].filter((value) => value && value !== 'Not Available').join(' · ') || 'Schedule not available';
+  const displaySchedule = formatFacultySchedule(
+    sectionData.schedule === 'Not Available' ? '' : sectionData.schedule,
+    sectionData.day === 'Not Available' ? '' : sectionData.day
+  );
   const isStarted = progress > 0;
   const isCompleted = progress >= 100;
   const isReturned = reviewStatus === 'returned';

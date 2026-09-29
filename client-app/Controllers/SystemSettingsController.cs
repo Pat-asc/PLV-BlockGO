@@ -70,6 +70,60 @@ namespace Client_app.Controllers
             public string? EndDate { get; set; }
         }
 
+        [HttpGet("academic-period-options")]
+        [Authorize(Roles = "registrar,system_admin")]
+        public async Task<IActionResult> GetAcademicPeriodOptions()
+        {
+            try
+            {
+                using var conn = new NpgsqlConnection(_connectionString);
+                await conn.OpenAsync();
+                var schoolYears = new List<string>();
+                string? activeSchoolYear = null;
+                string? activeSemester = null;
+
+                await using (var cmd = new NpgsqlCommand(@"
+                    SELECT school_year, semester, status
+                    FROM academic_periods
+                    ORDER BY CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END, opened_at DESC;", conn))
+                await using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        var schoolYear = reader.GetString(0);
+                        if (!schoolYears.Contains(schoolYear, StringComparer.OrdinalIgnoreCase))
+                            schoolYears.Add(schoolYear);
+                        if (activeSchoolYear is null && reader.GetString(2).Equals("ACTIVE", StringComparison.OrdinalIgnoreCase))
+                        {
+                            activeSchoolYear = schoolYear;
+                            activeSemester = reader.GetString(1);
+                        }
+                    }
+                }
+
+                var now = DateTime.UtcNow;
+                var startYear = now.Month >= 6 ? now.Year : now.Year - 1;
+                var currentSchoolYear = $"{startYear}-{startYear + 1}";
+                if (!schoolYears.Contains(currentSchoolYear, StringComparer.OrdinalIgnoreCase))
+                    schoolYears.Insert(0, currentSchoolYear);
+
+                return Ok(new
+                {
+                    status = "Success",
+                    schoolYears,
+                    currentSchoolYear,
+                    activeAcademicPeriod = activeSchoolYear is null
+                        ? null
+                        : new { schoolYear = activeSchoolYear, semester = activeSemester }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Academic-period options could not be loaded.");
+                return StatusCode(500, new { status = "Error", message = "Academic-period options could not be loaded." });
+            }
+        }
+
         [HttpGet("{key}")]
         public async Task<IActionResult> GetSetting(string key)
         {

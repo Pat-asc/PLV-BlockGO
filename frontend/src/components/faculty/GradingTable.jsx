@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { formatFacultySchedule } from "../../utils/facultySchedule";
 import BulkUploadModal from "./BulkUploadModal";
 import { exportGradingSheet } from "../../utils/exportGradingSheet";
 import StudentRow from "./StudentRow";
@@ -44,8 +45,7 @@ const GradingTable = ({
 }) => {
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [studentSearch, setStudentSearch] = useState("");
-  const displaySchedule = selectedSection?.schedule || "Not Available";
-  const displayDay = selectedSection?.day || "Not Available";
+  const displaySchedule = formatFacultySchedule(selectedSection?.schedule, selectedSection?.day);
   const activeTerm = systemTerm;
   const gradeStorageKey = selectedSection.assignmentKey || selectedSection.sectionName;
   const sortedStudents = [...(selectedSection.students || [])].sort(
@@ -166,8 +166,6 @@ const GradingTable = ({
               <span>{selectedSection.units} Units</span>
               <span className="text-slate-300">•</span>
               <span>{displaySchedule}</span>
-              <span className="text-slate-300">•</span>
-              <span>{displayDay}</span>
             </div>
           </div>
 

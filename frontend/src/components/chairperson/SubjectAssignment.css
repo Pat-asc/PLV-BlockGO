@@ -6,6 +6,9 @@
 .sa-header p{color:#64748b;margin-top:5px}
 .sa-help{white-space:nowrap;border:1px solid #dce9ff;color:#003366;padding:9px 13px;border-radius:6px;background:#f8fbff;font-weight:600}
 .sa-card{border:1px solid #e2e8f0;background:#fff;border-radius:16px;padding:20px;box-shadow:0 1px 2px #0000000d}
+.sa-section-title{margin:18px 2px 10px}
+.sa-section-title h3{font-size:17px;font-weight:750;color:#003366}
+.sa-section-title p,.sa-assigned-context{font-size:12px;color:#64748b;margin-top:2px}
 .sa-heading{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .sa-heading h3,.sa-professor h3{font-size:16px;font-weight:700;color:#003366}
 .sa-heading p,.sa-professor p{font-size:12px;color:#64748b;margin-top:1px}
@@ -45,7 +48,7 @@
 .sa-text-button{font-weight:600;white-space:nowrap}
 .sa-section-name{font-weight:600}
 .sa-section-name small{display:block;font-weight:400;color:#8294b4}
-.sa-schedule{width:100%;min-width:100px;padding:4px;background:transparent;border:1px solid #e2ebfa;border-radius:4px;font-size:12px}
+.sa-schedule{width:100%;min-width:104px;padding:6px;background:#fff;border:1px solid #d8e2f1;border-radius:6px;font-size:12px;color:#334155}
 .sa-assign{background:#facc15;padding:6px 11px;border-radius:6px;white-space:nowrap;font-size:12px;font-weight:700;color:#003366}
 .sa-info{display:flex;align-items:center;gap:12px;background:#eaf3ff;border:1px solid #dcecff;color:#2165e2;border-radius:6px;padding:12px;font-size:12px;margin-bottom:10px}
 .sa-selected{margin-top:16px;margin-bottom:0;font-size:12px}

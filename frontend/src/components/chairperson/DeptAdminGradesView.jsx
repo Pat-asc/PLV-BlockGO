@@ -505,7 +505,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     const [activeSemester, setActiveSemester] = useState("2nd Semester");
     const [activeEncodingTerm, setActiveEncodingTerm] = useState("midterm");
     const lastSectionSnapshotRef = useRef([]);
-    const lastNotifiedSectionChangeRef = useRef('');
+    const notifiedSectionChangeKeysRef = useRef(new Set());
     const approveInFlightRef = useRef(false);
     const finalizeInFlightRef = useRef(false);
 
@@ -1062,21 +1062,23 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
 
             createdSections.forEach((item) => {
                 const notificationKey = `created|${item.key}|${item.serialized}`;
-                if (lastNotifiedSectionChangeRef.current === notificationKey) return;
-                lastNotifiedSectionChangeRef.current = notificationKey;
+                if (notifiedSectionChangeKeysRef.current.has(notificationKey)) return;
+                notifiedSectionChangeKeysRef.current.add(notificationKey);
                 addNotification(
                     `New section created in ${department}: ${item.sectionName}`,
-                    'success'
+                    'success',
+                    { eventKey: notificationKey }
                 );
             });
 
             updatedSections.forEach((item) => {
                 const notificationKey = `updated|${item.key}|${item.serialized}`;
-                if (lastNotifiedSectionChangeRef.current === notificationKey) return;
-                lastNotifiedSectionChangeRef.current = notificationKey;
+                if (notifiedSectionChangeKeysRef.current.has(notificationKey)) return;
+                notifiedSectionChangeKeysRef.current.add(notificationKey);
                 addNotification(
                     `Section updated in ${department}: ${item.sectionName}`,
-                    'success'
+                    'success',
+                    { eventKey: notificationKey }
                 );
             });
 
@@ -1089,19 +1091,23 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             const actor = event.detail?.Actor || event.detail?.actor || '';
             const sameDepartment = normalizeText(changedDepartment) === normalizeText(department);
             const sameActor = normalizeText(actor) === normalizeText(loggedInEmail);
+            const occurredAt = event.detail?.ChangedAt || event.detail?.changedAt || event.detail?.OccurredAt || event.detail?.occurredAt || '';
+            const eventKey = `academic|${normalizeText(reason)}|${normalizeText(changedDepartment)}|${normalizeText(actor)}|${occurredAt}`;
 
             if (sameDepartment && !sameActor) {
                 if (reason === 'section_created') {
                     addNotification(
                         `Registrar created a new section in ${department}.`,
-                        'success'
+                        'success',
+                        { eventKey }
                     );
                 }
 
                 if (reason === 'masterlist_uploaded' || reason === 'students_enrolled') {
                     addNotification(
                         `Registrar updated section records in ${department}.`,
-                        'success'
+                        'success',
+                        { eventKey }
                     );
                 }
             }
@@ -1110,7 +1116,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             loadMyClasses();
             loadAcademicSections();
             loadDepartmentFaculties();
-            notifySectionStorageChanges();
+            lastSectionSnapshotRef.current = getDepartmentSectionSnapshot(department);
         };
 
         const handleStorageChanged = (event) => {
@@ -1127,7 +1133,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             window.removeEventListener('blockgo:academic-data-changed', handleAcademicDataChanged);
             window.removeEventListener('storage', handleStorageChanged);
         };
-    }, [addNotification, department, loadGrades, loggedInEmail, mainTab, loadMyClasses, loadAcademicSections, loadDepartmentFaculties]);
+    }, [addNotification, department, loadGrades, loggedInEmail, loadMyClasses, loadAcademicSections, loadDepartmentFaculties]);
 
     useEffect(() => {
         loadAcademicSections();

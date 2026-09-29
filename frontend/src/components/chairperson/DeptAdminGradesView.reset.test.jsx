@@ -6,8 +6,9 @@ import {
   fetchFacultySections, finalizeGrade, getSystemSetting,
 } from '../../services/api';
 
+const mockAddNotification = jest.fn();
 jest.mock('../../services/NotificationContext', () => ({
-  useNotification: () => ({ addNotification: jest.fn() }),
+  useNotification: () => ({ addNotification: mockAddNotification }),
 }));
 jest.mock('./ChairpersonHeader', () => () => null);
 jest.mock('./ChairpersonOverview', () => () => null);
@@ -75,6 +76,30 @@ test('encoding-season reset clears and refetches Chairperson For Review without 
 
   await waitFor(() => expect(fetchAllGrades).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:0'));
+});
+
+test('one realtime section event creates one notification and its listener is cleaned up', async () => {
+  fetchAllGrades.mockResolvedValue({ data: [] });
+  const view = render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  await waitFor(() => expect(fetchAllGrades).toHaveBeenCalled());
+  localStorage.setItem('studentSections', JSON.stringify([{
+    program: 'BSIT', yearLevel: '1st Year', section: 'BSIT 1-1', schoolYear: '2026-2027', semester: 'FIRST',
+  }]));
+  mockAddNotification.mockClear();
+  const event = new CustomEvent('blockgo:academic-data-changed', { detail: {
+    reason: 'section_created', department: 'BSIT', actor: 'registrar@plv.edu.ph', changedAt: '2026-09-29T01:00:00Z',
+  } });
+  fireEvent(window, event);
+  expect(mockAddNotification).toHaveBeenCalledTimes(1);
+  expect(mockAddNotification).toHaveBeenCalledWith(
+    'Registrar created a new section in BSIT.',
+    'success',
+    { eventKey: 'academic|section_created|bsit|registrar@plv.edu.ph|2026-09-29T01:00:00Z' }
+  );
+  view.unmount();
+  mockAddNotification.mockClear();
+  fireEvent(window, event);
+  expect(mockAddNotification).not.toHaveBeenCalled();
 });
 
 test('DepartmentApproved remains in Approved until ledger finalization succeeds', async () => {

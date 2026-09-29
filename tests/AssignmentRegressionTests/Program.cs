@@ -252,9 +252,11 @@ try { await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignme
 catch(ArgumentException ex) { missingSectionIdRejected=ex.Message.Contains("academicSectionId"); }
 Check(missingSectionIdRejected,"Assignment without academicSectionId was accepted."); Pass(59,"missing academic section ID fails closed");
 var bulkDuplicate = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
-    ClientId="duplicate", FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=1, SchoolYear="2026-2027", Semester="1st Semester"
+    ClientId="duplicate", FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=1, SchoolYear="2026-2027", Semester="1st Semester", Schedule="Tuesday | 09:00-10:00"
 }, AllowProgram);
-Check(bulkDuplicate.AlreadyAssigned && bulkDuplicate.Id==bulkOne.Id && await Count("SELECT COUNT(*) FROM facultysections WHERE user_id=1 AND academic_section_id=1 AND school_year='2026-2027' AND semester='FIRST' AND subject='IT 101' AND is_active")==1,"Duplicate assignment created."); Pass(29,"bulk assignment idempotency");
+Check(bulkDuplicate.AlreadyAssigned && bulkDuplicate.Id==bulkOne.Id && bulkDuplicate.Schedule=="Monday" &&
+      await Count("SELECT COUNT(*) FROM facultysections WHERE user_id=1 AND academic_section_id=1 AND school_year='2026-2027' AND semester='FIRST' AND subject='IT 101' AND schedule='Monday' AND is_active")==1,
+    "Duplicate assignment created or silently overwrote the existing schedule."); Pass(29,"bulk assignment idempotency without schedule overwrite");
 var bulkTwo = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=3, SubjectCode="IT 102", AcademicSectionId=2, SchoolYear="2026-2027", Semester="FIRST" }, AllowProgram);
 var bulkThree = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=9, SubjectCode="IT 101", AcademicSectionId=2, SchoolYear="2026-2027", Semester="FIRST" }, AllowProgram);
 Check(bulkTwo.FacultyUserId==3 && bulkThree.FacultyUserId==9 && await Count("SELECT COUNT(*) FROM facultysections WHERE id IN ("+bulkTwo.Id+","+bulkThree.Id+")")==2,"Multiple faculty assignments failed."); Pass(30,"multiple faculty bulk assignment");
