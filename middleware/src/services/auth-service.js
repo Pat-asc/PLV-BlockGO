@@ -13,6 +13,7 @@ const { createPasswordResetLimiter } = require('../shared/password-reset-rate-li
 const { PasswordResetError, createPasswordResetService } = require('../shared/password-reset-service');
 const { validatePassword } = require('../shared/password-policy');
 const { createServiceApp, installErrorHandler, listen } = require('../shared/service-app');
+const { clientIp } = require('../shared/client-ip');
 
 const serviceName = 'auth-service';
 const logger = createLogger(serviceName);
@@ -36,10 +37,26 @@ async function recordSecurityEvent(req, eventType, severity, attemptedIdentity, 
                 'attemptedIdentity', attempted_identity,
                 'createdAt', created_at
              )::text) FROM inserted`,
-            [eventType, severity, attemptedIdentity || null, req.ip || req.socket?.remoteAddress || null, req.originalUrl || req.path, req.method, details]
+            [eventType, severity, attemptedIdentity || null, clientIp(req), req.originalUrl || req.path, req.method, details]
         );
     } catch (error) {
         logger.warn({ err: error, eventType }, 'Security event could not be persisted');
+    }
+}
+
+async function recordLoginAudit(req, account, role) {
+    try {
+        await dbWrite.query(
+            `INSERT INTO audit_logs
+                (user_id, actor_role, action, entity_type, entity_id, new_values, description, ip_address, timestamp)
+             VALUES ($1, $2, 'LOGIN_SUCCESS', 'authentication', $3,
+                     '{"result":"success"}', $4, $5, CURRENT_TIMESTAMP)`,
+            [account.id, role, String(account.id),
+                role === 'system_admin' ? 'System Administrator login succeeded.' : 'Account login succeeded.',
+                clientIp(req)]
+        );
+    } catch (error) {
+        logger.warn({ err: error, accountId: account.id }, 'Successful login audit could not be persisted');
     }
 }
 
@@ -139,6 +156,9 @@ app.post('/api/login', loginLimiter, async (req, res) => {
         if (process.env.JWT_ISSUER) jwtOptions.issuer = process.env.JWT_ISSUER;
         if (process.env.JWT_AUDIENCE) jwtOptions.audience = process.env.JWT_AUDIENCE;
         const token = jwt.sign(payload, jwtKey(), jwtOptions);
+        await recordSecurityEvent(req, 'LOGIN_SUCCESS', 'LOW', account.email,
+            role === 'system_admin' ? 'System Administrator login succeeded.' : 'Account login succeeded.');
+        await recordLoginAudit(req, account, role);
         res.status(200).json({ status: 'success', token, message: role === 'system_admin' ? 'System administrator logged in successfully.' : 'Use this token in the Authorization header: Bearer <token>' });
     } catch (error) {
         logger.error({ err: error }, 'Login failed');
@@ -210,7 +230,7 @@ app.post('/api/forgot-password', forgotPasswordLimiter, async (req, res) => {
     await recordSecurityEvent(req, 'PASSWORD_RESET_REQUESTED', 'LOW', email,
         'A public self-service password reset was requested.');
     try {
-        const result = await passwordResetService.requestEmailReset({ email, requestedIp: req.ip || req.socket?.remoteAddress });
+        const result = await passwordResetService.requestEmailReset({ email, requestedIp: clientIp(req) });
         if (result.delivered) {
             await recordSecurityEvent(req, 'PASSWORD_RESET_EMAIL_SENT', 'LOW', email,
                 'A password reset email was delivered to an eligible account.');

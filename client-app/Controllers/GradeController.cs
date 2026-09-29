@@ -249,7 +249,7 @@ namespace BlockGo.Controllers
                     $"{request.StudentIdentifier}:{request.SchoolYear}:{request.Semester}:{request.Term}",
                     newValues: new { request.StudentIdentifier, request.SchoolYear, request.Semester, request.Term, RecordIds = eligible.Select(record => record.Id), Inserted = inserted },
                     description: $"Released {eligible.Length} finalized grade record(s) for student visibility.",
-                    ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    ipAddress: ClientIpResolver.Resolve(HttpContext),
                     connection: connection,
                     transaction: transaction,
                     cancellationToken: cancellationToken);

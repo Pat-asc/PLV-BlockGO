@@ -146,6 +146,21 @@ test('GKE Ingress sends every frontend API family to its owning gateway', () => 
     }
 });
 
+test('GKE public API backends replace spoofable forwarding headers with the verified client IP', () => {
+    const backend = byKey.get('plv-fabric/BackendConfig/blockgo-forwarded-headers');
+    assert.ok(backend, 'trusted forwarding BackendConfig is missing');
+    assert.deepEqual(backend.spec.customRequestHeaders?.headers, [
+        'X-Forwarded-For:{client_ip_address}',
+        'X-Forwarded-Proto:https'
+    ]);
+
+    for (const serviceName of ['client-app-service', 'middleware-api']) {
+        const service = byKey.get(`plv-fabric/Service/${serviceName}`);
+        assert.equal(service?.metadata?.annotations?.['cloud.google.com/backend-config'],
+            '{"default":"blockgo-forwarded-headers"}', `${serviceName} must use trusted forwarding headers`);
+    }
+});
+
 test('all ASP.NET API aliases are represented by YARP and GKE Ingress routes', () => {
     const topology = fs.readFileSync(path.join(repoRoot, 'client-app', 'Microservices', 'DotnetServiceTopology.cs'), 'utf8');
     const ingress = byKey.get('plv-fabric/Ingress/main-ingress');

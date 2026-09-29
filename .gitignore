@@ -25,6 +25,11 @@ temp/
 *.cache
 *.cache.json
 /tests/*
+!/tests/ClientIpForwardingChecks/
+!/tests/ClientIpForwardingChecks/ClientIpForwardingChecks.csproj
+!/tests/ClientIpForwardingChecks/Program.cs
+/tests/ClientIpForwardingChecks/bin/
+/tests/ClientIpForwardingChecks/obj/
 !/tests/KubernetesPodHealthTests/
 !/tests/KubernetesPodHealthTests/**
 /tests/KubernetesPodHealthTests/bin/

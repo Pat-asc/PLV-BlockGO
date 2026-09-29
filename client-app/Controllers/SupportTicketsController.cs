@@ -116,7 +116,7 @@ namespace Client_app.Controllers
 
             await _auditLog.LogAsync(ActorEmail(), "system_admin", "SUPPORT_NOTICE_BROADCAST", "support_notice", noticeId, null,
                 new { noticeId, messageLength = customMessage.Length }, "System Administrator broadcast a support resolution notice.",
-                HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken: cancellationToken);
+                ClientIpResolver.Resolve(HttpContext), cancellationToken: cancellationToken);
             await _chatHubContext.Clients.All.SendAsync("SupportNotice", payload, cancellationToken);
 
             return Ok(new { status = "Success", data = payload });
@@ -149,7 +149,7 @@ namespace Client_app.Controllers
             var ticketId = Convert.ToInt64(result);
             await _auditLog.LogAsync(ActorEmail(), "registrar", "SUPPORT_TICKET_CREATED", "support_ticket", ticketId.ToString(), null,
                 new { title, severity = "NORMAL", status = "OPEN", assignedSpecialist }, "Registrar reported a system error to the System Administrator.",
-                HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
+                ClientIpResolver.Resolve(HttpContext), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return CreatedAtAction(nameof(List), new { id = ticketId }, new { status = "Success", data = new { ticketId } });
         }
@@ -234,7 +234,7 @@ namespace Client_app.Controllers
             await _auditLog.LogAsync(ActorEmail(), "registrar", "SUPPORT_TICKET_CREATED", "support_ticket", ticketId.ToString(), null,
                 new { title, severity, status = "OPEN", assignedSpecialist, attachmentCount = request.Files.Count },
                 "Registrar reported a system error with validated support attachments.",
-                HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
+                ClientIpResolver.Resolve(HttpContext), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return CreatedAtAction(nameof(List), new { id = ticketId }, new { status = "Success", data = new { ticketId } });
         }
@@ -298,7 +298,7 @@ namespace Client_app.Controllers
             await _auditLog.LogAsync(ActorEmail(), "system_admin", "SUPPORT_TICKET_UPDATED", "support_ticket", ticketId.ToString(), null,
                 new { status, severity, hasResponse = !string.IsNullOrWhiteSpace(request.AdminResponse), assignedSpecialist },
                 "System Administrator updated and assigned a Registrar support ticket.",
-                HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
+                ClientIpResolver.Resolve(HttpContext), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             var notification = new
             {

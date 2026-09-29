@@ -1,4 +1,5 @@
 using Yarp.ReverseProxy.Configuration;
+using Yarp.ReverseProxy.Transforms;
 
 namespace Client_app.Microservices;
 
@@ -166,7 +167,7 @@ public static class DotnetServiceTopology
                 RouteId = $"{cluster}-{index}",
                 ClusterId = cluster,
                 Match = new RouteMatch { Path = paths[index] }
-            });
+            }.WithTransformXForwarded("X-Forwarded-", ForwardedTransformActions.Set));
         }
     }
 }

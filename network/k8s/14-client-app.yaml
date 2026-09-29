@@ -59,6 +59,11 @@ data:
   DOTNET_GRADE_SERVICE_URL: http://dotnet-grade-service.plv-fabric.svc.cluster.local:5103
   DOTNET_OPERATIONS_SERVICE_URL: http://dotnet-operations-service.plv-fabric.svc.cluster.local:5104
   DOTNET_REALTIME_SERVICE_URL: http://dotnet-realtime-service.plv-fabric.svc.cluster.local:5105
+  # Process at most the GCP LB/Ingress pair and stop at the first untrusted hop.
+  ForwardedHeaders__ForwardLimit: "2"
+  ForwardedHeaders__KnownNetworks__0: 10.72.0.0/16
+  ForwardedHeaders__KnownNetworks__1: 35.191.0.0/16
+  ForwardedHeaders__KnownNetworks__2: 130.211.0.0/22
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -116,6 +121,7 @@ metadata:
   labels: { app: dotnet-api-gateway, compatibility: client-app }
   annotations:
     cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default":"blockgo-forwarded-headers"}'
 spec:
   selector: { app: dotnet-api-gateway }
   ports: [{ name: http, protocol: TCP, port: 5000, targetPort: 5000 }]

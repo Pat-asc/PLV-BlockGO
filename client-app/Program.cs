@@ -13,6 +13,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Npgsql;
 using Client_app.Microservices;
+using Microsoft.AspNetCore.HttpOverrides;
 
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
@@ -153,6 +154,9 @@ try
         });
     });
 
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+        ForwardedHeadersConfiguration.Configure(options, builder.Configuration));
+
     if (dotnetServiceName == DotnetServiceTopology.Gateway)
     {
         var gatewayConfiguration = DotnetServiceTopology.BuildGatewayConfiguration(builder.Configuration);
@@ -166,6 +170,7 @@ try
         builder.Services.AddProblemDetails();
 
         var gatewayApp = builder.Build();
+        gatewayApp.UseForwardedHeaders();
         gatewayApp.UseSerilogRequestLogging();
         gatewayApp.UseCors("AllowFrontend");
         gatewayApp.Use(async (context, next) =>
@@ -401,7 +406,7 @@ try
     {
         options.AddPolicy("fixed", httpContext =>
             RateLimitPartition.GetFixedWindowLimiter(
-                partitionKey: httpContext.User.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+                partitionKey: httpContext.User.Identity?.Name ?? ClientIpResolver.Resolve(httpContext) ?? "anonymous",
                 factory: partition => new FixedWindowRateLimiterOptions
                 {
                     AutoReplenishment = true,
@@ -486,6 +491,7 @@ try
 
     var app = builder.Build();
 
+    app.UseForwardedHeaders();
     app.UseExceptionHandler();
     app.UseSerilogRequestLogging();
     app.UseSwagger();

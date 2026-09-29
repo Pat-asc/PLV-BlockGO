@@ -40,7 +40,7 @@ namespace Client_app.Controllers
 
                 var results = new List<BulkStaffAccountItemResult>(rows.Count);
                 var actor = RequiredActor();
-                var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+                var ipAddress = ClientIpResolver.Resolve(HttpContext);
                 foreach (var row in rows)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -83,7 +83,7 @@ namespace Client_app.Controllers
         {
             try
             {
-                var result = await _accounts.CreateStaffAsync(request, RequiredActor(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                var result = await _accounts.CreateStaffAsync(request, RequiredActor(), ClientIpResolver.Resolve(HttpContext), cancellationToken);
                 return CreatedAtAction(nameof(CreateStaff), new { id = result.Id }, new { status = "Success", data = result });
             }
             catch (ArgumentException ex) { return BadRequest(new { status = "Error", message = ex.Message }); }
@@ -103,7 +103,7 @@ namespace Client_app.Controllers
         {
             try
             {
-                var result = await _accounts.CreateRegistrarAsync(request, RequiredActor(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                var result = await _accounts.CreateRegistrarAsync(request, RequiredActor(), ClientIpResolver.Resolve(HttpContext), cancellationToken);
                 return CreatedAtAction(nameof(GetRegistrars), new { id = result.Id }, new { status = "Success", data = result });
             }
             catch (ArgumentException ex) { return BadRequest(new { status = "Error", message = ex.Message }); }
@@ -116,7 +116,7 @@ namespace Client_app.Controllers
         {
             try
             {
-                var result = await _accounts.UpdateRegistrarAsync(userId, request, RequiredActor(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                var result = await _accounts.UpdateRegistrarAsync(userId, request, RequiredActor(), ClientIpResolver.Resolve(HttpContext), cancellationToken);
                 return Ok(new { status = "Success", data = result });
             }
             catch (KeyNotFoundException ex) { return NotFound(new { status = "Error", message = ex.Message }); }
@@ -131,7 +131,7 @@ namespace Client_app.Controllers
             try
             {
                 var result = await _accounts.DeleteRegistrarAsync(
-                    userId, RequiredActor(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                    userId, RequiredActor(), ClientIpResolver.Resolve(HttpContext), cancellationToken);
                 return Ok(new
                 {
                     status = "Success",
@@ -154,7 +154,7 @@ namespace Client_app.Controllers
                     request.NewPassword,
                     RequiredActor(),
                     RequiredActorRole(),
-                    HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    ClientIpResolver.Resolve(HttpContext),
                     cancellationToken);
                 return Ok(new
                 {

@@ -20,6 +20,21 @@ spec:
     responseCodeName: MOVED_PERMANENTLY_DEFAULT
 
 ---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: blockgo-forwarded-headers
+  namespace: plv-fabric
+spec:
+  customRequestHeaders:
+    headers:
+      # GCP derives this value from the transport connection and replaces any
+      # client-supplied X-Forwarded-For chain before the request reaches a pod.
+      - "X-Forwarded-For:{client_ip_address}"
+      # FrontendConfig redirects public HTTP before it reaches these backends.
+      - "X-Forwarded-Proto:https"
+
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

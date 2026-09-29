@@ -1259,7 +1259,7 @@ namespace Client_app.Controllers
                     "STUDENT_ENROLLMENT_PROGRAM_CHANGED", "student_enrollment", id.ToString(), null,
                     new { studentNo, program = program.Code, curriculumId, schoolYear, semester, yearLevel, sectionCleared },
                     "Registrar corrected the academic program before section assignment.",
-                    HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
+                    ClientIpResolver.Resolve(HttpContext), connection, transaction, cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 _cache.Remove("approved_students");
                 await SafeNotifyAcademicDataChangedAsync("student_program_changed", program.Name, studentNo);
@@ -1356,7 +1356,7 @@ namespace Client_app.Controllers
                     "STUDENT_ENROLLMENTS_FINALIZED", "student_enrollment", $"{programId}:{schoolYear}:{semester}",
                     null, new { programId, schoolYear, semester, finalized },
                     "Registrar finalized the reviewed program roster.",
-                    HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken: cancellationToken);
+                    ClientIpResolver.Resolve(HttpContext), cancellationToken: cancellationToken);
 
                 var chairEmails = new List<string>();
                 await using (var chairs = new NpgsqlCommand(@"
@@ -1483,7 +1483,7 @@ namespace Client_app.Controllers
                 await _auditLog.LogAsync(User.Identity?.Name ?? "registrar", "registrar", "STUDENT_ENROLLED",
                     "student_enrollment", id.ToString(), null,
                     new { studentNo, program = program.Code, curriculumId, schoolYear, semester, yearLevel, section },
-                    "Registrar assigned the student's official academic-period enrollment.", HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    "Registrar assigned the student's official academic-period enrollment.", ClientIpResolver.Resolve(HttpContext),
                     conn, transaction);
                 await transaction.CommitAsync();
 
@@ -2133,7 +2133,7 @@ namespace Client_app.Controllers
                             null,
                             new { saved.FacultyUserId, saved.AcademicSectionId, saved.SubjectCode, saved.SchoolYear, saved.Semester },
                             "Chairperson processed an exact faculty bulk-assignment row.",
-                            HttpContext.Connection.RemoteIpAddress?.ToString(),
+                            ClientIpResolver.Resolve(HttpContext),
                             cancellationToken: cancellationToken);
                     }
                     catch (Exception auditError)
@@ -2374,7 +2374,7 @@ namespace Client_app.Controllers
                             "faculty_assignment", facultyUserId.ToString(), null,
                             new { facultyEmail, program = canonicalProgram, section, yearLevel, subject, academicSectionId, schoolYear, semester },
                             "Chairperson processed a faculty-load CSV row.",
-                            HttpContext.Connection.RemoteIpAddress?.ToString(), connection, transaction, cancellationToken);
+                            ClientIpResolver.Resolve(HttpContext), connection, transaction, cancellationToken);
                         await transaction.CommitAsync(cancellationToken);
 
                         if (inserted == 0) alreadyAssigned++;
@@ -3325,7 +3325,7 @@ namespace Client_app.Controllers
                             shouldSaveEnrollment ? "student_enrollment" : "student", userId.ToString(), null,
                             new { studentNo, program = program?.Code, curriculumId = resolvedCurriculumId, schoolYear = resolvedSchoolYear, semester = resolvedSemester, yearLevel = resolvedYearLevel, section = rowSection },
                             normalizedMode == "update" ? "Registrar updated a student record by administrative upload." : "Registrar enrolled a student by administrative upload.",
-                            HttpContext.Connection.RemoteIpAddress?.ToString(), conn, tx);
+                            ClientIpResolver.Resolve(HttpContext), conn, tx);
                         await tx.CommitAsync();
 
                         if (!string.IsNullOrWhiteSpace(name)) acceptedStudentNames.Add(name);
@@ -4328,7 +4328,7 @@ namespace Client_app.Controllers
                     "student", userId.ToString(), null, 
                     new { studentNo, contactEmail, fullName, program = program.Code },
                     "Registrar manually created a single student account.",
-                    HttpContext.Connection.RemoteIpAddress?.ToString(), conn, tx, cancellationToken);
+                    ClientIpResolver.Resolve(HttpContext), conn, tx, cancellationToken);
 
                 await tx.CommitAsync(cancellationToken);
                 _cache.Remove("approved_students");
@@ -4454,6 +4454,7 @@ namespace Client_app.Controllers
                 if (!await reader.ReadAsync())
                     return Unauthorized(new { error = "Invalid email or password" });
 
+                var userId = reader.GetInt32(0);
                 var email = reader.GetString(1);
                 var hash = reader.GetString(2);
                 var role = reader.GetString(3);
@@ -4501,6 +4502,17 @@ namespace Client_app.Controllers
 
                 var token = tokenHandler.CreateToken(tokenDescriptor);
                 var tokenString = tokenHandler.WriteToken(token);
+
+                try
+                {
+                    await _auditLog.LogAsync(email, normalizedRole, "LOGIN_SUCCESS", "authentication", userId.ToString(),
+                        newValues: new { result = "success" }, description: "Account login succeeded.",
+                        ipAddress: ClientIpResolver.Resolve(HttpContext));
+                }
+                catch (Exception auditError)
+                {
+                    _logger.LogWarning(auditError, "Successful login audit could not be persisted for account {Email}.", email);
+                }
 
                 return Ok(new
                 {

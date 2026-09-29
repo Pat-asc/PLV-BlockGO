@@ -996,7 +996,7 @@ namespace Client_app.Controllers
 
         private string ActorEmail() => User.Identity?.Name ?? throw new UnauthorizedAccessException("Authenticated identity is missing.");
         private string ActorRole() => NormalizeRole(User.FindFirst("dbRole")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value);
-        private string? IpAddress() => HttpContext.Connection.RemoteIpAddress?.ToString();
+        private string? IpAddress() => ClientIpResolver.Resolve(HttpContext);
         private static string NormalizeRole(string? role) => (role ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_') switch
         {
             "dept_admin" or "deptadmin" or "chairperson" or "department_head" => "department_admin",

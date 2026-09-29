@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { clientIp } = require('./client-ip');
 const { jwtKey, required, serviceUrl } = require('./config');
 const { requestJson } = require('./internal-http');
 const { normalizeAuthRole } = require('./roles');
@@ -13,7 +14,7 @@ async function introspectToken(token, req) {
         headers: { 'x-api-key': required('INTERNAL_API_KEY') },
         body: {
             token,
-            sourceIp: req?.ip || req?.socket?.remoteAddress || null,
+            sourceIp: req ? clientIp(req) : null,
             requestPath: req?.originalUrl || req?.path || null,
             requestMethod: req?.method || null
         }

@@ -1,5 +1,6 @@
 const express = require('express');
 const { createMetrics } = require('./metrics');
+const { trustProxySetting } = require('./client-ip');
 
 function securityHeaders(req, res, next) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -14,9 +15,7 @@ function createServiceApp(serviceName, logger, options = {}) {
     const app = express();
     const metrics = createMetrics(serviceName);
     app.disable('x-powered-by');
-    const proxyCidrs = String(process.env.TRUST_PROXY_CIDRS || '').split(',').map((value) => value.trim()).filter(Boolean);
-    const proxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS || '', 10);
-    app.set('trust proxy', proxyCidrs.length ? proxyCidrs : (Number.isInteger(proxyHops) && proxyHops > 0 ? proxyHops : ['loopback', 'linklocal', 'uniquelocal']));
+    app.set('trust proxy', trustProxySetting());
     app.use(securityHeaders);
     app.use(metrics.middleware);
     if (options.json !== false) app.use(express.json({ limit: options.jsonLimit || '2mb' }));

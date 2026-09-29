@@ -6,6 +6,9 @@ metadata:
   namespace: plv-fabric
 data:
   NODE_ENV: production
+  # GKE pod/ingress range plus Google Front End proxy ranges. Express rejects
+  # forwarding headers from every other directly connected address.
+  TRUST_PROXY_CIDRS: 10.72.0.0/16,35.191.0.0/16,130.211.0.0/22
   AUTH_SERVICE_URL: http://auth-service.plv-fabric.svc.cluster.local:4001
   IDENTITY_SERVICE_URL: http://fabric-identity-service.plv-fabric.svc.cluster.local:4002
   LEDGER_SERVICE_URL: http://ledger-service.plv-fabric.svc.cluster.local:4003
@@ -107,6 +110,7 @@ metadata:
   labels: { app: middleware-api }
   annotations:
     cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default":"blockgo-forwarded-headers"}'
 spec:
   selector: { app: middleware-api }
   ports: [{ name: api, port: 4000, targetPort: 4000 }]

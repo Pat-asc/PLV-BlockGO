@@ -1,12 +1,13 @@
 const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
+const { clientIp } = require('./client-ip');
 
 function normalizedResetEmail(req) {
     return String(req.body?.email || '').trim().toLowerCase() || '<missing-email>';
 }
 
 function resetRequestKey(req) {
-    const source = ipKeyGenerator(req.ip || req.socket?.remoteAddress || 'unknown');
+    const source = ipKeyGenerator(clientIp(req) || 'unknown');
     return `${source}\u001f${normalizedResetEmail(req)}`;
 }
 
