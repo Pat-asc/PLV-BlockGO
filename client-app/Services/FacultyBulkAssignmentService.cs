@@ -34,6 +34,8 @@ public static class FacultyBulkAssignmentService
         if (request.FacultyUserId <= 0) throw new ArgumentException("Faculty not found: a valid facultyUserId is required.");
         if (request.AcademicSectionId <= 0) throw new ArgumentException("Academic section not found: a valid academicSectionId is required.");
         if (string.IsNullOrWhiteSpace(request.SubjectCode)) throw new ArgumentException("Subject not found: subjectCode is required.");
+        var requestedSchoolYear = NormalizeSchoolYear(request.SchoolYear);
+        var requestedSemester = NormalizeSemester(request.Semester);
         var schedule = NormalizeSchedule(request.Schedule);
 
         string programCode;
@@ -71,6 +73,15 @@ public static class FacultyBulkAssignmentService
                     throw new ArgumentException("No authoritative active academic period is configured. Ask the Registrar to open the academic period before assigning faculty loads.");
                 schoolYear = NormalizeSchoolYear(reader.GetString(0));
                 semester = NormalizeSemester(reader.GetString(1));
+            }
+
+            if (!string.Equals(requestedSchoolYear, schoolYear, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(requestedSemester, semester, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    $"Faculty assignment period {requestedSchoolYear} {requestedSemester} does not match " +
+                    $"the active academic period {schoolYear} {semester}. " +
+                    "Refresh Academic Assignment and use a section enrolled in the active academic period.");
             }
 
             int yearLevel;

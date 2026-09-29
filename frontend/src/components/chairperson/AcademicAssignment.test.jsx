@@ -116,6 +116,79 @@ test("shows the authoritative period and explicit period columns", async () => {
   expect(screen.getByRole("columnheader", { name: "Semester" })).toBeInTheDocument();
 });
 
+test("blocks faculty assignment when section enrollment period differs from active academic period", async () => {
+  const firstSemesterSubject = {
+    subjectCode: "IT 321",
+    subjectTitle: "Web Systems and Technologies",
+    yearLevel: 3,
+    semester: "FIRST",
+    units: 3,
+  };
+
+  fetchCurriculums.mockResolvedValue({
+    data: [{
+      programCode: "BSIT",
+      status: "PUBLISHED",
+      subjects: [firstSemesterSubject],
+    }],
+  });
+
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    subjects: [firstSemesterSubject],
+    sections: [{
+      id: 31,
+      department: "Bachelor of Science in Information Technology",
+      programCode: "BSIT",
+      yearLevel: 3,
+      section: "3-1",
+    }],
+    schoolYears: ["2025-2026"],
+    enrollmentPeriods: [{
+      schoolYear: "2026-2027",
+      semester: "FIRST",
+      semesterDisplay: "1st Semester",
+      yearLevel: 3,
+      section: "3-1",
+      academicSectionId: 31,
+    }],
+    activeAcademicPeriod: {
+      schoolYear: "2025-2026",
+      semester: "FIRST",
+    },
+    assignments: [],
+  });
+
+  render(
+    <AcademicAssignment
+      chairpersonDepartment="Bachelor of Science in Information Technology"
+    />
+  );
+
+  await selectFaculty();
+
+  fireEvent.click(
+    screen.getByRole("radio", { name: "Select IT 321" })
+  );
+
+  expect(
+    screen.getByLabelText("Current academic period")
+  ).toHaveTextContent("2025-2026 · 1st Semester");
+
+  expect(screen.getByText("2026-2027")).toBeInTheDocument();
+
+  const mismatchButton = screen.getByRole("button", {
+    name: "Period mismatch",
+  });
+
+  expect(mismatchButton).toBeDisabled();
+
+  expect(
+    screen.getByRole("button", { name: "Save Assignments" })
+  ).toBeDisabled();
+
+  expect(assignFacultyLoadToBackend).not.toHaveBeenCalled();
+});
+
 test("uses the backend-returned authoritative period after saving", async () => {
   assignFacultyLoadToBackend.mockResolvedValue({
     status: "Success",
