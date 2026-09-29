@@ -131,7 +131,7 @@ public static class FacultyAssignmentRosterService
             WHERE e.academic_section_id = @academicSectionId
               AND e.school_year = @schoolYear
               AND e.semester = @semester
-              AND e.status = 'ENROLLED'
+              AND UPPER(BTRIM(e.status)) = 'ENROLLED'
               AND LOWER(u.role) = 'student'
               AND LOWER(u.status) = 'approved'
               AND u.is_active = TRUE

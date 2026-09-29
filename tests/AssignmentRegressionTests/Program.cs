@@ -10,6 +10,15 @@ var passed = 0; var skipped = 0;
 void Pass(int n, string name) { passed++; Console.WriteLine($"PASS {n}: {name}"); }
 void Skip(int n) { skipped++; Console.WriteLine($"SKIP {n}: PostgreSQL integration (SECTIONING_TEST_CONNECTION is not configured)"); }
 static void Check(bool value, string message) { if (!value) throw new Exception(message); }
+static string FindRepositoryFile(params string[] pathParts)
+{
+    for (var directory = new DirectoryInfo(Directory.GetCurrentDirectory()); directory is not null; directory = directory.Parent)
+    {
+        var candidate = Path.Combine(new[] { directory.FullName }.Concat(pathParts).ToArray());
+        if (File.Exists(candidate)) return candidate;
+    }
+    throw new FileNotFoundException($"Repository file was not found: {Path.Combine(pathParts)}");
+}
 
 Check(new[] { "final", "finals", "FINAL", "FINALS" }.All(term => GradeAcademicTerm.Normalize(term) == GradeAcademicTerm.Finals),
     "Finals aliases did not normalize to the canonical term."); Pass(60, "finals aliases normalize to finals");
@@ -187,7 +196,7 @@ Check(fullCoverage == (0, 0) && incompleteCoverage == (1, 1), "Roster coverage c
 Pass(42, "submit-to-Chairperson roster coverage");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=116;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -200,14 +209,30 @@ CREATE TEMP TABLE curriculums(curriculum_id INT PRIMARY KEY,program_id INT,statu
 CREATE TEMP TABLE curriculum_subjects(id SERIAL,curriculum_id INT,subject_code TEXT,year_level INT,semester TEXT);
 CREATE TEMP TABLE academicsections(id INT PRIMARY KEY,department TEXT,year_level INT,section_num INT,max_capacity INT DEFAULT 40,is_active BOOLEAN DEFAULT TRUE,archived_at TIMESTAMPTZ,archived_by TEXT);
 CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_name TEXT,department TEXT,section TEXT,assignment_status TEXT,student_email TEXT,sex TEXT,curriculum_id BIGINT,batch_year INT,year_level TEXT);
-CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,enrollment_state TEXT DEFAULT 'PLANNING',updated_at TIMESTAMPTZ,UNIQUE(student_user_id,school_year,semester));
+CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,enrollment_state TEXT DEFAULT 'PLANNING',updated_at TIMESTAMPTZ);
 CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_name TEXT,department TEXT);
 CREATE TEMP TABLE systemsettings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TEMP TABLE facultysections(id SERIAL PRIMARY KEY,user_id INT,department TEXT,section TEXT,year_level TEXT,subject TEXT,academic_section_id INT,school_year TEXT,semester TEXT,is_active BOOLEAN DEFAULT TRUE,deactivated_at TIMESTAMPTZ,deactivated_by TEXT,schedule TEXT);
 CREATE UNIQUE INDEX ux_test_facultysections_exact ON facultysections(user_id,academic_section_id,school_year,semester,LOWER(subject)) WHERE is_active=TRUE;
 CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT,student_hash TEXT,student_name TEXT,section TEXT,course TEXT,subject_code TEXT,semester TEXT,school_year TEXT,faculty_id TEXT,date TEXT,ipfs_cid TEXT,term TEXT,
     CONSTRAINT unique_grade_entry_assignment_cycle UNIQUE(student_hash,subject_code,school_year,semester,section,assignment_cycle_id,term));
-CREATE TEMP TABLE grade_assignment_cycles(record_id TEXT PRIMARY KEY,assignment_cycle_id TEXT NOT NULL);
+CREATE TEMP TABLE grade_assignment_cycles(record_id TEXT PRIMARY KEY,assignment_cycle_id TEXT NOT NULL);");
+var enrollmentConstraintMigration = await File.ReadAllTextAsync(
+    FindRepositoryFile("migrations", "024_student_enrollment_period_constraint.sql"));
+await Exec("INSERT INTO student_enrollments(student_user_id,school_year,semester) VALUES(999,'2026-2027','FIRST'),(999,'2026-2027','FIRST')");
+var duplicateMigrationRejected=false;
+try { await Exec(enrollmentConstraintMigration); }
+catch(PostgresException ex) when (ex.SqlState==PostgresErrorCodes.UniqueViolation) { duplicateMigrationRejected=true; }
+Check(duplicateMigrationRejected && await Count("SELECT COUNT(*) FROM student_enrollments WHERE student_user_id=999")==2,
+    "The migration did not stop safely while preserving duplicate enrollment history.");
+Pass(116,"migration rejects duplicates without deleting enrollment history");
+await Exec("DELETE FROM student_enrollments WHERE student_user_id=999");
+await Exec(enrollmentConstraintMigration);
+await Exec(enrollmentConstraintMigration);
+Check(await Count("SELECT COUNT(*) FROM pg_constraint WHERE conrelid='student_enrollments'::regclass AND conname='uq_student_enrollment_period' AND contype='u'")==1,
+    "The production-drift migration did not create one idempotent enrollment-period uniqueness contract.");
+Pass(114,"migration repairs missing enrollment-period uniqueness idempotently");
+await Exec(@"
 INSERT INTO academic_programs VALUES(1,'BSIT','BS Information Technology',TRUE),(2,'BSCS','BS Computer Science',TRUE); INSERT INTO curriculums VALUES(1,1,'PUBLISHED'),(2,2,'PUBLISHED');
 INSERT INTO curriculum_subjects(curriculum_id,subject_code,year_level,semester) VALUES(1,'IT 101',1,'FIRST'),(1,'IT 102',1,'FIRST'),(1,'IT 101',1,'SECOND'),(2,'CS 101',1,'FIRST');
 INSERT INTO academicsections(id,department,year_level,section_num) VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2),(3,'BS Computer Science',1,1);
@@ -289,6 +314,11 @@ Check(ledgerStudents.TryGetValue("26-0001",out var ledgerStudent) && ledgerStude
     "Registrar ledger student identity did not resolve the official Registrar profile.");
 Pass(84,"Registrar ledger resolves official student identity by number and account");
 Check(roster.Select(r=>r.StudentNo).SequenceEqual(new[]{"26-0001","26-0002","26-0003"}),"Roster is not A/B/C."); Pass(2,"existing roster A/B/C");
+await Exec("UPDATE student_enrollments SET status=' Enrolled ' WHERE student_user_id=5 AND school_year='2026-2027' AND semester='FIRST'");
+roster=await FacultyAssignmentRosterService.GetRosterAsync(db,exact);
+Check(roster.Any(r=>r.StudentNo=="26-0003"),"A case-variant active enrollment was excluded from the Faculty roster.");
+Pass(115,"Faculty roster normalizes active enrollment status");
+await Exec("UPDATE student_enrollments SET status='ENROLLED' WHERE student_user_id=5 AND school_year='2026-2027' AND semester='FIRST'");
 await Exec("UPDATE student_enrollments SET status='DROPPED' WHERE student_user_id=4 AND school_year='2026-2027' AND semester='FIRST'"); roster=await FacultyAssignmentRosterService.GetRosterAsync(db,exact); Check(!roster.Any(r=>r.StudentNo=="26-0002"),"B restored."); Pass(3,"removed student not recreated");
 await Exec("UPDATE facultysections SET user_id=3 WHERE id=102"); exact=(await FacultyAssignmentRosterService.ResolveAsync(db,102)).Value!; Check(exact.FacultyUserId==3 && await Count("SELECT COUNT(*) FROM student_enrollments")==enrollmentCount,"Reassignment changed students."); Pass(4,"professor reassignment only");
 var upsert=@"INSERT INTO student_enrollments(student_user_id,student_no,program_id,curriculum_id,academic_section_id,school_year,semester,year_level,status) VALUES(6,'26-0004',1,1,1,'2026-2027','FIRST',1,'ENROLLED') ON CONFLICT(student_user_id,school_year,semester) DO UPDATE SET academic_section_id=EXCLUDED.academic_section_id,status='ENROLLED'";
