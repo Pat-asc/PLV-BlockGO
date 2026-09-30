@@ -116,7 +116,7 @@ test("shows the authoritative period and explicit period columns", async () => {
   expect(screen.getByRole("columnheader", { name: "Semester" })).toBeInTheDocument();
 });
 
-test("blocks faculty assignment when section enrollment period differs from active academic period", async () => {
+test("shows only the active enrollment period and does not render a period mismatch action", async () => {
   const firstSemesterSubject = {
     subjectCode: "IT 321",
     subjectTitle: "Web Systems and Technologies",
@@ -179,14 +179,10 @@ test("blocks faculty assignment when section enrollment period differs from acti
     screen.getByLabelText("Current academic period")
   ).toHaveTextContent("2025-2026 · 1st Semester");
 
-  expect(screen.getByText("2026-2027 · 1st Semester")).toBeInTheDocument();
+  expect(screen.queryByText("2026-2027 · 1st Semester")).not.toBeInTheDocument();
 
-  const mismatchButtons = screen.getAllByRole("button", {
-    name: "Period mismatch",
-  });
-
-  expect(mismatchButtons).toHaveLength(2);
-  mismatchButtons.forEach((button) => expect(button).toBeDisabled());
+  expect(screen.queryByText(/period mismatch/i)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Assign$/ })).toBeEnabled();
 
   expect(
     screen.getByRole("button", { name: "Save Assignments" })

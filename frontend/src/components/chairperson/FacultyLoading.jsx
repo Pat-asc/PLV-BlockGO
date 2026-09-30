@@ -139,9 +139,6 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       (period) => String(period.academicSectionId) === String(section.id)
     );
     const periods = enrolledPeriods.length ? enrolledPeriods : activePeriod ? [activePeriod] : [];
-    const hasConflictingEnrollment = enrolledPeriods.some(
-      (period) => period.schoolYear !== activePeriod?.schoolYear || period.semester !== activePeriod?.semester
-    );
     return periods.map((period) => ({
       key: `${section.id}|${period.schoolYear}|${period.semester}`,
       academicSectionId: section.id,
@@ -150,7 +147,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       section: `${section.programCode} ${section.section}`,
       schoolYear: period.schoolYear,
       semester: period.semester,
-      periodMatchesActive: !hasConflictingEnrollment &&
+      periodMatchesActive:
         period.schoolYear === activePeriod?.schoolYear && period.semester === activePeriod?.semester,
       students: [],
     }));
@@ -186,6 +183,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
 
   const filteredSections = sectionOptions.filter(
     (section) =>
+      section.periodMatchesActive &&
       section.program === selectedProgram &&
       section.yearLevel === selectedYearLevel
   );
@@ -991,7 +989,6 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
                 filteredSections.map((section, index) => (
                   <option key={`${section.key}-${index}`} value={section.key}>
                     {section.section} - {section.yearLevel} - {section.schoolYear} {section.semester}
-                    {section.periodMatchesActive ? "" : " (Period mismatch)"}
                   </option>
                 ))
               ) : (
