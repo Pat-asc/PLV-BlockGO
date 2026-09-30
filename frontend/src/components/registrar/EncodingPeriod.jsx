@@ -38,8 +38,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
 
   const isSuccessStatusMessage =
     statusMessage === "Encoding period saved successfully." ||
-    statusMessage ===
-      "Encoding season reset successfully. Faculty assigned sections were cleared, saved sections were kept, and the encoding period was closed.";
+    statusMessage === "Encoding season reset successfully.";
 
   useEffect(() => {
     const loadSavedPeriod = async () => {
@@ -197,17 +196,27 @@ function EncodingPeriod({ onResetEncodingSeason }) {
       }
 
       const response = await onResetEncodingSeason(requestedPeriod);
-      if (!response?.encodingPeriod) throw new Error("The opened academic period could not be confirmed. Refresh the page before making further changes.");
-      const openedPeriod = JSON.parse(response.encodingPeriod);
+      const context = response?.academicContext;
+      const openedSemester = toSemesterDisplay(context?.semester);
+      if (!context?.academicPeriodId || !context?.schoolYear || !openedSemester || !context?.term) {
+        throw new Error("The opened academic period could not be confirmed. Refresh the page before making further changes.");
+      }
+      const openedPeriod = {
+        schoolYear: context.schoolYear,
+        semester: openedSemester,
+        term: context.term,
+        startDate: context.startDate || "",
+        endDate: context.endDate || "",
+      };
       setPeriod(openedPeriod);
       setSavedPeriod(openedPeriod);
-      setActiveAcademicPeriod(response.academicContext);
+      setActiveAcademicPeriod(context);
       setNewAcademicPeriod({ schoolYear: openedPeriod.schoolYear, semester: openedPeriod.semester });
-      setStatusMessage(
-        "Encoding season reset successfully. Faculty assigned sections were cleared, saved sections were kept, and the encoding period was closed."
-      );
+      setSchoolYears((current) => [...new Set([openedPeriod.schoolYear, ...current])]);
+      localStorage.setItem("encodingPeriod", JSON.stringify(openedPeriod));
+      setStatusMessage("Encoding season reset successfully.");
       showSystemNotification(
-        "Encoding season has been reset. Faculty assigned sections are now cleared, saved sections were kept, and the encoding period is now closed."
+        "Encoding season has been reset. Current faculty assignments were deactivated and the selected academic period is now active."
       );
     } catch (error) {
       setStatusMessage(
@@ -260,7 +269,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
         {loadError && <div role="alert" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{loadError}</div>}
 
         <p className="mt-3 text-xs font-semibold text-slate-700">Current Active Academic Period: {activeAcademicPeriod ? `${activeAcademicPeriod.schoolYear} · ${toSemesterDisplay(activeAcademicPeriod.semester)}` : "None"}</p>
-        <p className="mt-2 text-xs text-slate-600">New Academic Period to Open (Reset Encoding Season). Save Schedule only updates the term and dates for the current active period.</p>
+        <p className="mt-2 text-xs text-slate-600">New Academic Period to Open (Reset Encoding Season). Save Schedule only updates the dates for the current active period.</p>
 
         <div className="mt-3 grid grid-cols-1 items-end gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto_1fr]">
           <div>

@@ -6,7 +6,6 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.SignalR;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using Client_app.Services;
 
@@ -228,89 +227,46 @@ namespace Client_app.Controllers
 
                 using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
-                using var tx = await conn.BeginTransactionAsync();
-
-                await using (var closePeriod = new NpgsqlCommand(@"
-                    UPDATE academic_periods
-                    SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP
-                    WHERE status = 'ACTIVE';", conn, tx))
-                    await closePeriod.ExecuteNonQueryAsync();
-
-                await using (var openPeriod = new NpgsqlCommand(@"
-                    INSERT INTO academic_periods
-                        (school_year, semester, term, start_date, end_date, opened_by)
-                    VALUES (@schoolYear, @semester, @term, @startDate, @endDate,
-                            (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1));", conn, tx))
-                {
-                    openPeriod.Parameters.AddWithValue("schoolYear", schoolYear);
-                    openPeriod.Parameters.AddWithValue("semester", semester);
-                    openPeriod.Parameters.AddWithValue("term", term);
-                    openPeriod.Parameters.AddWithValue("startDate", (object?)startDate ?? DBNull.Value);
-                    openPeriod.Parameters.AddWithValue("endDate", (object?)endDate ?? DBNull.Value);
-                    openPeriod.Parameters.AddWithValue("actor", User.Identity?.Name ?? "unknown");
-                    await openPeriod.ExecuteNonQueryAsync();
-                }
-
-                // End the current teaching cycles without deleting their workflow or
-                // academic history. New assignments receive new FacultySections IDs.
-                using var cmdDeactivateAssignments = new NpgsqlCommand(@"
-                    UPDATE FacultySections
-                    SET is_active = FALSE,
-                        deactivated_at = CURRENT_TIMESTAMP,
-                        deactivated_by = @actor
-                    WHERE is_active = TRUE", conn, tx);
-                cmdDeactivateAssignments.Parameters.AddWithValue("actor", User.Identity?.Name ?? "unknown");
-                var deactivatedAssignmentCount = await cmdDeactivateAssignments.ExecuteNonQueryAsync();
-
-                var displaySemester = semester switch { "FIRST" => "1st Semester", "SECOND" => "2nd Semester", _ => "Summer" };
-                var resetEncodingPeriod = JsonSerializer.Serialize(new
-                {
-                    schoolYear,
-                    semester = displaySemester,
-                    startDate = startDate?.ToString("yyyy-MM-dd") ?? "",
-                    endDate = endDate?.ToString("yyyy-MM-dd") ?? "",
-                    term
-                });
-                using var cmdResetEncodingPeriod = new NpgsqlCommand(@"
-                    INSERT INTO SystemSettings (key, value) VALUES ('encoding_period', @value)
-                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", conn, tx);
-                cmdResetEncodingPeriod.Parameters.AddWithValue("value", resetEncodingPeriod);
-                await cmdResetEncodingPeriod.ExecuteNonQueryAsync();
-
-                await tx.CommitAsync();
+                var actor = User.Identity?.Name ?? "unknown";
+                var resetResult = await EncodingPeriodSettingService.ResetAsync(
+                    conn, schoolYear, semester, term, startDate, endDate, actor,
+                    HttpContext.RequestAborted);
 
                 _logger.LogInformation("Encoding season reset by {User}", User.Identity?.Name);
                 await _chatHubContext.Clients.All.SendAsync("SystemSettingChanged", new
                 {
                     Key = "encoding_period",
-                    Value = resetEncodingPeriod,
+                    Value = resetResult.EncodingPeriod,
                     UpdatedAt = DateTime.UtcNow
                 });
                 await _chatHubContext.Clients.All.SendAsync("AcademicDataChanged", new
                 {
                     Reason = "encoding_season_reset",
                     Department = string.Empty,
-                    Actor = User.Identity?.Name ?? "unknown",
+                    Actor = actor,
                     OccurredAt = DateTimeOffset.UtcNow
                 });
 
                 return Ok(new
                 {
                     status = "Success",
-                    message = "Encoding season reset. Current faculty assignments were deactivated; grade workflow history, finalized ledger records, and saved sections were preserved.",
-                    deactivatedAssignmentCount,
+                    message = "Encoding season reset successfully.",
+                    resetResult.DeactivatedAssignmentCount,
                     clearedDraftGradeCount = 0,
-                    academicContext = new { schoolYear, semester, term },
-                    encodingPeriod = resetEncodingPeriod
+                    resetResult.AcademicContext,
+                    resetResult.EncodingPeriod
                 });
             }
             catch (ArgumentException ex)
             {
                 return BadRequest(new { status = "Error", message = ex.Message });
             }
-            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+            catch (PostgresException ex) when (
+                ex.SqlState == PostgresErrorCodes.UniqueViolation &&
+                ex.ConstraintName is "academic_periods_school_year_semester_term_key" or "ux_academic_period_active")
             {
-                return Conflict(new { status = "Error", message = "That academic period already exists. Choose a new school year, semester, or term." });
+                _logger.LogWarning(ex, "Academic-period reset conflicted with another period change.");
+                return Conflict(new { status = "Error", message = "The academic period changed while the reset was in progress. Refresh and try again." });
             }
             catch (Exception ex)
             {
