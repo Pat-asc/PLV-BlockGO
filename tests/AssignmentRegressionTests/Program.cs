@@ -196,7 +196,7 @@ Check(fullCoverage == (0, 0) && incompleteCoverage == (1, 1), "Roster coverage c
 Pass(42, "submit-to-Chairperson roster coverage");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=124;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=131;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -206,7 +206,7 @@ await Exec(@"
 CREATE TEMP TABLE users(id INT PRIMARY KEY,username TEXT,email TEXT,role TEXT,status TEXT,is_active BOOLEAN);
 CREATE TEMP TABLE academic_programs(program_id INT PRIMARY KEY,program_code TEXT,program_name TEXT,is_active BOOLEAN);
 CREATE TEMP TABLE curriculums(curriculum_id INT PRIMARY KEY,program_id INT,status TEXT);
-CREATE TEMP TABLE curriculum_subjects(id SERIAL,curriculum_id INT,subject_code TEXT,year_level INT,semester TEXT);
+CREATE TEMP TABLE curriculum_subjects(id SERIAL,curriculum_id INT,subject_code TEXT,prerequisite TEXT,year_level INT,semester TEXT);
 CREATE TEMP TABLE academicsections(id INT PRIMARY KEY,department TEXT,year_level INT,section_num INT,max_capacity INT DEFAULT 40,is_active BOOLEAN DEFAULT TRUE,archived_at TIMESTAMPTZ,archived_by TEXT);
 CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_name TEXT,department TEXT,section TEXT,assignment_status TEXT,student_email TEXT,sex TEXT,curriculum_id BIGINT,batch_year INT,year_level TEXT);
 CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,enrollment_state TEXT DEFAULT 'PLANNING',updated_at TIMESTAMPTZ);
@@ -241,12 +241,39 @@ Pass(114,"migration repairs missing enrollment-period uniqueness idempotently");
 await Exec(@"
 INSERT INTO academic_programs VALUES(1,'BSIT','BS Information Technology',TRUE),(2,'BSCS','BS Computer Science',TRUE); INSERT INTO curriculums VALUES(1,1,'PUBLISHED'),(2,2,'PUBLISHED');
 INSERT INTO academic_periods(school_year,semester,term,status) VALUES('2026-2027','FIRST','midterm','ACTIVE');
-INSERT INTO curriculum_subjects(curriculum_id,subject_code,year_level,semester) VALUES(1,'IT 101',1,'FIRST'),(1,'IT 102',1,'FIRST'),(1,'IT 101',1,'SECOND'),(2,'CS 101',1,'FIRST');
+INSERT INTO curriculum_subjects(curriculum_id,subject_code,prerequisite,year_level,semester) VALUES(1,'IT 101',NULL,1,'FIRST'),(1,'IT 102','IT 101',1,'FIRST'),(1,'IT 201','IT 102',2,'SECOND'),(2,'CS 101',NULL,1,'FIRST');
 INSERT INTO academicsections(id,department,year_level,section_num) VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2),(3,'BS Computer Science',1,1);
 INSERT INTO users VALUES(1,'x','profx@plv.edu.ph','faculty','APPROVED',TRUE),(3,'y','profy@plv.edu.ph','faculty','APPROVED',TRUE),(9,'z','profz@plv.edu.ph','faculty','APPROVED',TRUE),(13,'chair','chair@plv.edu.ph','department_admin','APPROVED',TRUE),(2,'a','a@plv.edu.ph','student','APPROVED',TRUE),(4,'b','b@plv.edu.ph','student','APPROVED',TRUE),(5,'c','c@plv.edu.ph','student','APPROVED',TRUE),(6,'stale','stale@plv.edu.ph','student','APPROVED',TRUE),(7,'old','old@plv.edu.ph','student','APPROVED',TRUE),(8,'second','second@plv.edu.ph','student','APPROVED',TRUE),(12,'csc','csc@plv.edu.ph','student','APPROVED',TRUE);
 INSERT INTO facultyprofiles VALUES(1,'FAC-1','Professor X','BS Information Technology'),(3,'FAC-3','Professor Y','BS Information Technology'),(9,'FAC-9','Professor Z','BS Information Technology'),(13,'CHAIR-1','Chairperson Account','BS Information Technology');
 INSERT INTO studentprofiles(user_id,student_no,full_name,department,section,assignment_status) VALUES(2,'26-0001','Student A','Wrong','9-9','Dropped'),(4,'26-0002','Student B','BS Information Technology','BSIT 1-1','Enrolled'),(5,'26-0003','Student C','BS Information Technology','BSIT 1-1','Enrolled'),(6,'26-0004','Stale Profile','BS Information Technology','BSIT 1-1','Enrolled'),(7,'25-0001','Old Period','BS Information Technology','BSIT 1-1','Enrolled'),(8,'26-0005','Second Term','BS Information Technology','BSIT 1-1','Enrolled'),(12,'26-0100','Computer Science Student','BS Computer Science','BSCS 1-1','Enrolled');
 INSERT INTO student_enrollments(student_user_id,student_no,program_id,curriculum_id,academic_section_id,school_year,semester,year_level,status) VALUES(2,'26-0001',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(4,'26-0002',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(5,'26-0003',1,1,1,'2026-2027','FIRST',1,'ENROLLED'),(12,'26-0100',2,2,3,'2026-2027','FIRST',1,'ENROLLED');");
+Check(await StudentCurriculumResolver.ResolveAsync(db, "a@plv.edu.ph") == 1,
+    "A PLANNING enrollment did not resolve its assigned published curriculum.");
+Pass(125, "student assigned published curriculum is visible before period finalization");
+Check(await StudentCurriculumResolver.ResolveAsync(db, "csc@plv.edu.ph") == 2 &&
+      await StudentCurriculumResolver.ResolveAsync(db, "a@plv.edu.ph") != 2,
+    "Curriculum resolution crossed the authoritative enrollment program.");
+Pass(126, "student curriculum resolution is program-isolated");
+Check(await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1") == 3,
+    "The assigned curriculum did not retain its complete subject checklist.");
+Pass(127, "assigned curriculum subjects are available");
+Check(await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1 AND prerequisite IS NOT NULL") == 2,
+    "Curriculum prerequisites were not available with the assigned checklist.");
+Pass(128, "assigned curriculum prerequisites are available");
+Check(await StudentCurriculumResolver.ResolveAsync(db, "stale@plv.edu.ph") is null,
+    "A student without an enrollment curriculum received a fallback curriculum.");
+Pass(129, "student without an assigned curriculum receives no fallback");
+await Exec(@"INSERT INTO curriculums VALUES(3,1,'DRAFT'),(4,1,'RETURNED');
+INSERT INTO users VALUES(14,'draft','draft@plv.edu.ph','student','APPROVED',TRUE),(15,'returned','returned@plv.edu.ph','student','APPROVED',TRUE);
+INSERT INTO student_enrollments(student_user_id,student_no,program_id,curriculum_id,school_year,semester,year_level,status)
+VALUES(14,'26-0014',1,3,'2026-2027','FIRST',1,'ENROLLED'),(15,'26-0015',1,4,'2026-2027','FIRST',1,'ENROLLED');");
+Check(await StudentCurriculumResolver.ResolveAsync(db, "draft@plv.edu.ph") is null &&
+      await StudentCurriculumResolver.ResolveAsync(db, "returned@plv.edu.ph") is null,
+    "A DRAFT or RETURNED curriculum was exposed to a student.");
+Pass(130, "non-published curriculum workflow states remain hidden");
+Check(await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1 AND (year_level<>1 OR semester<>'FIRST')") == 1,
+    "The checklist was reduced to the current enrollment year or semester.");
+Pass(131, "curriculum checklist remains multi-year and multi-semester");
 var enrollmentCount=await Count("SELECT COUNT(*) FROM student_enrollments"); var profileCount=await Count("SELECT COUNT(*) FROM studentprofiles");
 var academicPeriodCount = await Count("SELECT COUNT(*) FROM academic_periods");
 var normalizedSetting = await EncodingPeriodSettingService.SaveAsync(db,

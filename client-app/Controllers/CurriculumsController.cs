@@ -520,35 +520,8 @@ namespace Client_app.Controllers
         public async Task<IActionResult> GetStudentCurriculum(CancellationToken cancellationToken)
         {
             await using var connection = await OpenConnectionAsync(cancellationToken);
-            await using var command = new NpgsqlCommand(@"
-                SELECT c.curriculum_id
-                FROM users u
-                JOIN studentprofiles sp ON sp.user_id = u.id
-                JOIN LATERAL (
-                    SELECT se.program_id, se.curriculum_id, se.status, se.enrollment_state
-                    FROM student_enrollments se
-                    WHERE se.student_user_id = u.id
-                      AND LOWER(TRIM(se.student_no)) = LOWER(TRIM(sp.student_no))
-                    ORDER BY se.school_year DESC,
-                             CASE se.semester WHEN 'MIDYEAR' THEN 3 WHEN 'SECOND' THEN 2 ELSE 1 END DESC,
-                             se.enrollment_id DESC
-                    LIMIT 1
-                ) enrollment ON TRUE
-                JOIN curriculums c ON c.curriculum_id = enrollment.curriculum_id
-                    AND c.program_id = enrollment.program_id AND c.status IN ('PUBLISHED', 'ARCHIVED')
-                WHERE (LOWER(u.email) = LOWER(@actor) OR LOWER(TRIM(sp.student_no)) = LOWER(TRIM(@actor))) AND LOWER(u.role) = 'student'
-                  AND LOWER(u.status) = 'approved' AND u.is_active
-                  AND enrollment.status = 'ENROLLED' AND enrollment.enrollment_state = 'FINALIZED';", connection);
-            command.Parameters.AddWithValue("actor", ActorEmail());
-            long? resolvedId = null;
-            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
-            {
-                if (await reader.ReadAsync(cancellationToken))
-                {
-                    resolvedId = reader.IsDBNull(0) ? null : reader.GetInt64(0);
-                }
-            }
-            if (!resolvedId.HasValue) return NotFound(new { status = "Error", message = "No published curriculum is assigned to your academic program." });
+            var resolvedId = await StudentCurriculumResolver.ResolveAsync(connection, ActorEmail(), cancellationToken);
+            if (!resolvedId.HasValue) return NotFound(new { status = "Error", message = "No published curriculum checklist is assigned to this student." });
             var curriculum = await LoadCurriculumAsync(connection, resolvedId.Value, cancellationToken);
             if (curriculum.Status is not (CurriculumStatuses.Published or CurriculumStatuses.Archived))
                 return NotFound(new { status = "Error", message = "Your program curriculum is not available." });

@@ -69,7 +69,8 @@ const StudentPortal = ({ studentData, onLogout }) => {
           setCurriculumError('The published curriculum has no configured subjects yet.');
       }
     } catch (error) {
-      setCurricula([]); setCurriculumError(error.message || 'No published curriculum is assigned to your account.');
+      console.error('Unable to load the student curriculum checklist:', error);
+      setCurricula([]); setCurriculumError('No published curriculum checklist is assigned to your account.');
     } finally { setCurriculumLoading(false); }
   }, []);
 
