@@ -25,7 +25,19 @@ beforeEach(() => {
     currentSchoolYear: '2026-2027',
     activeAcademicPeriod: { schoolYear: '2026-2027', semester: 'FIRST' },
   });
-  updateSystemSetting.mockResolvedValue({ status: 'Success' });
+  updateSystemSetting.mockImplementation(async (_key, value) => ({ status: 'Success', value }));
+});
+
+test('shows the Midterm value stored on the server', async () => {
+  getSystemSetting.mockResolvedValue({ status: 'Success', value: JSON.stringify({
+    schoolYear: '2026-2027', semester: '1st Semester', term: 'midterm',
+    startDate: '2026-09-01', endDate: '2026-09-30',
+  }) });
+
+  render(<EncodingPeriod />);
+
+  await waitFor(() => expect(screen.getByLabelText('Encoding Term')).toHaveValue('midterm'));
+  expect(updateSystemSetting).not.toHaveBeenCalled();
 });
 
 test('renders authoritative school years and selects the active year', async () => {
@@ -37,20 +49,27 @@ test('renders authoritative school years and selects the active year', async () 
 });
 
 test('Save Schedule uses the latest active period and preserves the schedule', async () => {
-  getSystemSetting.mockResolvedValue({ status: 'Success', value: JSON.stringify({
+  let storedValue = JSON.stringify({
     schoolYear: '2025-2026', semester: '1st Semester', term: 'midterm',
     startDate: '2026-09-01', endDate: '2026-09-30',
-  }) });
+  });
+  getSystemSetting.mockImplementation(async () => ({ status: 'Success', value: storedValue }));
   fetchAcademicPeriodOptions.mockResolvedValueOnce({
     activeAcademicPeriod: { schoolYear: '2025-2026', semester: 'FIRST' },
     schoolYears: ['2025-2026', '2026-2027'],
-  }).mockResolvedValueOnce({
+  }).mockResolvedValue({
     activeAcademicPeriod: { schoolYear: '2026-2027', semester: 'MIDYEAR' },
   });
-  updateSystemSetting.mockResolvedValue({ status: 'Success', value: JSON.stringify({
-    schoolYear: '2026-2027', semester: 'Summer', term: 'midterm',
-    startDate: '2026-10-01', endDate: '2026-10-31',
-  }) });
+  updateSystemSetting.mockImplementation(async (_key, value) => {
+    storedValue = JSON.stringify({
+      ...JSON.parse(value),
+      schoolYear: '2026-2027',
+      semester: 'Summer',
+    });
+    return { status: 'Success', value: storedValue };
+  });
+  const settingEvent = jest.fn();
+  window.addEventListener('blockgo:system-setting-changed', settingEvent);
   render(<EncodingPeriod />);
   const year = await screen.findByRole('combobox', { name: 'School Year' });
   await waitFor(() => expect(year).toBeEnabled());
@@ -68,8 +87,73 @@ test('Save Schedule uses the latest active period and preserves the schedule', a
   await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · Summer')).toBeInTheDocument());
   expect(year).toHaveValue('2025-2026');
   expect(screen.getByLabelText('Semester')).toHaveValue('1st Semester');
-  expect(JSON.parse(localStorage.getItem('encodingPeriod'))).toMatchObject({ ...expected, term: 'midterm' });
+  expect(JSON.parse(localStorage.getItem('encodingPeriod'))).toMatchObject(expected);
+  expect(JSON.parse(settingEvent.mock.calls[0][0].detail.value)).toMatchObject(expected);
+  expect(updateSystemSetting).toHaveBeenCalledTimes(1);
+  expect(updateSystemSetting.mock.calls.some(([, value]) => JSON.parse(value).term === 'midterm')).toBe(false);
   expect(screen.getByText('Encoding period saved successfully.')).toBeInTheDocument();
+  window.removeEventListener('blockgo:system-setting-changed', settingEvent);
+});
+
+test('server Finals wins over stale localStorage and the initial Midterm fallback', async () => {
+  localStorage.setItem('encodingPeriod', JSON.stringify({ term: 'midterm' }));
+  const finals = {
+    schoolYear: '2026-2027', semester: '1st Semester', term: 'finals',
+    startDate: '2026-10-01', endDate: '2026-10-31',
+  };
+  getSystemSetting.mockResolvedValue({ status: 'Success', value: JSON.stringify(finals) });
+
+  render(<EncodingPeriod />);
+
+  await waitFor(() => expect(screen.getByLabelText('Encoding Term')).toHaveValue('finals'));
+  expect(JSON.parse(localStorage.getItem('encodingPeriod'))).toEqual(finals);
+  expect(updateSystemSetting).not.toHaveBeenCalled();
+});
+
+test('saved Finals survives unmount and remount from the authoritative server value', async () => {
+  let storedValue = JSON.stringify({
+    schoolYear: '2026-2027', semester: '1st Semester', term: 'midterm',
+    startDate: '2026-09-01', endDate: '2026-09-30',
+  });
+  getSystemSetting.mockImplementation(async () => ({ status: 'Success', value: storedValue }));
+  updateSystemSetting.mockImplementation(async (_key, value) => {
+    storedValue = value;
+    return { status: 'Success', value: storedValue };
+  });
+
+  const view = render(<EncodingPeriod />);
+  await waitFor(() => expect(screen.getByLabelText('Encoding Term')).toHaveValue('midterm'));
+  fireEvent.change(screen.getByLabelText('Encoding Term'), { target: { value: 'finals' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save Schedule' }));
+  await waitFor(() => expect(screen.getByLabelText('Encoding Term')).toHaveValue('finals'));
+  expect(updateSystemSetting).toHaveBeenCalledTimes(1);
+
+  view.unmount();
+  render(<EncodingPeriod />);
+
+  await waitFor(() => expect(screen.getByLabelText('Encoding Term')).toHaveValue('finals'));
+  expect(updateSystemSetting).toHaveBeenCalledTimes(1);
+});
+
+test('a SystemSettingChanged notification refetches Finals without writing a setting', async () => {
+  let storedValue = JSON.stringify({
+    schoolYear: '2026-2027', semester: '1st Semester', term: 'midterm',
+    startDate: '2026-09-01', endDate: '2026-09-30',
+  });
+  getSystemSetting.mockImplementation(async () => ({ status: 'Success', value: storedValue }));
+  render(<EncodingPeriod />);
+  await waitFor(() => expect(screen.getByLabelText('Encoding Term')).toHaveValue('midterm'));
+
+  storedValue = JSON.stringify({
+    schoolYear: '2026-2027', semester: '1st Semester', term: 'finals',
+    startDate: '2026-10-01', endDate: '2026-10-31',
+  });
+  window.dispatchEvent(new CustomEvent('blockgo:system-setting-changed', {
+    detail: { Key: 'encoding_period', Value: storedValue },
+  }));
+
+  await waitFor(() => expect(screen.getByLabelText('Encoding Term')).toHaveValue('finals'));
+  expect(updateSystemSetting).not.toHaveBeenCalled();
 });
 
 test('Save Schedule requires an active academic period', async () => {

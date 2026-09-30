@@ -41,12 +41,15 @@ function EncodingPeriod({ onResetEncodingSeason }) {
     statusMessage === "Encoding season reset successfully.";
 
   useEffect(() => {
+    let active = true;
+
     const loadSavedPeriod = async () => {
       try {
         const [settingResult, optionsResult] = await Promise.allSettled([
           getSystemSetting("encoding_period"),
           fetchAcademicPeriodOptions(),
         ]);
+        if (!active) return;
         const options = optionsResult.status === "fulfilled" ? optionsResult.value : null;
         const res = settingResult.status === "fulfilled" ? settingResult.value : null;
         const activeAcademicPeriod = options?.activeAcademicPeriod || null;
@@ -82,6 +85,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           setPeriod(resolvedPeriod);
           setSavedPeriod(resolvedPeriod);
           setNewAcademicPeriod({ schoolYear: resolvedPeriod.schoolYear, semester: resolvedPeriod.semester });
+          localStorage.setItem("encodingPeriod", JSON.stringify(resolvedPeriod));
         } else {
           setPeriod((current) => ({
             ...current,
@@ -92,6 +96,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           }));
 
           setStatusMessage("No saved encoding period yet.");
+          localStorage.removeItem("encodingPeriod");
           setNewAcademicPeriod({
             schoolYear: selectedSchoolYear,
             semester: activeSemester || "2nd Semester",
@@ -108,13 +113,26 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           setLoadError("Available school years could not be refreshed. The current year remains available.");
         }
       } catch (error) {
+        if (!active) return;
         setLoadError("The encoding period could not be loaded. Please refresh and try again.");
       } finally {
-        setIsLoading(false);
+        if (active) setIsLoading(false);
+      }
+    };
+
+    const handleSystemSettingChanged = (event) => {
+      const key = event.detail?.key || event.detail?.Key;
+      if (key === "encoding_period" && event.detail?.source !== "encoding-period-save") {
+        loadSavedPeriod();
       }
     };
 
     loadSavedPeriod();
+    window.addEventListener("blockgo:system-setting-changed", handleSystemSettingChanged);
+    return () => {
+      active = false;
+      window.removeEventListener("blockgo:system-setting-changed", handleSystemSettingChanged);
+    };
   }, [fallbackSchoolYear]);
 
   const { startDate, endDate, term } = period;
@@ -159,16 +177,20 @@ function EncodingPeriod({ onResetEncodingSeason }) {
         semester: activeSemester,
       };
       const response = await updateSystemSetting("encoding_period", JSON.stringify(encodingData));
-      const savedData = response?.value ? JSON.parse(response.value) : encodingData;
+      if (response?.status !== "Success" || typeof response.value !== "string") {
+        throw new Error("The saved encoding period could not be confirmed. Refresh and try again.");
+      }
+      const savedData = JSON.parse(response.value);
       setPeriod(savedData);
       setActiveAcademicPeriod({ schoolYear: savedData.schoolYear, semester: savedData.semester });
       setSchoolYears((current) => [...new Set([savedData.schoolYear, ...current])]);
-      localStorage.setItem("encodingPeriod", JSON.stringify(savedData));
+      localStorage.setItem("encodingPeriod", response.value);
       window.dispatchEvent(
         new CustomEvent("blockgo:system-setting-changed", {
           detail: {
             key: "encoding_period",
-            value: JSON.stringify(savedData),
+            value: response.value,
+            source: "encoding-period-save",
           },
         })
       );

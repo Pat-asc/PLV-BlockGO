@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Npgsql;
@@ -39,12 +40,20 @@ public static class EncodingPeriodSettingService
             throw new ArgumentException("Encoding period setting contains invalid JSON.");
         }
 
+        var term = ReadString(setting, "term", "Encoding term").ToLowerInvariant();
+        if (term is not ("midterm" or "finals"))
+            throw new ArgumentException("Encoding term must be either midterm or finals.");
+
+        var startDate = NormalizeDate(setting, "startDate", "Start date");
+        var endDate = NormalizeDate(setting, "endDate", "End date");
+        if (startDate.HasValue && endDate.HasValue && endDate < startDate)
+            throw new ArgumentException("End date cannot be before start date.");
+
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         string? schoolYear = null;
         string? semester = null;
-        string? term = null;
         await using (var authority = new NpgsqlCommand(@"
-            SELECT school_year, semester, term
+            SELECT school_year, semester
             FROM academic_periods
             WHERE UPPER(status) = 'ACTIVE'
             ORDER BY opened_at DESC
@@ -56,11 +65,10 @@ public static class EncodingPeriodSettingService
             {
                 schoolYear = reader.GetString(0).Trim();
                 semester = reader.GetString(1).Trim().ToUpperInvariant();
-                term = reader.GetString(2).Trim().ToLowerInvariant();
             }
         }
 
-        if (schoolYear is null || semester is null || term is null)
+        if (schoolYear is null || semester is null)
             throw new NoActiveAcademicPeriodException();
 
         setting["schoolYear"] = schoolYear;
@@ -72,6 +80,8 @@ public static class EncodingPeriodSettingService
             _ => throw new InvalidOperationException("The active academic period has an unsupported semester.")
         };
         setting["term"] = term;
+        setting["startDate"] = startDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
+        setting["endDate"] = endDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
         var normalizedValue = setting.ToJsonString();
 
         await using (var save = new NpgsqlCommand(@"
@@ -84,6 +94,30 @@ public static class EncodingPeriodSettingService
 
         await transaction.CommitAsync(cancellationToken);
         return normalizedValue;
+    }
+
+    private static string ReadString(JsonObject setting, string propertyName, string displayName)
+    {
+        if (!setting.TryGetPropertyValue(propertyName, out var node) ||
+            node is not JsonValue value ||
+            !value.TryGetValue<string>(out var text))
+            throw new ArgumentException($"{displayName} is required.");
+
+        return text.Trim();
+    }
+
+    private static DateOnly? NormalizeDate(JsonObject setting, string propertyName, string displayName)
+    {
+        if (!setting.TryGetPropertyValue(propertyName, out var node) || node is null)
+            return null;
+        if (node is not JsonValue value || !value.TryGetValue<string>(out var rawValue))
+            throw new ArgumentException($"{displayName} is invalid.");
+        rawValue = rawValue.Trim();
+        if (rawValue.Length == 0) return null;
+        if (!DateOnly.TryParseExact(rawValue, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var parsed))
+            throw new ArgumentException($"{displayName} is invalid.");
+        return parsed;
     }
 
     public static async Task<EncodingSeasonResetResult> ResetAsync(
