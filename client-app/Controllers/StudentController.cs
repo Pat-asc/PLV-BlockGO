@@ -121,52 +121,25 @@ namespace Client_app.Controllers
 
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
-            await using var enrollment = new NpgsqlCommand(@"
-                SELECT sp.student_no, se.enrollment_id, se.school_year, se.semester, se.year_level,
-                       p.program_id, p.program_code, p.program_name, s.id, s.section_num,
-                       c.curriculum_id
-                FROM users u
-                JOIN studentprofiles sp ON sp.user_id = u.id
-                JOIN LATERAL (
-                    SELECT current.* FROM student_enrollments current
-                    WHERE current.student_user_id = u.id
-                      AND LOWER(TRIM(current.student_no)) = LOWER(TRIM(sp.student_no))
-                    ORDER BY current.school_year DESC,
-                             CASE current.semester WHEN 'MIDYEAR' THEN 3 WHEN 'SECOND' THEN 2 ELSE 1 END DESC,
-                             current.enrollment_id DESC
-                    LIMIT 1
-                ) se ON TRUE
-                JOIN academic_programs p ON p.program_id = se.program_id AND p.is_active = TRUE
-                JOIN academicsections s ON s.id = se.academic_section_id
-                    AND s.year_level = se.year_level
-                    AND LOWER(TRIM(s.department)) IN (LOWER(TRIM(p.program_code)), LOWER(TRIM(p.program_name)))
-                JOIN curriculums c ON c.curriculum_id = se.curriculum_id
-                    AND c.program_id = p.program_id AND c.status IN ('PUBLISHED', 'ARCHIVED')
-                WHERE LOWER(u.email) = LOWER(@email)
-                  AND LOWER(u.role) = 'student' AND LOWER(u.status) = 'approved' AND u.is_active
-                  AND se.status = 'ENROLLED' AND se.enrollment_state = 'FINALIZED';", connection);
-            enrollment.Parameters.AddWithValue("email", email);
-            string studentNo, schoolYear, semester, programCode, department;
-            long enrollmentId;
-            short yearLevel;
-            int programId, sectionId, sectionNumber;
-            long curriculumId;
-            await using (var reader = await enrollment.ExecuteReaderAsync(cancellationToken))
-            {
-                if (!await reader.ReadAsync(cancellationToken))
-                    return NotFound(new { status = "Error", message = "No enrolled academic section with an assigned published curriculum was found for this student." });
-                studentNo = reader.GetString(0);
-                enrollmentId = reader.GetInt64(1);
-                schoolYear = reader.GetString(2);
-                semester = reader.GetString(3);
-                yearLevel = reader.GetInt16(4);
-                programId = reader.GetInt32(5);
-                programCode = reader.GetString(6);
-                department = reader.GetString(7);
-                sectionId = reader.GetInt32(8);
-                sectionNumber = reader.GetInt32(9);
-                curriculumId = reader.GetInt64(10);
-            }
+            var enrollment = await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(connection, email, cancellationToken);
+            if (enrollment is null)
+                return NotFound(new
+                {
+                    status = "Error",
+                    message = "No enrolled academic section with an assigned curriculum was found for this student in the active academic period."
+                });
+
+            var studentNo = enrollment.StudentNo;
+            var enrollmentId = enrollment.EnrollmentId;
+            var schoolYear = enrollment.SchoolYear;
+            var semester = enrollment.Semester;
+            var yearLevel = enrollment.YearLevel;
+            var programId = enrollment.ProgramId;
+            var programCode = enrollment.ProgramCode;
+            var department = enrollment.ProgramName;
+            var sectionId = enrollment.AcademicSectionId;
+            var sectionNumber = enrollment.SectionNumber;
+            var curriculumId = enrollment.CurriculumId;
 
             var sectionToken = $"{yearLevel}-{sectionNumber}";
             var canonicalSection = $"{programCode} {sectionToken}";

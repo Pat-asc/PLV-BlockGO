@@ -196,7 +196,7 @@ Check(fullCoverage == (0, 0) && incompleteCoverage == (1, 1), "Roster coverage c
 Pass(42, "submit-to-Chairperson roster coverage");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=131;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=143;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -274,6 +274,59 @@ Pass(130, "non-published curriculum workflow states remain hidden");
 Check(await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1 AND (year_level<>1 OR semester<>'FIRST')") == 1,
     "The checklist was reduced to the current enrollment year or semester.");
 Pass(131, "curriculum checklist remains multi-year and multi-semester");
+var planningSubjects = await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph");
+Check(planningSubjects is { EnrollmentState: "PLANNING", CurriculumId: 1, AcademicSectionId: 1 },
+    "An ENROLLED PLANNING enrollment with an exact section did not resolve Current Subjects.");
+Pass(132, "ENROLLED PLANNING enrollment resolves Current Subjects");
+await Exec("UPDATE student_enrollments SET enrollment_state='FINALIZED' WHERE student_user_id=2");
+Check(await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph") is { EnrollmentState: "FINALIZED" },
+    "A FINALIZED enrollment no longer resolved Current Subjects.");
+Pass(133, "ENROLLED FINALIZED enrollment still resolves Current Subjects");
+await Exec("UPDATE student_enrollments SET enrollment_state='PLANNING',status='DROPPED' WHERE student_user_id=2");
+Check(await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph") is null,
+    "A non-ENROLLED row resolved Current Subjects.");
+Pass(134, "dropped enrollment is excluded from Current Subjects");
+await Exec("UPDATE student_enrollments SET status='ENROLLED',school_year='2025-2026' WHERE student_user_id=2");
+Check(await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph") is null,
+    "An enrollment outside the active academic period resolved Current Subjects.");
+Pass(135, "wrong academic period is excluded from Current Subjects");
+await Exec("UPDATE student_enrollments SET school_year='2026-2027' WHERE student_user_id=2; UPDATE academic_periods SET term='finals' WHERE status='ACTIVE'");
+Check(await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph") is not null,
+    "Changing only the active encoding term hid Current Subjects.");
+Pass(136, "midterm-to-finals change does not alter subject membership");
+await Exec("UPDATE academic_periods SET term='midterm' WHERE status='ACTIVE'");
+Check(await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph") is { CurriculumStatus: "PUBLISHED" },
+    "An assigned PUBLISHED curriculum did not resolve Current Subjects.");
+Pass(137, "assigned PUBLISHED curriculum resolves Current Subjects");
+await Exec("UPDATE curriculums SET status='ARCHIVED' WHERE curriculum_id=1");
+Check(await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph") is { CurriculumStatus: "ARCHIVED" },
+    "A cohort-retained ARCHIVED curriculum did not resolve Current Subjects.");
+Pass(138, "cohort-retained ARCHIVED curriculum resolves Current Subjects");
+await Exec("UPDATE curriculums SET status='DRAFT' WHERE curriculum_id=1");
+var draftSubjects = await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph");
+await Exec("UPDATE curriculums SET status='RETURNED' WHERE curriculum_id=1");
+var returnedSubjects = await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph");
+Check(draftSubjects is null && returnedSubjects is null,
+    "A DRAFT or RETURNED curriculum exposed Current Subjects.");
+Pass(139, "DRAFT and RETURNED curricula remain hidden from Current Subjects");
+await Exec("UPDATE curriculums SET status='PUBLISHED' WHERE curriculum_id=1; UPDATE student_enrollments SET curriculum_id=2 WHERE student_user_id=2");
+Check(await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph") is null,
+    "A curriculum belonging to another program resolved Current Subjects.");
+Pass(140, "wrong-program curriculum never resolves Current Subjects");
+await Exec("UPDATE student_enrollments SET curriculum_id=1 WHERE student_user_id=2");
+Check(await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1 AND year_level=1 AND semester='FIRST'") == 2 &&
+      await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1 AND (year_level<>1 OR semester<>'FIRST')") == 1,
+    "Current Subjects were not limited to the enrollment year level and semester.");
+Pass(141, "Current Subjects are limited to enrollment year level and semester");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records") == 0 &&
+      await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph") is not null,
+    "Current Subjects incorrectly required a finalized grade record.");
+Pass(142, "Current Subjects do not require a finalized grade");
+await Exec("UPDATE student_enrollments SET academic_section_id=NULL WHERE student_user_id=2");
+Check(await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph") is null,
+    "An enrollment without an academic section resolved subjects from another section.");
+Pass(143, "missing academic section returns no Current Subjects context");
+await Exec("UPDATE student_enrollments SET academic_section_id=1 WHERE student_user_id=2");
 var enrollmentCount=await Count("SELECT COUNT(*) FROM student_enrollments"); var profileCount=await Count("SELECT COUNT(*) FROM studentprofiles");
 var academicPeriodCount = await Count("SELECT COUNT(*) FROM academic_periods");
 var normalizedSetting = await EncodingPeriodSettingService.SaveAsync(db,
