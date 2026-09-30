@@ -2983,8 +2983,6 @@ namespace BlockGo.Controllers
                 {
                     if (!string.Equals(pendingRecord.Status, "DepartmentApproved", StringComparison.OrdinalIgnoreCase))
                         return Conflict(new { status = "Error", message = $"A grade in {pendingRecord.Status} status cannot be finalized. Chairperson approval is required first." });
-                    var facId = string.IsNullOrEmpty(pendingRecord.FacultyId) ? invokerId : pendingRecord.FacultyId;
-                    
                     AcademicRecord? stagedLedgerRecord = null;
                     try {
                         var existing = await _blockchainService.GetGradeAsync(recordId, invokerId);
@@ -3008,7 +3006,11 @@ namespace BlockGo.Controllers
                     {
                         try
                         {
-                            await _blockchainService.SubmitGradeAsync(pendingRecord, facId);
+                            // The authenticated Chairperson is already authorized by Fabric for
+                            // this department. Issuing approved staging as that real actor avoids
+                            // impersonating the original Faculty or depending on mutable Faculty
+                            // certificate section scope after the assignment cycle was captured.
+                            await _blockchainService.SubmitGradeAsync(pendingRecord, invokerId);
                         }
                         catch (LedgerMiddlewareException issueError) when (issueError.Code == "LEDGER_RECORD_EXISTS")
                         {

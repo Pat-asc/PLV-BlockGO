@@ -53,6 +53,39 @@ func TestChairpersonDepartmentScope(t *testing.T) {
 	}
 }
 
+func TestFacultySectionScope(t *testing.T) {
+	record := testRecord("Draft", "midterm", "BSIT")
+	if !facultySectionScopeAllows("BSIT 1-2| bsit 1-1 ", true, record) {
+		t.Fatal("correct Faculty section scope was denied")
+	}
+	if facultySectionScopeAllows("BSIT 1-2|BSIT 2-1", true, record) {
+		t.Fatal("wrong Faculty section scope was allowed")
+	}
+	if facultySectionScopeAllows("BSIT 1-1", false, record) {
+		t.Fatal("missing academic.sections attribute was accepted")
+	}
+}
+
+func TestFacultyIssueAttributionCannotClaimAnotherFaculty(t *testing.T) {
+	record := testRecord("Draft", "midterm", "BSIT")
+	record.FacultyID = "another-faculty@plv.edu.ph"
+	applyIssueAttribution(&record, "faculty", "signed-faculty@plv.edu.ph")
+	if record.FacultyID != "signed-faculty@plv.edu.ph" || record.SubmittedBy != "signed-faculty@plv.edu.ph" {
+		t.Fatalf("Faculty issue attribution was not bound to the signed actor: %+v", record)
+	}
+}
+
+func TestChairpersonIssuePreservesCapturedFacultyAndAuditsSignedActor(t *testing.T) {
+	record := testRecord(statusDepartmentApproved, "midterm", "BSIT")
+	applyIssueAttribution(&record, "department_admin", "chair@plv.edu.ph")
+	if record.FacultyID != "faculty@plv.edu.ph" {
+		t.Fatalf("Chairperson issuance replaced the captured Faculty owner: %+v", record)
+	}
+	if record.SubmittedBy != "chair@plv.edu.ph" {
+		t.Fatalf("Chairperson issuance did not audit the signed actor: %+v", record)
+	}
+}
+
 func TestChairpersonFullApprovalAndFinalizationPath(t *testing.T) {
 	record := testRecord(statusIssued, "finals", "BSIT")
 	approved, err := transitionToDepartmentApproved(&record)

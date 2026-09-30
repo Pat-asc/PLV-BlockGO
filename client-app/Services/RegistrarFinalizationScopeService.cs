@@ -20,7 +20,6 @@ public static class RegistrarFinalizationScopeService
             FROM pending_grade_records pgr
             JOIN facultysections fs
               ON fs.id::text = pgr.assignment_cycle_id
-             AND fs.is_active = TRUE
              AND LOWER(TRIM(fs.school_year)) = LOWER(TRIM(pgr.school_year))
              AND LOWER(TRIM(fs.semester)) = LOWER(TRIM(pgr.semester))
              AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(pgr.subject_code))

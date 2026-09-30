@@ -83,6 +83,11 @@ test('application finalization keeps approval distinct, preserves cycle identity
     'approved staging must survive until Fabric Finalized is read back and verified');
   assert.match(action, /status, assignment_cycle_id/);
   assert.match(action, /AssignmentCycleId = reader\.IsDBNull\(22\)/);
+  assert.match(action, /SubmitGradeAsync\(pendingRecord, invokerId\)/,
+    'missing approved staging must be issued by the authenticated Chairperson');
+  assert.doesNotMatch(action, /SubmitGradeAsync\(pendingRecord, facId\)/,
+    'finalization must not impersonate the original Faculty identity');
+  assert.match(read('chaincode', 'main.go'), /applyIssueAttribution\(&record, role, submitterID\)/);
 });
 
 test('approval remains an intermediate Chairperson-only transition', () => {

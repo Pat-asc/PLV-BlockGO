@@ -94,6 +94,18 @@ func departmentScopeAllows(department string, hasDepartment bool, record Academi
 		strings.EqualFold(strings.TrimSpace(department), strings.TrimSpace(record.Course)))
 }
 
+func facultySectionScopeAllows(sections string, hasSections bool, record AcademicRecord) bool {
+	if !hasSections {
+		return false
+	}
+	for _, section := range strings.Split(sections, "|") {
+		if strings.EqualFold(strings.TrimSpace(section), strings.TrimSpace(record.Section)) {
+			return true
+		}
+	}
+	return false
+}
+
 func authorizeGradeReader(stub shim.ChaincodeStubInterface) (string, *pb.Response) {
 	mspID, err := cid.GetMSPID(stub)
 	if err != nil {
@@ -124,15 +136,7 @@ func academicScopeAllows(stub shim.ChaincodeStubInterface, role string, record A
 		return true
 	}
 	sections, hasSections := getSafeAttribute(stub, "academic.sections")
-	if !hasSections {
-		return false
-	}
-	for _, section := range strings.Split(sections, "|") {
-		if strings.EqualFold(strings.TrimSpace(section), strings.TrimSpace(record.Section)) {
-			return true
-		}
-	}
-	return false
+	return facultySectionScopeAllows(sections, hasSections, record)
 }
 
 func transitionToDepartmentApproved(record *AcademicRecord) (bool, error) {
@@ -205,6 +209,16 @@ func stampRecord(stub shim.ChaincodeStubInterface, record *AcademicRecord, actor
 	if record.Course == "" {
 		record.Course = record.Program
 	}
+}
+
+func applyIssueAttribution(record *AcademicRecord, role string, actor string) {
+	// Faculty can never claim another issuer. A department administrator may
+	// commit an already-approved staged record on behalf of its captured Faculty
+	// owner, but SubmittedBy always records the real signed transaction actor.
+	if role == "faculty" || strings.TrimSpace(record.FacultyID) == "" {
+		record.FacultyID = actor
+	}
+	record.SubmittedBy = actor
 }
 
 func (cc *SmartContract) Init(stub shim.ChaincodeStubInterface) *pb.Response {
@@ -372,8 +386,7 @@ func (cc *SmartContract) issueGrade(stub shim.ChaincodeStubInterface, args []str
 	}
 
 	submitterID := getClientCommonName(stub)
-	record.FacultyID = submitterID
-	record.SubmittedBy = submitterID
+	applyIssueAttribution(&record, role, submitterID)
 	record.Status = statusIssued
 	record.Version = 1
 	stampRecord(stub, &record, submitterID)
@@ -435,8 +448,7 @@ func (cc *SmartContract) issueBatchGrades(stub shim.ChaincodeStubInterface, args
 		if existing != nil {
 			return shim.Error(fmt.Sprintf("Record already exists: %s", record.ID))
 		}
-		record.FacultyID = facultyID
-		record.SubmittedBy = facultyID
+		applyIssueAttribution(&record, role, facultyID)
 		record.Status = statusIssued
 		if record.Version <= 0 {
 			record.Version = 1
