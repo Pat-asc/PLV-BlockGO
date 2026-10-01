@@ -31,10 +31,6 @@ function EncodingPeriod({ onResetEncodingSeason }) {
   const [schoolYears, setSchoolYears] = useState([fallbackSchoolYear]);
   const [savedPeriod, setSavedPeriod] = useState(null);
   const [activeAcademicPeriod, setActiveAcademicPeriod] = useState(null);
-  const [newAcademicPeriod, setNewAcademicPeriod] = useState({
-    schoolYear: fallbackSchoolYear,
-    semester: "2nd Semester",
-  });
 
   const isSuccessStatusMessage =
     statusMessage === "Encoding period saved successfully." ||
@@ -53,7 +49,6 @@ function EncodingPeriod({ onResetEncodingSeason }) {
         const options = optionsResult.status === "fulfilled" ? optionsResult.value : null;
         const res = settingResult.status === "fulfilled" ? settingResult.value : null;
         const activeAcademicPeriod = options?.activeAcademicPeriod || null;
-        const activeSemester = toSemesterDisplay(activeAcademicPeriod?.semester);
         let selectedSchoolYear =
           activeAcademicPeriod?.schoolYear ||
           options?.currentSchoolYear ||
@@ -84,7 +79,6 @@ function EncodingPeriod({ onResetEncodingSeason }) {
 
           setPeriod(resolvedPeriod);
           setSavedPeriod(resolvedPeriod);
-          setNewAcademicPeriod({ schoolYear: resolvedPeriod.schoolYear, semester: resolvedPeriod.semester });
           localStorage.setItem("encodingPeriod", JSON.stringify(resolvedPeriod));
         } else {
           setPeriod((current) => ({
@@ -97,10 +91,6 @@ function EncodingPeriod({ onResetEncodingSeason }) {
 
           setStatusMessage("No saved encoding period yet.");
           localStorage.removeItem("encodingPeriod");
-          setNewAcademicPeriod({
-            schoolYear: selectedSchoolYear,
-            semester: activeSemester || "2nd Semester",
-          });
         }
         setActiveAcademicPeriod(activeAcademicPeriod);
         setSchoolYears([...new Set([
@@ -165,17 +155,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
   const handleSave = async () => {
     try {
       setIsSaving(true);
-      const options = await fetchAcademicPeriodOptions();
-      const activeAcademicPeriod = options?.activeAcademicPeriod;
-      const activeSemester = toSemesterDisplay(activeAcademicPeriod?.semester);
-      if (!activeAcademicPeriod?.schoolYear || !activeSemester) {
-        throw new Error("An academic period must be opened before saving the schedule. Use Reset Encoding Season to open one.");
-      }
-      const encodingData = {
-        ...period,
-        schoolYear: activeAcademicPeriod.schoolYear,
-        semester: activeSemester,
-      };
+      const encodingData = { ...period };
       const response = await updateSystemSetting("encoding_period", JSON.stringify(encodingData));
       if (response?.status !== "Success" || typeof response.value !== "string") {
         throw new Error("The saved encoding period could not be confirmed. Refresh and try again.");
@@ -194,6 +174,9 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           },
         })
       );
+      window.dispatchEvent(new CustomEvent("blockgo:academic-data-changed", {
+        detail: { reason: "encoding_period_changed", source: "encoding-period-save" },
+      }));
       setStatusMessage("Encoding period saved successfully.");
       setSavedPeriod(savedData);
     } catch (error) {
@@ -204,7 +187,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
   };
 
   const handleResetSeason = async () => {
-    const requestedPeriod = { ...period, ...newAcademicPeriod };
+    const requestedPeriod = { ...period };
     const shouldReset = await requestSystemConfirmation(
       `Open ${requestedPeriod.schoolYear} ${requestedPeriod.semester} ${term} as a new encoding context? Current faculty assignments will be deactivated, while historical grades and saved sections remain intact.`
     );
@@ -233,7 +216,6 @@ function EncodingPeriod({ onResetEncodingSeason }) {
       setPeriod(openedPeriod);
       setSavedPeriod(openedPeriod);
       setActiveAcademicPeriod(context);
-      setNewAcademicPeriod({ schoolYear: openedPeriod.schoolYear, semester: openedPeriod.semester });
       setSchoolYears((current) => [...new Set([openedPeriod.schoolYear, ...current])]);
       localStorage.setItem("encodingPeriod", JSON.stringify(openedPeriod));
       setStatusMessage("Encoding season reset successfully.");
@@ -291,27 +273,28 @@ function EncodingPeriod({ onResetEncodingSeason }) {
         {loadError && <div role="alert" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{loadError}</div>}
 
         <p className="mt-3 text-xs font-semibold text-slate-700">Current Active Academic Period: {activeAcademicPeriod ? `${activeAcademicPeriod.schoolYear} · ${toSemesterDisplay(activeAcademicPeriod.semester)}` : "None"}</p>
-        <p className="mt-2 text-xs text-slate-600">New Academic Period to Open (Reset Encoding Season). Save Schedule only updates the dates for the current active period.</p>
+        <p className="mt-2 text-xs font-semibold text-slate-700">Academic Period for Encoding</p>
+        <p className="mt-1 text-xs text-slate-600">Select the School Year, Semester, and Encoding Term to use for grade encoding.</p>
 
         <div className="mt-3 grid grid-cols-1 items-end gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto_1fr]">
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-700">New School Year</label>
+            <label className="mb-1 block text-xs font-medium text-slate-700">School Year</label>
             <select
               aria-label="School Year"
-              value={newAcademicPeriod.schoolYear}
-              onChange={(event) => setNewAcademicPeriod((current) => ({ ...current, schoolYear: event.target.value }))}
+              value={period.schoolYear}
+              onChange={(event) => updatePeriod("schoolYear", event.target.value)}
               disabled={isLoading}
               className="h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
             >
-              {isLoading ? <option value={newAcademicPeriod.schoolYear}>Loading school years…</option> : schoolYears.map((year) => <option key={year} value={year}>{year}</option>)}
+              {isLoading ? <option value={period.schoolYear}>Loading school years…</option> : schoolYears.map((year) => <option key={year} value={year}>{year}</option>)}
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-700">New Semester</label>
+            <label className="mb-1 block text-xs font-medium text-slate-700">Semester</label>
             <select
               aria-label="Semester"
-              value={newAcademicPeriod.semester}
-              onChange={(e) => setNewAcademicPeriod((current) => ({ ...current, semester: e.target.value }))}
+              value={period.semester}
+              onChange={(e) => updatePeriod("semester", e.target.value)}
               className="h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
             >
               <option value="1st Semester">1st Semester</option>

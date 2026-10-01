@@ -104,6 +104,12 @@ namespace Client_app.Controllers
                 var now = DateTime.UtcNow;
                 var startYear = now.Month >= 6 ? now.Year : now.Year - 1;
                 var currentSchoolYear = $"{startYear}-{startYear + 1}";
+                for (var offset = 0; offset <= 4; offset++)
+                {
+                    var generatedSchoolYear = $"{startYear + offset}-{startYear + offset + 1}";
+                    if (!schoolYears.Contains(generatedSchoolYear, StringComparer.OrdinalIgnoreCase))
+                        schoolYears.Add(generatedSchoolYear);
+                }
                 if (!schoolYears.Contains(currentSchoolYear, StringComparer.OrdinalIgnoreCase))
                     schoolYears.Insert(0, currentSchoolYear);
 
@@ -161,7 +167,7 @@ namespace Client_app.Controllers
                     try
                     {
                         storedValue = await EncodingPeriodSettingService.SaveAsync(
-                            conn, storedValue, HttpContext.RequestAborted);
+                            conn, storedValue, User.Identity?.Name ?? "unknown", HttpContext.RequestAborted);
                     }
                     catch (ArgumentException ex)
                     {
@@ -188,6 +194,16 @@ namespace Client_app.Controllers
                     Value = storedValue,
                     UpdatedAt = DateTime.UtcNow
                 });
+                if (string.Equals(req.Key?.Trim(), "encoding_period", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _chatHubContext.Clients.All.SendAsync("AcademicDataChanged", new
+                    {
+                        Reason = "encoding_period_changed",
+                        Department = string.Empty,
+                        Actor = User.Identity?.Name ?? "unknown",
+                        OccurredAt = DateTimeOffset.UtcNow
+                    });
+                }
                 return Ok(new { status = "Success", value = storedValue });
             }
             catch (Exception ex)

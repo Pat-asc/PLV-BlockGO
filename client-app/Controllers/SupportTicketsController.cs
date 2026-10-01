@@ -126,29 +126,37 @@ namespace Client_app.Controllers
         [Authorize(Roles = "registrar")]
         public async Task<IActionResult> Create([FromBody] CreateSupportTicketRequest request, CancellationToken cancellationToken)
         {
+            var severity = string.IsNullOrWhiteSpace(request.Severity)
+                ? "NORMAL"
+                : request.Severity.Trim().ToUpperInvariant();
+            if (!Severities.Contains(severity))
+                return BadRequest(new { status = "Error", message = "Invalid ticket severity." });
             var assignedSpecialist = NormalizeSpecialist(request.AssignedSpecialist);
             if (assignedSpecialist is not null && !Specialists.ContainsKey(assignedSpecialist))
                 return BadRequest(new { status = "Error", message = "Select a valid support specialty." });
-            var title = assignedSpecialist is not null
-                ? $"{Specialists[assignedSpecialist].Label} support request"
-                : "System support request";
+            var title = string.IsNullOrWhiteSpace(request.Title)
+                ? assignedSpecialist is not null
+                    ? $"{Specialists[assignedSpecialist].Label} support request"
+                    : "System support request"
+                : request.Title.Trim();
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             await using var command = new NpgsqlCommand(@"
                 INSERT INTO support_tickets (registrar_id, title, description, severity, assigned_specialist)
-                SELECT id, @title, @description, 'NORMAL', @assignedSpecialist FROM users
+                SELECT id, @title, @description, @severity, @assignedSpecialist FROM users
                 WHERE LOWER(email) = LOWER(@actor) AND LOWER(role) = 'registrar' AND is_active = TRUE
                 RETURNING ticket_id;", connection, transaction);
             command.Parameters.AddWithValue("title", title);
             command.Parameters.AddWithValue("description", request.Description.Trim());
+            command.Parameters.AddWithValue("severity", severity);
             command.Parameters.Add("assignedSpecialist", NpgsqlDbType.Varchar).Value = (object?)assignedSpecialist ?? DBNull.Value;
             command.Parameters.AddWithValue("actor", ActorEmail());
             var result = await command.ExecuteScalarAsync(cancellationToken);
             if (result is null) return Forbid();
             var ticketId = Convert.ToInt64(result);
             await _auditLog.LogAsync(ActorEmail(), "registrar", "SUPPORT_TICKET_CREATED", "support_ticket", ticketId.ToString(), null,
-                new { title, severity = "NORMAL", status = "OPEN", assignedSpecialist }, "Registrar reported a system error to the System Administrator.",
+                new { title, severity, status = "OPEN", assignedSpecialist }, "Registrar reported a system error to the System Administrator.",
                 ClientIpResolver.Resolve(HttpContext), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return CreatedAtAction(nameof(List), new { id = ticketId }, new { status = "Success", data = new { ticketId } });
@@ -175,8 +183,8 @@ namespace Client_app.Controllers
             if (request.Files.Count > 5)
                 return BadRequest(new { status = "Error", message = "A support ticket can contain at most five attachments." });
             var severity = request.Severity.Trim().ToUpperInvariant();
-            if (!Severities.Contains(severity) || severity == "CRITICAL")
-                return BadRequest(new { status = "Error", message = "Select Low, Normal, or High priority." });
+            if (!Severities.Contains(severity))
+                return BadRequest(new { status = "Error", message = "Select Low, Normal, High, or Critical priority." });
             var assignedSpecialist = NormalizeSpecialist(request.AssignedSpecialist);
             if (assignedSpecialist is null || !Specialists.ContainsKey(assignedSpecialist))
                 return BadRequest(new { status = "Error", message = "Select a valid support specialty." });
@@ -287,13 +295,25 @@ namespace Client_app.Controllers
                     updated_at = CURRENT_TIMESTAMP,
                     resolved_at = CASE WHEN @status IN ('RESOLVED', 'CLOSED') THEN CURRENT_TIMESTAMP ELSE NULL END
                 WHERE ticket_id = @ticketId
-                RETURNING (SELECT email FROM users WHERE id = support_tickets.registrar_id);", connection, transaction);
+                RETURNING (SELECT email FROM users WHERE id = support_tickets.registrar_id),
+                          severity, assigned_specialist;", connection, transaction);
             command.Parameters.AddWithValue("status", status);
             command.Parameters.Add("severity", NpgsqlDbType.Varchar).Value = (object?)severity ?? DBNull.Value;
             command.Parameters.AddWithValue("response", (object?)request.AdminResponse?.Trim() ?? DBNull.Value);
             command.Parameters.Add("assignedSpecialist", NpgsqlDbType.Varchar).Value = (object?)assignedSpecialist ?? DBNull.Value;
             command.Parameters.AddWithValue("ticketId", ticketId);
-            var registrarEmail = (string?)await command.ExecuteScalarAsync(cancellationToken);
+            string? registrarEmail = null;
+            string? storedSeverity = null;
+            string? storedSpecialist = null;
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            {
+                if (await reader.ReadAsync(cancellationToken))
+                {
+                    registrarEmail = reader.GetString(0);
+                    storedSeverity = reader.GetString(1);
+                    storedSpecialist = reader.IsDBNull(2) ? null : reader.GetString(2);
+                }
+            }
             if (registrarEmail is null) return NotFound(new { status = "Error", message = "Ticket not found." });
             await _auditLog.LogAsync(ActorEmail(), "system_admin", "SUPPORT_TICKET_UPDATED", "support_ticket", ticketId.ToString(), null,
                 new { status, severity, hasResponse = !string.IsNullOrWhiteSpace(request.AdminResponse), assignedSpecialist },
@@ -304,9 +324,9 @@ namespace Client_app.Controllers
             {
                 ticketId,
                 status,
-                severity,
-                assignedSpecialist,
-                assignedSpecialistLabel = assignedSpecialist is not null ? Specialists[assignedSpecialist].Label : null,
+                severity = storedSeverity,
+                assignedSpecialist = storedSpecialist,
+                assignedSpecialistLabel = storedSpecialist is not null ? Specialists[storedSpecialist].Label : null,
                 adminResponse = request.AdminResponse?.Trim(),
                 updatedAt = DateTimeOffset.UtcNow
             };

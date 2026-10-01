@@ -27,7 +27,8 @@ public static class EncodingPeriodSettingService
     }
 
     public static async Task<string> SaveAsync(
-        NpgsqlConnection connection, string value, CancellationToken cancellationToken = default)
+        NpgsqlConnection connection, string value, string actor = "unknown",
+        CancellationToken cancellationToken = default)
     {
         JsonObject setting;
         try
@@ -40,6 +41,10 @@ public static class EncodingPeriodSettingService
             throw new ArgumentException("Encoding period setting contains invalid JSON.");
         }
 
+        var schoolYear = GradeAcademicPeriod.SchoolYear(ReadString(setting, "schoolYear", "School year"))
+            ?? throw new ArgumentException("School year must use the consecutive YYYY-YYYY format.");
+        var semester = GradeAcademicPeriod.Semester(ReadString(setting, "semester", "Semester"))
+            ?? throw new ArgumentException("Semester must be First, Second, or Midyear.");
         var term = ReadString(setting, "term", "Encoding term").ToLowerInvariant();
         if (term is not ("midterm" or "finals"))
             throw new ArgumentException("Encoding term must be either midterm or finals.");
@@ -50,50 +55,24 @@ public static class EncodingPeriodSettingService
             throw new ArgumentException("End date cannot be before start date.");
 
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        string? schoolYear = null;
-        string? semester = null;
-        await using (var authority = new NpgsqlCommand(@"
-            SELECT school_year, semester
-            FROM academic_periods
-            WHERE UPPER(status) = 'ACTIVE'
-            ORDER BY opened_at DESC
-            LIMIT 1
-            FOR SHARE;", connection, transaction))
-        await using (var reader = await authority.ExecuteReaderAsync(cancellationToken))
+        try
         {
-            if (await reader.ReadAsync(cancellationToken))
-            {
-                schoolYear = reader.GetString(0).Trim();
-                semester = reader.GetString(1).Trim().ToUpperInvariant();
-            }
+            var academicContext = await ActivateAcademicPeriodAsync(
+                connection, transaction, schoolYear, semester, term, startDate, endDate,
+                actor, cancellationToken);
+            ApplyAcademicContext(setting, academicContext);
+            var normalizedValue = setting.ToJsonString();
+
+            await SaveEncodingPeriodAsync(
+                connection, transaction, normalizedValue, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return normalizedValue;
         }
-
-        if (schoolYear is null || semester is null)
-            throw new NoActiveAcademicPeriodException();
-
-        setting["schoolYear"] = schoolYear;
-        setting["semester"] = semester switch
+        catch
         {
-            "FIRST" => "1st Semester",
-            "SECOND" => "2nd Semester",
-            "MIDYEAR" => "Summer",
-            _ => throw new InvalidOperationException("The active academic period has an unsupported semester.")
-        };
-        setting["term"] = term;
-        setting["startDate"] = startDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
-        setting["endDate"] = endDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
-        var normalizedValue = setting.ToJsonString();
-
-        await using (var save = new NpgsqlCommand(@"
-            INSERT INTO SystemSettings (key, value) VALUES ('encoding_period', @value)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;", connection, transaction))
-        {
-            save.Parameters.AddWithValue("value", normalizedValue);
-            await save.ExecuteNonQueryAsync(cancellationToken);
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
         }
-
-        await transaction.CommitAsync(cancellationToken);
-        return normalizedValue;
     }
 
     private static string ReadString(JsonObject setting, string propertyName, string displayName)
@@ -133,82 +112,9 @@ public static class EncodingPeriodSettingService
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         try
         {
-            // Serialize reset operations, including the no-active-row case, so the
-            // partial unique index cannot be raced by two concurrent resets.
-            await using (var lockPeriods = new NpgsqlCommand(
-                "LOCK TABLE academic_periods IN SHARE ROW EXCLUSIVE MODE;", connection, transaction))
-                await lockPeriods.ExecuteNonQueryAsync(cancellationToken);
-
-            await using (var activePeriod = new NpgsqlCommand(@"
-                SELECT academic_period_id
-                FROM academic_periods
-                WHERE status = 'ACTIVE'
-                ORDER BY opened_at DESC
-                LIMIT 1
-                FOR UPDATE;", connection, transaction))
-                await activePeriod.ExecuteScalarAsync(cancellationToken);
-
-            long? targetAcademicPeriodId = null;
-            string? targetStatus = null;
-            await using (var targetPeriod = new NpgsqlCommand(@"
-                SELECT academic_period_id, status
-                FROM academic_periods
-                WHERE school_year = @schoolYear
-                  AND semester = @semester
-                  AND term = @term
-                FOR UPDATE;", connection, transaction))
-            {
-                targetPeriod.Parameters.AddWithValue("schoolYear", schoolYear);
-                targetPeriod.Parameters.AddWithValue("semester", semester);
-                targetPeriod.Parameters.AddWithValue("term", term);
-                await using var reader = await targetPeriod.ExecuteReaderAsync(cancellationToken);
-                if (await reader.ReadAsync(cancellationToken))
-                {
-                    targetAcademicPeriodId = reader.GetInt64(0);
-                    targetStatus = reader.GetString(1);
-                }
-            }
-
-            AcademicPeriodContext academicContext;
-            if (!targetAcademicPeriodId.HasValue)
-            {
-                await CloseOtherActivePeriodsAsync(connection, transaction, null, cancellationToken);
-                await using var insertTarget = new NpgsqlCommand(@"
-                    INSERT INTO academic_periods
-                        (school_year, semester, term, start_date, end_date, status,
-                         opened_by, opened_at, closed_at)
-                    VALUES
-                        (@schoolYear, @semester, @term, @startDate, @endDate, 'ACTIVE',
-                         (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1),
-                         CURRENT_TIMESTAMP, NULL)
-                    RETURNING academic_period_id, school_year, semester, term, start_date, end_date;",
-                    connection, transaction);
-                AddPeriodParameters(insertTarget, schoolYear, semester, term, startDate, endDate, actor);
-                academicContext = await ReadAcademicContextAsync(insertTarget, cancellationToken);
-            }
-            else
-            {
-                await CloseOtherActivePeriodsAsync(
-                    connection, transaction, targetAcademicPeriodId, cancellationToken);
-
-                var reopeningClosedPeriod = !string.Equals(targetStatus, "ACTIVE", StringComparison.OrdinalIgnoreCase);
-                await using var updateTarget = new NpgsqlCommand($@"
-                    UPDATE academic_periods
-                    SET start_date = @startDate,
-                        end_date = @endDate,
-                        status = 'ACTIVE',
-                        closed_at = NULL
-                        {(reopeningClosedPeriod ? ", opened_at = CURRENT_TIMESTAMP, opened_by = (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1)" : string.Empty)}
-                    WHERE academic_period_id = @academicPeriodId
-                    RETURNING academic_period_id, school_year, semester, term, start_date, end_date;",
-                    connection, transaction);
-                updateTarget.Parameters.AddWithValue("academicPeriodId", targetAcademicPeriodId.Value);
-                updateTarget.Parameters.AddWithValue("startDate", (object?)startDate ?? DBNull.Value);
-                updateTarget.Parameters.AddWithValue("endDate", (object?)endDate ?? DBNull.Value);
-                if (reopeningClosedPeriod)
-                    updateTarget.Parameters.AddWithValue("actor", actor);
-                academicContext = await ReadAcademicContextAsync(updateTarget, cancellationToken);
-            }
+            var academicContext = await ActivateAcademicPeriodAsync(
+                connection, transaction, schoolYear, semester, term, startDate, endDate,
+                actor, cancellationToken);
 
             await using var deactivateAssignments = new NpgsqlCommand(@"
                 UPDATE FacultySections
@@ -219,29 +125,9 @@ public static class EncodingPeriodSettingService
             deactivateAssignments.Parameters.AddWithValue("actor", actor);
             var deactivatedAssignmentCount = await deactivateAssignments.ExecuteNonQueryAsync(cancellationToken);
 
-            var displaySemester = academicContext.Semester switch
-            {
-                "FIRST" => "1st Semester",
-                "SECOND" => "2nd Semester",
-                "MIDYEAR" => "Summer",
-                _ => throw new InvalidOperationException("The active academic period has an unsupported semester.")
-            };
-            var encodingPeriod = JsonSerializer.Serialize(new
-            {
-                schoolYear = academicContext.SchoolYear,
-                semester = displaySemester,
-                startDate = academicContext.StartDate?.ToString("yyyy-MM-dd") ?? "",
-                endDate = academicContext.EndDate?.ToString("yyyy-MM-dd") ?? "",
-                term = academicContext.Term
-            });
-
-            await using (var saveSetting = new NpgsqlCommand(@"
-                INSERT INTO SystemSettings (key, value) VALUES ('encoding_period', @value)
-                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;", connection, transaction))
-            {
-                saveSetting.Parameters.AddWithValue("value", encodingPeriod);
-                await saveSetting.ExecuteNonQueryAsync(cancellationToken);
-            }
+            var encodingPeriod = SerializeAcademicContext(academicContext);
+            await SaveEncodingPeriodAsync(
+                connection, transaction, encodingPeriod, cancellationToken);
 
             await transaction.CommitAsync(cancellationToken);
             return new EncodingSeasonResetResult(
@@ -252,6 +138,68 @@ public static class EncodingPeriodSettingService
             await transaction.RollbackAsync(cancellationToken);
             throw;
         }
+    }
+
+    private static async Task<AcademicPeriodContext> ActivateAcademicPeriodAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction,
+        string schoolYear, string semester, string term,
+        DateOnly? startDate, DateOnly? endDate, string actor,
+        CancellationToken cancellationToken)
+    {
+        await using (var lockPeriods = new NpgsqlCommand(
+            "LOCK TABLE academic_periods IN SHARE ROW EXCLUSIVE MODE;", connection, transaction))
+            await lockPeriods.ExecuteNonQueryAsync(cancellationToken);
+
+        long? targetAcademicPeriodId = null;
+        string? targetStatus = null;
+        await using (var targetPeriod = new NpgsqlCommand(@"
+            SELECT academic_period_id, status
+            FROM academic_periods
+            WHERE school_year = @schoolYear AND semester = @semester AND term = @term
+            FOR UPDATE;", connection, transaction))
+        {
+            targetPeriod.Parameters.AddWithValue("schoolYear", schoolYear);
+            targetPeriod.Parameters.AddWithValue("semester", semester);
+            targetPeriod.Parameters.AddWithValue("term", term);
+            await using var reader = await targetPeriod.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                targetAcademicPeriodId = reader.GetInt64(0);
+                targetStatus = reader.GetString(1);
+            }
+        }
+
+        if (!targetAcademicPeriodId.HasValue)
+        {
+            await CloseOtherActivePeriodsAsync(connection, transaction, null, cancellationToken);
+            await using var insertTarget = new NpgsqlCommand(@"
+                INSERT INTO academic_periods
+                    (school_year, semester, term, start_date, end_date, status,
+                     opened_by, opened_at, closed_at)
+                VALUES
+                    (@schoolYear, @semester, @term, @startDate, @endDate, 'ACTIVE',
+                     (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1),
+                     CURRENT_TIMESTAMP, NULL)
+                RETURNING academic_period_id, school_year, semester, term, start_date, end_date;",
+                connection, transaction);
+            AddPeriodParameters(insertTarget, schoolYear, semester, term, startDate, endDate, actor);
+            return await ReadAcademicContextAsync(insertTarget, cancellationToken);
+        }
+
+        await CloseOtherActivePeriodsAsync(connection, transaction, targetAcademicPeriodId, cancellationToken);
+        var reopening = !string.Equals(targetStatus, "ACTIVE", StringComparison.OrdinalIgnoreCase);
+        await using var updateTarget = new NpgsqlCommand($@"
+            UPDATE academic_periods
+            SET start_date = @startDate, end_date = @endDate, status = 'ACTIVE', closed_at = NULL
+                {(reopening ? ", opened_at = CURRENT_TIMESTAMP, opened_by = (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1)" : string.Empty)}
+            WHERE academic_period_id = @academicPeriodId
+            RETURNING academic_period_id, school_year, semester, term, start_date, end_date;",
+            connection, transaction);
+        updateTarget.Parameters.AddWithValue("academicPeriodId", targetAcademicPeriodId.Value);
+        updateTarget.Parameters.AddWithValue("startDate", (object?)startDate ?? DBNull.Value);
+        updateTarget.Parameters.AddWithValue("endDate", (object?)endDate ?? DBNull.Value);
+        if (reopening) updateTarget.Parameters.AddWithValue("actor", actor);
+        return await ReadAcademicContextAsync(updateTarget, cancellationToken);
     }
 
     private static async Task CloseOtherActivePeriodsAsync(
@@ -271,6 +219,44 @@ public static class EncodingPeriodSettingService
         if (targetAcademicPeriodId.HasValue)
             closePeriods.Parameters.AddWithValue("targetAcademicPeriodId", targetAcademicPeriodId.Value);
         await closePeriods.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static void ApplyAcademicContext(JsonObject setting, AcademicPeriodContext context)
+    {
+        setting["schoolYear"] = context.SchoolYear;
+        setting["semester"] = SemesterDisplay(context.Semester);
+        setting["term"] = context.Term.ToLowerInvariant();
+        setting["startDate"] = context.StartDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
+        setting["endDate"] = context.EndDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
+    }
+
+    private static string SerializeAcademicContext(AcademicPeriodContext context) =>
+        JsonSerializer.Serialize(new
+        {
+            schoolYear = context.SchoolYear,
+            semester = SemesterDisplay(context.Semester),
+            term = context.Term.ToLowerInvariant(),
+            startDate = context.StartDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty,
+            endDate = context.EndDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty
+        });
+
+    private static string SemesterDisplay(string semester) => semester.ToUpperInvariant() switch
+    {
+        "FIRST" => "1st Semester",
+        "SECOND" => "2nd Semester",
+        "MIDYEAR" => "Summer",
+        _ => throw new InvalidOperationException("The active academic period has an unsupported semester.")
+    };
+
+    private static async Task SaveEncodingPeriodAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string value,
+        CancellationToken cancellationToken)
+    {
+        await using var save = new NpgsqlCommand(@"
+            INSERT INTO SystemSettings (key, value) VALUES ('encoding_period', @value)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;", connection, transaction);
+        save.Parameters.AddWithValue("value", value);
+        await save.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static void AddPeriodParameters(

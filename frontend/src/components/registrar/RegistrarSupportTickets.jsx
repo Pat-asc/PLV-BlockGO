@@ -3,7 +3,7 @@ import { createSupportTicket, downloadSupportAttachment, fetchSupportSpecialists
 import SupportAssignmentSelect, { assignmentPayload } from '../shared/SupportAssignmentSelect';
 
 const initialForm = { title: '', description: '', severity: 'NORMAL', assignment: '' };
-const severityStyles = { LOW: 'bg-emerald-500', NORMAL: 'bg-blue-500', HIGH: 'bg-red-500' };
+const severityStyles = { LOW: 'bg-emerald-500', NORMAL: 'bg-blue-500', HIGH: 'bg-red-500', CRITICAL: 'bg-purple-700' };
 
 const Icon = ({ children, className = 'h-4 w-4' }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
@@ -83,11 +83,11 @@ const RegistrarSupportTickets = () => {
             <div>
               <label className="block text-xs font-semibold text-slate-700">Priority <span className="text-red-500">*</span>
                 <select value={form.severity} onChange={(event) => setForm({ ...form, severity: event.target.value })} className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-normal outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
-                  <option value="LOW">Low</option><option value="NORMAL">Normal</option><option value="HIGH">High</option>
+                  <option value="LOW">Low</option><option value="NORMAL">Normal</option><option value="HIGH">High</option><option value="CRITICAL">Critical</option>
                 </select>
               </label>
               
-              <div className="mt-1 flex flex-wrap gap-1.5">{['LOW', 'NORMAL', 'HIGH'].map((level) => <span key={level} className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600"><span className={`h-1.5 w-1.5 rounded-full ${severityStyles[level]}`} />{level.charAt(0) + level.slice(1).toLowerCase()}</span>)}</div>
+              <div className="mt-1 flex flex-wrap gap-1.5">{['LOW', 'NORMAL', 'HIGH', 'CRITICAL'].map((level) => <span key={level} className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600"><span className={`h-1.5 w-1.5 rounded-full ${severityStyles[level]}`} />{level.charAt(0) + level.slice(1).toLowerCase()}</span>)}</div>
             </div>
           </div>
 

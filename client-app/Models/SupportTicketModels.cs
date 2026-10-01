@@ -4,8 +4,13 @@ namespace Client_app.Models
 {
     public sealed class CreateSupportTicketRequest
     {
+        [StringLength(200, MinimumLength = 3)]
+        public string? Title { get; set; }
+
         [Required, StringLength(5000, MinimumLength = 10)]
         public string Description { get; set; } = string.Empty;
+
+        public string? Severity { get; set; }
 
         [Required]
         public string AssignedSpecialist { get; set; } = string.Empty;

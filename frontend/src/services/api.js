@@ -1,4 +1,4 @@
-import { expireAuthSession, getAuthToken } from './authSession';
+import { broadcastAuthInvalidation, expireAuthSession, getAuthToken } from './authSession';
 import { assertValidCsvUpload, assertValidGradeUpload } from '../utils/csvUploadValidation';
 import { serializeAssignmentSchedule } from '../utils/facultySchedule';
 
@@ -130,11 +130,13 @@ export const forgotPassword = (email) => {
     });
 };
 
-export const resetPassword = ({ email, code, newPassword }) => {
-    return fetchPublic('/reset-password', {
+export const resetPassword = async ({ email, code, newPassword }) => {
+    const response = await fetchPublic('/reset-password', {
         method: 'POST',
         body: JSON.stringify({ email, code, newPassword })
     });
+    broadcastAuthInvalidation(email, 'password_reset');
+    return response;
 };
 
 export const requestPasswordResetAssistance = (email) => {
@@ -195,10 +197,16 @@ export const updateRegistrarAccount = async (userId, changes) => fetchWithAuth(`
 export const deleteRegistrarAccount = async (userId) => fetchWithAuth(`/AccountManagement/registrars/${encodeURIComponent(userId)}`, {
     method: 'DELETE',
 });
-export const resetManagedAccountPassword = async (userId, newPassword) => fetchWithAuth(`/AccountManagement/users/${encodeURIComponent(userId)}/password`, {
-    method: 'PUT',
-    body: JSON.stringify({ newPassword }),
-});
+export const resetManagedAccountPassword = async (userId, newPassword) => {
+    const response = await fetchWithAuth(`/AccountManagement/users/${encodeURIComponent(userId)}/password`, {
+        method: 'PUT',
+        body: JSON.stringify({ newPassword }),
+    });
+    if (!response?.idempotent) {
+        broadcastAuthInvalidation(response?.data?.email, 'password_reset_by_admin');
+    }
+    return response;
+};
 
 // ==================== CURRICULUM CHECKLISTS ====================
 export const fetchAcademicPrograms = async () => fetchWithAuth('/Curriculums/programs');

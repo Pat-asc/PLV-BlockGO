@@ -84,6 +84,17 @@ const publishSessionEvent = (payload) => {
   localStorage.removeItem(SESSION_EVENT_KEY);
 };
 
+export const broadcastAuthInvalidation = (account, reason = 'password_changed') => {
+  const normalizedAccount = String(account || '').trim().toLowerCase();
+  if (!normalizedAccount) return;
+  publishSessionEvent({
+    type: 'logout',
+    account: normalizedAccount,
+    reason,
+    nonce: `${Date.now()}-${Math.random()}`,
+  });
+};
+
 export const clearAuthSession = ({ broadcast = false, reason = 'logout' } = {}) => {
   const account = accountFromToken(getAuthToken());
   sessionStorage.removeItem(SESSION_TOKEN_KEY);
