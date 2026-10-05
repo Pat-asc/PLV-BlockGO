@@ -275,7 +275,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "histogram_quantile(0.95, sum by (le, namespace, pod, service, method) (rate(grpc_server_unary_request_duration_bucket{job=\"fabric-peer\"}[5m])))",
+                                           "expr":  "(histogram_quantile(0.95, sum by (le, namespace, pod, service, method) (rate(grpc_server_unary_request_duration_bucket{job=\"fabric-peer\"}[5m]))) \u003e= 0) or on() vector(0)",
                                            "legendFormat":  "{{namespace}} / {{pod}} / {{service}} / {{method}}",
                                            "refId":  "A"
                                        }
@@ -411,6 +411,6 @@
     "timezone":  "browser",
     "title":  "BlockGO / Hyperledger Fabric Peers \u0026 Orderers",
     "uid":  "blockgo-fabric",
-    "version":  1,
+    "version":  2,
     "weekStart":  ""
 }

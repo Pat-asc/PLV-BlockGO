@@ -113,7 +113,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "sum by (service) (rate(http_requests_total{status=~\"5..\"}[5m]))",
+                                           "expr":  "sum by (service) (rate(http_requests_total{status=~\"5..\"}[5m])) or on() vector(0)",
                                            "legendFormat":  "{{service}}",
                                            "refId":  "A"
                                        }
@@ -285,7 +285,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "topk(15, histogram_quantile(0.95, sum by (le, service, route) (rate(http_request_duration_seconds_bucket[5m]))))",
+                                           "expr":  "(topk(15, histogram_quantile(0.95, sum by (le, service, route) (rate(http_request_duration_seconds_bucket[5m])))) \u003e= 0) or on() vector(0)",
                                            "legendFormat":  "{{service}} {{route}}",
                                            "refId":  "A"
                                        }
@@ -357,6 +357,6 @@
     "timezone":  "browser",
     "title":  "BlockGO / API Errors \u0026 Latency",
     "uid":  "blockgo-api-observability",
-    "version":  1,
+    "version":  2,
     "weekStart":  ""
 }

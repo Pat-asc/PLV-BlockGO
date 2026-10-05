@@ -60,15 +60,21 @@ jobs:
 
       GKE_REGION: ${{ vars.GKE_REGION }}
 
-      GKE_ZONE_A: asia-southeast1-a
-      GKE_ZONE_B: asia-southeast1-b
-      GKE_ZONE_C: asia-southeast1-c
-
       PRODUCTION_IMAGE_REPOSITORY: ${{ vars.PRODUCTION_IMAGE_REPOSITORY }}
 
       PRODUCTION_IMAGE_TAG: ${{ github.sha }}
 
       PRODUCTION_BASE_URL: ${{ vars.PRODUCTION_BASE_URL }}
+
+      BLOCKGO_PUBLIC_HOST: ${{ vars.BLOCKGO_PUBLIC_HOST }}
+
+      BLOCKGO_PUBLIC_IP: ${{ vars.BLOCKGO_PUBLIC_IP }}
+
+      BLOCKGO_PUBLIC_SCHEME: ${{ vars.BLOCKGO_PUBLIC_SCHEME }}
+
+      BLOCKGO_PUBLIC_TLS_SECRET: ${{ vars.BLOCKGO_PUBLIC_TLS_SECRET }}
+
+      BLOCKGO_ALLOWED_ORIGINS: ${{ vars.BLOCKGO_ALLOWED_ORIGINS }}
 
       BLOCKGO_PRODUCTION_ENV_B64: ${{ secrets.BLOCKGO_PRODUCTION_ENV_B64 }}
 
@@ -102,6 +108,8 @@ jobs:
             GKE_CLUSTER_NAME \
             GKE_REGION \
             PRODUCTION_IMAGE_REPOSITORY \
+            BLOCKGO_PUBLIC_HOST \
+            BLOCKGO_PUBLIC_IP \
             BLOCKGO_PRODUCTION_ENV_B64
           do
             if [ -z "${!variable:-}" ]; then
@@ -116,6 +124,18 @@ jobs:
             echo "::error::PRODUCTION_IMAGE_REPOSITORY must begin with ${expected_prefix}."
             exit 1
           fi
+
+          public_scheme="${BLOCKGO_PUBLIC_SCHEME:-https}"
+          if [ "$public_scheme" != "https" ]; then
+            echo "::error::Production requires BLOCKGO_PUBLIC_SCHEME=https for end-to-end Cloudflare Full (strict) TLS."
+            exit 1
+          fi
+          public_origin="${public_scheme}://${BLOCKGO_PUBLIC_HOST}"
+          if [ -n "${PRODUCTION_BASE_URL:-}" ] && [ "${PRODUCTION_BASE_URL%/}" != "$public_origin" ]; then
+            echo "::error::PRODUCTION_BASE_URL conflicts with BLOCKGO_PUBLIC_HOST/BLOCKGO_PUBLIC_SCHEME."
+            exit 1
+          fi
+          echo "PRODUCTION_BASE_URL=${public_origin}" >> "$GITHUB_ENV"
 
       - name: Checkout exact release revision
         uses: actions/checkout@v4
@@ -258,6 +278,13 @@ jobs:
 
           ./k8s/deploy-k8s.sh production apply-application
 
+      - name: Deploy observability configuration
+        working-directory: network
+        run: |
+          set -euo pipefail
+
+          ./k8s/deploy-k8s.sh production apply-observability
+
       - name: Post-deployment smoke checks
         run: |
           set -euo pipefail
@@ -299,6 +326,16 @@ jobs:
             deployment/frontend \
             --namespace plv-fabric \
             --timeout=10m
+
+          echo
+          echo "=== Observability ==="
+
+          for deployment in prometheus loki alloy grafana; do
+            kubectl rollout status \
+              "deployment/${deployment}" \
+              --namespace plv-fabric \
+              --timeout=10m
+          done
 
           if [ -n "${PRODUCTION_BASE_URL:-}" ]; then
 
@@ -376,11 +413,14 @@ jobs:
             echo "- Commit: \`$GITHUB_SHA\`"
             echo "- Image repository: \`$PRODUCTION_IMAGE_REPOSITORY\`"
             echo "- Image tag: \`$PRODUCTION_IMAGE_TAG\`"
+            echo "- Public origin: \`${BLOCKGO_PUBLIC_SCHEME:-https}://${BLOCKGO_PUBLIC_HOST}\`"
+            echo "- Public IP: \`${BLOCKGO_PUBLIC_IP}\`"
+            echo "- TLS: HTTPS (Cloudflare Full strict-compatible origin required)"
             echo "- GKE cluster: \`$GKE_CLUSTER_NAME\`"
             echo "- Region: \`$GKE_REGION\`"
-            echo "- Zones: \`$GKE_ZONE_A / $GKE_ZONE_B / $GKE_ZONE_C\`"
+            echo "- Zones: \`${GKE_REGION}-a / ${GKE_REGION}-b / ${GKE_REGION}-c\`"
             echo "- Trigger: \`$GITHUB_EVENT_NAME\`"
-            echo "- Scope: middleware, ASP.NET services, frontend, and migration 018 only when absent"
+            echo "- Scope: middleware, ASP.NET services, frontend, observability, and migration 018 only when absent"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Collect failure diagnostics

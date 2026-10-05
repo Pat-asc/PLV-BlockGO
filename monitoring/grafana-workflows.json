@@ -59,7 +59,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "sum(increase(http_requests_total{route=~\".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions).*\"}[1h]))",
+                                           "expr":  "sum(increase(http_requests_total{route=~\".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions|ledger-transactions).*\"}[1h])) or vector(0)",
                                            "legendFormat":  "operations",
                                            "refId":  "A"
                                        }
@@ -111,7 +111,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "sum(rate(http_requests_total{route=~\".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions).*\",status=~\"2..|3..\"}[5m])) / clamp_min(sum(rate(http_requests_total{route=~\".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions).*\"}[5m])), 0.000001)",
+                                           "expr":  "(sum(rate(http_requests_total{route=~\".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions|ledger-transactions).*\",status=~\"2..|3..\"}[5m])) or vector(0)) / clamp_min((sum(rate(http_requests_total{route=~\".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions|ledger-transactions).*\"}[5m])) or vector(0)), 0.000001)",
                                            "legendFormat":  "success",
                                            "refId":  "A"
                                        }
@@ -165,7 +165,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "sum(increase(http_requests_total{route=~\".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions).*\",status=~\"4..|5..\"}[1h]))",
+                                           "expr":  "sum(increase(http_requests_total{route=~\".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions|ledger-transactions).*\",status=~\"4..|5..\"}[1h])) or vector(0)",
                                            "legendFormat":  "failures",
                                            "refId":  "A"
                                        }
@@ -273,7 +273,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "sum by (service, route, status) (rate(http_requests_total{route=~\".*(batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event).*\"}[5m]))",
+                                           "expr":  "sum by (service, route, status) (rate(http_requests_total{route=~\".*(batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions|ledger-transactions).*\"}[5m]))",
                                            "legendFormat":  "{{service}} / {{route}} / {{status}}",
                                            "refId":  "A"
                                        }
@@ -327,7 +327,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "histogram_quantile(0.95, sum by (le, service, route) (rate(http_request_duration_seconds_bucket{route=~\".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions).*\"}[5m])))",
+                                           "expr":  "(histogram_quantile(0.95, sum by (le, service, route) (rate(http_request_duration_seconds_bucket{route=~\".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions|ledger-transactions).*\"}[5m]))) \u003e= 0) or on() vector(0)",
                                            "legendFormat":  "{{service}} / {{route}}",
                                            "refId":  "A"
                                        }
@@ -398,7 +398,7 @@
                                    ]
                    }
                ],
-    "refresh":  "15s",
+    "refresh":  "30s",
     "schemaVersion":  41,
     "tags":  [
                  "blockgo",
@@ -413,12 +413,12 @@
                                 ]
                    },
     "time":  {
-                 "from":  "now-6h",
+                 "from":  "now-1h",
                  "to":  "now"
              },
     "timezone":  "browser",
     "title":  "BlockGO / Workflow Metrics",
     "uid":  "blockgo-workflows",
-    "version":  1,
+    "version":  2,
     "weekStart":  ""
 }
