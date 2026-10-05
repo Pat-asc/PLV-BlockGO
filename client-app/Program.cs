@@ -1,4 +1,5 @@
 using Serilog;
+using Serilog.Events;
 using BlockGo.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Threading.RateLimiting;
@@ -17,8 +18,25 @@ using Microsoft.AspNetCore.HttpOverrides;
 
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
+static LogEventLevel HttpRequestLogLevel(HttpContext context, double _, Exception? exception)
+{
+    if (exception is not null || context.Response.StatusCode >= StatusCodes.Status500InternalServerError)
+        return LogEventLevel.Error;
+    if (context.Response.StatusCode >= StatusCodes.Status400BadRequest)
+        return LogEventLevel.Warning;
+
+    var path = context.Request.Path;
+    return path.StartsWithSegments("/health")
+        || path.StartsWithSegments("/api/ready")
+        || path.StartsWithSegments("/api/backend/health")
+        ? LogEventLevel.Debug
+        : LogEventLevel.Information;
+}
+
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("System.Net.Http.HttpClient", LogEventLevel.Warning)
     .WriteTo.Console()
     .WriteTo.File(
         "logs/app-.txt",
@@ -143,11 +161,19 @@ try
 
     builder.Configuration.AddInMemoryCollection(configOverrides);
 
+    var configuredCorsOrigins = builder.Configuration["CORS_ORIGINS"]?
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    var allowedCorsOrigins = configuredCorsOrigins is { Length: > 0 }
+        ? configuredCorsOrigins
+        : new[] { "http://localhost:8080", "http://localhost:8090", "http://localhost:8100", "http://localhost:3000" };
+
     builder.Services.AddCors(options =>
     {
         options.AddPolicy("AllowFrontend", policy =>
         {
-            policy.WithOrigins("http://localhost:8080", "http://localhost:8090", "http://localhost:8100", "http://localhost:3000") 
+            policy.WithOrigins(allowedCorsOrigins)
                   .WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                   .WithHeaders("Content-Type", "Authorization", "x-user-identity", "x-api-key")
                   .AllowCredentials();
@@ -171,7 +197,7 @@ try
 
         var gatewayApp = builder.Build();
         gatewayApp.UseForwardedHeaders();
-        gatewayApp.UseSerilogRequestLogging();
+        gatewayApp.UseSerilogRequestLogging(options => options.GetLevel = HttpRequestLogLevel);
         gatewayApp.UseCors("AllowFrontend");
         gatewayApp.Use(async (context, next) =>
         {
@@ -492,8 +518,12 @@ try
     var app = builder.Build();
 
     app.UseForwardedHeaders();
+    app.UseWebSockets(new WebSocketOptions
+    {
+        KeepAliveInterval = TimeSpan.FromSeconds(30)
+    });
     app.UseExceptionHandler();
-    app.UseSerilogRequestLogging();
+    app.UseSerilogRequestLogging(options => options.GetLevel = HttpRequestLogLevel);
     app.UseSwagger();
     app.UseSwaggerUI();
     app.UseCors("AllowFrontend");
