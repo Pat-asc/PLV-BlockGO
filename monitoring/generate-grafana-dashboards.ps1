@@ -88,7 +88,15 @@ function New-Panel {
 }
 
 function New-Dashboard {
-    param([string]$Title, [string]$Uid, [string[]]$Tags, [object[]]$Panels)
+    param(
+        [string]$Title,
+        [string]$Uid,
+        [string[]]$Tags,
+        [object[]]$Panels,
+        [string]$Refresh = '15s',
+        [string]$From = 'now-6h',
+        [int]$Version = 1
+    )
     [ordered]@{
         annotations = [ordered]@{ list = @() }
         editable = $false
@@ -96,15 +104,15 @@ function New-Dashboard {
         graphTooltip = 1
         links = @()
         panels = $Panels
-        refresh = '15s'
+        refresh = $Refresh
         schemaVersion = 41
         tags = $Tags
         templating = [ordered]@{ list = @() }
-        time = [ordered]@{ from = 'now-6h'; to = 'now' }
+        time = [ordered]@{ from = $From; to = 'now' }
         timezone = 'browser'
         title = $Title
         uid = $Uid
-        version = 1
+        version = $Version
         weekStart = ''
     }
 }
@@ -118,10 +126,10 @@ function Write-Dashboard {
 
 $kubernetesPanels = @(
     (New-Panel 1 'Cluster Memory Utilization' 'gauge' 0 0 6 7 @(
-        (New-PrometheusTarget 'sum(container_memory_working_set_bytes{namespace!=""}) / scalar(max(machine_memory_bytes))' 'cluster' 'A')
+        (New-PrometheusTarget 'sum(container_memory_working_set_bytes{namespace!="",container!="",container!="POD",image!=""}) / sum(machine_memory_bytes)' 'cluster' 'A')
     ) 'percentunit'),
     (New-Panel 2 'Node Memory Capacity' 'stat' 6 0 6 7 @(
-        (New-PrometheusTarget 'max(machine_memory_bytes)' 'capacity' 'A')
+        (New-PrometheusTarget 'max by (instance) (machine_memory_bytes)' '{{instance}}' 'A')
     ) 'bytes'),
     (New-Panel 3 'Running Pods' 'stat' 12 0 6 7 @(
         (New-PrometheusTarget 'sum(kube_pod_status_phase{phase="Running"})' 'running' 'A')
@@ -130,30 +138,30 @@ $kubernetesPanels = @(
         (New-PrometheusTarget 'sum(increase(kube_pod_container_status_restarts_total[1h]))' 'restarts' 'A')
     )),
     (New-Panel 5 'Memory by Namespace' 'timeseries' 0 7 12 8 @(
-        (New-PrometheusTarget 'sum by (namespace) (container_memory_working_set_bytes{namespace!=""})' '{{namespace}}' 'A')
+        (New-PrometheusTarget 'sum by (namespace) (container_memory_working_set_bytes{namespace!="",container!="",container!="POD",image!=""})' '{{namespace}}' 'A')
     ) 'bytes'),
     (New-Panel 6 'Top Pods by Working Set' 'timeseries' 12 7 12 8 @(
-        (New-PrometheusTarget 'topk(15, sum by (namespace, pod) (container_memory_working_set_bytes{namespace!=""}))' '{{namespace}} / {{pod}}' 'A')
+        (New-PrometheusTarget 'topk(15, sum by (namespace, pod) (container_memory_working_set_bytes{namespace!="",pod!="",container!="",container!="POD",image!=""}))' '{{namespace}} / {{pod}}' 'A')
     ) 'bytes'),
     (New-Panel 7 'Container Memory Limit Utilization' 'timeseries' 0 15 12 8 @(
-        (New-PrometheusTarget 'topk(15, sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~"plv-.*"}) / sum by (namespace, pod) (kube_pod_container_resource_limits{namespace=~"plv-.*",resource="memory",unit="byte"}))' '{{namespace}} / {{pod}}' 'A')
+        (New-PrometheusTarget 'topk(15, sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~"plv-.*",pod!="",container!="",container!="POD",image!=""}) / clamp_min(sum by (namespace, pod) (kube_pod_container_resource_limits{namespace=~"plv-.*",resource="memory",unit="byte"}), 1))' '{{namespace}} / {{pod}}' 'A')
     ) 'percentunit'),
     (New-Panel 8 'Pod Availability' 'timeseries' 12 15 12 8 @(
         (New-PrometheusTarget 'kube_deployment_status_replicas_available{namespace=~"plv-.*"}' '{{namespace}} / {{deployment}} available' 'A'),
         (New-PrometheusTarget 'kube_deployment_spec_replicas{namespace=~"plv-.*"}' '{{namespace}} / {{deployment}} desired' 'B')
     ))
 )
-Write-Dashboard 'grafana-kubernetes-memory.json' (New-Dashboard 'BlockGO / Kubernetes & Node Memory' 'blockgo-kubernetes-memory' @('blockgo','kubernetes','memory','system-admin') $kubernetesPanels)
+Write-Dashboard 'grafana-kubernetes-memory.json' (New-Dashboard 'BlockGO / Kubernetes & Node Memory' 'blockgo-kubernetes-memory' @('blockgo','kubernetes','memory','system-admin') $kubernetesPanels -Refresh '30s' -From 'now-1h' -Version 2)
 
 $apiPanels = @(
     (New-Panel 1 'Request Rate' 'timeseries' 0 0 8 8 @(
         (New-PrometheusTarget 'sum by (service) (rate(http_requests_total[5m]))' '{{service}}' 'A')
     ) 'reqps'),
     (New-Panel 2 '5xx Error Rate' 'timeseries' 8 0 8 8 @(
-        (New-PrometheusTarget 'sum by (service) (rate(http_requests_total{status=~"5.."}[5m]))' '{{service}}' 'A')
+        (New-PrometheusTarget 'sum by (service) (rate(http_requests_total{status=~"5.."}[5m])) or sum by (service) (rate(http_requests_total[5m])) * 0' '{{service}}' 'A')
     ) 'reqps'),
     (New-Panel 3 'Error Percentage' 'timeseries' 16 0 8 8 @(
-        (New-PrometheusTarget 'sum by (service) (rate(http_requests_total{status=~"4..|5.."}[5m])) / clamp_min(sum by (service) (rate(http_requests_total[5m])), 0.000001)' '{{service}}' 'A')
+        (New-PrometheusTarget '(sum by (service) (rate(http_requests_total{status=~"4..|5.."}[5m])) or sum by (service) (rate(http_requests_total[5m])) * 0) / clamp_min(sum by (service) (rate(http_requests_total[5m])), 0.000001)' '{{service}}' 'A')
     ) 'percentunit'),
     (New-Panel 4 'API Latency Percentiles' 'timeseries' 0 8 12 8 @(
         (New-PrometheusTarget 'histogram_quantile(0.50, sum by (le, service) (rate(http_request_duration_seconds_bucket[5m])))' '{{service}} p50' 'A'),
@@ -161,13 +169,13 @@ $apiPanels = @(
         (New-PrometheusTarget 'histogram_quantile(0.99, sum by (le, service) (rate(http_request_duration_seconds_bucket[5m])))' '{{service}} p99' 'C')
     ) 's'),
     (New-Panel 5 'Slow Routes (p95)' 'timeseries' 12 8 12 8 @(
-        (New-PrometheusTarget 'topk(15, histogram_quantile(0.95, sum by (le, service, route) (rate(http_request_duration_seconds_bucket[5m]))))' '{{service}} {{route}}' 'A')
+        (New-PrometheusTarget '(topk(15, histogram_quantile(0.95, sum by (le, service, route) (rate(http_request_duration_seconds_bucket[5m])))) >= 0) or on() vector(0)' '{{service}} {{route}}' 'A')
     ) 's'),
     (New-Panel 6 'Errors by Route and Status (1h)' 'table' 0 16 24 9 @(
-        (New-PrometheusTarget 'sort_desc(sum by (service, route, status) (increase(http_requests_total{status=~"4..|5.."}[1h])))' '{{service}} {{route}} {{status}}' 'A')
+        (New-PrometheusTarget 'sort_desc(sum by (service, route, status) (increase(http_requests_total{status=~"4..|5.."}[1h]))) or on() vector(0)' '{{service}} {{route}} {{status}}' 'A')
     ))
 )
-Write-Dashboard 'grafana-api-observability.json' (New-Dashboard 'BlockGO / API Errors & Latency' 'blockgo-api-observability' @('blockgo','api','errors','latency','system-admin') $apiPanels)
+Write-Dashboard 'grafana-api-observability.json' (New-Dashboard 'BlockGO / API Errors & Latency' 'blockgo-api-observability' @('blockgo','api','errors','latency','system-admin') $apiPanels -Refresh '30s' -From 'now-1h' -Version 2)
 
 $fabricPanels = @(
     (New-Panel 1 'Fabric Targets Up' 'stat' 0 0 8 7 @(
@@ -183,7 +191,7 @@ $fabricPanels = @(
         (New-PrometheusTarget 'sum by (namespace, pod, service, method, code) (rate(grpc_server_unary_requests_completed{job="fabric-peer"}[5m]))' '{{namespace}} / {{pod}} / {{service}} / {{method}} / {{code}}' 'A')
     ) 'ops'),
     (New-Panel 5 'Peer gRPC p95 Duration' 'timeseries' 12 7 12 8 @(
-        (New-PrometheusTarget 'histogram_quantile(0.95, sum by (le, namespace, pod, service, method) (rate(grpc_server_unary_request_duration_bucket{job="fabric-peer"}[5m])))' '{{namespace}} / {{pod}} / {{service}} / {{method}}' 'A')
+        (New-PrometheusTarget '(histogram_quantile(0.95, sum by (le, namespace, pod, service, method) (rate(grpc_server_unary_request_duration_bucket{job="fabric-peer"}[5m]))) >= 0) or on() vector(0)' '{{namespace}} / {{pod}} / {{service}} / {{method}}' 'A')
     ) 's'),
     (New-Panel 6 'Raft Committed Block Number' 'timeseries' 0 15 12 8 @(
         (New-PrometheusTarget 'consensus_etcdraft_committed_block_number' '{{namespace}} / {{pod}} / {{channel}}' 'A')
@@ -192,7 +200,7 @@ $fabricPanels = @(
         (New-PrometheusTarget 'sum by (namespace, pod, channel) (rate(deliver_requests_received[5m]))' '{{namespace}} / {{pod}} / {{channel}}' 'A')
     ) 'ops')
 )
-Write-Dashboard 'grafana-fabric.json' (New-Dashboard 'BlockGO / Hyperledger Fabric Peers & Orderers' 'blockgo-fabric' @('blockgo','fabric','peer','orderer','system-admin') $fabricPanels)
+Write-Dashboard 'grafana-fabric.json' (New-Dashboard 'BlockGO / Hyperledger Fabric Peers & Orderers' 'blockgo-fabric' @('blockgo','fabric','peer','orderer','system-admin') $fabricPanels -Version 2)
 
 $postgresPanels = @(
     (New-Panel 1 'PostgreSQL Up' 'stat' 0 0 6 7 @((New-PrometheusTarget 'pg_up' 'postgres' 'A'))),
@@ -218,25 +226,25 @@ $postgresPanels = @(
 )
 Write-Dashboard 'grafana-postgresql.json' (New-Dashboard 'BlockGO / PostgreSQL' 'blockgo-postgresql' @('blockgo','postgresql','database','system-admin') $postgresPanels)
 
-$workflowFilter = 'route=~".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions).*"'
+$workflowFilter = 'route=~".*(register|enroll|revoke|wallet|batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions|ledger-transactions).*"'
 $workflowPanels = @(
     (New-Panel 1 'Workflow Operations (1h)' 'stat' 0 0 8 7 @(
-        (New-PrometheusTarget "sum(increase(http_requests_total{$workflowFilter}[1h]))" 'operations' 'A')
+        (New-PrometheusTarget "sum(increase(http_requests_total{$workflowFilter}[1h])) or vector(0)" 'operations' 'A')
     )),
     (New-Panel 2 'Workflow Success Rate' 'gauge' 8 0 8 7 @(
-        (New-PrometheusTarget ('sum(rate(http_requests_total{' + $workflowFilter + ',status=~"2..|3.."}[5m])) / clamp_min(sum(rate(http_requests_total{' + $workflowFilter + '}[5m])), 0.000001)') 'success' 'A')
+        (New-PrometheusTarget ('(sum(rate(http_requests_total{' + $workflowFilter + ',status=~"2..|3.."}[5m])) or vector(0)) / clamp_min((sum(rate(http_requests_total{' + $workflowFilter + '}[5m])) or vector(0)), 0.000001)') 'success' 'A')
     ) 'percentunit'),
     (New-Panel 3 'Workflow Failures (1h)' 'stat' 16 0 8 7 @(
-        (New-PrometheusTarget ('sum(increase(http_requests_total{' + $workflowFilter + ',status=~"4..|5.."}[1h]))') 'failures' 'A')
+        (New-PrometheusTarget ('sum(increase(http_requests_total{' + $workflowFilter + ',status=~"4..|5.."}[1h])) or vector(0)') 'failures' 'A')
     )),
     (New-Panel 4 'Identity Lifecycle Workflows' 'timeseries' 0 7 12 8 @(
         (New-PrometheusTarget 'sum by (route, status) (rate(http_requests_total{service="fabric-identity-service",route=~".*(register|enroll|revoke|wallet|identities).*"}[5m]))' '{{route}} / {{status}}' 'A')
     ) 'ops'),
     (New-Panel 5 'Grade & Ledger Workflows' 'timeseries' 12 7 12 8 @(
-        (New-PrometheusTarget 'sum by (service, route, status) (rate(http_requests_total{route=~".*(batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event).*"}[5m]))' '{{service}} / {{route}} / {{status}}' 'A')
+        (New-PrometheusTarget 'sum by (service, route, status) (rate(http_requests_total{route=~".*(batch-upload|upload-grades|issue-grade|batch-issue-grade|audit-event|all-grades|student-transactions|ledger-transactions).*"}[5m]))' '{{service}} / {{route}} / {{status}}' 'A')
     ) 'ops'),
     (New-Panel 6 'Workflow p95 Latency' 'timeseries' 0 15 12 8 @(
-        (New-PrometheusTarget "histogram_quantile(0.95, sum by (le, service, route) (rate(http_request_duration_seconds_bucket{$workflowFilter}[5m])))" '{{service}} / {{route}}' 'A')
+        (New-PrometheusTarget "(histogram_quantile(0.95, sum by (le, service, route) (rate(http_request_duration_seconds_bucket{$workflowFilter}[5m]))) >= 0) or on() vector(0)" '{{service}} / {{route}}' 'A')
     ) 's'),
     (New-Panel 7 'Fabric Client Caches' 'timeseries' 12 15 12 8 @(
         (New-PrometheusTarget 'blockgo_gateway_cache_entries' 'gateway entries' 'A'),
@@ -244,22 +252,51 @@ $workflowPanels = @(
         (New-PrometheusTarget 'blockgo_ca_config_cache_entries' 'CA config entries' 'C')
     ))
 )
-Write-Dashboard 'grafana-workflows.json' (New-Dashboard 'BlockGO / Workflow Metrics' 'blockgo-workflows' @('blockgo','workflow','grades','identity','system-admin') $workflowPanels)
+Write-Dashboard 'grafana-workflows.json' (New-Dashboard 'BlockGO / Workflow Metrics' 'blockgo-workflows' @('blockgo','workflow','grades','identity','system-admin') $workflowPanels -Refresh '30s' -From 'now-1h' -Version 2)
 
 $logPanels = @(
     (New-Panel 1 'Log Lines by Namespace' 'timeseries' 0 0 12 8 @(
-        (New-LokiTarget 'sum by (namespace) (count_over_time({cluster="blockgo"}[$__interval]))')
+        (New-LokiTarget 'sum by (namespace) (count_over_time({cluster="blockgo",namespace=~"$namespace",app=~"$app"}[$__interval]))')
     ) 'short' 'loki' 'loki'),
     (New-Panel 2 'Errors and Exceptions' 'timeseries' 12 0 12 8 @(
-        (New-LokiTarget 'sum by (namespace, app) (count_over_time({cluster="blockgo"} |~ "(?i)(error|exception|failed|42P08)" [$__interval]))')
+        (New-LokiTarget 'sum by (namespace, app) (count_over_time({cluster="blockgo",namespace=~"$namespace",app=~"$app"} |~ "(?i)(error|exception|failed|42P08)" [$__interval]))')
     ) 'short' 'loki' 'loki'),
     (New-Panel 3 'BlockGO Application Logs' 'logs' 0 8 24 11 @(
-        (New-LokiTarget '{cluster="blockgo",namespace=~"plv-.*"}')
+        (New-LokiTarget '{cluster="blockgo",namespace=~"$namespace",app=~"$app"}')
     ) 'short' 'loki' 'loki'),
     (New-Panel 4 'Kubernetes Events' 'logs' 0 19 24 9 @(
         (New-LokiTarget '{cluster="blockgo",job="integrations/kubernetes/eventhandler"}')
     ) 'short' 'loki' 'loki')
 )
-Write-Dashboard 'grafana-logs.json' (New-Dashboard 'BlockGO / Kubernetes & Application Logs' 'blockgo-logs' @('blockgo','loki','logs','kubernetes','system-admin') $logPanels)
+$logDashboard = New-Dashboard 'BlockGO / Kubernetes & Application Logs' 'blockgo-logs' @('blockgo','loki','logs','kubernetes','system-admin') $logPanels -Refresh '30s' -From 'now-1h' -Version 2
+$logDashboard.templating.list = @(
+    [ordered]@{
+        name = 'namespace'
+        label = 'Namespace'
+        type = 'query'
+        datasource = [ordered]@{ type = 'loki'; uid = 'loki' }
+        definition = 'label_values({cluster="blockgo"}, namespace)'
+        query = 'label_values({cluster="blockgo"}, namespace)'
+        refresh = 2
+        includeAll = $true
+        allValue = 'plv-.*'
+        multi = $true
+        current = [ordered]@{ selected = $true; text = 'All'; value = '$__all' }
+    },
+    [ordered]@{
+        name = 'app'
+        label = 'Application'
+        type = 'query'
+        datasource = [ordered]@{ type = 'loki'; uid = 'loki' }
+        definition = 'label_values({cluster="blockgo",namespace=~"$namespace"}, app)'
+        query = 'label_values({cluster="blockgo",namespace=~"$namespace"}, app)'
+        refresh = 2
+        includeAll = $true
+        allValue = '.*'
+        multi = $true
+        current = [ordered]@{ selected = $true; text = 'All'; value = '$__all' }
+    }
+)
+Write-Dashboard 'grafana-logs.json' $logDashboard
 
 Write-Host "Generated six Grafana dashboards in $OutputDirectory"

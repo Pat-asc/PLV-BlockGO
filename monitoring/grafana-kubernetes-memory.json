@@ -57,7 +57,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "sum(container_memory_working_set_bytes{namespace!=\"\"}) / scalar(max(machine_memory_bytes))",
+                                           "expr":  "sum(container_memory_working_set_bytes{namespace!=\"\",container!=\"\",container!=\"POD\",image!=\"\"}) / sum(machine_memory_bytes)",
                                            "legendFormat":  "cluster",
                                            "refId":  "A"
                                        }
@@ -111,8 +111,8 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "max(machine_memory_bytes)",
-                                           "legendFormat":  "capacity",
+                                           "expr":  "max by (instance) (machine_memory_bytes)",
+                                           "legendFormat":  "{{instance}}",
                                            "refId":  "A"
                                        }
                                    ]
@@ -273,7 +273,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "sum by (namespace) (container_memory_working_set_bytes{namespace!=\"\"})",
+                                           "expr":  "sum by (namespace) (container_memory_working_set_bytes{namespace!=\"\",container!=\"\",container!=\"POD\",image!=\"\"})",
                                            "legendFormat":  "{{namespace}}",
                                            "refId":  "A"
                                        }
@@ -327,7 +327,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "topk(15, sum by (namespace, pod) (container_memory_working_set_bytes{namespace!=\"\"}))",
+                                           "expr":  "topk(15, sum by (namespace, pod) (container_memory_working_set_bytes{namespace!=\"\",pod!=\"\",container!=\"\",container!=\"POD\",image!=\"\"}))",
                                            "legendFormat":  "{{namespace}} / {{pod}}",
                                            "refId":  "A"
                                        }
@@ -381,7 +381,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "topk(15, sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~\"plv-.*\"}) / sum by (namespace, pod) (kube_pod_container_resource_limits{namespace=~\"plv-.*\",resource=\"memory\",unit=\"byte\"}))",
+                                           "expr":  "topk(15, sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~\"plv-.*\",pod!=\"\",container!=\"\",container!=\"POD\",image!=\"\"}) / clamp_min(sum by (namespace, pod) (kube_pod_container_resource_limits{namespace=~\"plv-.*\",resource=\"memory\",unit=\"byte\"}), 1))",
                                            "legendFormat":  "{{namespace}} / {{pod}}",
                                            "refId":  "A"
                                        }
@@ -447,7 +447,7 @@
                                    ]
                    }
                ],
-    "refresh":  "15s",
+    "refresh":  "30s",
     "schemaVersion":  41,
     "tags":  [
                  "blockgo",
@@ -461,12 +461,12 @@
                                 ]
                    },
     "time":  {
-                 "from":  "now-6h",
+                 "from":  "now-1h",
                  "to":  "now"
              },
     "timezone":  "browser",
     "title":  "BlockGO / Kubernetes \u0026 Node Memory",
     "uid":  "blockgo-kubernetes-memory",
-    "version":  1,
+    "version":  2,
     "weekStart":  ""
 }

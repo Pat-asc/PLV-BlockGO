@@ -450,8 +450,8 @@ data:
     discovery.relabel "pod_logs" {
       targets = discovery.kubernetes.pods.targets
 
-      # Stop retrying API log streams after short-lived Jobs and init containers
-      # have terminated. Their output is collected while the container is running.
+      // Stop retrying API log streams after short-lived Jobs and init containers
+      // have terminated. Their output is collected while the container is running.
       rule {
         source_labels = ["__meta_kubernetes_pod_phase"]
         regex         = "Succeeded|Failed"
