@@ -111,8 +111,8 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "max by (instance) (machine_memory_bytes)",
-                                           "legendFormat":  "{{instance}}",
+                                           "expr":  "max(machine_memory_bytes)",
+                                           "legendFormat":  "capacity",
                                            "refId":  "A"
                                        }
                                    ]
@@ -467,6 +467,6 @@
     "timezone":  "browser",
     "title":  "BlockGO / Kubernetes \u0026 Node Memory",
     "uid":  "blockgo-kubernetes-memory",
-    "version":  2,
+    "version":  3,
     "weekStart":  ""
 }

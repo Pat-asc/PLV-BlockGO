@@ -129,7 +129,7 @@ $kubernetesPanels = @(
         (New-PrometheusTarget 'sum(container_memory_working_set_bytes{namespace!="",container!="",container!="POD",image!=""}) / sum(machine_memory_bytes)' 'cluster' 'A')
     ) 'percentunit'),
     (New-Panel 2 'Node Memory Capacity' 'stat' 6 0 6 7 @(
-        (New-PrometheusTarget 'max by (instance) (machine_memory_bytes)' '{{instance}}' 'A')
+        (New-PrometheusTarget 'max(machine_memory_bytes)' 'capacity' 'A')
     ) 'bytes'),
     (New-Panel 3 'Running Pods' 'stat' 12 0 6 7 @(
         (New-PrometheusTarget 'sum(kube_pod_status_phase{phase="Running"})' 'running' 'A')
@@ -151,7 +151,7 @@ $kubernetesPanels = @(
         (New-PrometheusTarget 'kube_deployment_spec_replicas{namespace=~"plv-.*"}' '{{namespace}} / {{deployment}} desired' 'B')
     ))
 )
-Write-Dashboard 'grafana-kubernetes-memory.json' (New-Dashboard 'BlockGO / Kubernetes & Node Memory' 'blockgo-kubernetes-memory' @('blockgo','kubernetes','memory','system-admin') $kubernetesPanels -Refresh '30s' -From 'now-1h' -Version 2)
+Write-Dashboard 'grafana-kubernetes-memory.json' (New-Dashboard 'BlockGO / Kubernetes & Node Memory' 'blockgo-kubernetes-memory' @('blockgo','kubernetes','memory','system-admin') $kubernetesPanels -Refresh '30s' -From 'now-1h' -Version 3)
 
 $apiPanels = @(
     (New-Panel 1 'Request Rate' 'timeseries' 0 0 8 8 @(
@@ -191,7 +191,7 @@ $fabricPanels = @(
         (New-PrometheusTarget 'sum by (namespace, pod, service, method, code) (rate(grpc_server_unary_requests_completed{job="fabric-peer"}[5m]))' '{{namespace}} / {{pod}} / {{service}} / {{method}} / {{code}}' 'A')
     ) 'ops'),
     (New-Panel 5 'Peer gRPC p95 Duration' 'timeseries' 12 7 12 8 @(
-        (New-PrometheusTarget '(histogram_quantile(0.95, sum by (le, namespace, pod, service, method) (rate(grpc_server_unary_request_duration_bucket{job="fabric-peer"}[5m]))) >= 0) or on() vector(0)' '{{namespace}} / {{pod}} / {{service}} / {{method}}' 'A')
+        (New-PrometheusTarget 'histogram_quantile(0.95, sum by (le, namespace, pod, service, method) (grpc_server_unary_request_duration_bucket{job="fabric-peer"}))' '{{namespace}} / {{pod}} / {{service}} / {{method}}' 'A')
     ) 's'),
     (New-Panel 6 'Raft Committed Block Number' 'timeseries' 0 15 12 8 @(
         (New-PrometheusTarget 'consensus_etcdraft_committed_block_number' '{{namespace}} / {{pod}} / {{channel}}' 'A')
@@ -200,7 +200,7 @@ $fabricPanels = @(
         (New-PrometheusTarget 'sum by (namespace, pod, channel) (rate(deliver_requests_received[5m]))' '{{namespace}} / {{pod}} / {{channel}}' 'A')
     ) 'ops')
 )
-Write-Dashboard 'grafana-fabric.json' (New-Dashboard 'BlockGO / Hyperledger Fabric Peers & Orderers' 'blockgo-fabric' @('blockgo','fabric','peer','orderer','system-admin') $fabricPanels -Version 2)
+Write-Dashboard 'grafana-fabric.json' (New-Dashboard 'BlockGO / Hyperledger Fabric Peers & Orderers' 'blockgo-fabric' @('blockgo','fabric','peer','orderer','system-admin') $fabricPanels -Version 3)
 
 $postgresPanels = @(
     (New-Panel 1 'PostgreSQL Up' 'stat' 0 0 6 7 @((New-PrometheusTarget 'pg_up' 'postgres' 'A'))),
