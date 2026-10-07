@@ -16,6 +16,21 @@ public static class FacultyCurriculumAuthorizationService
         var programsById = programs.ToDictionary(program => program.Id);
         var authorizedProgramIds = new HashSet<int>();
 
+        await using (var profileCommand = new NpgsqlCommand(@"
+            SELECT profile.department
+            FROM users actor
+            JOIN facultyprofiles profile ON profile.user_id = actor.id
+            WHERE LOWER(actor.email) = LOWER(@actor)
+              AND LOWER(actor.role) = 'faculty'
+              AND LOWER(actor.status) = 'approved'
+              AND actor.is_active = TRUE;", connection))
+        {
+            profileCommand.Parameters.AddWithValue("actor", facultyEmail);
+            var profileProgramId = ResolveUniqueProgramId(
+                (await profileCommand.ExecuteScalarAsync(cancellationToken))?.ToString(), programs);
+            if (profileProgramId.HasValue) authorizedProgramIds.Add(profileProgramId.Value);
+        }
+
         await using var command = new NpgsqlCommand(@"
             SELECT fs.department, section.department, enrolled_program.program_id
             FROM users actor
