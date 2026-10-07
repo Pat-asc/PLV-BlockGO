@@ -351,12 +351,11 @@ Check(facultyCurriculumSource.Contains("JOIN facultysections fs") &&
       facultyCurriculumSource.Contains("period.school_year = fs.school_year") &&
       facultyCurriculumSource.Contains("period.semester = fs.semester") &&
       facultyCurriculumSource.Contains("period.status = 'ACTIVE'") &&
-      facultyCurriculumSource.Contains("LOWER(subject.subject_code) = LOWER(fs.subject)") &&
-      facultyCurriculumSource.Contains("subject.year_level = section.year_level") &&
-      facultyCurriculumSource.Contains("subject.semester = fs.semester") &&
+      facultyCurriculumSource.Contains("pca.program_id = p.program_id") &&
+      !facultyCurriculumSource.Contains("LOWER(subject.subject_code) = LOWER(fs.subject)") &&
       facultyCurriculumSource.Contains("c.status = 'PUBLISHED'"),
-    "Faculty curriculum lookup is not constrained to an active exact subject, section, program, and academic period.");
-Pass(185, "Faculty curriculum endpoint uses exact authorized assignment context");
+    "Faculty curriculum lookup is not constrained to an active section, program, and academic period, or still hides a program checklist behind one subject row.");
+Pass(185, "Faculty curriculum endpoint uses active program assignment context");
 
 var publishCurriculumStart = curriculumControllerSource.IndexOf("public async Task<IActionResult> Publish", StringComparison.Ordinal);
 var publishCurriculumEnd = curriculumControllerSource.IndexOf("[HttpPost(\"{id:long}/archive\")]", publishCurriculumStart, StringComparison.Ordinal);
@@ -371,11 +370,11 @@ var facultyAuthorizationStart = curriculumControllerSource.IndexOf("if (role == 
 var facultyAuthorizationEnd = curriculumControllerSource.IndexOf("await using (var command", facultyAuthorizationStart, StringComparison.Ordinal);
 var facultyAuthorizationSource = curriculumControllerSource[facultyAuthorizationStart..facultyAuthorizationEnd];
 Check(facultyAuthorizationSource.Contains("assignment.curriculum_id = @curriculumId") &&
-      facultyAuthorizationSource.Contains("LOWER(subject.subject_code) = LOWER(fs.subject)") &&
-      facultyAuthorizationSource.Contains("subject.year_level = section.year_level") &&
-      facultyAuthorizationSource.Contains("period.status = 'ACTIVE'"),
-    "Direct Faculty curriculum access can bypass exact active assignment ownership.");
-Pass(187, "direct Faculty curriculum access preserves assignment authorization");
+      facultyAuthorizationSource.Contains("section.id = fs.academic_section_id") &&
+      facultyAuthorizationSource.Contains("period.status = 'ACTIVE'") &&
+      !facultyAuthorizationSource.Contains("LOWER(subject.subject_code) = LOWER(fs.subject)"),
+    "Direct Faculty curriculum access does not preserve active program assignment ownership or still depends on one subject row.");
+Pass(187, "direct Faculty curriculum access preserves active program authorization");
 
 var curriculumRepairMigration = await File.ReadAllTextAsync(
     FindRepositoryFile("migrations", "027_repair_program_curriculum_assignments.sql"));

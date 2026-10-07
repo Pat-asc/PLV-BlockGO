@@ -849,11 +849,6 @@ namespace Client_app.Controllers
                 JOIN curriculums c ON c.curriculum_id = pca.curriculum_id
                     AND c.program_id = p.program_id
                     AND c.status = 'PUBLISHED'
-                JOIN curriculum_subjects subject
-                  ON subject.curriculum_id = c.curriculum_id
-                 AND LOWER(subject.subject_code) = LOWER(fs.subject)
-                 AND subject.year_level = section.year_level
-                 AND subject.semester = fs.semester
                 WHERE LOWER(u.email) = LOWER(@actor)
                   AND LOWER(u.role) = 'faculty'
                   AND LOWER(u.status) = 'approved'
@@ -985,11 +980,6 @@ namespace Client_app.Controllers
                     JOIN program_curriculum_assignments assignment
                       ON assignment.program_id = p.program_id
                      AND assignment.curriculum_id = @curriculumId
-                    JOIN curriculum_subjects subject
-                      ON subject.curriculum_id = assignment.curriculum_id
-                     AND LOWER(subject.subject_code) = LOWER(fs.subject)
-                     AND subject.year_level = section.year_level
-                     AND subject.semester = fs.semester
                     WHERE LOWER(u.email) = LOWER(@actor)
                       AND LOWER(u.role) = 'faculty'
                       AND LOWER(u.status) = 'approved'
