@@ -36,3 +36,25 @@ test('Chairperson correction sends the expected version and mandatory reason', a
     recordId: 'grade-1', newGrade: '90', reason: 'Verified examination total', expectedGradeVersion: 2,
   }));
 });
+
+test('handles a generic Version 1 history failure without showing API Request Failed', async () => {
+  fetchGradeHistory.mockRejectedValue(new Error('API Request Failed'));
+  render(<GradeVersionHistory recordId="grade-1" />);
+  fireEvent.click(screen.getByRole('button', { name: 'View Version History' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('original Version 1 grade');
+  expect(screen.queryByText('API Request Failed')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Try Again' })).toBeInTheDocument();
+});
+
+test('retries a failed Version 1 history request in the same modal', async () => {
+  fetchGradeHistory
+    .mockRejectedValueOnce(new Error('API Request Failed'))
+    .mockResolvedValueOnce({ data: { currentVersion: 1, versions: [
+      { version: 1, grade: '88', status: 'Current', transactionId: 'tx-1' },
+    ] } });
+  render(<GradeVersionHistory recordId="grade-1" />);
+  fireEvent.click(screen.getByRole('button', { name: 'View Version History' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Try Again' }));
+  expect(await screen.findByText('Version 1')).toBeInTheDocument();
+  expect(fetchGradeHistory).toHaveBeenCalledTimes(2);
+});

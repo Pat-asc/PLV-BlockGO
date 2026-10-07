@@ -2,6 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { correctFinalizedGrade, fetchGradeHistory } from '../../services/api';
 import Modal from '../../services/Modal';
 
+const VERSION_ONE_HISTORY_ERROR = 'Version history could not be loaded. If this is the original Version 1 grade, there are no earlier versions to display. Try again to verify the immutable record.';
+
+const historyErrorMessage = (error) => {
+  const message = String(error?.message || '').trim();
+  return !message || /^api request failed$/i.test(message)
+    ? VERSION_ONE_HISTORY_ERROR
+    : message;
+};
+
 const displayGrade = (raw) => {
   if (!raw) return 'Not recorded';
   if (typeof raw === 'object') return raw.finalAverage || raw.finals || raw.midterm || JSON.stringify(raw);
@@ -22,12 +31,12 @@ const GradeVersionHistory = ({ recordId, label = 'View Version History', allowCo
 
   const load = async () => {
     if (!recordId) return;
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setHistory(null);
     try {
       const response = await fetchGradeHistory(recordId);
       setHistory(response?.data || response);
     } catch (requestError) {
-      setError(requestError.message || 'Grade version history could not be loaded.');
+      setError(historyErrorMessage(requestError));
     } finally { setLoading(false); }
   };
 
@@ -52,7 +61,7 @@ const GradeVersionHistory = ({ recordId, label = 'View Version History', allowCo
     <button type="button" disabled={!recordId} onClick={() => setOpen(true)} className="text-xs font-bold text-blue-700 hover:text-[#003366] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:text-slate-400">{label}</button>
     <Modal isOpen={open} onClose={() => { if (!saving) setOpen(false); }} title="Grade Version History" description="Finalized versions are read from the immutable Fabric key history. CouchDB shows only the current version.">
       {loading ? <p role="status" className="py-6 text-center text-sm text-slate-500">Loading version history…</p> : null}
-      {error ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+      {error ? <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p>{error}</p><button type="button" onClick={load} disabled={loading} className="mt-3 min-h-10 rounded-lg bg-[#003366] px-4 font-bold text-white hover:bg-blue-900 disabled:opacity-50">Try Again</button></div> : null}
       {!loading && versions.length === 0 && !error ? <p className="py-6 text-center text-sm text-slate-500">No finalized version is available.</p> : null}
       <div className="mt-4 space-y-3">
         {versions.map((version) => <article key={`${version.version}-${version.transactionId}`} className={`rounded-xl border p-4 ${version.status === 'Current' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
