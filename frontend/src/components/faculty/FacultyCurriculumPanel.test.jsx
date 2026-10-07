@@ -32,6 +32,27 @@ test('supports multiple matching assigned programs returned by the authorized en
   await waitFor(() => expect(screen.getByTestId('curriculum-viewer')).toHaveAttribute('data-count', '2'));
 });
 
+test('shows a concise curriculum summary from the published checklist', async () => {
+  fetchFacultyCurriculums.mockResolvedValue({ data: [{
+    curriculumId: 1,
+    programCode: 'BSIT',
+    curriculumName: 'BSIT 2026',
+    totalUnits: 7,
+    subjects: [
+      { subjectId: 1, subjectCode: 'IT 101', units: 3 },
+      { subjectId: 2, subjectCode: 'IT 102', units: 4 },
+    ],
+  }] });
+
+  render(<FacultyCurriculumPanel />);
+
+  expect(await screen.findByRole('region', { name: 'Curriculum summary' })).toBeInTheDocument();
+  expect(screen.getByText('Academic Program')).toBeInTheDocument();
+  expect(screen.getByText('Curriculum Subjects')).toBeInTheDocument();
+  expect(screen.getByText('Total Curriculum Units')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Refresh curriculum' })).toBeEnabled();
+});
+
 test.each([
   ['empty array', { data: [] }],
   ['null data', { data: null }],

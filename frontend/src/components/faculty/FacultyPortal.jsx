@@ -1155,7 +1155,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           totalSections={totalSections}
           onLogout={onLogout}
         />
-        <main className="w-full px-4 py-5 md:px-6">
+        <main className="mx-auto w-full max-w-[1440px] px-4 py-5 md:px-6 lg:py-7">
           <BackButton
             onClick={() => setPortalView('grades')}
             className="mb-5"

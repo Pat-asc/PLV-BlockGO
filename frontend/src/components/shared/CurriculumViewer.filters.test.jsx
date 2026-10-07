@@ -32,3 +32,9 @@ test('only semesters actually present in curriculum data are offered', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Semester' }));
   expect(screen.queryByRole('option', { name: /Midyear/i })).not.toBeInTheDocument();
 });
+
+test('catalog-only views use neutral rows instead of student progress styling', () => {
+  render(<CurriculumViewer curricula={[curriculum]} />);
+
+  expect(screen.getByRole('row', { name: /IT101 First/ })).not.toHaveAttribute('data-progress-status');
+});
