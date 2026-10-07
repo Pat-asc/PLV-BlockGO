@@ -351,6 +351,13 @@ Check(facultyCurriculumSource.Contains("ResolveAuthorizedProgramIdsAsync") &&
       facultyCurriculumSource.Contains("c.status = 'PUBLISHED'"),
     "Faculty curriculum lookup does not use reusable active-assignment program authorization or still applies subject/period visibility gates.");
 Pass(185, "Faculty curriculum endpoint uses reusable program-level authorization");
+var facultyCurriculumAuthorizationSource = await File.ReadAllTextAsync(
+    FindRepositoryFile("client-app", "Services", "FacultyCurriculumAuthorizationService.cs"));
+Check(facultyCurriculumAuthorizationSource.Contains("LEFT JOIN academicsections section") &&
+      facultyCurriculumAuthorizationSource.Contains("fs.academic_section_id IS NULL OR section.id IS NOT NULL") &&
+      facultyCurriculumAuthorizationSource.Contains("reader.IsDBNull(1) ? null : reader.GetString(1)"),
+    "Faculty curriculum authorization does not safely support active legacy assignments.");
+Pass(194, "Faculty curriculum authorization supports legacy assignments without accepting inactive sections");
 
 var programCatalog = new[]
 {
@@ -358,12 +365,14 @@ var programCatalog = new[]
     new FacultyCurriculumAuthorizationService.AcademicProgram(2, "BSCE", "Bachelor of Science in Civil Engineering"),
     new FacultyCurriculumAuthorizationService.AcademicProgram(3, "BSCpE", "Bachelor of Science in Computer Engineering")
 };
-Check(new[] { "IT", "IT Department", "BSIT", "Bachelor of Science in Information Technology", "Information Technology" }
+Check(new[] { "IT", "IT Department", "BSIT", "Bachelor of Science in Information Technology", "BS Information Technology", "Information Technology" }
         .All(alias => FacultyCurriculumAuthorizationService.ResolveUniqueProgramId(alias, programCatalog) == 1) &&
       FacultyCurriculumAuthorizationService.ResolveUniqueProgramId("IT Department", new[]
       {
           new FacultyCurriculumAuthorizationService.AcademicProgram(1, "BSIT", "BS Information Technology")
-      }) == 1,
+      }) == 1 &&
+      FacultyCurriculumAuthorizationService.ResolveUniqueProgramId("BS Civil Engineering", programCatalog) == 2 &&
+      FacultyCurriculumAuthorizationService.ResolveUniqueProgramId("BS Computer Engineering", programCatalog) == 3,
     "IT aliases do not resolve uniquely to the canonical BSIT program.");
 Pass(189, "IT aliases resolve to canonical BSIT without an IT-only query");
 Check(FacultyCurriculumAuthorizationService.ResolveUniqueProgramId("Civil Engineering", programCatalog) == 2 &&
@@ -401,7 +410,7 @@ Check(curriculumRepairMigration.Contains("WHERE curriculum.status = 'PUBLISHED'"
 Pass(188, "program curriculum repair migration is idempotent and published-only");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=196;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -455,7 +464,8 @@ INSERT INTO academic_programs VALUES(1,'BSIT','BS Information Technology',TRUE),
 INSERT INTO academic_periods(school_year,semester,term,status) VALUES('2026-2027','FIRST','midterm','ACTIVE');
 INSERT INTO curriculum_subjects(curriculum_id,subject_code,prerequisite,year_level,semester) VALUES(1,'IT 101',NULL,1,'FIRST'),(1,'IT 102','IT 101',1,'FIRST'),(1,'IT 201','IT 102',2,'SECOND'),(2,'CS 101',NULL,1,'FIRST');
 INSERT INTO academicsections(id,department,year_level,section_num) VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2),(3,'BS Computer Science',1,1);
-INSERT INTO users VALUES(1,'x','profx@plv.edu.ph','faculty','APPROVED',TRUE),(3,'y','profy@plv.edu.ph','faculty','APPROVED',TRUE),(9,'z','profz@plv.edu.ph','faculty','APPROVED',TRUE),(13,'chair','chair@plv.edu.ph','department_admin','APPROVED',TRUE),(16,'inactive','inactive@plv.edu.ph','faculty','APPROVED',FALSE),(17,'pending','pending@plv.edu.ph','faculty','PENDING',TRUE),(18,'cschair','cschair@plv.edu.ph','department_admin','APPROVED',TRUE),(19,'unknownchair','unknownchair@plv.edu.ph','department_admin','APPROVED',TRUE),(2,'a','a@plv.edu.ph','student','APPROVED',TRUE),(4,'b','b@plv.edu.ph','student','APPROVED',TRUE),(5,'c','c@plv.edu.ph','student','APPROVED',TRUE),(6,'stale','stale@plv.edu.ph','student','APPROVED',TRUE),(7,'old','old@plv.edu.ph','student','APPROVED',TRUE),(8,'second','second@plv.edu.ph','student','APPROVED',TRUE),(12,'csc','csc@plv.edu.ph','student','APPROVED',TRUE);
+INSERT INTO academicsections(id,department,year_level,section_num,is_active) VALUES(4,'BS Information Technology',1,3,FALSE);
+INSERT INTO users VALUES(1,'x','profx@plv.edu.ph','faculty','APPROVED',TRUE),(3,'y','profy@plv.edu.ph','faculty','APPROVED',TRUE),(9,'z','profz@plv.edu.ph','faculty','APPROVED',TRUE),(13,'chair','chair@plv.edu.ph','department_admin','APPROVED',TRUE),(16,'inactive','inactive@plv.edu.ph','faculty','APPROVED',FALSE),(17,'pending','pending@plv.edu.ph','faculty','PENDING',TRUE),(18,'cschair','cschair@plv.edu.ph','department_admin','APPROVED',TRUE),(19,'unknownchair','unknownchair@plv.edu.ph','department_admin','APPROVED',TRUE),(20,'legacy','legacy@plv.edu.ph','faculty','APPROVED',TRUE),(21,'unresolved','unresolved@plv.edu.ph','faculty','APPROVED',TRUE),(22,'archived','archived@plv.edu.ph','faculty','APPROVED',TRUE),(2,'a','a@plv.edu.ph','student','APPROVED',TRUE),(4,'b','b@plv.edu.ph','student','APPROVED',TRUE),(5,'c','c@plv.edu.ph','student','APPROVED',TRUE),(6,'stale','stale@plv.edu.ph','student','APPROVED',TRUE),(7,'old','old@plv.edu.ph','student','APPROVED',TRUE),(8,'second','second@plv.edu.ph','student','APPROVED',TRUE),(12,'csc','csc@plv.edu.ph','student','APPROVED',TRUE);
 INSERT INTO facultyprofiles VALUES(1,'FAC-1','Professor X','BS Information Technology'),(3,'FAC-3','Professor Y','BS Information Technology'),(9,'FAC-9','Professor Z','BS Information Technology'),(13,'CHAIR-1','Chairperson Account','BS Information Technology');
 INSERT INTO adminprofiles VALUES(13,'IT Chair','IT Department'),(18,'CS Chair','BS Computer Science'),(19,'Unknown Chair','CE Department');
 INSERT INTO studentprofiles(user_id,student_no,full_name,department,section,assignment_status) VALUES(2,'26-0001','Student A','Wrong','9-9','Dropped'),(4,'26-0002','Student B','BS Information Technology','BSIT 1-1','Enrolled'),(5,'26-0003','Student C','BS Information Technology','BSIT 1-1','Enrolled'),(6,'26-0004','Stale Profile','BS Information Technology','BSIT 1-1','Enrolled'),(7,'25-0001','Old Period','BS Information Technology','BSIT 1-1','Enrolled'),(8,'26-0005','Second Term','BS Information Technology','BSIT 1-1','Enrolled'),(12,'26-0100','Computer Science Student','BS Computer Science','BSCS 1-1','Enrolled');
@@ -466,7 +476,10 @@ INSERT INTO facultysections(id,user_id,department,section,year_level,subject,aca
   (172,3,'Computer Science','BSCS 1-1','1','CS 101',3,'2026-2027','FIRST',TRUE),
   (173,9,'Computer Science','BSCS 1-1','1','CS 101',3,'2026-2027','FIRST',TRUE),
   (174,16,'Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE),
-  (175,17,'Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE);");
+  (175,17,'Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE),
+  (176,20,'IT Department','BSIT 1-1','1','IT 101',NULL,NULL,NULL,TRUE),
+  (177,21,'Unknown Department','UNKNOWN 1-1','1','XX 101',NULL,NULL,NULL,TRUE),
+  (178,22,'IT Department','BSIT 1-3','1','IT 101',4,'2026-2027','FIRST',TRUE);");
 var bsitFacultyPrograms = await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(db, "profx@plv.edu.ph");
 var multiProgramFacultyPrograms = await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(db, "profy@plv.edu.ph");
 var bscsFacultyPrograms = await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(db, "profz@plv.edu.ph");
@@ -484,7 +497,14 @@ Check((await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedPr
       (await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedProgramIdsAsync(db, "unknownchair@plv.edu.ph")).Count == 0,
     "Department Head aliases did not resolve uniquely and fail closed by canonical program.");
 Pass(193, "Department Head curriculum authorization is canonical and program-exclusive");
-await Exec("DELETE FROM facultysections WHERE id BETWEEN 170 AND 175");
+Check((await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(db, "legacy@plv.edu.ph")).SetEquals(new[] { 1 }),
+    "An active legacy Faculty assignment did not resolve to its unique canonical program.");
+Pass(195, "active legacy Faculty assignment authorizes its uniquely resolved program");
+Check((await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(db, "unresolved@plv.edu.ph")).Count == 0 &&
+      (await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(db, "archived@plv.edu.ph")).Count == 0,
+    "An unresolved legacy assignment or inactive canonical section granted curriculum access.");
+Pass(196, "unresolved and inactive-section Faculty assignments fail closed");
+await Exec("DELETE FROM facultysections WHERE id BETWEEN 170 AND 178");
 Check(await StudentCurriculumResolver.ResolveAsync(db, "a@plv.edu.ph") == 1,
     "A PLANNING enrollment did not resolve its assigned published curriculum.");
 Pass(125, "student assigned published curriculum is visible before period finalization");

@@ -22,7 +22,7 @@ public static class FacultyCurriculumAuthorizationService
             JOIN facultysections fs
               ON fs.user_id = actor.id
              AND fs.is_active = TRUE
-            JOIN academicsections section
+            LEFT JOIN academicsections section
               ON section.id = fs.academic_section_id
              AND section.is_active = TRUE
             LEFT JOIN LATERAL (
@@ -40,6 +40,7 @@ public static class FacultyCurriculumAuthorizationService
             WHERE LOWER(actor.email) = LOWER(@actor)
               AND LOWER(actor.role) = 'faculty'
               AND LOWER(actor.status) = 'approved'
+              AND (fs.academic_section_id IS NULL OR section.id IS NOT NULL)
               AND actor.is_active = TRUE;", connection);
         command.Parameters.AddWithValue("actor", facultyEmail);
 
@@ -54,8 +55,10 @@ public static class FacultyCurriculumAuthorizationService
                 continue;
             }
 
-            var sectionProgramId = ResolveUniqueProgramId(reader.GetString(1), programs);
-            var assignmentProgramId = ResolveUniqueProgramId(reader.GetString(0), programs);
+            var sectionProgramId = ResolveUniqueProgramId(
+                reader.IsDBNull(1) ? null : reader.GetString(1), programs);
+            var assignmentProgramId = ResolveUniqueProgramId(
+                reader.IsDBNull(0) ? null : reader.GetString(0), programs);
             var resolvedIds = new[] { sectionProgramId, assignmentProgramId }
                 .Where(id => id.HasValue)
                 .Select(id => id!.Value)
@@ -171,6 +174,9 @@ public static class FacultyCurriculumAuthorizationService
     {
         var withoutDescriptor = Regex.Replace((value ?? string.Empty).Trim(),
             @"\b(?:department|dept\.?|program|course)\b", string.Empty, RegexOptions.IgnoreCase);
-        return Regex.Replace(withoutDescriptor.ToLowerInvariant(), @"[^a-z0-9]", string.Empty);
+        var withoutDegreePrefix = Regex.Replace(withoutDescriptor.Trim(),
+            @"^(?:Bachelor\s+of\s+(?:Science|Arts?)\s+in\s+|Bachelor\s+of\s+|B(?:S|A)\s+)",
+            string.Empty, RegexOptions.IgnoreCase);
+        return Regex.Replace(withoutDegreePrefix.ToLowerInvariant(), @"[^a-z0-9]", string.Empty);
     }
 }
