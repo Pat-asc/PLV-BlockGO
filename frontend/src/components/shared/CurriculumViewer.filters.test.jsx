@@ -36,5 +36,14 @@ test('only semesters actually present in curriculum data are offered', () => {
 test('catalog-only views use neutral rows instead of student progress styling', () => {
   render(<CurriculumViewer curricula={[curriculum]} />);
 
-  expect(screen.getByRole('row', { name: /IT101 First/ })).not.toHaveAttribute('data-progress-status');
+  expect(screen.getByRole('row', { name: /Subject code IT101 Subject title First/ })).not.toHaveAttribute('data-progress-status');
+});
+
+test('renders phone and tablet labels without duplicating curriculum rows', () => {
+  render(<CurriculumViewer curricula={[curriculum]} />);
+
+  expect(screen.getAllByText('Subject code')).toHaveLength(curriculum.subjects.length);
+  expect(screen.getAllByText('Subject title')).toHaveLength(curriculum.subjects.length);
+  expect(screen.queryByText(/swipe horizontally/i)).not.toBeInTheDocument();
+  expect(screen.getAllByRole('row', { name: /IT10[12]|IT201/ })).toHaveLength(curriculum.subjects.length);
 });

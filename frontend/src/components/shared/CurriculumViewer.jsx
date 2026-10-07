@@ -55,21 +55,30 @@ const CurriculumViewer = ({ curricula = [], currentYear = 0, loading = false, em
           <h3 className="text-base font-bold text-slate-800">{ordinal(year)} <span className="mx-1 text-slate-300">/</span> {semesterLabels[semester] || semester}</h3>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">Total Units: {total}</span>
         </div>
-        <div className="max-w-full overflow-x-auto rounded-xl border border-slate-200 shadow-sm">
-          <table className="min-w-[820px] table-fixed divide-y divide-slate-200 text-sm">
-            <thead className="sticky top-0 bg-slate-100/95 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 backdrop-blur">
+        <div className="max-w-full xl:overflow-x-auto xl:rounded-xl xl:border xl:border-slate-200 xl:shadow-sm">
+          <table className="block w-full text-sm xl:table xl:min-w-[820px] xl:table-fixed xl:divide-y xl:divide-slate-200">
+            <thead className="hidden bg-slate-100/95 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 backdrop-blur xl:table-header-group">
               <tr><th className="w-28 px-4 py-3">Code</th><th className="w-56 px-4 py-3">Subject</th><th className="w-20 px-4 py-3 text-center">Units</th><th className="w-24 px-4 py-3 text-center">Lecture</th><th className="w-28 px-4 py-3 text-center">Laboratory</th><th className="w-40 px-4 py-3">Prerequisite</th><th className="w-32 px-4 py-3">Category</th>{progressBySubject ? <><th className="w-32 px-4 py-3">Status</th><th className="w-28 px-4 py-3">Grade</th></> : null}</tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">{rows.map((subject, index) => {
+            <tbody className="grid gap-3 xl:table-row-group xl:divide-y xl:divide-slate-100">{rows.map((subject, index) => {
               const progress = progressBySubject?.[String(subject.subjectCode).trim().toUpperCase()];
               const status = progress?.status || 'Not Yet Taken';
               const progressClass = status === 'Completed' ? 'bg-emerald-50/60 text-slate-800' : status === 'In Progress' ? 'bg-amber-50/70 text-slate-800' : status === 'Not Yet Taken' ? 'bg-slate-200/80 text-slate-600' : 'bg-red-50/60 text-slate-800';
               const rowClass = progressBySubject ? progressClass : `${index % 2 === 0 ? 'bg-white' : 'bg-slate-50/70'} text-slate-700 hover:bg-blue-50/60`;
-              return <tr key={subject.subjectId} data-progress-status={progressBySubject ? status : undefined} className={`${rowClass} transition-colors`}><td className="break-words px-4 py-3.5 font-bold text-[#003366]">{subject.subjectCode}</td><td className="break-words px-4 py-3.5 font-medium">{subject.subjectTitle}</td><td className="px-4 py-3.5 text-center tabular-nums">{subject.units}</td><td className="px-4 py-3.5 text-center tabular-nums">{subject.lectureHours}</td><td className="px-4 py-3.5 text-center tabular-nums">{subject.laboratoryHours}</td><td className="break-words px-4 py-3.5 text-slate-600">{subject.prerequisite || 'None'}</td><td className="break-words px-4 py-3.5 text-slate-600">{subject.subjectType || '—'}</td>{progressBySubject ? <><td className="break-words px-4 py-3.5 font-semibold">{status}</td><td className="break-words px-4 py-3.5">{progress?.grade || 'Not Yet Available'}</td></> : null}</tr>;
+              const mobileLabelClass = 'mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400 xl:hidden';
+              return <tr key={subject.subjectId} data-progress-status={progressBySubject ? status : undefined} className={`${rowClass} grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-slate-200 p-4 shadow-sm transition-colors sm:grid-cols-4 xl:table-row xl:rounded-none xl:border-0 xl:p-0 xl:shadow-none`}>
+                <td className="col-span-1 break-words font-bold text-[#003366] xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Subject code</span>{subject.subjectCode}</td>
+                <td className="col-span-2 break-words font-medium sm:col-span-3 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Subject title</span>{subject.subjectTitle}</td>
+                <td className="tabular-nums xl:table-cell xl:px-4 xl:py-3.5 xl:text-center"><span className={mobileLabelClass}>Units</span>{subject.units}</td>
+                <td className="tabular-nums xl:table-cell xl:px-4 xl:py-3.5 xl:text-center"><span className={mobileLabelClass}>Lecture hours</span>{subject.lectureHours}</td>
+                <td className="tabular-nums xl:table-cell xl:px-4 xl:py-3.5 xl:text-center"><span className={mobileLabelClass}>Laboratory hours</span>{subject.laboratoryHours}</td>
+                <td className="break-words text-slate-600 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Prerequisite</span>{subject.prerequisite || 'None'}</td>
+                <td className="break-words text-slate-600 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Category</span>{subject.subjectType || '—'}</td>
+                {progressBySubject ? <><td className="break-words font-semibold xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Status</span>{status}</td><td className="col-span-2 break-words sm:col-span-1 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Grade</span>{progress?.grade || 'Not Yet Available'}</td></> : null}
+              </tr>;
             })}</tbody>
           </table>
         </div>
-        <p className="mt-2 text-xs text-slate-400 sm:hidden">Swipe horizontally to view all subject details.</p>
       </div>;
     })}
     {!filteredSubjects.length ? <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-7 text-center text-sm font-medium text-slate-500">No subjects match the selected Year Level and Semester.</div> : null}

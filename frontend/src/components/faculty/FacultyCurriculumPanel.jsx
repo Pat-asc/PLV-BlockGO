@@ -41,7 +41,7 @@ const FacultyCurriculumPanel = () => {
         <div className="relative px-5 py-6 sm:px-7">
           <div aria-hidden="true" className="absolute -right-14 -top-16 h-48 w-48 rounded-full bg-blue-400/15" />
           <div aria-hidden="true" className="absolute -bottom-24 right-24 h-44 w-44 rounded-full bg-yellow-300/10" />
-          <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative">
             <div className="flex min-w-0 items-start gap-4">
               <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15 sm:flex">
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6 text-yellow-300">
@@ -55,10 +55,6 @@ const FacultyCurriculumPanel = () => {
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">Review the Registrar-published checklist for your academic program, including subject requirements, prerequisites, and unit totals.</p>
               </div>
             </div>
-            <button type="button" onClick={load} disabled={loading} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 self-start rounded-lg border border-white/25 bg-white px-4 text-sm font-bold text-[#003366] shadow-sm transition hover:bg-blue-50 disabled:cursor-wait disabled:opacity-70 sm:self-center">
-              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}><path d="M20 11a8.1 8.1 0 1 0 2 5.3" /><path d="M20 4v7h-7" /></svg>
-              {loading ? 'Refreshing...' : 'Refresh curriculum'}
-            </button>
           </div>
         </div>
       </section>

@@ -50,7 +50,7 @@ test('shows a concise curriculum summary from the published checklist', async ()
   expect(screen.getByText('Academic Program')).toBeInTheDocument();
   expect(screen.getByText('Curriculum Subjects')).toBeInTheDocument();
   expect(screen.getByText('Total Curriculum Units')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Refresh curriculum' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Refresh curriculum' })).not.toBeInTheDocument();
 });
 
 test.each([
