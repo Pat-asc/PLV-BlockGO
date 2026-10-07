@@ -101,7 +101,8 @@ namespace Client_app.Controllers
                 LIMIT 1;", connection))
             {
                 command.Parameters.AddWithValue("program", program.Trim());
-                command.Parameters.AddWithValue("batchYear", (object?)batchYear ?? DBNull.Value);
+                command.Parameters.Add("batchYear", NpgsqlDbType.Integer).Value =
+                    (object?)batchYear ?? DBNull.Value;
                 command.Parameters.AddWithValue("isRegistrar", role == "registrar");
                 command.Parameters.AddWithValue("actor", ActorEmail());
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken);

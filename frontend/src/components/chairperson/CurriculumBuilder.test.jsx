@@ -178,6 +178,49 @@ test('automatically shows the assigned published version without a version dropd
   expect(screen.getAllByText('v2026.2').length).toBeGreaterThan(0);
   expect(screen.queryByRole('combobox', { name: /curriculum version/i })).not.toBeInTheDocument();
   expect(fetchCurriculums).toHaveBeenCalledTimes(1);
+  expect(fetchAssignedCurriculum).toHaveBeenCalledWith('BSIT');
+});
+
+test('IT Department automatically uses BSIT and does not display a program selector', async () => {
+  fetchCurriculums.mockResolvedValue({ data: [] });
+
+  render(<CurriculumBuilder department="IT Department" />);
+
+  expect(await screen.findByRole('button', { name: 'Create Curriculum' })).toBeInTheDocument();
+  expect(fetchAssignedCurriculum).toHaveBeenCalledWith('BSIT');
+  expect(screen.queryByRole('combobox', { name: 'Program for new curriculum' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Select program/i)).not.toBeInTheDocument();
+});
+
+test('IT Department curriculum creation keeps BSIT after the selector is removed', async () => {
+  fetchCurriculums.mockResolvedValue({ data: [] });
+  createCurriculum.mockResolvedValue({ data: { ...curriculum, curriculumId: 44 } });
+  render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);
+
+  await screen.findByRole('button', { name: 'Create Curriculum' });
+  fireEvent.change(screen.getByPlaceholderText('Curriculum Code'), { target: { value: 'BSIT-2028' } });
+  fireEvent.change(screen.getByPlaceholderText('Curriculum Name'), { target: { value: 'BSIT Curriculum 2028' } });
+  fireEvent.change(screen.getByPlaceholderText('Version'), { target: { value: '3.0' } });
+  fireEvent.change(screen.getByPlaceholderText('School Year'), { target: { value: '2028-2029' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create Curriculum' }));
+
+  await waitFor(() => expect(createCurriculum).toHaveBeenCalledWith(expect.objectContaining({
+    programCode: 'BSIT',
+    curriculumCode: 'BSIT-2028',
+  })));
+});
+
+test('non-IT departments retain the existing program selector', async () => {
+  fetchAcademicPrograms.mockResolvedValue({ data: [
+    { programId: 2, programCode: 'BSEE', programName: 'Bachelor of Science in Electrical Engineering' },
+  ] });
+  fetchCurriculums.mockResolvedValue({ data: [] });
+
+  render(<CurriculumBuilder department="Bachelor of Science in Electrical Engineering" />);
+
+  const selector = await screen.findByRole('combobox', { name: 'Program for new curriculum' });
+  expect(selector).toHaveValue('BSEE');
+  expect(fetchAssignedCurriculum).toHaveBeenCalledWith('BSEE');
 });
 
 test('shows a clear state when no approved curriculum is assigned', async () => {
