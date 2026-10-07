@@ -67,6 +67,42 @@ public static class FacultyCurriculumAuthorizationService
         return authorizedProgramIds;
     }
 
+    public static async Task<IReadOnlySet<int>> ResolveDepartmentAuthorizedProgramIdsAsync(
+        NpgsqlConnection connection,
+        string departmentHeadEmail,
+        NpgsqlTransaction? transaction = null,
+        CancellationToken cancellationToken = default)
+    {
+        var programs = await LoadActiveProgramsAsync(connection, transaction, cancellationToken);
+        string? department;
+        await using (var command = new NpgsqlCommand(@"
+            SELECT profile.department
+            FROM users actor
+            JOIN adminprofiles profile ON profile.user_id = actor.id
+            WHERE LOWER(actor.email) = LOWER(@actor)
+              AND LOWER(actor.role) = 'department_admin'
+              AND LOWER(actor.status) = 'approved'
+              AND actor.is_active = TRUE;", connection, transaction))
+        {
+            command.Parameters.AddWithValue("actor", departmentHeadEmail);
+            department = (await command.ExecuteScalarAsync(cancellationToken))?.ToString();
+        }
+
+        var programId = ResolveUniqueProgramId(department, programs);
+        return programId.HasValue
+            ? new HashSet<int> { programId.Value }
+            : new HashSet<int>();
+    }
+
+    public static async Task<int?> ResolveUniqueProgramIdAsync(
+        NpgsqlConnection connection,
+        string? identifier,
+        NpgsqlTransaction? transaction = null,
+        CancellationToken cancellationToken = default) =>
+        ResolveUniqueProgramId(
+            identifier,
+            await LoadActiveProgramsAsync(connection, transaction, cancellationToken));
+
     public static int? ResolveUniqueProgramId(
         string? identifier,
         IReadOnlyCollection<AcademicProgram> programs)
@@ -85,6 +121,7 @@ public static class FacultyCurriculumAuthorizationService
 
     private static async Task<IReadOnlyCollection<AcademicProgram>> LoadActiveProgramsAsync(
         NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
         CancellationToken cancellationToken)
     {
         var programs = new List<AcademicProgram>();
@@ -92,12 +129,17 @@ public static class FacultyCurriculumAuthorizationService
             SELECT program_id, program_code, program_name
             FROM academic_programs
             WHERE is_active = TRUE
-            ORDER BY program_id;", connection);
+            ORDER BY program_id;", connection, transaction);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             programs.Add(new AcademicProgram(reader.GetInt32(0), reader.GetString(1), reader.GetString(2)));
         return programs;
     }
+
+    private static Task<IReadOnlyCollection<AcademicProgram>> LoadActiveProgramsAsync(
+        NpgsqlConnection connection,
+        CancellationToken cancellationToken) =>
+        LoadActiveProgramsAsync(connection, null, cancellationToken);
 
     private static HashSet<string> BuildAliases(AcademicProgram program)
     {
@@ -106,7 +148,7 @@ public static class FacultyCurriculumAuthorizationService
         AddAlias(aliases, program.Name);
 
         var coreName = Regex.Replace(program.Name.Trim(),
-            @"^Bachelor\s+of\s+(?:Science|Arts?)\s+in\s+|^Bachelor\s+of\s+",
+            @"^Bachelor\s+of\s+(?:Science|Arts?)\s+in\s+|^Bachelor\s+of\s+|^B(?:S|A)\s+",
             string.Empty, RegexOptions.IgnoreCase);
         AddAlias(aliases, coreName);
 

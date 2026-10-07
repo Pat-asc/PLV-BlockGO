@@ -59,7 +59,9 @@ const CurriculumBuilder = ({ department = '' }) => {
       const [programResult, curriculumResult] = await Promise.all([fetchAcademicPrograms(), fetchCurriculums()]);
       const allPrograms = Array.isArray(programResult?.data) ? programResult.data : [];
       const allCurricula = Array.isArray(curriculumResult?.data) ? curriculumResult.data : [];
-      const owned = normalizedDepartment ? allPrograms.filter((item) => item.programName.toLowerCase() === normalizedDepartment || item.programCode.toLowerCase() === normalizedDepartment) : allPrograms;
+      // The backend already returns only canonical programs authorized for this Chairperson.
+      // Do not re-apply a fragile display-name comparison in the browser.
+      const owned = allPrograms;
       const assignedProgramCode = isItDepartment ? itProgramCode : owned[0]?.programCode;
       const assignedResult = assignedProgramCode ? await fetchAssignedCurriculum(assignedProgramCode) : { data: null };
       const assignment = assignedResult?.data || null;
@@ -86,7 +88,7 @@ const CurriculumBuilder = ({ department = '' }) => {
       } else setNotice({ type: 'error', message: error.message });
     }
     finally { setLoading(false); }
-  }, [isItDepartment, isLocalMode, normalizedDepartment]);
+  }, [isItDepartment, isLocalMode]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {

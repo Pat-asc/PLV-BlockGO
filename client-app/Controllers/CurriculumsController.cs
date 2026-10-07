@@ -42,20 +42,20 @@ namespace Client_app.Controllers
             var programs = new List<object>();
             await using var connection = await OpenConnectionAsync(cancellationToken);
             var role = ActorRole();
+            var authorizedProgramIds = role == "registrar"
+                ? Array.Empty<int>()
+                : (await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedProgramIdsAsync(
+                    connection, ActorEmail(), cancellationToken: cancellationToken)).ToArray();
             var sql = role == "registrar"
                 ? @"SELECT program_id, program_code, program_name
                     FROM academic_programs WHERE is_active = TRUE ORDER BY program_name;"
-                : @"SELECT DISTINCT program.program_id, program.program_code, program.program_name
+                : @"SELECT program.program_id, program.program_code, program.program_name
                     FROM academic_programs program
-                    JOIN users actor ON LOWER(actor.email) = LOWER(@actor)
-                    JOIN adminprofiles profile ON profile.user_id = actor.id
                     WHERE program.is_active = TRUE
-                      AND actor.is_active = TRUE
-                      AND LOWER(actor.status) = 'approved'
-                      AND LOWER(profile.department) IN (LOWER(program.program_code), LOWER(program.program_name))
+                      AND program.program_id = ANY(@programIds)
                     ORDER BY program.program_name;";
             await using var command = new NpgsqlCommand(sql, connection);
-            if (role != "registrar") command.Parameters.AddWithValue("actor", ActorEmail());
+            if (role != "registrar") command.Parameters.AddWithValue("programIds", authorizedProgramIds);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
@@ -76,40 +76,47 @@ namespace Client_app.Controllers
 
             await using var connection = await OpenConnectionAsync(cancellationToken);
             var role = ActorRole();
+            var requestedProgramId = await FacultyCurriculumAuthorizationService.ResolveUniqueProgramIdAsync(
+                connection, program, cancellationToken: cancellationToken);
+            if (!requestedProgramId.HasValue)
+                return Ok(new { status = "Success", data = (object?)null });
+            if (role != "registrar")
+            {
+                var authorizedProgramIds = await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedProgramIdsAsync(
+                    connection, ActorEmail(), cancellationToken: cancellationToken);
+                if (!authorizedProgramIds.Contains(requestedProgramId.Value)) return Forbid();
+            }
+
             long? curriculumId = null;
             int? resolvedBatchYear = null;
             DateTimeOffset? assignedAt = null;
             await using (var command = new NpgsqlCommand(@"
-                SELECT curriculum.curriculum_id, assignment.batch_year, assignment.assigned_at
-                FROM curriculum_batch_assignments assignment
-                JOIN academic_programs academic_program ON academic_program.program_id = assignment.program_id
-                JOIN curriculums curriculum ON curriculum.curriculum_id = assignment.curriculum_id
-                WHERE LOWER(@program) IN (LOWER(academic_program.program_code), LOWER(academic_program.program_name))
-                  AND (@batchYear IS NULL OR assignment.batch_year = @batchYear)
-                  AND curriculum.status IN ('PUBLISHED', 'ARCHIVED')
-                  AND (@isRegistrar OR EXISTS (
-                      SELECT 1
-                      FROM users actor
-                      JOIN adminprofiles profile ON profile.user_id = actor.id
-                      WHERE LOWER(actor.email) = LOWER(@actor)
-                        AND actor.is_active = TRUE
-                        AND LOWER(actor.status) = 'approved'
-                        AND LOWER(profile.department) IN (LOWER(academic_program.program_code), LOWER(academic_program.program_name))))
-                ORDER BY assignment.updated_at DESC,
-                         curriculum.published_at DESC NULLS LAST,
-                         curriculum.updated_at DESC
-                LIMIT 1;", connection))
+                SELECT curriculum.curriculum_id, cohort.batch_year, assignment.assigned_at
+                FROM program_curriculum_assignments assignment
+                JOIN curriculums curriculum
+                  ON curriculum.curriculum_id = assignment.curriculum_id
+                 AND curriculum.program_id = assignment.program_id
+                 AND curriculum.status = 'PUBLISHED'
+                LEFT JOIN LATERAL (
+                    SELECT batch.batch_year
+                    FROM curriculum_batch_assignments batch
+                    WHERE batch.program_id = assignment.program_id
+                      AND batch.curriculum_id = assignment.curriculum_id
+                      AND (@batchYear IS NULL OR batch.batch_year = @batchYear)
+                    ORDER BY batch.updated_at DESC
+                    LIMIT 1
+                ) cohort ON TRUE
+                WHERE assignment.program_id = @programId
+                  AND (@batchYear IS NULL OR cohort.batch_year IS NOT NULL);", connection))
             {
-                command.Parameters.AddWithValue("program", program.Trim());
+                command.Parameters.AddWithValue("programId", requestedProgramId.Value);
                 command.Parameters.Add("batchYear", NpgsqlDbType.Integer).Value =
                     (object?)batchYear ?? DBNull.Value;
-                command.Parameters.AddWithValue("isRegistrar", role == "registrar");
-                command.Parameters.AddWithValue("actor", ActorEmail());
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken);
                 if (await reader.ReadAsync(cancellationToken))
                 {
                     curriculumId = reader.GetInt64(0);
-                    resolvedBatchYear = reader.GetInt32(1);
+                    resolvedBatchYear = reader.IsDBNull(1) ? null : reader.GetInt32(1);
                     assignedAt = reader.GetFieldValue<DateTimeOffset>(2);
                 }
             }
@@ -184,22 +191,23 @@ namespace Client_app.Controllers
             var role = ActorRole();
             var actor = ActorEmail();
             await using var connection = await OpenConnectionAsync(cancellationToken);
+            var authorizedProgramIds = role == "registrar"
+                ? Array.Empty<int>()
+                : (await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedProgramIdsAsync(
+                    connection, actor, cancellationToken: cancellationToken)).ToArray();
             var ids = new List<long>();
             var sql = role == "registrar"
                 ? @"SELECT c.curriculum_id FROM curriculums c WHERE (@status IS NULL OR c.status = @status) ORDER BY c.updated_at DESC"
                 : @"SELECT c.curriculum_id
                     FROM curriculums c
-                    JOIN academic_programs p ON p.program_id = c.program_id
-                    JOIN users u ON LOWER(u.email) = LOWER(@actor)
-                    JOIN adminprofiles ap ON ap.user_id = u.id
-                    WHERE (LOWER(ap.department) = LOWER(p.program_name) OR LOWER(ap.department) = LOWER(p.program_code))
+                    WHERE c.program_id = ANY(@programIds)
                       AND (@status IS NULL OR c.status = @status)
                     ORDER BY c.updated_at DESC";
             await using (var command = new NpgsqlCommand(sql, connection))
             {
                 var statusParameter = command.Parameters.Add("status", NpgsqlTypes.NpgsqlDbType.Varchar);
                 statusParameter.Value = (object?)NormalizeOptionalStatus(status) ?? DBNull.Value;
-                if (role != "registrar") command.Parameters.AddWithValue("actor", actor);
+                if (role != "registrar") command.Parameters.AddWithValue("programIds", authorizedProgramIds);
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken);
                 while (await reader.ReadAsync(cancellationToken)) ids.Add(reader.GetInt64(0));
             }
@@ -227,7 +235,7 @@ namespace Client_app.Controllers
             await using var connection = await OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             var actor = await GetActorAsync(connection, transaction, cancellationToken);
-            var program = await ResolveOwnedProgramAsync(connection, transaction, actor.Id, request.ProgramCode, cancellationToken);
+            var program = await ResolveOwnedProgramAsync(connection, transaction, actor.Email, request.ProgramCode, cancellationToken);
 
             long curriculumId;
             try
@@ -327,7 +335,7 @@ namespace Client_app.Controllers
             await using var connection = await OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             var actor = await GetActorAsync(connection, transaction, cancellationToken);
-            var program = await ResolveOwnedProgramAsync(connection, transaction, actor.Id, request.ProgramCode, cancellationToken);
+            var program = await ResolveOwnedProgramAsync(connection, transaction, actor.Email, request.ProgramCode, cancellationToken);
             long curriculumId;
             try
             {
@@ -969,16 +977,10 @@ namespace Client_app.Controllers
                 facultyCommand.Parameters.AddWithValue("curriculumId", curriculum.CurriculumId);
                 return Convert.ToInt64(await facultyCommand.ExecuteScalarAsync(cancellationToken)) > 0;
             }
-            await using (var command = new NpgsqlCommand($@"
-                SELECT COUNT(*) FROM users u JOIN adminprofiles profile ON profile.user_id = u.id
-                JOIN academic_programs p ON p.program_id = @programId
-                WHERE LOWER(u.email) = LOWER(@actor)
-                  AND (LOWER(profile.department) = LOWER(p.program_name) OR LOWER(profile.department) = LOWER(p.program_code));", connection))
-            {
-                command.Parameters.AddWithValue("actor", ActorEmail());
-                command.Parameters.AddWithValue("programId", curriculum.ProgramId);
-                return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) > 0;
-            }
+            if (role != "department_admin") return false;
+            var departmentProgramIds = await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedProgramIdsAsync(
+                connection, ActorEmail(), cancellationToken: cancellationToken);
+            return departmentProgramIds.Contains(curriculum.ProgramId);
         }
 
         private async Task<CurriculumDto> RequireEditableOwnedCurriculumAsync(
@@ -991,7 +993,7 @@ namespace Client_app.Controllers
             allowedStatuses ??= new[] { CurriculumStatuses.Draft, CurriculumStatuses.Returned };
             var curriculum = await RequireStatusAsync(connection, transaction, id, allowedStatuses, cancellationToken);
             var actor = await GetActorAsync(connection, transaction, cancellationToken);
-            await ResolveOwnedProgramAsync(connection, transaction, actor.Id, curriculum.ProgramCode, cancellationToken);
+            await ResolveOwnedProgramAsync(connection, transaction, actor.Email, curriculum.ProgramCode, cancellationToken);
             return curriculum;
         }
 
@@ -1170,18 +1172,20 @@ namespace Client_app.Controllers
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        private async Task<(int Id, string Code, string Name)> ResolveOwnedProgramAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int actorId, string programCode, CancellationToken cancellationToken)
+        private async Task<(int Id, string Code, string Name)> ResolveOwnedProgramAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string actorEmail, string programCode, CancellationToken cancellationToken)
         {
+            var requestedProgramId = await FacultyCurriculumAuthorizationService.ResolveUniqueProgramIdAsync(
+                connection, programCode, transaction, cancellationToken);
+            var authorizedProgramIds = await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedProgramIdsAsync(
+                connection, actorEmail, transaction, cancellationToken);
+            if (!requestedProgramId.HasValue || !authorizedProgramIds.Contains(requestedProgramId.Value))
+                throw new UnauthorizedAccessException("Chairpersons may manage only their assigned academic program.");
+
             await using var command = new NpgsqlCommand(@"
                 SELECT p.program_id, p.program_code, p.program_name
                 FROM academic_programs p
-                JOIN adminprofiles ap ON ap.user_id = @actorId
-                JOIN users u ON u.id = ap.user_id
-                WHERE LOWER(p.program_code) = LOWER(@programCode) AND p.is_active = TRUE
-                  AND LOWER(u.role) = 'department_admin' AND u.is_active = TRUE
-                  AND (LOWER(ap.department) = LOWER(p.program_name) OR LOWER(ap.department) = LOWER(p.program_code));", connection, transaction);
-            command.Parameters.AddWithValue("actorId", actorId);
-            command.Parameters.AddWithValue("programCode", programCode.Trim());
+                WHERE p.program_id = @programId AND p.is_active = TRUE;", connection, transaction);
+            command.Parameters.AddWithValue("programId", requestedProgramId.Value);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken)) throw new UnauthorizedAccessException("Chairpersons may manage only their assigned academic program.");
             return (reader.GetInt32(0), reader.GetString(1), reader.GetString(2));

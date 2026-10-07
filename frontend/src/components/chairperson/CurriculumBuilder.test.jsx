@@ -218,6 +218,18 @@ test('non-IT departments automatically use their owned program without a selecto
   expect(fetchAssignedCurriculum).toHaveBeenCalledWith('BSEE');
 });
 
+test('uses the backend-authorized canonical program when a non-IT department label is an alias', async () => {
+  fetchAcademicPrograms.mockResolvedValue({ data: [
+    { programId: 2, programCode: 'BSEE', programName: 'Bachelor of Science in Electrical Engineering' },
+  ] });
+  fetchCurriculums.mockResolvedValue({ data: [] });
+
+  render(<CurriculumBuilder department="Electrical Engineering Department" />);
+
+  expect(await screen.findByRole('button', { name: 'Create Curriculum' })).toBeEnabled();
+  expect(fetchAssignedCurriculum).toHaveBeenCalledWith('BSEE');
+});
+
 test('shows a clear state when no approved curriculum is assigned', async () => {
   fetchCurriculums.mockResolvedValue({ data: [{ ...curriculum, status: 'DRAFT' }] });
   fetchAssignedCurriculum.mockResolvedValue({ data: null });

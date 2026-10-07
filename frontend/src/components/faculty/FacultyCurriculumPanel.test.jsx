@@ -47,5 +47,6 @@ test('surfaces an unauthorized API response without crashing or exposing curricu
   fetchFacultyCurriculums.mockRejectedValue(new Error('Forbidden'));
   render(<FacultyCurriculumPanel />);
   expect(await screen.findByText('Forbidden')).toBeInTheDocument();
-  expect(screen.getByTestId('curriculum-viewer')).toHaveAttribute('data-count', '0');
+  expect(screen.queryByTestId('curriculum-viewer')).not.toBeInTheDocument();
+  expect(screen.queryByText('No published curriculum matches your assigned programs.')).not.toBeInTheDocument();
 });

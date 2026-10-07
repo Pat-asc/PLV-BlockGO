@@ -36,7 +36,7 @@ const FacultyCurriculumPanel = () => {
         </button>
       </div>
       {error ? <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
-      <CurriculumViewer curricula={curricula} loading={loading} emptyMessage="No published curriculum matches your assigned programs." />
+      {!error ? <CurriculumViewer curricula={curricula} loading={loading} emptyMessage="No published curriculum matches your assigned programs." /> : null}
     </div>
   );
 };

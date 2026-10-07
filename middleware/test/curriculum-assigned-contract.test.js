@@ -20,11 +20,14 @@ test('assigned curriculum binds an omitted batch year as a typed nullable Postgr
 test('assigned curriculum returns valid success responses for both data and no assignment', () => {
   assert.match(action, /if \(!curriculumId\.HasValue\)[\s\S]*return Ok\(new \{ status = "Success", data = \(object\?\)null \}\)/);
   assert.match(action, /curriculum = await LoadCurriculumAsync\(connection, curriculumId\.Value/);
-  assert.match(action, /curriculum\.status IN \('PUBLISHED', 'ARCHIVED'\)/);
+  assert.match(action, /FROM program_curriculum_assignments assignment/);
+  assert.match(action, /curriculum\.status = 'PUBLISHED'/);
+  assert.doesNotMatch(action, /curriculum\.status IN \('PUBLISHED', 'ARCHIVED'\)/);
+  assert.match(action, /resolvedBatchYear = reader\.IsDBNull\(1\) \? null : reader\.GetInt32\(1\)/);
 });
 
 test('assigned curriculum keeps Department Admin authorization and program ownership checks', () => {
   assert.match(controller, /\[HttpGet\("assigned"\)\][\s\S]*Authorize\(Roles = "department_admin,registrar"\)/);
-  assert.match(action, /LOWER\(actor\.email\) = LOWER\(@actor\)/);
-  assert.match(action, /LOWER\(profile\.department\) IN \(LOWER\(academic_program\.program_code\), LOWER\(academic_program\.program_name\)\)/);
+  assert.match(action, /ResolveDepartmentAuthorizedProgramIdsAsync/);
+  assert.match(action, /authorizedProgramIds\.Contains\(requestedProgramId\.Value\)/);
 });
