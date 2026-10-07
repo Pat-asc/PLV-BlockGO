@@ -12,12 +12,14 @@ var trustedConfiguration = new ConfigurationBuilder()
     {
         ["ForwardedHeaders:ForwardLimit"] = "2",
         ["ForwardedHeaders:KnownNetworks:0"] = "10.72.0.0/16",
-        ["ForwardedHeaders:KnownNetworks:1"] = "35.191.0.0/16"
+        ["ForwardedHeaders:KnownNetworks:1"] = "10.96.0.0/16",
+        ["ForwardedHeaders:KnownNetworks:2"] = "35.191.0.0/16"
     })
     .Build();
 
 await Check("direct IPv4 request", "198.51.100.20", null, null, "198.51.100.20", "http");
 await Check("trusted X-Forwarded-For and proto", "10.72.4.8", "203.0.113.25", "https", "203.0.113.25", "https");
+await Check("service-range proxy preserves the forwarded client IP", "10.96.2.82", "100.96.2.82", "https", "100.96.2.82", "https");
 await Check("multiple trusted proxy hops", "10.72.4.8", "203.0.113.25, 35.191.10.9", "https", "203.0.113.25", "https");
 await Check("spoofed header from untrusted peer", "198.51.100.44", "203.0.113.99", "https", "198.51.100.44", "http");
 await Check("direct IPv6 request", "2001:db8::25", null, null, "2001:db8::25", "http");

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { getGradeEquivalent } from '../../utils/gradingHelpers';
 import StatusBadge from '../shared/StatusBadge';
+import GradeVersionHistory from '../shared/GradeVersionHistory';
 
 const VIEW_KEY = 'blockgo.student.grades.view';
 const yearLabels = { 1: '1st Year', 2: '2nd Year', 3: '3rd Year', 4: '4th Year' };
@@ -14,13 +15,20 @@ const displayEquivalent = (grade) => {
 
 const mergeTerms = (grades) => {
   const records = new Map();
-  grades.forEach((grade, index) => {
-    const key = grade.recordId || `${grade.subjectCode}-${index}`;
+  grades.forEach((grade) => {
+    const assignmentIdentity = grade.assignmentCycleId || grade.section || grade.facultyId || '';
+    const key = [grade.studentId, grade.subjectCode, assignmentIdentity, grade.schoolYear, grade.semester]
+      .map((value) => String(value || '').trim().toLowerCase()).join('|');
     const current = records.get(key) || { ...grade, midtermGrade: '—', finalGrade: '—' };
     const term = String(grade.term || '').toLowerCase();
     if (term.includes('mid')) current.midtermGrade = grade.grade || '—';
-    else current.finalGrade = grade.grade || '—';
-    current.finalAverage = grade.finalAverage || current.finalAverage || grade.grade;
+    else {
+      current.finalGrade = grade.grade || '—';
+      current.finalAverage = grade.finalAverage || grade.grade || current.finalAverage;
+      current.recordId = grade.recordId || current.recordId;
+      current.term = grade.term || current.term;
+    }
+    if (!current.finalAverage) current.finalAverage = grade.finalAverage || grade.grade;
     records.set(key, current);
   });
   return [...records.values()];
@@ -117,11 +125,11 @@ const StudentHistoricalGrades = ({ grades = [], loading = false, error = '', emp
                           <div className="mt-4 flex items-center justify-between border-y border-slate-100 py-3 text-sm"><span className="text-slate-500">{grade.units || '—'} Units</span><span className="text-xs font-medium text-slate-500">{yearLabels[Number(grade.yearLevel)] || grade.yearLevel || 'Year not recorded'}</span></div>
                           <div className="mt-4 grid grid-cols-2 gap-5">
                             <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Midterm</p><p className="mt-1 text-xl font-bold text-slate-800">{grade.midtermGrade}</p></div>
-                            <div className="border-l border-slate-200 pl-5"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Final Grade</p><p className="mt-1 text-2xl font-extrabold text-[#003366]">{displayEquivalent(grade)}</p></div>
+                            <div className="border-l border-slate-200 pl-5"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Final Grade</p><p className="mt-1 text-2xl font-extrabold text-[#003366]">{grade.finalGrade || '—'}</p><p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Equivalent</p><p className="mt-1 text-lg font-bold text-[#003366]">{displayEquivalent(grade)}</p></div>
                           </div>
                           <div className="mt-4"><p className="text-xs font-semibold text-slate-500">Faculty</p><p className="mt-0.5 truncate text-sm font-medium text-slate-800" title={grade.professor || 'Not recorded'}>{grade.professor || 'Not recorded'}</p></div>
                           {expanded ? <dl className="mt-3 grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 text-xs"><div><dt className="text-slate-500">Section</dt><dd className="mt-0.5 font-semibold text-slate-700">{grade.section || 'Not recorded'}</dd></div><div><dt className="text-slate-500">Term</dt><dd className="mt-0.5 font-semibold capitalize text-slate-700">{grade.term || 'Finals'}</dd></div></dl> : null}
-                          <button type="button" onClick={() => setExpandedCard(expanded ? '' : cardKey)} aria-expanded={expanded} className="mt-auto pt-4 text-left text-sm font-bold text-blue-700 hover:text-[#003366] hover:underline">{expanded ? 'Hide Details' : 'View Details'}</button>
+                          <div className="mt-auto flex flex-wrap gap-3 pt-4"><button type="button" onClick={() => setExpandedCard(expanded ? '' : cardKey)} aria-expanded={expanded} className="text-left text-sm font-bold text-blue-700 hover:text-[#003366] hover:underline">{expanded ? 'Hide Details' : 'View Details'}</button>{grade.recordId ? <GradeVersionHistory recordId={grade.recordId} /> : null}</div>
                         </article>
                       );
                     })}
@@ -129,8 +137,8 @@ const StudentHistoricalGrades = ({ grades = [], loading = false, error = '', emp
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-slate-200">
                     <table className="min-w-full divide-y divide-slate-200 text-sm">
-                      <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Subject Code</th><th className="px-4 py-3">Subject Name</th><th className="px-4 py-3">Units</th><th className="px-4 py-3">Midterm</th><th className="px-4 py-3">Final Grade</th><th className="px-4 py-3">Faculty</th><th className="px-4 py-3">Status</th></tr></thead>
-                      <tbody className="divide-y divide-slate-100">{semesterGrades.map((grade, index) => <tr key={`${grade.recordId}-${index}`} className="hover:bg-slate-50"><td className="whitespace-nowrap px-4 py-3 font-bold text-[#003366]">{grade.subjectCode}</td><td className="px-4 py-3 text-slate-700">{grade.subjectTitle}</td><td className="px-4 py-3">{grade.units || '—'}</td><td className="px-4 py-3 font-semibold">{grade.midtermGrade}</td><td className="px-4 py-3 font-bold text-[#003366]">{displayEquivalent(grade)}</td><td className="px-4 py-3 text-slate-700">{grade.professor || 'Not recorded'}</td><td className="px-4 py-3"><StatusBadge status={releasedStatus(grade.status)} /></td></tr>)}</tbody>
+                      <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Subject Code</th><th className="px-4 py-3">Subject Name</th><th className="px-4 py-3">Units</th><th className="px-4 py-3">Midterm</th><th className="px-4 py-3">Final Grade</th><th className="px-4 py-3">Equivalent</th><th className="px-4 py-3">Faculty</th><th className="px-4 py-3">Status</th></tr></thead>
+                      <tbody className="divide-y divide-slate-100">{semesterGrades.map((grade, index) => <tr key={`${grade.recordId}-${index}`} className="hover:bg-slate-50"><td className="whitespace-nowrap px-4 py-3 font-bold text-[#003366]">{grade.subjectCode}</td><td className="px-4 py-3 text-slate-700">{grade.subjectTitle}</td><td className="px-4 py-3">{grade.units || '—'}</td><td className="px-4 py-3 font-semibold">{grade.midtermGrade}</td><td className="px-4 py-3 font-bold text-[#003366]">{grade.finalGrade || '—'}</td><td className="px-4 py-3 font-bold text-[#003366]">{displayEquivalent(grade)}</td><td className="px-4 py-3 text-slate-700">{grade.professor || 'Not recorded'}</td><td className="px-4 py-3"><StatusBadge status={releasedStatus(grade.status)} /></td></tr>)}</tbody>
                     </table>
                   </div>
                 )}

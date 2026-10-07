@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import DeptAdminGradesView from './DeptAdminGradesView';
 import {
   approveGrade, fetchAllGrades, fetchApprovedFaculties, fetchDepartmentSections,
-  fetchFacultySections, finalizeGrade, getSystemSetting,
+  fetchFacultySections, finalizeGrade, getSystemSetting, returnGrade,
 } from '../../services/api';
 
 const mockAddNotification = jest.fn();
@@ -21,10 +21,12 @@ jest.mock('../faculty/FacultyStatusTable', () => ({ rows = [], viewMode, loadErr
     {rows[0] && <button type="button" onClick={() => onSelectSection(rows[0])}>Select first section</button>}
   </div>
 ));
-jest.mock('./SectionReviewPanel', () => ({ onApprove, onFinalize }) => (
+jest.mock('./SectionReviewPanel', () => ({ selectedSection, onApprove, onFinalize, onSendBack }) => (
   <div>
+    <span>{selectedSection.reviewNote}</span>
     <button type="button" onClick={() => onApprove('').catch(() => {})}>Approve selected section</button>
     <button type="button" onClick={() => onFinalize('').catch(() => {})}>Finalize selected section</button>
+    <button type="button" onClick={() => onSendBack('Correct the encoded grade')}>Return selected section</button>
   </div>
 ));
 jest.mock('../../services/Modal', () => () => null);
@@ -32,6 +34,7 @@ jest.mock('./ChairpersonSidebar', () => ({ setActiveTab }) => (
   <div>
     <button type="button" onClick={() => setActiveTab('grades')}>Dashboard</button>
     <button type="button" onClick={() => setActiveTab('forReview')}>For Review</button>
+    <button type="button" onClick={() => setActiveTab('returned')}>Returned</button>
     <button type="button" onClick={() => setActiveTab('approved')}>Approved</button>
     <button type="button" onClick={() => setActiveTab('forwarded')}>Finalized</button>
     <button type="button" onClick={() => setActiveTab('myClasses')}>My Classes</button>
@@ -176,6 +179,33 @@ test('approval sends one section request and moves the record to Finalize Queue,
   await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved'));
   fireEvent.click(screen.getByRole('button', { name: 'Finalized' }));
   expect(screen.getByTestId('review-rows')).toHaveTextContent('forwarded:0');
+});
+
+test('return moves the authoritative record out of For Review and exposes its persisted remark', async () => {
+  const submitted = {
+    id: 'returned-grade', assignment_cycle_id: '41', student_no: '26-0001', student_name: 'Student',
+    faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT', record_section: 'BSIT 1-1',
+    section: 'BSIT 1-1', subject_code: 'IT 101', school_year: '2026-2027', semester: 'FIRST',
+    term: 'midterm', status: 'SubmittedToChairperson', grade: JSON.stringify({ midterm: 85 }),
+  };
+  fetchAllGrades
+    .mockResolvedValueOnce({ data: [submitted] })
+    .mockResolvedValue({ data: [{ ...submitted, status: 'Returned', note: 'Correct the encoded grade' }] });
+  returnGrade.mockResolvedValue({ status: 'Success' });
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'For Review' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:1:submitted'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Return selected section' }));
+
+  await waitFor(() => expect(returnGrade).toHaveBeenCalledWith(
+    'returned-grade', 'Correct the encoded grade', 'chair@plv.edu.ph'));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:0'));
+  fireEvent.click(screen.getByRole('button', { name: 'Returned' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('returned:1:returned'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
+  expect(screen.getByText('Correct the encoded grade')).toBeInTheDocument();
 });
 
 test('approval failure refreshes authoritative state and leaves the record in For Review', async () => {

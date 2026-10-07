@@ -286,5 +286,24 @@ namespace BlockGo.Services
             
             return await response.Content.ReadAsStringAsync();
         }
+
+        public async Task<string> CorrectFinalizedGradeAsync(FinalizedGradeCorrectionRequest correction, string invokerUsername)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{_middlewareBaseUrl}/api/correct-finalized-grade")
+            {
+                Content = JsonContent.Create(new
+                {
+                    record_id = correction.RecordId,
+                    new_grade = correction.NewGrade,
+                    reason = correction.Reason,
+                    expected_grade_version = correction.ExpectedGradeVersion
+                })
+            };
+            request.Headers.Add("x-user-identity", invokerUsername);
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+                throw await MiddlewareErrorAsync(response, "CorrectFinalizedGrade", correction.RecordId);
+            return await response.Content.ReadAsStringAsync();
+        }
     }
 }

@@ -71,3 +71,27 @@ test('System Monitoring renders the backend-provided service availability result
   expect(screen.getByText('Ledger Service')).toBeInTheDocument();
   expect(screen.getByText('HTTP 200')).toBeInTheDocument();
 });
+
+test('System Monitoring displays incremental IP tracker numbers without exposing raw addresses', async () => {
+  fetchSystemMonitoringSummary.mockResolvedValue({
+    status: 'warning',
+    generatedAt: '2026-09-25T00:00:00Z',
+    services: [],
+    alerts: [{
+      eventId: 44,
+      name: 'LOGIN RATE LIMITED',
+      severity: 'warning',
+      component: 'access-control',
+      ipTracker: '100.0.0.1',
+      summary: 'registrar@plv.edu.ph: Login attempt was rate limited.',
+    }],
+    runtime: { uptimeSeconds: 120 },
+    infrastructure: { source: 'runtime' },
+  });
+
+  render(<SystemMonitoring activeView="alerts" />);
+
+  expect(await screen.findByText('100.0.0.1')).toBeInTheDocument();
+  expect(screen.getByText('IP Tracker')).toBeInTheDocument();
+  expect(screen.queryByText('10.9.7.26')).not.toBeInTheDocument();
+});

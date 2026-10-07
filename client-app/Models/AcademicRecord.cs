@@ -88,6 +88,24 @@ namespace BlockGo.Models
         [JsonPropertyName("version")]
         public int Version { get; set; }
 
+        [JsonPropertyName("grade_version")]
+        public int GradeVersion { get; set; }
+
+        [JsonPropertyName("logical_grade_id")]
+        public string LogicalGradeId { get; set; } = string.Empty;
+
+        [JsonPropertyName("previous_transaction_id")]
+        public string PreviousTransactionId { get; set; } = string.Empty;
+
+        [JsonPropertyName("correction_reason")]
+        public string CorrectionReason { get; set; } = string.Empty;
+
+        [JsonPropertyName("corrected_by")]
+        public string CorrectedBy { get; set; } = string.Empty;
+
+        [JsonPropertyName("corrected_at")]
+        public string CorrectedAt { get; set; } = string.Empty;
+
         [JsonPropertyName("finalized_by")]
         public string FinalizedBy { get; set; } = string.Empty;
 

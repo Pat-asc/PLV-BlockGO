@@ -401,8 +401,11 @@ namespace Client_app.Controllers
                 }
                 var facultyNames = await LoadFacultyNamesAsync(records.Select(record => record.FacultyId), cancellationToken);
                 var subjectMetadata = await LoadSubjectMetadataAsync(email, cancellationToken);
-                var grades = new List<object>();
-                foreach (var record in records)
+                var gradesByIdentity = new Dictionary<string, (DateTimeOffset RecordedAt, object Row)>(StringComparer.OrdinalIgnoreCase);
+                var distinctRecords = records
+                    .GroupBy(record => record.Id, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.OrderByDescending(HistoricalGradeTimestamp).First());
+                foreach (var record in distinctRecords)
                 {
                     var yearLevel = ParseYearLevel(record.YearLevel, record.Section);
                     var subjectTitle = !string.IsNullOrWhiteSpace(record.SubjectTitle)
@@ -418,7 +421,7 @@ namespace Client_app.Controllers
 
                     foreach (var term in terms)
                     {
-                        grades.Add(new
+                        var row = new
                         {
                             recordId = record.Id,
                             studentId = string.IsNullOrWhiteSpace(record.StudentId) ? record.StudentNo : record.StudentId,
@@ -441,11 +444,27 @@ namespace Client_app.Controllers
                             transactionHash = string.IsNullOrWhiteSpace(record.TransactionHash) ? record.TransactionId : record.TransactionHash,
                             timestamp = record.Timestamp,
                             date = record.Date
+                        };
+                        var assignmentIdentity = string.IsNullOrWhiteSpace(record.AssignmentCycleId)
+                            ? record.Section?.Trim() ?? string.Empty
+                            : record.AssignmentCycleId.Trim();
+                        var identity = string.Join("|", new[]
+                        {
+                            string.IsNullOrWhiteSpace(record.StudentHash) ? record.StudentNo : record.StudentHash,
+                            record.SubjectCode?.Trim() ?? string.Empty,
+                            assignmentIdentity,
+                            record.SchoolYear?.Trim() ?? string.Empty,
+                            record.Semester?.Trim() ?? string.Empty,
+                            term.Name.Trim().ToLowerInvariant()
                         });
+                        var recordedAt = HistoricalGradeTimestamp(record);
+                        if (!gradesByIdentity.TryGetValue(identity, out var existing) || recordedAt >= existing.RecordedAt)
+                            gradesByIdentity[identity] = (recordedAt, row);
                     }
                 }
 
-                var orderedGrades = grades.OrderBy(item => JsonSerializer.Serialize(item)).ToArray();
+                var orderedGrades = gradesByIdentity.Values.Select(value => value.Row)
+                    .OrderBy(item => JsonSerializer.Serialize(item)).ToArray();
                 return Ok(new
                 {
                     status = "Success",
@@ -496,7 +515,7 @@ namespace Client_app.Controllers
                             || !StudentSubjectGradeResolver.MatchesStudent(record, email, studentNo)
                             || !string.Equals(record.Status?.Trim(), "Finalized", StringComparison.OrdinalIgnoreCase)
                             || string.IsNullOrWhiteSpace(record.Id)
-                            || !releasedRecordIds.Contains(record.Id)) continue;
+                            || !releasedRecordIds.Contains(GradeReleasePolicy.ReleaseKey(record))) continue;
 
                         var transactionId = GetJsonString(transaction, "transaction_id");
                         safeTransactions.Add(new
@@ -686,12 +705,13 @@ namespace Client_app.Controllers
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
             await using var command = new NpgsqlCommand(@"
-                SELECT record_id
+                SELECT record_id, grade_version
                 FROM grade_releases
                 WHERE LOWER(student_identifier) = ANY(@identifiers);", connection);
             command.Parameters.AddWithValue("identifiers", identifiers.Select(value => value.ToLowerInvariant()).ToArray());
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken)) released.Add(reader.GetString(0));
+            while (await reader.ReadAsync(cancellationToken))
+                released.Add($"{reader.GetString(0)}|{reader.GetInt32(1)}");
             return released;
         }
 
@@ -821,6 +841,15 @@ namespace Client_app.Controllers
             }
             if (terms.Count == 0) terms.Add((string.IsNullOrWhiteSpace(explicitTerm) ? "finals" : explicitTerm.ToLowerInvariant(), rawGrade, rawGrade));
             return terms;
+        }
+
+        private static DateTimeOffset HistoricalGradeTimestamp(AcademicRecord record)
+        {
+            var value = string.IsNullOrWhiteSpace(record.Timestamp) ? record.Date : record.Timestamp;
+            return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed)
+                ? parsed
+                : DateTimeOffset.MinValue;
         }
 
         private static string GetDisplayGrade(string rawGrade, string explicitTerm)

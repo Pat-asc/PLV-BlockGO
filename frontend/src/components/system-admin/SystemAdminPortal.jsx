@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import plvlogo from '../../assets/plvlogo.png';
 import { fetchSupportTickets } from '../../services/api';
 import SystemMonitoring from './SystemMonitoring';
@@ -8,6 +8,8 @@ import GrafanaObservability from './GrafanaObservability';
 import SystemAdminTransactions from './SystemAdminTransactions';
 import CouchDbBrowser from './CouchDbBrowser';
 import SettingsMenu from '../shared/SettingsMenu';
+import TextSizeControl from '../shared/TextSizeControl';
+import DataLifeCycle from './DataLifeCycle';
 
 const navigationItems = [
   { id: 'overview', label: 'Overview' },
@@ -23,6 +25,9 @@ const navigationItems = [
 function SystemAdminPortal({ adminData, onLogout }) {
   const [activeView, setActiveView] = useState('overview');
   const [tickets, setTickets] = useState([]);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const mobileNavigationRef = useRef(null);
 
   const loadTickets = useCallback(async () => {
     try {
@@ -34,6 +39,12 @@ function SystemAdminPortal({ adminData, onLogout }) {
   }, []);
 
   useEffect(() => { loadTickets(); }, [loadTickets]);
+  useEffect(() => {
+    const outside = (event) => { if (!mobileNavigationRef.current?.contains(event.target)) setMobileNavigationOpen(false); };
+    const escape = (event) => { if (event.key === 'Escape') setMobileNavigationOpen(false); };
+    document.addEventListener('mousedown', outside); document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('mousedown', outside); document.removeEventListener('keydown', escape); };
+  }, []);
 
   const openTickets = tickets.filter((ticket) => ['OPEN', 'IN_PROGRESS'].includes(ticket.status));
   const recentTickets = tickets.slice(0, 3);
@@ -60,7 +71,29 @@ function SystemAdminPortal({ adminData, onLogout }) {
               <p className="truncate text-sm font-semibold">{adminData?.name || 'System Administrator'}</p>
               <p className="truncate text-xs text-blue-100">{adminData?.email || ''}</p>
             </div>
-            <SettingsMenu />
+            <SettingsMenu
+              open={settingsOpen}
+              onOpenChange={setSettingsOpen}
+              title="System Administrator Settings"
+              description="Manage display preferences and secondary administrative tools."
+            >
+              {({ close }) => (
+                <div className="space-y-4">
+                  <TextSizeControl />
+                  <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <h2 className="font-bold text-[#003366]">Data Life Cycle</h2>
+                    <p className="mt-1 text-sm text-slate-600">View how application, database, and blockchain data move through BlockGo.</p>
+                    <button
+                      type="button"
+                      onClick={() => { close(); setActiveView('data-life-cycle'); }}
+                      className="mt-3 rounded-md bg-[#003366] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#004b8f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                    >
+                      View Data Life Cycle
+                    </button>
+                  </section>
+                </div>
+              )}
+            </SettingsMenu>
             <button
               type="button"
               onClick={onLogout}
@@ -73,15 +106,16 @@ function SystemAdminPortal({ adminData, onLogout }) {
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <aside className="shrink-0 border-b border-slate-200 bg-white p-3 lg:w-60 lg:border-b-0 lg:border-r lg:p-4">
-          <nav className="flex gap-2 overflow-x-auto lg:flex-col" aria-label="System administration views">
+        <aside ref={mobileNavigationRef} className="relative shrink-0 border-b border-slate-200 bg-white p-3 lg:w-60 lg:border-b-0 lg:border-r lg:p-4">
+          <button type="button" aria-label="Open navigation menu" aria-expanded={mobileNavigationOpen} onClick={() => setMobileNavigationOpen((open) => !open)} className="flex min-h-11 w-full items-center justify-between rounded-md border border-slate-300 px-4 text-sm font-bold text-[#003366] lg:hidden"><span>☰ Navigation</span><span>{activeView === 'data-life-cycle' ? 'Settings' : navigationItems.find((item) => item.id === activeView)?.label}</span></button>
+          <nav className={`${mobileNavigationOpen ? 'absolute left-3 right-3 top-[3.75rem] z-50 flex' : 'hidden'} max-h-[min(70vh,28rem)] flex-col gap-2 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 shadow-xl lg:static lg:flex lg:max-h-none lg:overflow-visible lg:border-0 lg:p-0 lg:shadow-none`} aria-label="System administration views">
             {navigationItems.map((item) => {
               const isActive = activeView === item.id;
               return (
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setActiveView(item.id)}
+                  onClick={() => { setActiveView(item.id); setMobileNavigationOpen(false); }}
                   className={`min-h-11 shrink-0 rounded-md border-l-4 px-4 py-2 text-left text-sm font-semibold transition lg:w-full ${
                     isActive
                       ? 'border-yellow-400 bg-[#003366] text-white'
@@ -107,6 +141,18 @@ function SystemAdminPortal({ adminData, onLogout }) {
               <SystemAdminTransactions />
             ) : activeView === 'data-browser' ? (
               <CouchDbBrowser />
+            ) : activeView === 'data-life-cycle' ? (
+              <div className="space-y-4">
+                <button
+                  type="button"
+                  onClick={() => { setActiveView('overview'); setSettingsOpen(true); }}
+                  className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-[#003366] transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                >
+                  <span aria-hidden="true">←</span>
+                  Back to Settings
+                </button>
+                <DataLifeCycle />
+              </div>
             ) : (
               <>
                 <SystemMonitoring activeView={activeView} />

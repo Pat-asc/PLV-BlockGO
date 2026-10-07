@@ -44,9 +44,50 @@ test('finals review renders preserved Midterm and active Finals values', () => {
   renderPanel('finals');
 
   expect(screen.getByRole('columnheader', { name: 'Finals' })).toBeInTheDocument();
-  expect(screen.getByRole('columnheader', { name: 'Final Grade' })).toBeInTheDocument();
+  expect(screen.getByRole('columnheader', { name: 'Reference' })).toBeInTheDocument();
   expect(screen.getByText('85')).toBeInTheDocument();
   expect(screen.getByText('90')).toBeInTheDocument();
+});
+
+test('comparison rows align by authoritative Student ID without changing grade mappings', () => {
+  const students = [
+    { studentId: '26-0001', studentNo: '26-0001', fullName: 'Reyes, Carla', lastName: 'Reyes', firstName: 'Carla' },
+    { studentId: '26-0004', studentNo: '26-0004', fullName: 'Cruz, Juan B', lastName: 'Cruz', firstName: 'Juan', middleName: 'B' },
+    { studentId: '26-0005', studentNo: '26-0005', fullName: 'Cruz, Juan A', lastName: 'Cruz', firstName: 'Juan', middleName: 'A' },
+    { studentId: '26-0003', studentNo: '26-0003', fullName: 'Cruz, Juan A', lastName: 'Cruz', firstName: 'Juan', middleName: 'A' },
+    { studentId: '26-0002', studentNo: '26-0002', fullName: 'Abarquez, Ana', lastName: 'Abarquez', firstName: 'Ana' },
+  ];
+  const selectedSection = {
+    ...section,
+    totalStudents: students.length,
+    encodedCount: students.length,
+    students,
+    grades: Object.fromEntries(students.map((student, index) => [student.studentId, {
+      midterm: String(81 + index), finals: String(91 + index), standing: 'active',
+    }])),
+  };
+
+  render(<SectionReviewPanel {...{
+    selectedSection, activeTerm: 'finals', onSendBack: jest.fn(), onApprove: jest.fn(),
+    onFinalize: jest.fn(), onViewIpfs: jest.fn(),
+  }} />);
+
+  const tables = screen.getAllByRole('table');
+  const bodyRows = within(tables[0]).getAllByRole('row').slice(1);
+  const referenceRows = within(tables[1]).getAllByRole('row').slice(1);
+  expect(bodyRows.map((row) => within(row).getAllByRole('cell')[1].textContent)).toEqual([
+    'Reyes, Carla', 'Abarquez, Ana', 'Cruz, Juan A', 'Cruz, Juan B', 'Cruz, Juan A',
+  ]);
+  expect(bodyRows.map((row) => within(row).getAllByRole('cell')[0].textContent)).toEqual([
+    '26-0001', '26-0002', '26-0003', '26-0004', '26-0005',
+  ]);
+  expect(within(bodyRows[0]).getByText('91')).toBeInTheDocument();
+  expect(within(bodyRows[1]).getByText('95')).toBeInTheDocument();
+  expect(within(referenceRows[0]).getByText('81')).toBeInTheDocument();
+  expect(within(referenceRows[1]).getByText('85')).toBeInTheDocument();
+  expect(students.map((student) => student.studentNo)).toEqual([
+    '26-0001', '26-0004', '26-0005', '26-0003', '26-0002',
+  ]);
 });
 
 test('approval requires confirmation and cancel makes no request', () => {

@@ -54,10 +54,10 @@ var studentAttempt = new StudentSubjectAttempt(
 var finalizedStudentGrade = new AcademicRecord
 {
     Id = "finalized-visible", StudentHash = "student@plv.edu.ph", StudentNo = "26-0042",
-    SubjectCode = "IT 101", SchoolYear = "2026-2027", Semester = "FIRST",
+    SubjectCode = "IT 101", Program = "BSIT", SchoolYear = "2026-2027", Semester = "FIRST",
     Section = "BSIT 1-1", AssignmentCycleId = "104", Status = "Finalized", Grade = "92"
 };
-var releasedGradeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "finalized-visible" };
+var releasedGradeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "finalized-visible|1" };
 var releasedFinalizedGrades = new[] { finalizedStudentGrade }
     .Where(record => GradeReleasePolicy.IsVisibleToStudent(record, releasedGradeIds));
 var visibleResolution = StudentSubjectGradeResolver.Resolve(studentAttempt, releasedFinalizedGrades);
@@ -67,6 +67,15 @@ Pass(92, "released Chairperson Finalized grade is student-visible");
 Check(!GradeReleasePolicy.IsVisibleToStudent(finalizedStudentGrade, new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
     "An unreleased Finalized grade became student-visible.");
 Pass(111, "unreleased Finalized grade remains hidden from students");
+var correctedUnreleasedGrade = new AcademicRecord
+{
+    Id = finalizedStudentGrade.Id, StudentHash = finalizedStudentGrade.StudentHash, StudentNo = finalizedStudentGrade.StudentNo,
+    SubjectCode = finalizedStudentGrade.SubjectCode, SchoolYear = finalizedStudentGrade.SchoolYear,
+    Semester = finalizedStudentGrade.Semester, Status = "Finalized", Grade = "95", GradeVersion = 2
+};
+Check(!GradeReleasePolicy.IsVisibleToStudent(correctedUnreleasedGrade, releasedGradeIds),
+    "A corrected v2 inherited the release of finalized v1.");
+Pass(124, "corrected finalized version requires a new Registrar release");
 var hiddenWorkflowGrades = new[] { "Draft", "SubmittedToChairperson", "Returned", "ChairpersonApproved", "DepartmentApproved" }
     .Select(status => new AcademicRecord
     {
@@ -78,13 +87,27 @@ Check(!StudentSubjectGradeResolver.Resolve(studentAttempt, hiddenWorkflowGrades)
     "A non-finalized workflow grade became student-visible.");
 Pass(93, "non-finalized workflow grades remain hidden from students");
 Check(hiddenWorkflowGrades.All(record => !GradeReleasePolicy.IsVisibleToStudent(record,
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { record.Id })),
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { GradeReleasePolicy.ReleaseKey(record) })),
     "A released but non-finalized workflow grade became student-visible.");
 Pass(112, "release metadata cannot expose non-finalized grades");
 Check(GradeReleasePolicy.MatchesReleaseContext(finalizedStudentGrade, "26-0042", "2026-2027", "FIRST", "finals")
       && !GradeReleasePolicy.MatchesReleaseContext(finalizedStudentGrade, "26-0042", "2026-2027", "SECOND", "finals"),
     "Registrar grade release matching crossed student academic periods.");
 Pass(113, "Registrar release context is student and period scoped");
+Check(GradeReleasePolicy.MatchesProgramReleaseContext(finalizedStudentGrade, "BSIT", "2026-2027", "FIRST", "finals")
+      && !GradeReleasePolicy.MatchesProgramReleaseContext(finalizedStudentGrade, "BSCS", "2026-2027", "FIRST", "finals")
+      && !GradeReleasePolicy.MatchesProgramReleaseContext(finalizedStudentGrade, "BSIT", "2026-2027", "SECOND", "finals"),
+    "Program release matching crossed program or academic-period boundaries.");
+Pass(114, "Registrar program release is exact-program and exact-period scoped");
+var staleIssued = new AcademicRecord { Id = "returned-refresh", Status = "Issued", Grade = "80" };
+var authoritativeReturned = new AcademicRecord { Id = "returned-refresh", Status = "Returned", Grade = "80", Note = "Correct the final exam." };
+var mergedReturned = GradeRecordMergePolicy.PreferPending(
+    new[] { staleIssued, authoritativeReturned },
+    new Dictionary<string, AcademicRecord>(StringComparer.OrdinalIgnoreCase) { [authoritativeReturned.Id] = authoritativeReturned },
+    record => string.IsNullOrWhiteSpace(record.Note) ? 0 : 1).Single();
+Check(mergedReturned.Status == "Returned" && mergedReturned.Note == "Correct the final exam.",
+    "A stale ledger copy replaced the authoritative returned staging status after refetch.");
+Pass(115, "returned staging status and note remain authoritative after ledger merge");
 var closedRejected = false;
 try { GradeEncodingPeriodService.ParseOpen("{\"semester\":\"FIRST\",\"startDate\":\"2026-10-01\",\"endDate\":\"2026-10-31\",\"term\":\"midterm\"}", new DateOnly(2026, 9, 22)); }
 catch (GradeEncodingPeriodException) { closedRejected = true; }
@@ -97,23 +120,23 @@ var canonical = new List<FacultyAssignmentRosterService.RosterStudent> {
     new(3,5,"26-0003","Student C","c@plv.edu.ph",1,1,"2026-2027","FIRST","ENROLLED")
 };
 var bytes = FacultyGradeWorkbookService.Build(assignment, canonical);
-var csvBytes = FacultyGradeWorkbookService.BuildCsv(assignment, canonical);
-var csvText = new System.Text.UTF8Encoding(true).GetString(csvBytes).TrimStart('\uFEFF');
-var csvHeader = csvText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)[0];
-Check(FacultyGradeWorkbookService.Headers.All(header => csvHeader.Contains($"\"{header}\"", StringComparison.Ordinal)) &&
-      csvText.Contains("\"26-0001\"") && csvText.Contains("\"IT 101\"") && csvText.Contains("\"2026-2027\""),
-    "CSV template does not match the XLSX grading headers and assignment roster context.");
-Pass(106, "CSV and XLSX templates share headers and authoritative assignment context");
-await using (var validCsvStream = new MemoryStream(csvBytes))
+using var memory = new MemoryStream(bytes); using var book = new XLWorkbook(memory); var sheet = book.Worksheet("Grade Encoding");
+Check(FacultyGradeWorkbookService.Headers.Select((header, index) => sheet.Cell(1, index + 1).GetString() == header).All(value => value) &&
+      sheet.Cell("A2").GetString() == "26-0001" && sheet.Cell("N2").GetString() == "IT 101" &&
+      sheet.Cell("P2").GetString() == "2026-2027",
+    "XLSX grading template does not preserve its headers, roster, or authoritative assignment context.");
+Pass(106, "XLSX template preserves headers roster and assignment context");
+var csvBytes = System.Text.Encoding.UTF8.GetBytes("Student ID,Midterm Grade,Final Grade\n26-0001,85,90");
+await using (var csvStream = new MemoryStream(csvBytes))
 {
-    var validCsv = new FormFile(validCsvStream, 0, csvBytes.Length, "file", "grades.csv")
+    var csvFile = new FormFile(csvStream, 0, csvBytes.Length, "file", "grades.csv")
     {
         Headers = new HeaderDictionary(), ContentType = "text/csv"
     };
-    Check(await CsvUploadValidator.ValidateGradeWorkbookAsync(validCsv) is null,
-        "A generated CSV grading template was rejected by upload validation.");
+    Check((await CsvUploadValidator.ValidateGradeWorkbookAsync(csvFile))?.Contains("XLSX") == true,
+        "A CSV grading file bypassed XLSX-only backend upload validation.");
 }
-Pass(107, "CSV grade upload validation accepts generated template");
+Pass(107, "backend grade upload rejects CSV and requires XLSX");
 await using (var unsupportedStream = new MemoryStream("not supported"u8.ToArray()))
 {
     var unsupported = new FormFile(unsupportedStream, 0, unsupportedStream.Length, "file", "grades.xls")
@@ -144,9 +167,9 @@ await using (var invalidWorkbookStream = new MemoryStream("not a workbook"u8.ToA
     Check((await CsvUploadValidator.ValidateGradeWorkbookAsync(invalidWorkbook))?.Contains("valid XLSX") == true,
         "A renamed non-XLSX file passed grade workbook validation.");
 } Pass(97, "XLSX grade upload validation rejects invalid signature");
-using var memory = new MemoryStream(bytes); using var book = new XLWorkbook(memory); var sheet = book.Worksheet("Grade Encoding");
 Check(bytes.Length > 0 && FacultyGradeWorkbookService.ContentType.Contains("spreadsheetml"), "Invalid XLSX payload."); Pass(22, "XLSX download payload");
-Check(sheet.Cell("G2").HasFormula && sheet.Cell("L2").HasFormula && sheet.Cell("M2").HasFormula, "Missing formulas."); Pass(23, "midterm/finals/average formulas");
+Check(book.CalculateMode == XLCalculateMode.Auto && sheet.Cell("G2").HasFormula && sheet.Cell("L2").HasFormula && sheet.Cell("M2").HasFormula,
+    "Automatic Midterm, Finals, or Final Average calculation is not enabled."); Pass(23, "automatic midterm/finals/average formulas");
 Check(sheet.Cell("G2").FormulaA1.Contains("COUNT(C2:F2)<4") && sheet.Cell("M2").FormulaA1.Contains("OR(G2=\"\",L2=\"\")"),
     "Incomplete grading rows do not remain blank."); Pass(94, "grading formulas recalculate only complete component sets");
 Check(FacultyGradeWorkbookService.WeightedGrade(80,90,100,85) == 86m, "Formula differs from BlockGO."); Pass(24, "20/10/10/60 calculation parity");
@@ -195,12 +218,137 @@ var incompleteCoverage = FacultyAssignmentRosterService.CompareRosterCoverage(ca
 Check(fullCoverage == (0, 0) && incompleteCoverage == (1, 1), "Roster coverage comparison failed.");
 Pass(42, "submit-to-Chairperson roster coverage");
 
+var testCurriculumSeed = await File.ReadAllTextAsync(FindRepositoryFile("scripts", "seed_test_curriculum.sql"));
+Check(testCurriculumSeed.Contains("BSIT-QA-2026") && testCurriculumSeed.Contains("IT 101") &&
+      testCurriculumSeed.Contains("IT 102") && testCurriculumSeed.Contains("IT 201"),
+    "The prior BSIT regression curriculum is not represented by the opt-in QA seed.");
+Pass(166, "previous BSIT test curriculum is retrievable from the QA seed");
+Check(testCurriculumSeed.Contains("ON CONFLICT (curriculum_code) DO NOTHING") &&
+      testCurriculumSeed.Contains("ON CONFLICT (curriculum_id, year_level, semester, subject_code) DO NOTHING") &&
+      !testCurriculumSeed.Contains("UPDATE curriculums", StringComparison.OrdinalIgnoreCase) &&
+      !testCurriculumSeed.Contains("UPDATE curriculum_subjects", StringComparison.OrdinalIgnoreCase),
+    "The QA curriculum seed can duplicate or overwrite an existing curriculum.");
+Pass(167, "QA curriculum seed is idempotent and does not overwrite production curricula");
+var enrollmentControllerSource = await File.ReadAllTextAsync(FindRepositoryFile("client-app", "Controllers", "AuthController.cs"));
+Check(enrollmentControllerSource.Contains("students/{id:int}/enroll-existing") &&
+      enrollmentControllerSource.Contains("This student is already enrolled for") &&
+      enrollmentControllerSource.Contains("academic_section_id,", StringComparison.Ordinal) &&
+      enrollmentControllerSource.Contains("@schoolYear, @semester, @yearLevel, NULL", StringComparison.Ordinal),
+    "Existing-student enrollment is missing duplicate-period rejection or unassigned-section insertion.");
+Pass(169, "existing Student enrollment reuses identity and starts without an old section");
+Check(enrollmentControllerSource.Contains("students/{id:int}/assigned-subjects") &&
+      enrollmentControllerSource.Contains("subject.curriculum_id = curriculum.curriculum_id") &&
+      enrollmentControllerSource.Contains("enrollment.school_year = @schoolYear") &&
+      enrollmentControllerSource.Contains("enrollment.semester = @semester") &&
+      enrollmentControllerSource.Contains("section.id = enrollment.academic_section_id"),
+    "Registrar assigned-subject lookup is not scoped by curriculum, period, and exact section.");
+Pass(170, "Registrar assigned subjects use exact enrollment period and section scope");
+var assignmentOptionsStart = enrollmentControllerSource.IndexOf("GetFacultyAssignmentOptions", StringComparison.Ordinal);
+var assignmentOptionsEnd = enrollmentControllerSource.IndexOf("faculty/assignments/bulk", assignmentOptionsStart, StringComparison.Ordinal);
+var assignmentOptionsSource = enrollmentControllerSource[assignmentOptionsStart..assignmentOptionsEnd];
+Check(assignmentOptionsSource.Contains("CanManageAcademicProgramAsync(connection, department") &&
+      assignmentOptionsSource.Contains("LOWER(p.program_code) = LOWER(@programCode)") &&
+      assignmentOptionsSource.Contains("JOIN academic_periods ap") &&
+      assignmentOptionsSource.Contains("ap.school_year = fs.school_year") &&
+      assignmentOptionsSource.Contains("ap.semester = fs.semester"),
+    "Assignment options do not enforce authenticated program and exact active-period scope.");
+Pass(171, "Chairperson assignment options enforce program and period scope server-side");
+Check(enrollmentControllerSource.Contains("[Authorize(Roles = \"department_admin,registrar\")]") &&
+      enrollmentControllerSource.Contains("if (User.IsInRole(\"registrar\")) return true;"),
+    "Registrar-wide assignment visibility was accidentally removed.");
+Pass(172, "Registrar retains authorized university-wide assignment lookup");
+var facultySectionsStart = enrollmentControllerSource.IndexOf("GetFacultySections", StringComparison.Ordinal);
+var facultySectionsEnd = enrollmentControllerSource.IndexOf("UnassignFacultySection", facultySectionsStart, StringComparison.Ordinal);
+var facultySectionsSource = enrollmentControllerSource[facultySectionsStart..facultySectionsEnd];
+Check(facultySectionsSource.Contains("program_curriculum_assignments pca") &&
+      facultySectionsSource.Contains("resolved_subject.subject_title") &&
+      facultySectionsSource.Contains("resolved_subject.units") &&
+      facultySectionsSource.Contains("c.program_id = pca.program_id") &&
+      facultySectionsSource.Contains("cs.year_level = s.year_level") &&
+      facultySectionsSource.Contains("cs.semester = fs.semester"),
+    "Faculty assignment metadata is not resolved from the assigned program curriculum, year, and semester.");
+Pass(175, "Faculty assignments return curriculum-scoped subject title and units");
+Check(facultySectionsSource.Contains("ap.school_year = fs.school_year") &&
+      facultySectionsSource.Contains("ap.semester = fs.semester") &&
+      facultySectionsSource.Contains("ap.status = 'ACTIVE'"),
+    "Faculty assignment metadata lookup weakened active school-year or semester isolation.");
+Pass(176, "Faculty assignment metadata preserves active academic-period scope");
+Check(assignmentOptionsSource.Contains("FROM program_curriculum_assignments pca") &&
+      assignmentOptionsSource.Contains("resolved_subject.subject_title") &&
+      assignmentOptionsSource.Contains("resolved_subject.units") &&
+      assignmentOptionsSource.Contains("cs.year_level = s.year_level") &&
+      assignmentOptionsSource.Contains("cs.semester = fs.semester"),
+    "Chairperson assignment options do not use the assigned curriculum and exact subject context.");
+Pass(179, "Chairperson assignments return curriculum-scoped subject title and units");
+Check(assignmentOptionsSource.Contains("ap.school_year = fs.school_year") &&
+      assignmentOptionsSource.Contains("ap.semester = fs.semester") &&
+      assignmentOptionsSource.Contains("ap.status = 'ACTIVE'"),
+    "Chairperson assignment metadata weakened active school-year or semester isolation.");
+Pass(180, "Chairperson assignment metadata preserves active academic-period scope");
+Check(facultySectionsSource.Contains("FROM program_curriculum_assignments pca") &&
+      assignmentOptionsSource.Contains("FROM program_curriculum_assignments pca"),
+    "Faculty and Chairperson assignment metadata use conflicting curriculum relationships.");
+Pass(181, "Faculty and Chairperson use the same authoritative curriculum relationship");
+Check(facultySectionsSource.Contains("UNRESOLVED_LEGACY") &&
+      facultySectionsSource.Contains("(decimal?)null") &&
+      !facultySectionsSource.Contains("units = 3"),
+    "Legacy Faculty assignment metadata is not represented as an explicit unresolved value.");
+Pass(177, "legacy Faculty metadata remains nullable instead of fabricated");
+var gradeControllerSource = await File.ReadAllTextAsync(FindRepositoryFile("client-app", "Controllers", "GradeController.cs"));
+var facultyRosterServiceSource = await File.ReadAllTextAsync(FindRepositoryFile("client-app", "Services", "FacultyAssignmentRosterService.cs"));
+Check(facultyRosterServiceSource.Contains("ResolveSubjectMetadataAsync") &&
+      facultyRosterServiceSource.Contains("program_curriculum_assignments program_assignment") &&
+      gradeControllerSource.Contains("request.SubjectName = subjectMetadata.Title") &&
+      gradeControllerSource.Contains("request.Units = subjectMetadata.Units") &&
+      gradeControllerSource.Contains("record.SubjectName = subjectMetadata.Title") &&
+      gradeControllerSource.Contains("record.Units = subjectMetadata.Units") &&
+      !gradeControllerSource.Contains("if (request.Units <= 0) request.Units = 3;") &&
+      !gradeControllerSource.Contains("if (blockchainRecord.Units <= 0) blockchainRecord.Units = 3;"),
+    "Manual grade staging still trusts display metadata or fabricates three units.");
+Pass(178, "manual and XLSX grade staging re-resolve authoritative subject title and units");
+
+var curriculumControllerSource = await File.ReadAllTextAsync(FindRepositoryFile("client-app", "Controllers", "CurriculumsController.cs"));
+Check(curriculumControllerSource.Contains("{id:long}/subjects/bulk-import") &&
+      curriculumControllerSource.Contains("ParseCurriculumSubjectsAsync") &&
+      curriculumControllerSource.Contains("coursecode") && curriculumControllerSource.Contains("coursetitle") &&
+      curriculumControllerSource.Contains("await transaction.CommitAsync(cancellationToken)"),
+    "Existing-curriculum CSV import is not validated and committed transactionally.");
+Pass(173, "curriculum multi-year CSV import uses backend transaction and template headers");
+Check(curriculumControllerSource.Contains("{id:long}/subjects/bulk") &&
+      curriculumControllerSource.Contains("Every selected subject must belong to the requested curriculum") &&
+      curriculumControllerSource.Contains("subject_id = ANY(@subjectIds)") &&
+      curriculumControllerSource.Contains("still references a selected subject as a prerequisite"),
+    "Curriculum bulk delete lacks authoritative ID or prerequisite integrity checks.");
+Pass(174, "curriculum bulk delete validates ownership and prerequisite integrity");
+var assignedCurriculumStart = curriculumControllerSource.IndexOf("GetLatestAssigned", StringComparison.Ordinal);
+var assignedCurriculumEnd = curriculumControllerSource.IndexOf("[HttpPost(\"programs\")]", assignedCurriculumStart, StringComparison.Ordinal);
+var assignedCurriculumSource = curriculumControllerSource[assignedCurriculumStart..assignedCurriculumEnd];
+Check(assignedCurriculumSource.Contains("curriculum_batch_assignments") &&
+      assignedCurriculumSource.Contains("curriculum.status IN ('PUBLISHED', 'ARCHIVED')") &&
+      assignedCurriculumSource.Contains("assignment.updated_at DESC") &&
+      assignedCurriculumSource.Contains("curriculum.published_at DESC NULLS LAST") &&
+      !assignedCurriculumSource.Contains("curriculum_id DESC"),
+    "Chairperson assigned-curriculum resolution is not based on the authoritative cohort assignment and approval state.");
+Pass(182, "Chairperson latest curriculum uses assigned cohort and published history");
+Check(assignedCurriculumSource.Contains("adminprofiles profile") &&
+      assignedCurriculumSource.Contains("LOWER(profile.department)") &&
+      curriculumControllerSource.Contains("[Authorize(Roles = \"department_admin,registrar\")]"),
+    "Assigned-curriculum lookup does not enforce Chairperson program scope.");
+Pass(183, "Chairperson assigned curriculum endpoint enforces department authorization");
+Check(enrollmentControllerSource.Contains("[Authorize(Roles = \"registrar,department_admin\")]") &&
+      enrollmentControllerSource.Contains("LOWER(actor_profile.department)") &&
+      enrollmentControllerSource.Contains("COALESCE(enrollment.curriculum_id, sp.curriculum_id)") &&
+      enrollmentControllerSource.Contains("@isRegistrar OR UPPER(se.status) = 'ENROLLED'"),
+    "Chairperson student curriculum visibility is not enrollment-authoritative and department scoped.");
+Pass(184, "Chairperson student curriculum list is enrollment-authoritative and scoped");
+
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=143;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
 async Task<long> Count(string sql) { await using var c=new NpgsqlCommand(sql,db); return Convert.ToInt64(await c.ExecuteScalarAsync()); }
+async Task<object?> Scalar(string sql) { await using var c=new NpgsqlCommand(sql,db); return await c.ExecuteScalarAsync(); }
 try {
 await Exec(@"
 CREATE TEMP TABLE users(id INT PRIMARY KEY,username TEXT,email TEXT,role TEXT,status TEXT,is_active BOOLEAN);
@@ -212,17 +360,22 @@ CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_n
 CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,enrollment_state TEXT DEFAULT 'PLANNING',updated_at TIMESTAMPTZ);
 CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_name TEXT,department TEXT);
 CREATE TEMP TABLE systemsettings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-CREATE TEMP TABLE academic_periods(academic_period_id BIGSERIAL PRIMARY KEY,school_year TEXT NOT NULL,semester TEXT NOT NULL,term TEXT NOT NULL,status TEXT NOT NULL,opened_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,closed_at TIMESTAMPTZ);
+CREATE TEMP TABLE academic_periods(academic_period_id BIGSERIAL PRIMARY KEY,school_year TEXT NOT NULL,semester TEXT NOT NULL,term TEXT NOT NULL,start_date DATE,end_date DATE,status TEXT NOT NULL DEFAULT 'ACTIVE',opened_by INT,opened_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,closed_at TIMESTAMPTZ,CONSTRAINT academic_periods_school_year_semester_term_key UNIQUE(school_year,semester,term),CHECK(start_date IS NULL OR end_date IS NULL OR end_date>=start_date));
+CREATE UNIQUE INDEX ux_academic_period_active ON academic_periods((status)) WHERE status='ACTIVE';
 CREATE TEMP TABLE facultysections(id SERIAL PRIMARY KEY,user_id INT,department TEXT,section TEXT,year_level TEXT,subject TEXT,academic_section_id INT,school_year TEXT,semester TEXT,is_active BOOLEAN DEFAULT TRUE,deactivated_at TIMESTAMPTZ,deactivated_by TEXT,schedule TEXT);
 CREATE UNIQUE INDEX ux_test_facultysections_exact ON facultysections(user_id,academic_section_id,school_year,semester,LOWER(subject)) WHERE is_active=TRUE;
 CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT,student_hash TEXT,student_name TEXT,section TEXT,course TEXT,subject_code TEXT,semester TEXT,school_year TEXT,faculty_id TEXT,date TEXT,ipfs_cid TEXT,term TEXT,
     CONSTRAINT unique_grade_entry_assignment_cycle UNIQUE(student_hash,subject_code,school_year,semester,section,assignment_cycle_id,term));
 CREATE TEMP TABLE grade_assignment_cycles(record_id TEXT PRIMARY KEY,assignment_cycle_id TEXT NOT NULL);");
-var noActivePeriodRejected = false;
-try { await EncodingPeriodSettingService.SaveAsync(db, System.Text.Json.JsonSerializer.Serialize(new { term = "finals" })); }
-catch (EncodingPeriodSettingService.NoActiveAcademicPeriodException ex) { noActivePeriodRejected = ex.Message.Contains("open an academic period"); }
-Check(noActivePeriodRejected && await Count("SELECT COUNT(*) FROM systemsettings") == 0,
-    "Save Schedule accepted a missing active period or changed settings before rejecting it."); Pass(119,"Save Schedule requires active academic period and rolls back");
+var firstSavedPeriod = await EncodingPeriodSettingService.SaveAsync(db, System.Text.Json.JsonSerializer.Serialize(new {
+    schoolYear="2026-2027",semester="1st Semester",term="finals",startDate="2026-10-01",endDate="2026-10-31"
+}));
+Check(firstSavedPeriod.Contains("\"schoolYear\":\"2026-2027\"") &&
+      await Count("SELECT COUNT(*) FROM academic_periods WHERE school_year='2026-2027' AND semester='FIRST' AND term='finals' AND status='ACTIVE'")==1 &&
+      await Count("SELECT COUNT(*) FROM systemsettings WHERE key='encoding_period'")==1,
+    "Save Schedule did not establish the first authoritative academic period atomically.");
+Pass(119,"Save Schedule can establish the first active academic period");
+await Exec("DELETE FROM systemsettings; DELETE FROM academic_periods;");
 var enrollmentConstraintMigration = await File.ReadAllTextAsync(
     FindRepositoryFile("migrations", "024_student_enrollment_period_constraint.sql"));
 await Exec("INSERT INTO student_enrollments(student_user_id,school_year,semester) VALUES(999,'2026-2027','FIRST'),(999,'2026-2027','FIRST')");
@@ -337,14 +490,142 @@ var normalizedSetting = await EncodingPeriodSettingService.SaveAsync(db,
 using (var savedSetting = System.Text.Json.JsonDocument.Parse(normalizedSetting))
 {
     var root = savedSetting.RootElement;
-    Check(root.GetProperty("schoolYear").GetString() == "2026-2027" && root.GetProperty("semester").GetString() == "1st Semester" &&
+    Check(root.GetProperty("schoolYear").GetString() == "2025-2026" && root.GetProperty("semester").GetString() == "1st Semester" &&
           root.GetProperty("term").GetString() == "finals" && root.GetProperty("startDate").GetString() == "2026-10-01" &&
           root.GetProperty("endDate").GetString() == "2026-10-31" &&
-          await Count("SELECT COUNT(*) FROM academic_periods") == academicPeriodCount &&
+          await Count("SELECT COUNT(*) FROM academic_periods") == academicPeriodCount + 1 &&
+          await Count("SELECT COUNT(*) FROM academic_periods WHERE school_year='2025-2026' AND semester='FIRST' AND term='finals' AND status='ACTIVE'") == 1 &&
+          await Count("SELECT COUNT(*) FROM academic_periods WHERE status='ACTIVE'") == 1 &&
+          await Count("SELECT COUNT(*) FROM student_enrollments") == enrollmentCount &&
+          await Count("SELECT COUNT(*) FROM studentprofiles") == profileCount &&
           await Count("SELECT COUNT(*) FROM systemsettings WHERE key='encoding_period'") == 1,
-        "Save Schedule did not normalize stale period fields or altered academic_periods.");
+        "Save Schedule did not activate the selected period or changed historical enrollment data.");
 }
-Pass(120,"Save Schedule normalizes stale period and preserves academic_periods and dates");
+Pass(120,"Save Schedule activates the selected academic context and preserves enrollment history");
+
+await Exec("DELETE FROM systemsettings; DELETE FROM academic_periods;");
+var insertedFirst = await EncodingPeriodSettingService.ResetAsync(
+    db, "2026-2027", "FIRST", "midterm", new DateOnly(2026,8,1), new DateOnly(2026,8,31), "profx@plv.edu.ph");
+Check(insertedFirst.AcademicContext.AcademicPeriodId > 0 &&
+      await Count("SELECT COUNT(*) FROM academic_periods WHERE school_year='2026-2027' AND semester='FIRST' AND term='midterm' AND status='ACTIVE' AND start_date='2026-08-01' AND end_date='2026-08-31'")==1 &&
+      await Count("SELECT COUNT(*) FROM academic_periods WHERE status='ACTIVE'")==1,
+    "A new reset target was not inserted as the sole ACTIVE period.");
+Pass(144,"reset inserts a new academic period as ACTIVE");
+
+var firstOpenedAt = Convert.ToDateTime(await Scalar($"SELECT opened_at FROM academic_periods WHERE academic_period_id={insertedFirst.AcademicContext.AcademicPeriodId}"));
+var alreadyActiveFirst = await EncodingPeriodSettingService.ResetAsync(
+    db, "2026-2027", "FIRST", "midterm", new DateOnly(2026,8,2), new DateOnly(2026,9,1), "profx@plv.edu.ph");
+var unchangedOpenedAt = Convert.ToDateTime(await Scalar($"SELECT opened_at FROM academic_periods WHERE academic_period_id={insertedFirst.AcademicContext.AcademicPeriodId}"));
+Check(alreadyActiveFirst.AcademicContext.AcademicPeriodId==insertedFirst.AcademicContext.AcademicPeriodId &&
+      firstOpenedAt==unchangedOpenedAt &&
+      await Count("SELECT COUNT(*) FROM academic_periods WHERE school_year='2026-2027' AND semester='FIRST' AND term='midterm'")==1 &&
+      await Count("SELECT COUNT(*) FROM academic_periods WHERE status='ACTIVE'")==1,
+    "Resetting an already ACTIVE target duplicated it or changed its opening timestamp.");
+Pass(145,"reset updates an already ACTIVE target without duplicating or reopening it");
+
+var insertedSecond = await EncodingPeriodSettingService.ResetAsync(
+    db, "2026-2027", "SECOND", "midterm", new DateOnly(2027,1,5), new DateOnly(2027,1,31), "profx@plv.edu.ph");
+Check(await Count($"SELECT COUNT(*) FROM academic_periods WHERE academic_period_id={insertedFirst.AcademicContext.AcademicPeriodId} AND status='CLOSED' AND closed_at IS NOT NULL")==1 &&
+      await Count($"SELECT COUNT(*) FROM academic_periods WHERE academic_period_id={insertedSecond.AcademicContext.AcademicPeriodId} AND status='ACTIVE'")==1 &&
+      await Count("SELECT COUNT(*) FROM academic_periods WHERE status='ACTIVE'")==1,
+    "Switching to SECOND did not close FIRST and leave SECOND as the sole ACTIVE period.");
+Pass(146,"reset switches from FIRST to a new SECOND period");
+
+await Exec($"UPDATE academic_periods SET opened_at=CURRENT_TIMESTAMP-INTERVAL '1 day' WHERE academic_period_id={insertedFirst.AcademicContext.AcademicPeriodId}");
+var priorClosedOpenedAt = Convert.ToDateTime(await Scalar($"SELECT opened_at FROM academic_periods WHERE academic_period_id={insertedFirst.AcademicContext.AcademicPeriodId}"));
+var reopenedFirst = await EncodingPeriodSettingService.ResetAsync(
+    db, "2026-2027", "FIRST", "midterm", new DateOnly(2026,9,1), new DateOnly(2026,9,30), "profx@plv.edu.ph");
+var reopenedFirstAt = Convert.ToDateTime(await Scalar($"SELECT opened_at FROM academic_periods WHERE academic_period_id={insertedFirst.AcademicContext.AcademicPeriodId}"));
+Check(reopenedFirst.AcademicContext.AcademicPeriodId==insertedFirst.AcademicContext.AcademicPeriodId &&
+      reopenedFirstAt>priorClosedOpenedAt &&
+      await Count("SELECT COUNT(*) FROM academic_periods WHERE school_year='2026-2027' AND semester='FIRST' AND term='midterm'")==1 &&
+      await Count($"SELECT COUNT(*) FROM academic_periods WHERE academic_period_id={insertedSecond.AcademicContext.AcademicPeriodId} AND status='CLOSED'")==1,
+    "A CLOSED FIRST target was not reopened with its existing identity.");
+Pass(147,"reset reopens a CLOSED historical target with the same ID");
+
+var historicalFinalsId = Convert.ToInt64(await Scalar(@"
+    INSERT INTO academic_periods(school_year,semester,term,start_date,end_date,status,opened_at,closed_at)
+    VALUES('2026-2027','FIRST','finals','2026-10-01','2026-10-31','CLOSED',CURRENT_TIMESTAMP-INTERVAL '2 days',CURRENT_TIMESTAMP-INTERVAL '1 day')
+    RETURNING academic_period_id"));
+await Exec("INSERT INTO facultysections(id,user_id,department,section,year_level,subject,academic_section_id,school_year,semester,is_active) VALUES(180,1,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE),(181,1,'BS Information Technology','BSIT 1-2','1','IT 102',2,'2025-2026','FIRST',FALSE); INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade) VALUES('reset-history','180','26-0001','Finalized','{}')");
+var resetEnrollmentCount = await Count("SELECT COUNT(*) FROM student_enrollments");
+var resetGradeCount = await Count("SELECT COUNT(*) FROM pending_grade_records");
+var reopenedFinals = await EncodingPeriodSettingService.ResetAsync(
+    db, "2026-2027", "FIRST", "finals", new DateOnly(2026,10,2), new DateOnly(2026,11,1), "profx@plv.edu.ph");
+Check(reopenedFinals.AcademicContext.AcademicPeriodId==historicalFinalsId &&
+      await Count("SELECT COUNT(*) FROM academic_periods WHERE school_year='2026-2027' AND semester='FIRST' AND term='finals'")==1,
+    "A historical FIRST finals target was duplicated instead of reopened.");
+Pass(148,"reset reopens historical FIRST finals");
+Check(await Count("SELECT COUNT(*) FROM academic_periods WHERE status='ACTIVE'")==1,
+    "Reset left more than one ACTIVE academic period.");
+Pass(149,"every reset leaves at most one ACTIVE academic period");
+Check(reopenedFinals.DeactivatedAssignmentCount==1 &&
+      await Count("SELECT COUNT(*) FROM facultysections WHERE id IN (180,181)")==2 &&
+      await Count("SELECT COUNT(*) FROM facultysections WHERE id=180 AND is_active=FALSE AND deactivated_at IS NOT NULL AND deactivated_by='profx@plv.edu.ph'")==1,
+    "Reset did not deactivate the current FacultySection safely or deleted assignment history.");
+Pass(150,"reset deactivates current FacultySections without deleting history");
+Check(await Count("SELECT COUNT(*) FROM student_enrollments")==resetEnrollmentCount &&
+      await Count("SELECT COUNT(*) FROM pending_grade_records")==resetGradeCount &&
+      await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='reset-history' AND status='Finalized'")==1,
+    "Reset changed enrollment or grade history.");
+Pass(151,"reset preserves enrollment and grade history");
+Check(await Count("SELECT COUNT(*) FROM systemsettings WHERE key='encoding_period' AND value::jsonb->>'schoolYear'='2026-2027' AND value::jsonb->>'semester'='1st Semester' AND value::jsonb->>'term'='finals' AND value::jsonb->>'startDate'='2026-10-02' AND value::jsonb->>'endDate'='2026-11-01'")==1,
+    "SystemSettings.encoding_period did not match the reopened ACTIVE row.");
+Pass(152,"reset synchronizes SystemSettings with the resulting ACTIVE row");
+
+var restoredFirst = await EncodingPeriodSettingService.ResetAsync(
+    db, "2026-2027", "FIRST", "midterm", new DateOnly(2026,9,1), new DateOnly(2026,9,30), "profx@plv.edu.ph");
+await Exec("INSERT INTO facultysections(id,user_id,department,section,year_level,subject,academic_section_id,school_year,semester,is_active) VALUES(182,1,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE); ALTER TABLE systemsettings ADD CONSTRAINT reject_reset_test_setting CHECK(value NOT LIKE '%2030-2031%')");
+var settingBeforeFailedReset = Convert.ToString(await Scalar("SELECT value FROM systemsettings WHERE key='encoding_period'"));
+var failedResetRolledBack = false;
+try { await EncodingPeriodSettingService.ResetAsync(db,"2030-2031","FIRST","midterm",new DateOnly(2030,8,1),new DateOnly(2030,8,31),"profx@plv.edu.ph"); }
+catch(PostgresException ex) when(ex.SqlState==PostgresErrorCodes.CheckViolation) { failedResetRolledBack=true; }
+Check(failedResetRolledBack &&
+      await Count($"SELECT COUNT(*) FROM academic_periods WHERE academic_period_id={restoredFirst.AcademicContext.AcademicPeriodId} AND status='ACTIVE'")==1 &&
+      await Count("SELECT COUNT(*) FROM academic_periods WHERE school_year='2030-2031'")==0 &&
+      await Count("SELECT COUNT(*) FROM facultysections WHERE id=182 AND is_active=TRUE")==1 &&
+      Convert.ToString(await Scalar("SELECT value FROM systemsettings WHERE key='encoding_period'"))==settingBeforeFailedReset,
+    "A failed settings write did not roll back the period and FacultySection changes.");
+Pass(153,"reset rolls back period assignments and settings together");
+await Exec("ALTER TABLE systemsettings DROP CONSTRAINT reject_reset_test_setting");
+
+var academicPeriodCountBeforeFinalsSave = await Count("SELECT COUNT(*) FROM academic_periods");
+var gradeHistoryCountBeforeFinalsSave = await Count("SELECT COUNT(*) FROM pending_grade_records");
+var saveFinals = await EncodingPeriodSettingService.SaveAsync(db,
+    System.Text.Json.JsonSerializer.Serialize(new { schoolYear="2026-2027",semester="1st Semester",term="finals",startDate="2026-09-02",endDate="2026-09-29" }));
+using(var savedAuthority = System.Text.Json.JsonDocument.Parse(saveFinals))
+{
+    var root=savedAuthority.RootElement;
+    Check(root.GetProperty("schoolYear").GetString()=="2026-2027" && root.GetProperty("semester").GetString()=="1st Semester" && root.GetProperty("term").GetString()=="finals" &&
+          root.GetProperty("startDate").GetString()=="2026-09-02" && root.GetProperty("endDate").GetString()=="2026-09-29" &&
+          await Count($"SELECT COUNT(*) FROM academic_periods WHERE academic_period_id={restoredFirst.AcademicContext.AcademicPeriodId} AND status='CLOSED' AND term='midterm'")==1 &&
+          await Count($"SELECT COUNT(*) FROM academic_periods WHERE academic_period_id={historicalFinalsId} AND status='ACTIVE'")==1 &&
+          await Count("SELECT COUNT(*) FROM academic_periods WHERE status='ACTIVE'")==1 &&
+          await Count("SELECT COUNT(*) FROM academic_periods")==academicPeriodCountBeforeFinalsSave,
+        "Save Schedule did not reuse the matching Finals row as the sole authority.");
+}
+Pass(154,"Save Schedule reuses an existing CLOSED Finals row without duplication");
+var configuredFinals = await GradeEncodingPeriodService.GetConfiguredAsync(db);
+Check(configuredFinals.Term=="finals" && configuredFinals.Semester=="FIRST" &&
+      configuredFinals.StartDate==new DateOnly(2026,9,2) && configuredFinals.EndDate==new DateOnly(2026,9,29),
+    "GradeEncodingPeriodService did not read the Finals setting saved by Save Schedule.");
+Pass(163,"GradeEncodingPeriodService reads saved Finals");
+var storedFinalsBeforeInvalidSave = Convert.ToString(await Scalar("SELECT value FROM systemsettings WHERE key='encoding_period'"));
+var invalidEncodingTermRejected = false;
+try { await EncodingPeriodSettingService.SaveAsync(db,System.Text.Json.JsonSerializer.Serialize(new { schoolYear="2026-2027",semester="1st Semester",term="quarterly",startDate="2026-09-02",endDate="2026-09-29" })); }
+catch(ArgumentException ex) { invalidEncodingTermRejected=ex.Message.Contains("midterm or finals",StringComparison.OrdinalIgnoreCase); }
+Check(invalidEncodingTermRejected && Convert.ToString(await Scalar("SELECT value FROM systemsettings WHERE key='encoding_period'"))==storedFinalsBeforeInvalidSave,
+    "An invalid encoding term was accepted or changed the stored Finals setting.");
+Pass(164,"Save Schedule rejects invalid term without changing Finals");
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records")==gradeHistoryCountBeforeFinalsSave &&
+      await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='reset-history' AND status='Finalized'")==1,
+    "Saving Finals changed historical grade records.");
+Pass(165,"Save Schedule preserves historical grades");
+Check(await Count("SELECT COUNT(*) FROM pg_constraint WHERE conrelid='academic_periods'::regclass AND conname='academic_periods_school_year_semester_term_key' AND contype='u'")==1 &&
+      await Count("SELECT COUNT(*) FROM pg_indexes WHERE tablename='academic_periods' AND indexname='ux_academic_period_active'")==1,
+    "The academic-period tuple or one-ACTIVE uniqueness contract is missing.");
+Pass(155,"academic-period uniqueness constraints remain enforced");
+await Exec($"DELETE FROM pending_grade_records WHERE id='reset-history'; DELETE FROM facultysections WHERE id IN (180,181,182); DELETE FROM academic_periods WHERE academic_period_id<>{restoredFirst.AcademicContext.AcademicPeriodId}; UPDATE academic_periods SET status='ACTIVE',closed_at=NULL,opened_at=CURRENT_TIMESTAMP WHERE academic_period_id={restoredFirst.AcademicContext.AcademicPeriodId}");
 Task<bool> AllowProgram(string program, CancellationToken _) => Task.FromResult(program == "BSIT");
 await Exec("INSERT INTO facultysections(id,user_id,department,section,year_level,subject,academic_section_id,school_year,semester,is_active) VALUES(191,1,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2025-2026','FIRST',FALSE)");
 await Exec("INSERT INTO academicsections(id,department,year_level,section_num) VALUES(90,'BS Information Technology',4,9)");
@@ -369,6 +650,36 @@ var archivedFacultyAssignmentRejected=false;
 try { await FacultyBulkAssignmentService.AssignAsync(db,new BulkFacultyAssignmentItemRequest { FacultyUserId=1,SubjectCode="IT 101",AcademicSectionId=91,SchoolYear="2026-2027",Semester="FIRST" },AllowProgram); }
 catch(ArgumentException) { archivedFacultyAssignmentRejected=true; }
 Check(archivedFacultyAssignmentRejected,"Archived section accepted a new Faculty load."); Pass(87,"referenced section archives while preserving grade history");
+var resolvedUploadSection = await FacultyBulkAssignmentService.ResolveAcademicSectionAsync(
+    db,"BS Information Technology","BSIT 1-1","2026-2027","FIRST",null,AllowProgram);
+Check(resolvedUploadSection.Id==1 && resolvedUploadSection.ProgramCode=="BSIT",
+    "Human-readable bulk Section did not resolve to its authoritative ID."); Pass(156,"bulk upload resolves Section without exposing its ID");
+var missingUploadSectionRejected=false;
+try { await FacultyBulkAssignmentService.ResolveAcademicSectionAsync(db,"BS Information Technology","BSIT 9-9","2026-2027","FIRST",null,AllowProgram); }
+catch(ArgumentException ex) { missingUploadSectionRejected=ex.Message.Contains("does not identify"); }
+Check(missingUploadSectionRejected,"A nonexistent human-readable Section was accepted."); Pass(157,"bulk upload rejects nonexistent Section");
+var wrongDepartmentUploadSectionRejected=false;
+try { await FacultyBulkAssignmentService.ResolveAcademicSectionAsync(db,"BS Computer Science","BSCS 1-1","2026-2027","FIRST",null,AllowProgram); }
+catch(UnauthorizedAccessException) { wrongDepartmentUploadSectionRejected=true; }
+Check(wrongDepartmentUploadSectionRejected,"A Chairperson resolved a Section outside the managed department."); Pass(158,"bulk upload rejects wrong-department Section");
+var selectedSectionOverrideRejected=false;
+try { await FacultyBulkAssignmentService.ResolveAcademicSectionAsync(db,"BS Information Technology","BSIT 1-1","2026-2027","FIRST",2,AllowProgram); }
+catch(ArgumentException ex) { selectedSectionOverrideRejected=ex.Message.Contains("does not match the selected"); }
+Check(selectedSectionOverrideRejected,"Spreadsheet Section overrode the selected authoritative section context."); Pass(159,"bulk upload cannot override selected Section context");
+var inactiveUploadSectionRejected=false;
+try { await FacultyBulkAssignmentService.ResolveAcademicSectionAsync(db,"BS Information Technology","BSIT 1-9","2026-2027","FIRST",null,AllowProgram); }
+catch(ArgumentException) { inactiveUploadSectionRejected=true; }
+Check(inactiveUploadSectionRejected,"An inactive Section was resolved for bulk upload."); Pass(160,"bulk upload rejects inactive Section");
+await Exec("INSERT INTO academicsections(id,department,year_level,section_num) VALUES(92,'BS Information Technology',1,1)");
+var ambiguousUploadSectionRejected=false;
+try { await FacultyBulkAssignmentService.ResolveAcademicSectionAsync(db,"BS Information Technology","BSIT 1-1","2026-2027","FIRST",null,AllowProgram); }
+catch(ArgumentException ex) { ambiguousUploadSectionRejected=ex.Message.Contains("ambiguous"); }
+await Exec("DELETE FROM academicsections WHERE id=92");
+Check(ambiguousUploadSectionRejected,"An ambiguous Section label was guessed instead of rejected."); Pass(161,"bulk upload rejects ambiguous Section");
+var wrongPeriodUploadSectionRejected=false;
+try { await FacultyBulkAssignmentService.ResolveAcademicSectionAsync(db,"BS Information Technology","BSIT 1-1","2025-2026","FIRST",null,AllowProgram); }
+catch(ArgumentException ex) { wrongPeriodUploadSectionRejected=ex.Message.Contains("does not match the active academic period"); }
+Check(wrongPeriodUploadSectionRejected,"A wrong-period Section context was accepted."); Pass(162,"bulk upload rejects wrong-period Section context");
 var bulkOne = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
     ClientId="one", FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=1, SchoolYear="2026-2027", Semester="FIRST", Schedule="Monday"
 }, AllowProgram);
@@ -415,7 +726,7 @@ Check(otherYear.Id!=bulkOne.Id && otherYear.SchoolYear=="2027-2028","Authoritati
 await Exec("UPDATE academic_periods SET status='CLOSED',closed_at=CURRENT_TIMESTAMP WHERE status='ACTIVE'; INSERT INTO academic_periods(school_year,semester,term,status) VALUES('2026-2027','SECOND','midterm','ACTIVE')");
 var otherSemester = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=2, SchoolYear="2026-2027", Semester="SECOND" }, AllowProgram);
 Check(otherSemester.Id!=bulkOne.Id && otherSemester.SchoolYear=="2026-2027" && otherSemester.Semester=="SECOND","Authoritative semester identity collapsed."); Pass(35,"backend semester isolation");
-await Exec("UPDATE academic_periods SET status='CLOSED',closed_at=CURRENT_TIMESTAMP WHERE status='ACTIVE'; INSERT INTO academic_periods(school_year,semester,term,status) VALUES('2026-2027','FIRST','midterm','ACTIVE')");
+await Exec("UPDATE academic_periods SET status='CLOSED',closed_at=CURRENT_TIMESTAMP WHERE status='ACTIVE'; UPDATE academic_periods SET status='ACTIVE',closed_at=NULL,opened_at=CURRENT_TIMESTAMP WHERE school_year='2026-2027' AND semester='FIRST' AND term='midterm'");
 Check(await Count("SELECT COUNT(*) FROM facultysections WHERE id=191 AND school_year='2025-2026' AND semester='FIRST' AND is_active=FALSE")==1,
     "Creating current-period assignments rewrote the historical FacultySection."); Pass(118,"previous-period FacultySection remains unchanged");
 var unauthorized=false; try { await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=2, SchoolYear="2028-2029", Semester="FIRST" }, (_,_)=>Task.FromResult(false)); } catch(UnauthorizedAccessException ex) { unauthorized=ex.Message.Contains("Unauthorized"); }
@@ -546,7 +857,8 @@ await Exec(@"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no
     ('term-mid-finalized','104','26-0805','Finalized','{}','term-finalized@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm'),
     ('term-final-after-finalized','104','26-0805','Draft','{}','term-finalized@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals'),
     ('term-final-submitted','104','26-0806','SubmittedToChairperson','{}','final-submitted@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals'),
-    ('term-final-chair','104','26-0807','ChairpersonApproved','{}','final-chair@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals');");
+    ('term-final-chair','104','26-0807','ChairpersonApproved','{}','final-chair@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals'),
+    ('term-final-returned','104','26-0808','Returned','{}','final-returned@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','finals');");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE student_hash='term-draft@example.edu' AND assignment_cycle_id='104'")==2,
     "Midterm and Finals Draft records did not coexist."); Pass(98,"Midterm and Finals Draft coexist under term identity");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('term-final-after-submitted','term-final-after-chair','term-final-after-dept','term-final-after-finalized') AND term='finals' AND status='Draft'")==4,
@@ -556,8 +868,8 @@ Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE student_hash
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE student_hash='final-chair@example.edu' AND term='finals' AND LOWER(status) NOT IN ('draft','returned')")==1,
     "Same-term Finals ChairpersonApproved was not protected."); Pass(101,"same-term Finals ChairpersonApproved remains protected");
 var finalsTermReviewIds=await ChairpersonReviewScopeService.GetCurrentVisibleRecordIdsAsync(db,"finals","FIRST");
-Check(finalsTermReviewIds.Contains("term-final-submitted") && !finalsTermReviewIds.Contains("term-mid-submitted"),
-    "Chairperson review did not isolate submitted Finals from Midterm."); Pass(102,"Chairperson For Review is term scoped");
+Check(finalsTermReviewIds.Contains("term-final-submitted") && finalsTermReviewIds.Contains("term-final-returned") && !finalsTermReviewIds.Contains("term-mid-submitted"),
+    "Chairperson review did not expose authoritative Returned Finals or isolate Finals from Midterm."); Pass(102,"Chairperson review is term scoped and includes Returned state");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records GROUP BY student_hash,subject_code,school_year,semester,section,assignment_cycle_id,LOWER(COALESCE(term,'')) HAVING COUNT(*)>1")==0,
     "Same-term duplicates exist in the migration fixture."); Pass(103,"term-identity duplicate preflight is clean");
 await Exec(@"INSERT INTO pending_grade_records
@@ -570,8 +882,8 @@ await Exec(@"INSERT INTO pending_grade_records
 await Exec("INSERT INTO grade_assignment_cycles(record_id,assignment_cycle_id) VALUES('old-approved','102'),('current-finalized','104')");
 var approvedHistoryCount=await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-chair-approved','current-approved','current-finalized')");
 var finalizationQueue=await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST");
-Check(finalizationQueue.Select(record=>record.Id).SequenceEqual(new[]{"current-chair-approved","current-approved"}),
-    "Chairperson finalization queue omitted an approved status or included inactive/historical records."); Pass(66,"Chairperson finalization queue is current-cycle and includes both approved statuses");
+Check(finalizationQueue.Select(record=>record.Id).SequenceEqual(new[]{"current-chair-approved","old-approved","current-approved"}),
+    "Chairperson finalization queue omitted approved captured-assignment staging."); Pass(66,"Chairperson finalization queue includes approved active and captured historical cycles");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='current-finalized'")==1,
     "Finalized history was removed while selecting the active queue."); Pass(67,"finalized history remains stored outside active queue");
 await Exec(@"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term)
@@ -590,9 +902,9 @@ Check(await Count("SELECT COUNT(*) FROM facultysections WHERE is_active=TRUE")==
 currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
 currentFinalizedIds=await ChairpersonReviewScopeService.GetCurrentFinalizedRecordIdsAsync(db,"FIRST");
 Check(currentReviewIds.Count==0 && currentFinalizedIds.Count==0,"Reset left old submissions or finalized rows in current tracking."); Pass(55,"reset empties current For Review and Finalized tracking");
-Check((await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST")).Count==0 &&
+Check((await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST")).Select(record=>record.Id).SequenceEqual(new[]{"current-chair-approved","old-approved","current-approved"}) &&
       await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-chair-approved','current-approved','current-finalized')")==approvedHistoryCount,
-    "Reset left an actionable finalization row or deleted grade history."); Pass(68,"reset empties finalization queue and preserves history");
+    "Reset removed retryable approved staging or deleted grade history."); Pass(68,"reset preserves approved captured cycles for safe finalization");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review','final')")==3,
     "Reset deleted historical or finalized grades."); Pass(56,"reset preserves submitted and finalized history");
 await Exec("INSERT INTO facultysections VALUES(106,1,'BS Information Technology','BSIT 1-1','1','IT 101',1,'2026-2027','FIRST',TRUE,NULL,NULL,NULL); INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term) VALUES('new-review','106','26-0001','SubmittedToChairperson','{}','IT 101','2026-2027','FIRST','finals')");
@@ -602,7 +914,7 @@ Check(await Count("SELECT COUNT(*) FROM facultysections WHERE id=106 AND is_acti
 currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
 Check(currentReviewIds.SetEquals(new[]{"new-review"}) && await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review')")==2,
     "New cycle did not isolate its submission from preserved old cycles."); Pass(57,"new-cycle submission is the only current review record");
-await Exec("INSERT INTO systemsettings(key,value) VALUES('encoding_period','{\"semester\":\"FIRST\",\"startDate\":\"2026-01-01\",\"endDate\":\"2026-12-31\",\"term\":\"MIDTERM\"}')");
+await Exec("INSERT INTO systemsettings(key,value) VALUES('encoding_period','{\"semester\":\"FIRST\",\"startDate\":\"2026-01-01\",\"endDate\":\"2026-12-31\",\"term\":\"MIDTERM\"}') ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value");
 var dbPeriod=await GradeEncodingPeriodService.GetOpenAsync(db,new DateOnly(2026,9,22));
 Check(dbPeriod.Term=="midterm" && dbPeriod.Semester=="FIRST","Database encoding period was not authoritative."); Pass(75,"PostgreSQL authoritative Midterm period");
 var dbMidtermPayload=GradeEncodingPeriodService.ProjectIncomingGradePayload("{\"midterm\":\"85\",\"finals\":\"90\"}",null,dbPeriod.Term);
@@ -626,5 +938,21 @@ Check(finalsPeriod.Term=="finals" && await Count("SELECT COUNT(*) FROM pending_g
     "Opening Finals altered historical grades."); Pass(80,"opening Finals preserves historical grades");
 Check(!GradeEncodingPeriodService.ProjectIncomingGradePayload("{\"final\":\"90\"}",null,"midterm").Contains("finals",StringComparison.OrdinalIgnoreCase),
     "API projection leaked a Finals alias during Midterm."); Pass(81,"current API projection removes Finals aliases");
+await Exec("DROP TABLE curriculum_subjects,curriculums,academic_programs,users CASCADE");
+await Exec(@"
+CREATE TEMP TABLE users(id INT PRIMARY KEY,email TEXT,role TEXT,status TEXT,is_active BOOLEAN);
+CREATE TEMP TABLE academic_programs(program_id INT PRIMARY KEY,program_code TEXT UNIQUE,program_name TEXT,is_active BOOLEAN);
+CREATE TEMP TABLE curriculums(curriculum_id BIGSERIAL PRIMARY KEY,curriculum_code TEXT UNIQUE,curriculum_name TEXT,program_id INT,curriculum_version TEXT,school_year TEXT,status TEXT,created_by INT,published_at TIMESTAMPTZ,UNIQUE(program_id,curriculum_version));
+CREATE TEMP TABLE curriculum_subjects(subject_id BIGSERIAL PRIMARY KEY,curriculum_id BIGINT,subject_code TEXT,subject_title TEXT,units NUMERIC,lecture_hours NUMERIC,laboratory_hours NUMERIC,prerequisite TEXT,year_level INT,semester TEXT,subject_type TEXT,UNIQUE(curriculum_id,year_level,semester,subject_code));
+INSERT INTO users VALUES(1,'registrar@plv.edu.ph','registrar','APPROVED',TRUE);
+INSERT INTO academic_programs VALUES(1,'BSIT','Bachelor of Science in Information Technology',TRUE);
+INSERT INTO curriculums(curriculum_code,curriculum_name,program_id,curriculum_version,school_year,status,created_by) VALUES('BSIT-PRODUCTION','Production Curriculum',1,'PROD-2025','2025-2026','PUBLISHED',1);");
+await Exec(testCurriculumSeed);
+await Exec(testCurriculumSeed);
+Check(await Count("SELECT COUNT(*) FROM curriculums WHERE curriculum_code='BSIT-QA-2026'")==1 &&
+      await Count("SELECT COUNT(*) FROM curriculum_subjects subject JOIN curriculums curriculum ON curriculum.curriculum_id=subject.curriculum_id WHERE curriculum.curriculum_code='BSIT-QA-2026'")==3 &&
+      await Count("SELECT COUNT(*) FROM curriculums WHERE curriculum_code='BSIT-PRODUCTION' AND curriculum_name='Production Curriculum' AND curriculum_version='PROD-2025'")==1,
+    "Running the QA curriculum seed twice duplicated records or overwrote the production curriculum.");
+Pass(168,"QA curriculum setup is idempotent and preserves production curriculum");
 Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped");
 } finally { await Exec("DROP TABLE IF EXISTS grade_assignment_cycles,pending_grade_records,facultysections,facultyprofiles,student_enrollments,studentprofiles,curriculum_subjects,curriculums,academicsections,academic_programs,academic_periods,systemsettings,users CASCADE"); }

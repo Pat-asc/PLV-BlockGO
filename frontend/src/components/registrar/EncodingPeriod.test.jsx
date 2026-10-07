@@ -48,17 +48,15 @@ test('renders authoritative school years and selects the active year', async () 
   expect(screen.queryByPlaceholderText('2026-2027')).not.toBeInTheDocument();
 });
 
-test('Save Schedule uses the latest active period and preserves the schedule', async () => {
+test('Save Schedule sends the selected academic period and preserves the schedule', async () => {
   let storedValue = JSON.stringify({
     schoolYear: '2025-2026', semester: '1st Semester', term: 'midterm',
     startDate: '2026-09-01', endDate: '2026-09-30',
   });
   getSystemSetting.mockImplementation(async () => ({ status: 'Success', value: storedValue }));
-  fetchAcademicPeriodOptions.mockResolvedValueOnce({
+  fetchAcademicPeriodOptions.mockResolvedValue({
     activeAcademicPeriod: { schoolYear: '2025-2026', semester: 'FIRST' },
     schoolYears: ['2025-2026', '2026-2027'],
-  }).mockResolvedValue({
-    activeAcademicPeriod: { schoolYear: '2026-2027', semester: 'MIDYEAR' },
   });
   updateSystemSetting.mockImplementation(async (_key, value) => {
     storedValue = JSON.stringify({
@@ -73,6 +71,8 @@ test('Save Schedule uses the latest active period and preserves the schedule', a
   render(<EncodingPeriod />);
   const year = await screen.findByRole('combobox', { name: 'School Year' });
   await waitFor(() => expect(year).toBeEnabled());
+  fireEvent.change(year, { target: { value: '2026-2027' } });
+  fireEvent.change(screen.getByLabelText('Semester'), { target: { value: 'Summer' } });
   fireEvent.change(screen.getByLabelText('Encoding Term'), { target: { value: 'finals' } });
   fireEvent.change(screen.getByLabelText('Start Date'), { target: { value: '2026-10-01' } });
   fireEvent.change(screen.getByLabelText('End Date'), { target: { value: '2026-10-31' } });
@@ -82,11 +82,11 @@ test('Save Schedule uses the latest active period and preserves the schedule', a
     schoolYear: '2026-2027', semester: 'Summer', term: 'finals',
     startDate: '2026-10-01', endDate: '2026-10-31',
   };
-  expect(fetchAcademicPeriodOptions).toHaveBeenCalledTimes(2);
+  expect(fetchAcademicPeriodOptions).toHaveBeenCalledTimes(1);
   expect(JSON.parse(updateSystemSetting.mock.calls[0][1])).toMatchObject(expected);
   await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · Summer')).toBeInTheDocument());
-  expect(year).toHaveValue('2025-2026');
-  expect(screen.getByLabelText('Semester')).toHaveValue('1st Semester');
+  expect(year).toHaveValue('2026-2027');
+  expect(screen.getByLabelText('Semester')).toHaveValue('Summer');
   expect(JSON.parse(localStorage.getItem('encodingPeriod'))).toMatchObject(expected);
   expect(JSON.parse(settingEvent.mock.calls[0][0].detail.value)).toMatchObject(expected);
   expect(updateSystemSetting).toHaveBeenCalledTimes(1);
@@ -156,15 +156,19 @@ test('a SystemSettingChanged notification refetches Finals without writing a set
   expect(updateSystemSetting).not.toHaveBeenCalled();
 });
 
-test('Save Schedule requires an active academic period', async () => {
-  fetchAcademicPeriodOptions.mockResolvedValueOnce({
-    activeAcademicPeriod: { schoolYear: '2026-2027', semester: 'FIRST' },
-  }).mockResolvedValueOnce({ activeAcademicPeriod: null });
+test('Save Schedule can establish the first active academic period', async () => {
+  fetchAcademicPeriodOptions.mockResolvedValue({
+    activeAcademicPeriod: null,
+    schoolYears: ['2026-2027'],
+    currentSchoolYear: '2026-2027',
+  });
   render(<EncodingPeriod />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Save Schedule' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Save Schedule' }));
-  expect(await screen.findByText(/academic period must be opened/)).toBeInTheDocument();
-  expect(updateSystemSetting).not.toHaveBeenCalled();
+  await waitFor(() => expect(updateSystemSetting).toHaveBeenCalledTimes(1));
+  expect(JSON.parse(updateSystemSetting.mock.calls[0][1])).toMatchObject({
+    schoolYear: '2026-2027', semester: '2nd Semester', term: 'midterm',
+  });
 });
 
 test('uses the backend-normalized value when the active period changes during save', async () => {
@@ -176,7 +180,8 @@ test('uses the backend-normalized value when the active period changes during sa
   await waitFor(() => expect(screen.getByRole('button', { name: 'Save Schedule' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Save Schedule' }));
   await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2027-2028 · 2nd Semester')).toBeInTheDocument());
-  expect(screen.getByLabelText('School Year')).toHaveValue('2026-2027');
+  expect(screen.getByLabelText('School Year')).toHaveValue('2027-2028');
+  expect(screen.getByLabelText('Semester')).toHaveValue('2nd Semester');
   expect(JSON.parse(localStorage.getItem('encodingPeriod'))).toMatchObject({
     schoolYear: '2027-2028', semester: '2nd Semester',
   });
@@ -235,7 +240,7 @@ test('uses active academic period over stale saved school year and semester', as
   expect(screen.getByLabelText('End Date')).toHaveValue('2026-11-16');
 });
 
-test('keeps MIDYEAR active on Save Schedule, then opens FIRST and shows it after reload', async () => {
+test('Save Schedule switches MIDYEAR to FIRST and shows it after reload without resetting assignments', async () => {
   const summer = { schoolYear: '2026-2027', semester: 'MIDYEAR' };
   const first = { schoolYear: '2026-2027', semester: 'FIRST' };
   let active = summer;
@@ -249,7 +254,8 @@ test('keeps MIDYEAR active on Save Schedule, then opens FIRST and shows it after
   getSystemSetting.mockImplementation(async () => ({ status: 'Success', value: setting }));
   updateSystemSetting.mockImplementation(async (_key, value) => {
     const requested = JSON.parse(value);
-    setting = JSON.stringify({ ...requested, schoolYear: active.schoolYear, semester: active.semester === 'MIDYEAR' ? 'Summer' : '1st Semester' });
+    active = { schoolYear: requested.schoolYear, semester: 'FIRST' };
+    setting = JSON.stringify(requested);
     return { status: 'Success', value: setting };
   });
   requestSystemConfirmation.mockResolvedValue(true);
@@ -275,14 +281,11 @@ test('keeps MIDYEAR active on Save Schedule, then opens FIRST and shows it after
   fireEvent.change(screen.getByLabelText('Semester'), { target: { value: '1st Semester' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save Schedule' }));
   await waitFor(() => expect(updateSystemSetting).toHaveBeenCalled());
-  expect(JSON.parse(updateSystemSetting.mock.calls[0][1]).semester).toBe('Summer');
-  expect(active).toEqual(summer);
-  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · Summer')).toBeInTheDocument());
-  expect(screen.getByLabelText('Semester')).toHaveValue('1st Semester');
-  fireEvent.click(screen.getByRole('button', { name: 'Reset Encoding Season' }));
-  await waitFor(() => expect(onResetEncodingSeason).toHaveBeenCalledTimes(1));
+  expect(JSON.parse(updateSystemSetting.mock.calls[0][1]).semester).toBe('1st Semester');
+  expect(active).toEqual(first);
   await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · 1st Semester')).toBeInTheDocument());
   expect(screen.getByLabelText('Semester')).toHaveValue('1st Semester');
+  expect(onResetEncodingSeason).not.toHaveBeenCalled();
   view.unmount();
   render(<EncodingPeriod onResetEncodingSeason={onResetEncodingSeason} />);
   await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · 1st Semester')).toBeInTheDocument());

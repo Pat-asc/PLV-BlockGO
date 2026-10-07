@@ -705,6 +705,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     earliestEncodedAt: g.date || g.Date || null,
                     latestStatusTimestamp: 0,
                     latestStatusPriority: 0,
+                    reviewNote: '',
                 };
             }
             
@@ -737,6 +738,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             const { firstName, lastName } = splitStudentName(studentName);
             const previousGrade = groups[key].grades[studentKey] || {};
             const mergedGrade = {
+                recordId: g.id || g.Id || previousGrade.recordId || '',
                 midterm: parsedGrade.midterm || previousGrade.midterm || '-',
                 finals: parsedGrade.finals || previousGrade.finals || '-',
                 finalAverage: gradeVal || previousGrade.finalAverage || '-',
@@ -786,6 +788,9 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 groups[key].reviewStatus = normalizedReviewStatus;
                 groups[key].latestStatusTimestamp = incomingTimestamp;
                 groups[key].latestStatusPriority = incomingPriority;
+                groups[key].reviewNote = normalizedReviewStatus === 'returned'
+                    ? (g.note || g.Note || '')
+                    : '';
             }
         });
         return Object.values(groups).map(g => {

@@ -6,6 +6,7 @@ import FacultyStatusTable from "../components/chairperson/FacultyStatusTable";
 import SectionReviewPanel from "../components/chairperson/SectionReviewPanel";
 import AcademicAssignment from "../components/chairperson/AcademicAssignment";
 import StudentSectioning from "../components/chairperson/StudentSectioning";
+import CurriculumBuilder from "../components/chairperson/CurriculumBuilder";
 import { facultyList } from "../data/registrarData";
 import { STUDENT_BATCHES_KEY } from "../utils/studentSectioningHelpers";
 import {
@@ -393,7 +394,6 @@ function ChairpersonPortal({ onLogout, allGrades = {} }) {
           <main className="flex-1 space-y-6">
             {activeTab === "sectioning" ? (
               <StudentSectioning
-                chairpersonDepartment={chairpersonDepartment}
                 onSectioningSaved={() =>
                   setStudentDataVersion((current) => current + 1)
                 }
@@ -402,6 +402,8 @@ function ChairpersonPortal({ onLogout, allGrades = {} }) {
               <>
                 <AcademicAssignment chairpersonDepartment={chairpersonDepartment} />
               </>
+            ) : activeTab === "curriculum" ? (
+              <CurriculumBuilder department={chairpersonDepartment} />
             ) : activeTab === "dashboard" ? (
               <>
                 <div>

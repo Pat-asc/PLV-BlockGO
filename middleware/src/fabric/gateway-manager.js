@@ -184,6 +184,13 @@ function identityFingerprint(identity) {
         .digest('hex');
 }
 
+function isReusableCacheEntry(cached, identity, now = Date.now()) {
+    if (!cached || !identity) return false;
+    return cached.mspId === identity.mspId &&
+        cached.identityFingerprint === identityFingerprint(identity) &&
+        now - cached.lastAccessed <= idleTimeout;
+}
+
 function disconnect(username, reason = 'invalidated') {
     const cached = gatewayCache.get(username);
     if (!cached) return false;
@@ -223,12 +230,7 @@ async function contractForUser(username, roleHint) {
     const fingerprint = identityFingerprint(found.identity);
     const cached = gatewayCache.get(username);
 
-    if (
-        cached &&
-        cached.mspId === found.identity.mspId &&
-        cached.identityFingerprint === fingerprint &&
-        Date.now() - cached.lastAccessed <= idleTimeout
-    ) {
+    if (isReusableCacheEntry(cached, found.identity)) {
         cached.lastAccessed = Date.now();
         return cached.contract;
     }
@@ -362,4 +364,5 @@ async function closeGateways() {
     for (const username of [...gatewayCache.keys()]) disconnect(username, 'shutdown');
 }
 
-module.exports = { cacheStats, checkFabricEndpoints, checkSocket, closeGateways, contractForUser, disconnect, fabricEndpointUrls, profileForIdentity };
+module.exports = { cacheStats, checkFabricEndpoints, checkSocket, closeGateways, contractForUser, disconnect,
+    fabricEndpointUrls, identityFingerprint, isReusableCacheEntry, profileForIdentity };

@@ -7,6 +7,7 @@ const { normalizeAuthRole } = require('../shared/roles');
 const { createServiceApp, installErrorHandler, listen } = require('../shared/service-app');
 const { cacheStats, checkFabricEndpoints, closeGateways, contractForUser, disconnect } = require('../fabric/gateway-manager');
 const { checkWallets } = require('../fabric/wallet-manager');
+const { REGISTRAR_SERVICE_LABEL } = require('../fabric/registrar-service-identity');
 const { classifyLedgerError, safeFabricReason } = require('../fabric/ledger-errors');
 
 const serviceName = 'ledger-service';
@@ -165,8 +166,10 @@ app.get('/api/grade-history/:id', authenticate, async (req, res) => {
     try {
         actor = await actorForRequest(req);
         const role = normalizeAuthRole(actor.dbRole);
-        if (!['faculty', 'department_admin', 'registrar'].includes(role)) return res.status(403).json({ error: 'Grade audit history is restricted to authorized academic staff.' });
-        const contract = await contractForUser(actor.username, role);
+        if (!['student', 'faculty', 'department_admin', 'registrar', 'system_admin'].includes(role)) return res.status(403).json({ error: 'Grade audit history is restricted to authorized users.' });
+        const contract = role === 'system_admin'
+            ? await contractWithReadFallback(actor)
+            : await contractForUser(actor.username, role);
         const current = JSON.parse((await contract.evaluateTransaction('ReadGrade', req.params.id)).toString());
         if (role === 'faculty' && String(current.faculty_id || '').toLowerCase() !== actor.username.toLowerCase()) {
             return res.status(403).json({ error: 'Faculty may view history only for grades they submitted.' });
@@ -175,6 +178,14 @@ app.get('/api/grade-history/:id', authenticate, async (req, res) => {
             const recordProgram = String(current.program || current.course || '').toLowerCase();
             const allowed = [actor.scope?.department, actor.scope?.programCode, actor.scope?.programName].filter(Boolean).map((value) => String(value).toLowerCase());
             if (!allowed.includes(recordProgram)) return res.status(403).json({ error: 'Chairpersons may view history only for their assigned academic program.' });
+        }
+        if (role === 'student') {
+            const identifiers = [current.student_hash, current.student_id, current.student_no]
+                .filter(Boolean).map((value) => String(value).toLowerCase());
+            const ownIdentifiers = [actor.username, actor.username.split('@')[0]].map((value) => value.toLowerCase());
+            if (!identifiers.some((value) => ownIdentifiers.includes(value))) {
+                return res.status(403).json({ error: 'Students may view only their own grade history.' });
+            }
         }
         const history = await contract.evaluateTransaction('GetGradeHistory', req.params.id);
         res.json({ status: 'success', data: JSON.parse(history.toString()) });
@@ -186,13 +197,22 @@ app.get('/api/grade-history/:id', authenticate, async (req, res) => {
 
 app.post('/api/fabric/audit-event', authenticate, requireRegistrarOrInternal, async (req, res) => {
     let actor;
+    let ledgerIdentity;
     try {
-        actor = await actorForRequest(req);
-        if (normalizeAuthRole(actor.dbRole) !== 'registrar') return res.status(403).json({ error: 'A registered Registrar ledger identity is required.' });
-        const result = await (await contractForUser(actor.username, 'registrar')).submitTransaction('CreateAuditEvent', JSON.stringify(req.body));
+        if (req.isInternal) {
+            // System Administrator lifecycle events are submitted by the dedicated
+            // Registrar-MSP service identity. They must not depend on the target
+            // Registrar being newly visible, active, or still present in the wallet.
+            ledgerIdentity = REGISTRAR_SERVICE_LABEL;
+        } else {
+            actor = await actorForRequest(req);
+            if (normalizeAuthRole(actor.dbRole) !== 'registrar') return res.status(403).json({ error: 'A registered Registrar ledger identity is required.' });
+            ledgerIdentity = actor.username;
+        }
+        const result = await (await contractForUser(ledgerIdentity, 'registrar')).submitTransaction('CreateAuditEvent', JSON.stringify(req.body));
         res.status(201).json({ status: 'success', data: JSON.parse(result.toString()) });
     } catch (error) {
-        onLedgerError(actor?.username, error);
+        onLedgerError(ledgerIdentity || actor?.username, error);
         res.status(500).json({ error: process.env.NODE_ENV === 'production' ? 'Unable to record audit event' : error.message });
     }
 });
@@ -256,6 +276,7 @@ function submitRoute(path, roles, transaction, message, status = 200, withBody =
 submitRoute('/api/update-grade', ['faculty', 'department_admin', 'registrar'], 'UpdateGrade', 'Grade updated', 200, true);
 submitRoute('/api/approve-grade/:id', ['department_admin'], 'ApproveGrade', 'Grade approved');
 submitRoute('/api/finalize-grade/:id', ['department_admin'], 'FinalizeRecord', 'Record finalized');
+submitRoute('/api/correct-finalized-grade', ['department_admin'], 'CorrectFinalizedGrade', 'Corrected grade finalized as a new ledger version', 200, true);
 submitRoute('/api/return-grade/:id', ['department_admin', 'registrar'], 'ReturnGrade', 'Record returned for revision');
 
 app.post('/api/batch-issue-grade', authenticate, async (req, res) => {

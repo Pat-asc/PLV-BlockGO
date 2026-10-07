@@ -5,6 +5,7 @@ import { buildLedgerHierarchy, canonicalizeLedgerPrograms, filterLedgerRecords, 
 import { selectLedgerExportRecords } from '../../utils/registrarGradesLedgerPdf';
 import SearchField from '../shared/SearchField';
 import StatusBadge from '../shared/StatusBadge';
+import GradeVersionHistory from '../shared/GradeVersionHistory';
 
 const PAGE_SIZE = 25;
 const displayValue = (value) => (value === null || value === undefined || String(value).trim() === '' ? '--' : String(value));
@@ -89,6 +90,7 @@ const SubjectCard = ({ subject, onViewIpfs }) => {
                       <th className="p-3">Status</th>
                       <th className="p-3">Submitted / Finalized</th>
                       <th className="p-3">File</th>
+                      <th className="p-3">History</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -106,6 +108,7 @@ const SubjectCard = ({ subject, onViewIpfs }) => {
                             <button type="button" onClick={() => onViewIpfs(student.ipfs_cid || student.IpfsCID)} className="font-bold text-blue-700 hover:underline">View File</button>
                           ) : <span className="text-xs text-slate-400">No File</span>}
                         </td>
+                        <td className="p-3"><GradeVersionHistory recordId={student.id || student.recordId} /></td>
                       </tr>
                     ))}
                   </tbody>

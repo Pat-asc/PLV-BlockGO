@@ -1,5 +1,4 @@
 using ClosedXML.Excel;
-using System.Text;
 
 namespace Client_app.Services;
 
@@ -27,6 +26,7 @@ public static class FacultyGradeWorkbookService
         IReadOnlyList<FacultyAssignmentRosterService.RosterStudent> students)
     {
         using var workbook = new XLWorkbook();
+        workbook.CalculateMode = XLCalculateMode.Auto;
         var ws = workbook.Worksheets.Add(GradeSheetName);
         for (var column = 0; column < Headers.Length; column++)
             ws.Cell(1, column + 1).Value = Headers[column];
@@ -58,25 +58,6 @@ public static class FacultyGradeWorkbookService
         using var stream = new MemoryStream();
         workbook.SaveAs(stream);
         return stream.ToArray();
-    }
-
-    public static byte[] BuildCsv(
-        FacultyAssignmentRosterService.Assignment assignment,
-        IReadOnlyList<FacultyAssignmentRosterService.RosterStudent> students)
-    {
-        static string Csv(string? value) => $"\"{(value ?? string.Empty).Replace("\"", "\"\"")}\"";
-        var builder = new StringBuilder();
-        builder.AppendLine(string.Join(',', Headers.Select(Csv)));
-        foreach (var student in students)
-        {
-            var values = new[]
-            {
-                student.StudentNo, student.FullName, "", "", "", "", "", "", "", "", "", "", "",
-                assignment.Subject, assignment.CanonicalSection, assignment.SchoolYear, assignment.Semester
-            };
-            builder.AppendLine(string.Join(',', values.Select(Csv)));
-        }
-        return new UTF8Encoding(true).GetBytes(builder.ToString());
     }
 
     public static decimal WeightedGrade(decimal quizzes, decimal assignments, decimal attendance, decimal exam) =>

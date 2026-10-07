@@ -14,6 +14,7 @@ const { PasswordResetError, createPasswordResetService } = require('../shared/pa
 const { validatePassword } = require('../shared/password-policy');
 const { createServiceApp, installErrorHandler, listen } = require('../shared/service-app');
 const { clientIp } = require('../shared/client-ip');
+const { bootstrapAccounts } = require('../shared/bootstrap-service');
 
 const serviceName = 'auth-service';
 const logger = createLogger(serviceName);
@@ -22,8 +23,25 @@ const { read: dbRead, write: dbWrite } = getPools();
 const emailService = createEmailService();
 
 async function recordSecurityEvent(req, eventType, severity, attemptedIdentity, details) {
+    const verifiedIp = clientIp(req);
+    let client;
+    let committed = false;
     try {
-        await dbWrite.query(
+        client = await dbWrite.connect();
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(2026100702)');
+        if (verifiedIp) {
+            await client.query(
+                `INSERT INTO ip_tracker_mappings (tracker_id, ip_address)
+                 SELECT COALESCE(MAX(tracker_id), 0) + 1, $1
+                   FROM ip_tracker_mappings
+                 HAVING NOT EXISTS (
+                     SELECT 1 FROM ip_tracker_mappings WHERE ip_address = $1
+                 )`,
+                [verifiedIp]
+            );
+        }
+        await client.query(
             `WITH inserted AS (
              INSERT INTO security_events
                 (event_type, severity, attempted_identity, ip_address, request_path, request_method, details)
@@ -37,10 +55,15 @@ async function recordSecurityEvent(req, eventType, severity, attemptedIdentity, 
                 'attemptedIdentity', attempted_identity,
                 'createdAt', created_at
              )::text) FROM inserted`,
-            [eventType, severity, attemptedIdentity || null, clientIp(req), req.originalUrl || req.path, req.method, details]
+            [eventType, severity, attemptedIdentity || null, verifiedIp, req.originalUrl || req.path, req.method, details]
         );
+        await client.query('COMMIT');
+        committed = true;
     } catch (error) {
+        if (client && !committed) await client.query('ROLLBACK').catch(() => {});
         logger.warn({ err: error, eventType }, 'Security event could not be persisted');
+    } finally {
+        client?.release();
     }
 }
 
@@ -300,38 +323,22 @@ app.get('/api/bootstrap', requireInternalKey, async (req, res) => {
     const systemPassword = process.env.BOOTSTRAP_SYSTEM_ADMIN_PASS || 'sysadmin123';
     const registrarEmail = process.env.BOOTSTRAP_REGISTRAR_EMAIL || 'registrar@plv.edu.ph';
     const registrarPassword = process.env.BOOTSTRAP_REGISTRAR_PASS || 'adminpw';
-    const client = await dbWrite.connect();
-    let committed = false;
-    try {
-        await client.query('BEGIN');
-        let result = await client.query('SELECT id FROM users WHERE email = $1', [systemEmail]);
-        if (!result.rows.length) {
-            result = await client.query("INSERT INTO users (email, password_hash, role, status, is_active) VALUES ($1, $2, 'system_admin', 'APPROVED', TRUE) RETURNING id", [systemEmail, await bcrypt.hash(systemPassword, 10)]);
-            await client.query("INSERT INTO adminprofiles (user_id, full_name, admin_level) VALUES ($1, 'System Administrator', 'system_admin')", [result.rows[0].id]);
-        }
-        result = await client.query('SELECT id, role, status, is_active FROM users WHERE email = $1', [registrarEmail]);
-        if (!result.rows.length) {
-            result = await client.query("INSERT INTO users (email, password_hash, role, status, is_active) VALUES ($1, $2, 'registrar', 'APPROVED', TRUE) RETURNING id, role, status, is_active", [registrarEmail, await bcrypt.hash(registrarPassword, 10)]);
-            await client.query("INSERT INTO adminprofiles (user_id, full_name, admin_level, department) VALUES ($1, 'System Registrar', 'registrar', 'Registrar')", [result.rows[0].id]);
-        }
-        const bootstrapRegistrarIsActive = String(result.rows[0].role || '').toLowerCase() === 'registrar' &&
-            String(result.rows[0].status || '').toLowerCase() === 'approved' && result.rows[0].is_active !== false;
-        await client.query('COMMIT');
-        committed = true;
-        if (bootstrapRegistrarIsActive) {
+    const result = await bootstrapAccounts({
+        dbWrite,
+        hashPassword: (password) => bcrypt.hash(password, 10),
+        systemEmail,
+        systemPassword,
+        registrarEmail,
+        registrarPassword,
+        bootstrapRegistrarIdentity: async ({ username, password }) => {
             await requestJson(`${serviceUrl('IDENTITY_SERVICE_URL', 'fabric-identity-service', 4002)}/internal/identities/bootstrap-registrar`, {
                 method: 'POST', timeoutMs: 45000,
                 headers: { 'x-api-key': required('INTERNAL_API_KEY') },
-                body: { username: registrarEmail, password: registrarPassword }
+                body: { username, password }
             });
         }
-        res.json({ status: 'success', message: 'System administrator and registrar bootstrap is complete.' });
-    } catch (error) {
-        if (!committed) await client.query('ROLLBACK');
-        throw error;
-    } finally {
-        client.release();
-    }
+    });
+    res.json({ status: 'success', message: 'System administrator and registrar bootstrap is complete.', data: result });
 });
 
 app.get('/api/ready', async (req, res) => {

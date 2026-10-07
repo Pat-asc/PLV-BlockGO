@@ -13,8 +13,14 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
+const gradeWorkbook = (name = 'grades.xlsx') => new File(
+  [new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1])],
+  name,
+  { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+);
+
 test('bulk grade multipart data always carries the exact assignment identity', async () => {
-  const file = new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', { type: 'text/csv' });
+  const file = gradeWorkbook();
   await batchUploadGrades(file, {
     facultySectionId: 123,
     academicSectionId: 45,
@@ -35,14 +41,14 @@ test('bulk grade multipart data always carries the exact assignment identity', a
 });
 
 test('bulk grade upload refuses to send when the exact assignment ID is absent', async () => {
-  await expect(batchUploadGrades(new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', { type: 'text/csv' }), {
+  await expect(batchUploadGrades(gradeWorkbook(), {
     academicSectionId: 45,
   })).rejects.toThrow('exact Faculty assignment is missing');
   expect(global.fetch).not.toHaveBeenCalled();
 });
 
 test('finals bulk upload sends the canonical term with the complete multipart identity', async () => {
-  await batchUploadGrades(new File(['Student ID,Grade\n26-0001,90'], 'finals.csv', { type: 'text/csv' }), {
+  await batchUploadGrades(gradeWorkbook('finals.xlsx'), {
     facultySectionId: 77,
     academicSectionId: 12,
     subjectCode: 'IT 101',
@@ -79,7 +85,7 @@ test('bulk grade upload accepts XLSX and preserves canonical Finals context', as
 });
 
 test('draft overwrite confirmation is explicit in multipart data', async () => {
-  await batchUploadGrades(new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', { type: 'text/csv' }), {
+  await batchUploadGrades(gradeWorkbook(), {
     facultySectionId: 77, academicSectionId: 12, subjectCode: 'IT 101',
     section: 'BSIT 1-1', schoolYear: '2026-2027', semester: 'FIRST',
     term: 'midterm', confirmOverwrite: true,
@@ -88,7 +94,8 @@ test('draft overwrite confirmation is explicit in multipart data', async () => {
   expect(options.body.get('confirmOverwrite')).toBe('true');
 });
 
-test.each(['xlsx', 'csv'])('template download requests and names the selected %s format', async (format) => {
+test('template download requests and names the XLSX grading workbook', async () => {
+  const format = 'xlsx';
   global.fetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['template']) });
   window.URL.createObjectURL = jest.fn(() => 'blob:grade-template');
   window.URL.revokeObjectURL = jest.fn();
@@ -102,8 +109,8 @@ test.each(['xlsx', 'csv'])('template download requests and names the selected %s
   click.mockRestore();
 });
 
-test('template download rejects an unsupported format before making a request', async () => {
-  await expect(downloadGradingSheet(77, 'template', 'xls')).rejects.toThrow('Unsupported template format');
+test.each(['csv', 'xls'])('template download rejects unsupported %s before making a request', async (format) => {
+  await expect(downloadGradingSheet(77, 'template', format)).rejects.toThrow('Only XLSX');
   expect(global.fetch).not.toHaveBeenCalled();
 });
 

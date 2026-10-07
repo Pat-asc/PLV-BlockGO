@@ -60,7 +60,6 @@ test('checklist covers all years, stored prerequisites, and enrollment progress 
   expect(screen.getByText('In Progress')).toBeInTheDocument();
   expect(screen.getByText('IT 102')).toBeInTheDocument();
   for (const [year, code] of [[2, 'IT 201'], [3, 'IT 301'], [4, 'IT 401']]) {
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(`${year}(?:nd|rd|th) Year`) }));
     expect(screen.getByText(code)).toBeInTheDocument();
     expect(screen.getByRole('row', { name: new RegExp(`${code}.*Not Yet Taken`) }))
       .toHaveAttribute('data-progress-status', 'Not Yet Taken');
@@ -76,6 +75,46 @@ test('only finalized grades determine completed or failed status', () => {
   expect(progress['IT 201'].status).toBe('Not Yet Taken');
   expect(progress['IT 301']).toEqual({ status: 'Completed', grade: '90' });
   expect(progress['IT 401']).toEqual({ status: 'Failed', grade: '70' });
+});
+
+test('curriculum checklist uses actual unit values and no generic current-year highlight', () => {
+  const variedSubjects = [
+    { subjectId: 10, subjectCode: 'GE 101', subjectTitle: 'Two Unit Course', units: 2, lectureHours: 2, laboratoryHours: 0, yearLevel: 1, semester: 'FIRST' },
+    { subjectId: 11, subjectCode: 'LAB 101', subjectTitle: 'Four Unit Course', units: 4, lectureHours: 3, laboratoryHours: 3, yearLevel: 1, semester: 'FIRST' },
+  ];
+  render(<CurriculumViewer curricula={[{ curriculumId: 2, curriculumName: 'Variable Units', curriculumVersion: '2026',
+    programCode: 'BSIT', programName: 'BSIT', status: 'PUBLISHED', subjects: variedSubjects }]} currentYear={1} />);
+
+  expect(screen.getByText('Total Units: 6')).toBeInTheDocument();
+  expect(screen.getByText('Overall Curriculum Units: 6')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Year Level' }));
+  const currentYearOption = screen.getByRole('option', { name: /1st Year.*Current/ });
+  expect(currentYearOption).not.toHaveClass('bg-yellow-100');
+  expect(currentYearOption).not.toHaveClass('ring-yellow-300');
+});
+
+test('student curriculum checklist hides internal metadata while authorized views retain it', () => {
+  const curriculum = {
+    curriculumId: 3,
+    curriculumName: 'BSIT Curriculum',
+    curriculumVersion: 'v2026.1',
+    batchYear: 2026,
+    submittedAt: '2026-09-30T08:45:00Z',
+    programCode: 'BSIT',
+    programName: 'Bachelor of Science in Information Technology',
+    status: 'PUBLISHED',
+    subjects,
+  };
+
+  const { rerender } = render(<CurriculumViewer curricula={[curriculum]} showInternalMetadata={false} />);
+  expect(screen.queryByText(/Version v2026\.1/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Batch Year/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Submitted for approval/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Sep|September|8:45|4:45/i)).not.toBeInTheDocument();
+
+  rerender(<CurriculumViewer curricula={[curriculum]} />);
+  expect(screen.getByText(/Version v2026\.1/i)).toBeInTheDocument();
+  expect(screen.getByText(/Submitted for approval/i)).toBeInTheDocument();
 });
 
 test('Chairperson and Registrar period matching keeps a legacy roster aligned with canonical grades', () => {

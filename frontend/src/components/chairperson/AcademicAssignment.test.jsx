@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import AcademicAssignment from "./AcademicAssignment";
 import { fetchApprovedFaculties, fetchCurriculums, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend } from "../../services/api";
@@ -50,7 +50,99 @@ test("limits professors and programs to the chairperson department", async () =>
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   expect(await screen.findByRole("button", { name: /Carlos Reyes/ })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Other Professor/ })).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Academic Program").options).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Academic Program" }));
+  expect(within(screen.getByRole("listbox", { name: "Academic Program" })).getAllByRole("option")).toHaveLength(1);
+});
+test("does not display another department assignment retained in browser storage", async () => {
+  localStorage.setItem("registrarAssignments", JSON.stringify([
+    savedAssignment({ id: 900, program: "Bachelor of Science in Civil Engineering", subjectCode: "CE 101", subjectTitle: "Civil Engineering" }),
+  ]));
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    program: { code: "BSIT", name: "Bachelor of Science in Information Technology" },
+    subjects: [], sections: [], enrollmentPeriods: [], schoolYears: ["2026-2027"],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
+    assignments: [savedAssignment({ id: 901, subjectCode: "IT 101", subjectTitle: "Information Technology" })],
+  });
+
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+
+  expect(await screen.findByText("IT 101")).toBeInTheDocument();
+  expect(screen.queryByText("CE 101")).not.toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toEqual([
+    expect.objectContaining({ id: 901, subjectCode: "IT 101" }),
+  ]);
+});
+test("CE Chairperson sees CE assignments and never inherits IT assignments", async () => {
+  fetchApprovedFaculties.mockResolvedValue({ faculties: [{ id: 2, fullname: "Maria Santos", department: "Bachelor of Science in Civil Engineering" }] });
+  fetchCurriculums.mockResolvedValue({ data: [{ programCode: "BSCE", status: "PUBLISHED", subjects: [] }] });
+  localStorage.setItem("registrarAssignments", JSON.stringify([
+    savedAssignment({ id: 910, program: "Bachelor of Science in Information Technology", subjectCode: "IT 101" }),
+  ]));
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    program: { code: "BSCE", name: "Bachelor of Science in Civil Engineering" },
+    subjects: [], sections: [], enrollmentPeriods: [], schoolYears: ["2026-2027"],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
+    assignments: [savedAssignment({ id: 911, facultyUserId: 2, program: "Bachelor of Science in Civil Engineering", subjectCode: "CE 101", subjectTitle: "Civil Engineering" })],
+  });
+
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Civil Engineering"/>);
+
+  expect(await screen.findByText("CE 101")).toBeInTheDocument();
+  expect(screen.queryByText("IT 101")).not.toBeInTheDocument();
+});
+test.each([
+  ["IT 202", "Data Communications", 2],
+  ["IT 203", "Data Structures", 3],
+  ["IT 204", "Advanced Systems", 4],
+])("shows authoritative units for saved %s assignment", async (subjectCode, subjectTitle, units) => {
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    program: { code: "BSIT", name: "Bachelor of Science in Information Technology" },
+    subjects: [], sections: [], enrollmentPeriods: [], schoolYears: ["2026-2027"],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
+    assignments: [savedAssignment({ id: 200 + units, subjectCode, subjectTitle, units })],
+  });
+
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+
+  const row = (await screen.findByText(subjectCode)).closest("tr");
+  expect(within(row).getByText(String(units))).toBeInTheDocument();
+  expect(within(row).queryByText("0")).not.toBeInTheDocument();
+});
+
+test("same subject in two sections retains both assignments and the same authoritative units", async () => {
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    program: { code: "BSIT", name: "Bachelor of Science in Information Technology" },
+    subjects: [], sections: [], enrollmentPeriods: [], schoolYears: ["2026-2027"],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
+    assignments: [
+      savedAssignment({ id: 211, subjectCode: "IT 201", sectionName: "BSIT 2-1", units: 3 }),
+      savedAssignment({ id: 212, subjectCode: "IT 201", sectionName: "BSIT 2-2", units: 3 }),
+    ],
+  });
+
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+
+  const rows = (await screen.findAllByText("IT 201")).map((cell) => cell.closest("tr"));
+  expect(rows).toHaveLength(2);
+  expect(rows.map((row) => within(row).getByText("3"))).toHaveLength(2);
+  expect(screen.getByText("BSIT 2-1")).toBeInTheDocument();
+  expect(screen.getByText("BSIT 2-2")).toBeInTheDocument();
+});
+
+test("legacy unresolved saved assignment displays N/A rather than fabricated units", async () => {
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    program: { code: "BSIT", name: "Bachelor of Science in Information Technology" },
+    subjects: [], sections: [], enrollmentPeriods: [], schoolYears: ["2026-2027"],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
+    assignments: [savedAssignment({ id: 220, subjectCode: "LEG 101", subjectTitle: null, units: null })],
+  });
+
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+
+  const row = (await screen.findByText("LEG 101")).closest("tr");
+  expect(within(row).getByText("Not available")).toBeInTheDocument();
+  expect(within(row).getByText("N/A")).toBeInTheDocument();
+  expect(within(row).queryByText("0")).not.toBeInTheDocument();
 });
 test("stages assignments, prevents duplicates, and persists only on Save", async () => {
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);

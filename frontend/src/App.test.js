@@ -63,6 +63,23 @@ test('keeps the signed-in account in sessionStorage and shows its role URL', asy
   expect(localStorage.getItem('token')).toBeNull();
 });
 
+test('redirects an unauthorized role away from the protected System Administrator portal', async () => {
+  const token = tokenFor('student', 'student@plv.edu.ph');
+  sessionStorage.setItem('blockgo.auth.token', token);
+  sessionStorage.setItem('blockgo.auth.role', 'student');
+  fetchUserProfile.mockResolvedValue({
+    status: 'Success',
+    data: { id: 21, email: 'student@plv.edu.ph', fullName: 'Test Student', role: 'student', status: 'APPROVED' },
+  });
+  window.history.replaceState({}, '', '/system-admin');
+
+  render(<App />);
+
+  expect(await screen.findByText(/student portal for student@plv.edu.ph/i)).toBeInTheDocument();
+  await waitFor(() => expect(window.location.pathname).toBe('/student'));
+  expect(screen.queryByText('BlockGo Data Life Cycle')).not.toBeInTheDocument();
+});
+
 test('renders managed-account login at the stable login route without public registration', async () => {
   render(<App />);
   expect(await screen.findByRole('button', { name: /sign in/i })).toBeInTheDocument();

@@ -161,6 +161,14 @@ test('GKE public API backends replace spoofable forwarding headers with the veri
     }
 });
 
+test('application gateways trust the Kubernetes service proxy range for verified forwarding', () => {
+    const middlewareConfig = byKey.get('plv-fabric/ConfigMap/middleware-service-config');
+    const dotnetConfig = byKey.get('plv-fabric/ConfigMap/dotnet-service-config');
+
+    assert.ok(String(middlewareConfig?.data?.TRUST_PROXY_CIDRS || '').split(',').includes('10.96.0.0/16'));
+    assert.ok(Object.values(dotnetConfig?.data || {}).includes('10.96.0.0/16'));
+});
+
 test('all ASP.NET API aliases are represented by YARP and GKE Ingress routes', () => {
     const topology = fs.readFileSync(path.join(repoRoot, 'client-app', 'Microservices', 'DotnetServiceTopology.cs'), 'utf8');
     const ingress = byKey.get('plv-fabric/Ingress/main-ingress');

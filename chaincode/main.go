@@ -43,6 +43,12 @@ type AcademicRecord struct {
 	Status            string  `json:"status"`
 	Note              string  `json:"note"`
 	Version           int     `json:"version"`
+	GradeVersion      int     `json:"grade_version,omitempty"`
+	LogicalGradeID    string  `json:"logical_grade_id,omitempty"`
+	PreviousTxID      string  `json:"previous_transaction_id,omitempty"`
+	CorrectionReason  string  `json:"correction_reason,omitempty"`
+	CorrectedBy       string  `json:"corrected_by,omitempty"`
+	CorrectedAt       string  `json:"corrected_at,omitempty"`
 	FinalizedBy       string  `json:"finalized_by,omitempty"`
 	FinalizedAt       string  `json:"finalized_at,omitempty"`
 	AssignmentCycleID string  `json:"assignment_cycle_id,omitempty"`
@@ -62,6 +68,13 @@ type AuditRecord struct {
 }
 
 type SmartContract struct{}
+
+type FinalizedGradeCorrection struct {
+	RecordID             string `json:"record_id"`
+	NewGrade             string `json:"new_grade"`
+	Reason               string `json:"reason"`
+	ExpectedGradeVersion int    `json:"expected_grade_version"`
+}
 
 const (
 	statusIssued             = "Issued"
@@ -161,8 +174,52 @@ func transitionToFinalized(record *AcademicRecord, actor string, finalizedAt tim
 	record.Status = statusFinalized
 	record.FinalizedBy = actor
 	record.FinalizedAt = finalizedAt.Format(time.RFC3339Nano)
+	if record.GradeVersion <= 0 {
+		record.GradeVersion = 1
+	}
+	if record.LogicalGradeID == "" {
+		record.LogicalGradeID = record.ID
+	}
 	record.Version++
 	return true, nil
+}
+
+func finalizedGradeVersion(record AcademicRecord) int {
+	if record.GradeVersion > 0 {
+		return record.GradeVersion
+	}
+	// Records finalized before explicit grade versioning are the first immutable
+	// finalized generation. This is a read-time compatibility rule; no migration
+	// or rewrite of historical ledger values is required.
+	return 1
+}
+
+func applyFinalizedCorrection(record *AcademicRecord, correction FinalizedGradeCorrection, actor string, correctedAt time.Time) error {
+	if record.Status != statusFinalized {
+		return fmt.Errorf("invalid grade transition: only a finalized grade can create a new finalized version")
+	}
+	if strings.TrimSpace(correction.NewGrade) == "" {
+		return fmt.Errorf("corrected grade is required")
+	}
+	if len(strings.TrimSpace(correction.Reason)) < 3 {
+		return fmt.Errorf("correction reason must contain at least 3 characters")
+	}
+	currentVersion := finalizedGradeVersion(*record)
+	if correction.ExpectedGradeVersion != currentVersion {
+		return fmt.Errorf("grade version conflict: expected %d but current version is %d", correction.ExpectedGradeVersion, currentVersion)
+	}
+
+	record.PreviousTxID = record.TransactionID
+	record.Grade = correction.NewGrade
+	record.GradeVersion = currentVersion + 1
+	record.LogicalGradeID = record.ID
+	record.CorrectionReason = strings.TrimSpace(correction.Reason)
+	record.CorrectedBy = actor
+	record.CorrectedAt = correctedAt.Format(time.RFC3339Nano)
+	record.FinalizedBy = actor
+	record.FinalizedAt = correctedAt.Format(time.RFC3339Nano)
+	record.Version++
+	return nil
 }
 
 func getTransactionDate(stub shim.ChaincodeStubInterface) string {
@@ -247,6 +304,8 @@ func (cc *SmartContract) Invoke(stub shim.ChaincodeStubInterface) *pb.Response {
 		return cc.approveGrade(stub, args)
 	case "FinalizeRecord":
 		return cc.finalizeRecord(stub, args)
+	case "CorrectFinalizedGrade":
+		return cc.correctFinalizedGrade(stub, args)
 	case "GetAllGrades":
 		return cc.getAllGrades(stub)
 	case "GetGradeHistory":
@@ -714,6 +773,59 @@ func (cc *SmartContract) finalizeRecord(stub shim.ChaincodeStubInterface, args [
 	return shim.Success(updatedJSON)
 }
 
+func (cc *SmartContract) correctFinalizedGrade(stub shim.ChaincodeStubInterface, args []string) *pb.Response {
+	if len(args) < 1 {
+		return shim.Error("Finalized grade correction data required")
+	}
+
+	mspID, _ := cid.GetMSPID(stub)
+	role, found := getSafeAttribute(stub, "role")
+	if !found || !isDepartmentAdminIdentity(mspID, role) {
+		return shim.Error("OBAC/ABAC Denied: Only an authorized Chairperson can correct a finalized grade")
+	}
+
+	var correction FinalizedGradeCorrection
+	if err := json.Unmarshal([]byte(args[0]), &correction); err != nil {
+		return shim.Error("Invalid finalized grade correction: " + err.Error())
+	}
+	correction.RecordID = strings.TrimSpace(correction.RecordID)
+	if correction.RecordID == "" {
+		return shim.Error("Record ID is required")
+	}
+
+	recordJSON, err := stub.GetState(correction.RecordID)
+	if err != nil {
+		return shim.Error("Failed to read current grade: " + err.Error())
+	}
+	if recordJSON == nil {
+		return shim.Error("Record not found")
+	}
+
+	var record AcademicRecord
+	if err := json.Unmarshal(recordJSON, &record); err != nil {
+		return shim.Error("Failed to decode current grade: " + err.Error())
+	}
+	if !academicScopeAllows(stub, role, record) {
+		return shim.Error("ABAC Denied: Grade is outside the Chairperson's authoritative department scope")
+	}
+
+	actor := getClientCommonName(stub)
+	if err := applyFinalizedCorrection(&record, correction, actor, getTransactionTime(stub)); err != nil {
+		return shim.Error(err.Error())
+	}
+	stampRecord(stub, &record, actor)
+	updatedJSON, err := json.Marshal(record)
+	if err != nil {
+		return shim.Error("Failed to encode corrected grade: " + err.Error())
+	}
+	// The read followed by PutState participates in Fabric MVCC validation. Two
+	// concurrent proposals based on the same version cannot both commit.
+	if err := stub.PutState(record.ID, updatedJSON); err != nil {
+		return shim.Error("Failed to commit corrected finalized grade: " + err.Error())
+	}
+	return shim.Success(updatedJSON)
+}
+
 func (cc *SmartContract) getAllGrades(stub shim.ChaincodeStubInterface) *pb.Response {
 	role, denied := authorizeGradeReader(stub)
 	if denied != nil {
@@ -898,18 +1010,22 @@ func (cc *SmartContract) getGradeHistory(stub shim.ChaincodeStubInterface, args 
 	recordID := args[0]
 
 	role, denied := authorizeGradeReader(stub)
-	if denied != nil || role == "student" {
-		return shim.Error("ABAC Denied: Students cannot view the full audit history.")
+	if denied != nil {
+		return denied
 	}
-	if role != "registrar" {
-		currentJSON, readErr := stub.GetState(recordID)
-		if readErr != nil || currentJSON == nil {
-			return shim.Error("Record not found")
+	currentJSON, readErr := stub.GetState(recordID)
+	if readErr != nil || currentJSON == nil {
+		return shim.Error("Record not found")
+	}
+	var current AcademicRecord
+	if err := json.Unmarshal(currentJSON, &current); err != nil {
+		return shim.Error("Failed to decode current record: " + err.Error())
+	}
+	if role == "student" {
+		if !strings.EqualFold(current.StudentHash, getClientCommonName(stub)) {
+			return shim.Error("ABAC Denied: Students may view only their own grade history")
 		}
-		var current AcademicRecord
-		if err := json.Unmarshal(currentJSON, &current); err != nil {
-			return shim.Error("Failed to decode current record: " + err.Error())
-		}
+	} else if role != "registrar" {
 		if !academicScopeAllows(stub, role, current) {
 			return shim.Error("ABAC Denied: Grade history is outside the caller's authoritative academic scope")
 		}
@@ -924,31 +1040,62 @@ func (cc *SmartContract) getGradeHistory(stub shim.ChaincodeStubInterface, args 
 	}
 	defer resultsIterator.Close()
 
-	var history []map[string]interface{}
+	versions := make([]map[string]interface{}, 0)
+	legacyVersion := 0
 	for resultsIterator.HasNext() {
 		response, err := resultsIterator.Next()
 		if err != nil {
 			return shim.Error("Error processing history iteration: " + err.Error())
 		}
 
-		var value map[string]interface{}
-		if len(response.Value) > 0 {
-			err = json.Unmarshal(response.Value, &value)
-			if err != nil {
-				return shim.Error("Error unmarshalling history value: " + err.Error())
-			}
+		if response.IsDelete || len(response.Value) == 0 {
+			continue
 		}
-
-		historyRecord := map[string]interface{}{
-			"txId":      response.TxId,
-			"timestamp": time.Unix(response.Timestamp.Seconds, int64(response.Timestamp.Nanos)).UTC().Format(time.RFC3339Nano),
-			"isDelete":  response.IsDelete,
-			"value":     value,
+		var record AcademicRecord
+		if err = json.Unmarshal(response.Value, &record); err != nil {
+			return shim.Error("Error unmarshalling history value: " + err.Error())
 		}
-		history = append(history, historyRecord)
+		if record.Status != statusFinalized {
+			continue
+		}
+		legacyVersion++
+		gradeVersion := record.GradeVersion
+		if gradeVersion <= 0 {
+			gradeVersion = legacyVersion
+		}
+		versions = append(versions, map[string]interface{}{
+			"logicalGradeId":       recordID,
+			"version":              gradeVersion,
+			"grade":                record.Grade,
+			"studentId":            record.StudentNo,
+			"subjectCode":          record.SubjectCode,
+			"facultySectionId":     record.AssignmentCycleID,
+			"schoolYear":           record.SchoolYear,
+			"semester":             record.Semester,
+			"term":                 record.Term,
+			"transactionId":        response.TxId,
+			"previousTransactionId": record.PreviousTxID,
+			"correctionReason":     record.CorrectionReason,
+			"actor":                record.FinalizedBy,
+			"finalizedAt":          record.FinalizedAt,
+			"timestamp":            time.Unix(response.Timestamp.Seconds, int64(response.Timestamp.Nanos)).UTC().Format(time.RFC3339Nano),
+		})
 	}
 
-	historyJSON, _ := json.Marshal(history)
+	for index, version := range versions {
+		if index == len(versions)-1 {
+			version["status"] = "Current"
+		} else {
+			version["status"] = "Superseded"
+		}
+	}
+	currentVersion := finalizedGradeVersion(current)
+	payload := map[string]interface{}{
+		"logicalGradeId": recordID,
+		"currentVersion": currentVersion,
+		"versions":       versions,
+	}
+	historyJSON, _ := json.Marshal(payload)
 	return shim.Success(historyJSON)
 }
 

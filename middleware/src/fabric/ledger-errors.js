@@ -22,6 +22,8 @@ function classifyLedgerError(error, functionName = '') {
         return { code: 'GRADE_NOT_FOUND', status: 404, reason: 'Record not found on the Fabric ledger.' };
     if (functionName === 'IssueGrade' && /\brecord already exists\b/i.test(reason))
         return { code: 'LEDGER_RECORD_EXISTS', status: 409, reason: 'Grade UUID already exists on the Fabric ledger.' };
+    if (functionName === 'CorrectFinalizedGrade' && /grade version conflict/i.test(reason))
+        return { code: 'GRADE_VERSION_CONFLICT', status: 409, reason: 'The finalized grade changed; refresh before submitting another correction.' };
     if (/endorse|commit|validation|mvcc/i.test(reason))
         return { code: 'FABRIC_COMMIT_FAILED', status: 503, reason: 'Fabric endorsement or commit did not succeed.' };
     if (/abac denied|obac\/abac denied|invalid grade transition/i.test(reason))

@@ -1,9 +1,15 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import TextSizeControl from './TextSizeControl';
 
-const SettingsMenu = ({ children, title = 'Settings', description = 'Adjust your portal display.' }) => {
-  const [open, setOpen] = useState(false);
+const SettingsMenu = ({ children, title = 'Settings', description = 'Adjust your portal display.', open: controlledOpen, onOpenChange }) => {
+  const [internalOpen, setInternalOpen] = useState(false);
   const menuRef = useRef(null);
+  const isControlled = typeof controlledOpen === 'boolean';
+  const open = isControlled ? controlledOpen : internalOpen;
+  const setOpen = useCallback((nextOpen) => {
+    if (!isControlled) setInternalOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  }, [isControlled, onOpenChange]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -19,11 +25,11 @@ const SettingsMenu = ({ children, title = 'Settings', description = 'Adjust your
       document.removeEventListener('mousedown', closeOnOutsideClick);
       document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [open]);
+  }, [open, setOpen]);
 
   return (
     <div ref={menuRef} className="relative shrink-0">
-      <button type="button" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((value) => !value)}
+      <button type="button" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen(!open)}
         aria-label="Settings"
         className="inline-flex h-10 items-center gap-2 rounded-lg border border-white/25 px-3 text-sm font-semibold text-white transition hover:border-yellow-400 hover:bg-white/10 hover:text-yellow-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#001b55]">
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4 shrink-0">

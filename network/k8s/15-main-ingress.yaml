@@ -1,14 +1,4 @@
 ---
-apiVersion: networking.gke.io/v1
-kind: ManagedCertificate
-metadata:
-  name: blockgo-managed-cert
-  namespace: plv-fabric
-spec:
-  domains:
-    - plv-blockgo.com
-
----
 apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
 metadata:
@@ -26,6 +16,10 @@ metadata:
   name: blockgo-forwarded-headers
   namespace: plv-fabric
 spec:
+  # The classic GCE load balancer applies this timeout to the full lifetime of
+  # upgraded WebSocket connections. Keep Grafana Live sessions stable while
+  # retaining a finite upper bound for all requests through the API gateway.
+  timeoutSec: 3600
   customRequestHeaders:
     headers:
       # GCP derives this value from the transport connection and replaces any
@@ -46,15 +40,16 @@ metadata:
     # Permanent GCP production IP
     kubernetes.io/ingress.global-static-ip-name: "blockgo-prod-ip"
 
-    # Google-managed HTTPS certificate
-    networking.gke.io/managed-certificates: "blockgo-managed-cert"
-
     # Redirect HTTP -> HTTPS
     networking.gke.io/v1beta1.FrontendConfig: "blockgo-frontend-config"
 
 spec:
+  tls:
+  - hosts:
+    - __BLOCKGO_PUBLIC_HOST__
+    secretName: __BLOCKGO_PUBLIC_TLS_SECRET__
   rules:
-  - host: plv-blockgo.com
+  - host: __BLOCKGO_PUBLIC_HOST__
     http:
       paths:
 

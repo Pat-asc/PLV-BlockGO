@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchApplicationTransactions, fetchLedgerTransactions } from '../../services/api';
 import SearchField from '../shared/SearchField';
 import useDebouncedValue from '../../hooks/useDebouncedValue';
+import GradeVersionHistory from '../shared/GradeVersionHistory';
 
 const PAGE_SIZE = 10;
 
@@ -86,15 +87,15 @@ function SystemAdminTransactions() {
       {error ? <div role="alert" className="rounded-md border border-red-300 bg-red-50 p-3 text-red-800">{error}</div> : null}
       <div className="overflow-x-auto rounded-md border border-slate-200 bg-white shadow-sm">
         <table className="min-w-full text-left text-sm">
-          <thead className="border-b bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="px-4 py-3">Hash</th><th className="px-4 py-3">Action</th><th className="px-4 py-3">Actor</th><th className="px-4 py-3">Record</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Timestamp</th></tr></thead>
+          <thead className="border-b bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="px-4 py-3">Hash</th><th className="px-4 py-3">Action</th><th className="px-4 py-3">Actor</th><th className="px-4 py-3">Record</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Timestamp</th><th className="px-4 py-3">Versions</th></tr></thead>
           <tbody className="divide-y divide-slate-100">
             {visible.map((record, index) => <tr key={`${record.recordSource}-${value(record, 'auditId', 'transactionId', 'recordId')}-${index}`}>
               <td className="max-w-48 truncate px-4 py-3 font-mono text-xs" title={value(record, 'transactionHash', 'transactionId')}>{value(record, 'transactionHash', 'transactionId')}</td>
               <td className="px-4 py-3 font-semibold">{value(record, 'action', 'status')}</td><td className="px-4 py-3">{value(record, 'actor')}</td>
               <td className="px-4 py-3">{value(record, 'entityId', 'recordId')}</td><td className="px-4 py-3 capitalize">{record.recordSource}</td>
-              <td className="px-4 py-3">{value(record, 'status', 'actorRole')}</td><td className="whitespace-nowrap px-4 py-3">{dateText(value(record, 'occurredAt'))}</td>
+              <td className="px-4 py-3">{value(record, 'status', 'actorRole')}</td><td className="whitespace-nowrap px-4 py-3">{dateText(value(record, 'occurredAt'))}</td><td className="px-4 py-3">{record.recordSource === 'blockchain' ? <GradeVersionHistory recordId={value(record, 'recordId')} /> : <span className="text-slate-400">--</span>}</td>
             </tr>)}
-            {!visible.length ? <tr><td colSpan="7" className="px-4 py-8 text-center text-slate-500">{loading ? 'Loading transactions…' : 'No matching transactions.'}</td></tr> : null}
+            {!visible.length ? <tr><td colSpan="8" className="px-4 py-8 text-center text-slate-500">{loading ? 'Loading transactions…' : 'No matching transactions.'}</td></tr> : null}
           </tbody>
         </table>
       </div>

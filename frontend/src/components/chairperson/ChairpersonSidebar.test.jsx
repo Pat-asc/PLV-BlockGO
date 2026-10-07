@@ -2,16 +2,16 @@ import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import ChairpersonSidebar from './ChairpersonSidebar';
 
-test('exposes the intermediate Finalize Queue between review and finalized tracking', () => {
+test('exposes the intermediate Finalize Grades queue between review and finalized tracking', () => {
   const setActiveTab = jest.fn();
   render(<ChairpersonSidebar activeTab="forReview" setActiveTab={setActiveTab} />);
 
   const labels = screen.getAllByRole('button').map((button) => button.textContent.trim());
-  expect(labels.indexOf('For Review')).toBeLessThan(labels.indexOf('Finalize Queue'));
-  expect(labels.indexOf('For Review')).toBeLessThan(labels.indexOf('Returned'));
-  expect(labels.indexOf('Returned')).toBeLessThan(labels.indexOf('Finalize Queue'));
-  expect(labels.indexOf('Finalize Queue')).toBeLessThan(labels.indexOf('Finalized'));
+  expect(labels.indexOf('Grade Review')).toBeLessThan(labels.indexOf('Finalize Grades'));
+  expect(labels.indexOf('Grade Review')).toBeLessThan(labels.indexOf('Returned Grades'));
+  expect(labels.indexOf('Returned Grades')).toBeLessThan(labels.indexOf('Finalize Grades'));
+  expect(labels.indexOf('Finalize Grades')).toBeLessThan(labels.indexOf('Finalized Grades'));
 
-  fireEvent.click(screen.getByRole('button', { name: 'Finalize Queue' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Finalize Grades' }));
   expect(setActiveTab).toHaveBeenCalledWith('approved');
 });

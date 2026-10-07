@@ -70,6 +70,12 @@ namespace Client_app.Models
         [Required, EmailAddress] public string StudentEmail { get; set; } = string.Empty;
     }
 
+    public sealed class BulkDeleteCurriculumSubjectsRequest
+    {
+        [Required, MinLength(1), MaxLength(500)]
+        public long[] SubjectIds { get; set; } = Array.Empty<long>();
+    }
+
     public sealed class AssignCurriculumBatchRequest
     {
         [Range(2000, 9999)] public int BatchYear { get; set; }

@@ -4,6 +4,7 @@ import { getGradeEquivalent } from "../../utils/gradingHelpers";
 import Modal from "../../services/Modal";
 import BackButton from "../shared/BackButton";
 import StatusBadge from "../shared/StatusBadge";
+import GradeVersionHistory from "../shared/GradeVersionHistory";
 
 const formatLogDate = (value) => {
   if (!value) return "--";
@@ -13,6 +14,22 @@ const formatLogDate = (value) => {
 
 const getEncodingTermLabel = (term = "") =>
   String(term || "").toLowerCase() === "finals" ? "Finals" : "Midterm";
+
+const studentNameCollator = new Intl.Collator("en", {
+  sensitivity: "base",
+  numeric: true,
+});
+
+const compareStudentReviewRows = (left, right) => {
+  for (const field of ["id", "lastName", "firstName", "middleName", "name"]) {
+    const comparison = studentNameCollator.compare(
+      String(left[field] || "").trim(),
+      String(right[field] || "").trim()
+    );
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
+};
 
 function SectionReviewPanel({
   selectedSection,
@@ -83,10 +100,14 @@ function SectionReviewPanel({
     if (!selectedSection) return [];
 
     return selectedSection.students.map((student) => {
+      const studentId = student.studentNo || student.studentId || student.id;
       const record =
+        selectedSection.grades[student.studentNo] ||
         selectedSection.grades[student.studentId] ||
         selectedSection.grades[student.id] ||
         {};
+      const referenceRecord = selectedSection.referenceGrades?.[studentId] ||
+        selectedSection.referenceGrades?.[student.studentId] || {};
 
       const numericMidterm = Number(record.midterm);
       const numericFinals = Number(record.finals);
@@ -104,7 +125,8 @@ function SectionReviewPanel({
           : finalAverage;
 
       return {
-        id: student.studentNo || student.studentId || student.id,
+        id: studentId,
+        recordId: record.recordId || record.id || "",
         name:
           student.fullName ||
           `${student.lastName || ""}, ${student.firstName || ""}`.replace(
@@ -113,15 +135,20 @@ function SectionReviewPanel({
           ) ||
           student.studentId ||
           "-",
+        lastName: student.lastName || "",
+        firstName: student.firstName || "",
+        middleName: student.middleName || "",
         midterm: record.midterm || "-",
         finals: record.finals || "-",
+        referenceGrade: referenceRecord.grade || referenceRecord.midterm ||
+          (String(activeTerm).toLowerCase() === 'finals' ? record.midterm : "-"),
         finalAverage,
         gradeEquivalent,
         standing: record.standing || "active",
         flagged: !!record.flagged,
         status: computeGradeStatus(record, activeTerm),
       };
-    });
+    }).sort(compareStudentReviewRows);
   }, [selectedSection, activeTerm]);
 
   const summary = useMemo(() => {
@@ -195,7 +222,7 @@ function SectionReviewPanel({
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h3 className="text-xl font-bold text-[#003366]">Section Review Details</h3>
@@ -270,54 +297,13 @@ function SectionReviewPanel({
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <h3 className="text-lg font-bold text-[#003366]">Submitted Grades</h3>
-            
+            <h3 className="text-lg font-bold text-[#003366]">Grade Comparison</h3>
+            <p className="text-sm text-slate-500">Rows are aligned by authoritative Student ID, never by name or array position.</p>
           </div>
         </div>
-
-        <div className="mt-4 overflow-x-auto">
-          <table className="min-w-full">
-            <thead>
-              <tr className="bg-[#003366] text-white">
-                <th className="px-4 py-3 text-left text-sm">Student ID</th>
-                <th className="px-4 py-3 text-left text-sm">Student Name</th>
-                <th className="px-4 py-3 text-left text-sm">Midterm</th>
-                {activeTerm === "finals" && (
-                  <>
-                    <th className="px-4 py-3 text-left text-sm">Finals</th>
-                    <th className="px-4 py-3 text-left text-sm">Final Grade</th>
-                    <th className="px-4 py-3 text-left text-sm">Equivalent</th>
-                  </>
-                )}
-                <th className="px-4 py-3 text-left text-sm">Standing</th>
-                <th className="px-4 py-3 text-left text-sm">Status</th>
-                <th className="px-4 py-3 text-left text-sm">Remarks</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className={`border-b ${row.flagged ? "bg-red-50" : "bg-white"}`}>
-                  <td className="px-4 py-3">{row.id}</td>
-                  <td className="px-4 py-3 font-medium text-slate-800">{row.name}</td>
-                  <td className="px-4 py-3">{row.midterm}</td>
-                  {activeTerm === "finals" && (
-                    <>
-                      <td className="px-4 py-3">{row.finals}</td>
-                      <td className="px-4 py-3 font-semibold text-slate-800">{row.finalAverage}</td>
-                      <td className="px-4 py-3">{row.gradeEquivalent}</td>
-                    </>
-                  )}
-                  <td className="px-4 py-3 capitalize">
-                    {String(row.standing).replaceAll("_", " ")}
-                  </td>
-                  <td className="px-4 py-3 capitalize">
-                    {String(row.status).replaceAll("_", " ")}
-                  </td>
-                  <td className="px-4 py-3">{row.flagged ? "Flagged by faculty" : "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-2" data-testid="grade-comparison-grid">
+          <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200"><h4 className="sticky left-0 bg-[#003366] px-4 py-3 font-bold text-white">Current / Submitted</h4><table className="min-w-[680px] table-fixed text-sm"><thead className="bg-slate-100 text-left"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">{getEncodingTermLabel(activeTerm)}</th><th className="w-28 px-3 py-2">Status</th><th className="w-32 px-3 py-2">Ledger History</th></tr></thead><tbody>{rows.map((row) => <tr key={`current-${row.id}`} className={`border-t ${row.flagged ? 'bg-red-50' : ''}`}><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium">{row.name}</td><td className="px-3 py-2 font-semibold">{String(activeTerm).toLowerCase() === 'finals' ? row.finals : row.midterm}</td><td className="break-words px-3 py-2 capitalize">{String(row.status).replaceAll('_', ' ')}</td><td className="px-3 py-2">{row.recordId ? <GradeVersionHistory recordId={row.recordId} allowCorrection={selectedSection.reviewStatus === 'forwarded'} /> : <span className="text-xs text-slate-400">Not finalized</span>}</td></tr>)}</tbody></table></div>
+          <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200"><h4 className="sticky left-0 bg-slate-700 px-4 py-3 font-bold text-white">Comparison / Reference</h4><table className="min-w-[560px] table-fixed text-sm"><thead className="bg-slate-100 text-left"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">Reference</th><th className="w-28 px-3 py-2">Standing</th></tr></thead><tbody>{rows.map((row) => <tr key={`reference-${row.id}`} className="border-t"><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium">{row.name}</td><td className="px-3 py-2 font-semibold">{row.referenceGrade}</td><td className="break-words px-3 py-2 capitalize">{String(row.standing).replaceAll('_', ' ')}</td></tr>)}</tbody></table></div>
         </div>
       </div>
 

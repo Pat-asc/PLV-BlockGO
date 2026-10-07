@@ -19,9 +19,15 @@ jest.setTimeout(15000);
 const assignment = {
   id: 77, academicSectionId: 1,
   program: 'BSIT', sectionName: 'BSIT 1-1', subjectCode: 'IT 101', subjectTitle: 'Introduction to IT',
-  yearLevel: '1', schoolYear: '2026-2027', semester: '2nd Semester',
+  yearLevel: '1', schoolYear: '2026-2027', semester: '2nd Semester', units: 3,
   rosterStudents: [{ studentId: '2026-0001', email: '26-0001', firstName: 'Juan' }],
 };
+
+const gradeWorkbook = (name = 'grades.xlsx') => new File(
+  [new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1])],
+  name,
+  { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+);
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -30,7 +36,7 @@ beforeEach(() => {
   getSystemSetting.mockResolvedValue({ status: 'Success', value: { startDate: '2020-01-01', endDate: '2099-12-31', semester: '2nd Semester', term: 'midterm' } });
   fetchFacultySections.mockResolvedValue({ sections: [{ id: 77, facultySectionId: 77, assignmentCycleId: 77, department: 'BSIT', section: 'BSIT 1-1',
     canonicalSection: 'BSIT 1-1', academicSectionId: 1, schoolYear: '2026-2027', semester: 'FIRST',
-    yearLevel: '1', subject: 'IT 101' }] });
+    yearLevel: '1', subject: 'IT 101', subjectTitle: 'Introduction to IT', units: 2 }] });
   fetchFacultyStudents.mockResolvedValue({ students: [{ internalStudentId: 5, facultySectionId: 77, studentNumber: '26-0001', fullName: 'Juan Andres Dela Cruz',
     email: '26-0001', department: 'BSIT', section: '1-1', enrollmentStatus: 'ENROLLED' }] });
   fetchAllGrades.mockResolvedValue({ data: [] });
@@ -45,6 +51,84 @@ const openSection = async () => {
   fireEvent.click(await screen.findByRole('button', { name: 'Encode Now' }));
 };
 
+test('assignment card uses backend curriculum title and 2 units without repeating its subject code', async () => {
+  localStorage.clear();
+  render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
+
+  expect(await screen.findByText('Introduction to IT')).toBeInTheDocument();
+  expect(screen.getAllByText('IT 101')).toHaveLength(1);
+  expect(screen.getByText('Section: BSIT 1-1')).toBeInTheDocument();
+  expect(screen.getByText('Units: 2')).toBeInTheDocument();
+  expect(screen.queryByText(/BSIT 1-1 \(IT 101\) \[77\]/)).not.toBeInTheDocument();
+});
+
+test('assignment card displays a stored 4-unit curriculum subject', async () => {
+  fetchFacultySections.mockResolvedValue({ sections: [{ id: 78, facultySectionId: 78, assignmentCycleId: 78,
+    department: 'BSIT', section: 'BSIT 2-1', canonicalSection: 'BSIT 2-1', academicSectionId: 2,
+    schoolYear: '2026-2027', semester: 'FIRST', yearLevel: '2', subject: 'IT 204',
+    subjectTitle: 'Advanced Systems', units: 4 }] });
+  localStorage.clear();
+
+  render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
+  fireEvent.click(await screen.findByRole('tab', { name: /2nd Year/ }));
+
+  expect(screen.getByText('Advanced Systems')).toBeInTheDocument();
+  expect(screen.getByText('Units: 4')).toBeInTheDocument();
+});
+
+test('unresolved legacy metadata is explicit and never fabricates zero or three units', async () => {
+  fetchFacultySections.mockResolvedValue({ sections: [{ id: 79, facultySectionId: 79, assignmentCycleId: 79,
+    department: 'BSIT', section: 'Legacy 1', canonicalSection: 'Legacy 1', yearLevel: '1',
+    subject: 'LEG 101', subjectTitle: null, units: null, periodResolution: 'UNRESOLVED_LEGACY' }] });
+  localStorage.clear();
+
+  render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
+
+  expect(await screen.findByText('Not available')).toBeInTheDocument();
+  expect(screen.getByText('Units: N/A')).toBeInTheDocument();
+  expect(screen.queryByText(/Units: 0/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Units: 3/)).not.toBeInTheDocument();
+});
+
+test('same subject in two FacultySections remains two assignments with one code per card', async () => {
+  fetchFacultySections.mockResolvedValue({ sections: [
+    { id: 80, facultySectionId: 80, assignmentCycleId: 80, department: 'BSIT', section: 'BSIT 2-1',
+      canonicalSection: 'BSIT 2-1', academicSectionId: 2, schoolYear: '2026-2027', semester: 'FIRST',
+      yearLevel: '2', subject: 'IT 201', subjectTitle: 'Data Structures and Algorithms', units: 3 },
+    { id: 81, facultySectionId: 81, assignmentCycleId: 81, department: 'BSIT', section: 'BSIT 2-2',
+      canonicalSection: 'BSIT 2-2', academicSectionId: 3, schoolYear: '2026-2027', semester: 'FIRST',
+      yearLevel: '2', subject: 'IT 201', subjectTitle: 'Data Structures and Algorithms', units: 3 },
+  ] });
+  localStorage.clear();
+
+  render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
+  fireEvent.click(await screen.findByRole('tab', { name: /2nd Year/ }));
+
+  expect(screen.getAllByText('IT 201')).toHaveLength(2);
+  expect(screen.getByText('Section: BSIT 2-1')).toBeInTheDocument();
+  expect(screen.getByText('Section: BSIT 2-2')).toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Encode Now' })).toHaveLength(2);
+});
+
+test('backend curriculum metadata overrides stale local assignment display data', async () => {
+  localStorage.setItem('registrarAssignments', JSON.stringify([{ ...assignment,
+    subjectTitle: 'Stale Cached Title', units: 3 }]));
+
+  render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
+
+  expect(await screen.findByText('Introduction to IT')).toBeInTheDocument();
+  expect(screen.getByText('Units: 2')).toBeInTheDocument();
+  expect(screen.queryByText('Stale Cached Title')).not.toBeInTheDocument();
+});
+
+test('assignment card keeps a responsive single-card layout for narrow screens', async () => {
+  render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
+
+  const title = await screen.findByText('Introduction to IT');
+  expect(title.parentElement).toHaveClass('break-words');
+  expect(title.closest('article')).toHaveClass('flex', 'h-full', 'flex-col');
+});
+
 test('backend enrollment period overrides a stale SECOND assignment and Save sends FIRST', async () => {
   await openSection();
   expect(screen.getByText('26-0001')).toBeInTheDocument();
@@ -52,7 +136,7 @@ test('backend enrollment period overrides a stale SECOND assignment and Save sen
   fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }));
   await waitFor(() => expect(issueGrade).toHaveBeenCalledWith(expect.objectContaining({
     student_id: '26-0001', school_year: '2026-2027', semester: 'FIRST',
-    section: 'BSIT 1-1', subject_code: 'IT 101',
+    section: 'BSIT 1-1', subject_code: 'IT 101', subject_name: 'Introduction to IT', units: 2,
   })));
   fireEvent.click(screen.getByRole('button', { name: 'Submit to Chairperson' }));
   fireEvent.click(screen.getByRole('button', { name: 'Yes, Submit Final Grades' }));
@@ -158,9 +242,7 @@ test('Bulk Upload sends FacultySections.id instead of academicSectionId', async 
     enrollmentStatus: 'ENROLLED' }] });
   await openSection();
 
-  const file = new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', {
-    type: 'text/csv',
-  });
+  const file = gradeWorkbook();
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
   await waitFor(() => expect(batchUploadGrades).toHaveBeenCalledWith(file, expect.objectContaining({
@@ -172,25 +254,34 @@ test('Bulk Upload sends FacultySections.id instead of academicSectionId', async 
   expect(batchUploadGrades.mock.calls[0][1].facultySectionId).not.toBe(45);
 });
 
-test('offers XLSX and CSV templates for the same Faculty assignment', async () => {
+test('offers only the XLSX grading template for the Faculty assignment', async () => {
   await openSection();
-  expect(screen.getByText('Accepted formats: XLSX, CSV')).toBeInTheDocument();
+  expect(screen.queryByText(/accepted formats/i)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Bulk upload grades workbook')).toHaveAttribute(
+    'accept',
+    '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  );
 
   fireEvent.click(screen.getByRole('button', { name: 'Excel Template' }));
-  fireEvent.click(screen.getByRole('button', { name: 'CSV Template' }));
-
-  await waitFor(() => expect(downloadGradingSheet).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole('button', { name: 'CSV Template' })).not.toBeInTheDocument();
+  await waitFor(() => expect(downloadGradingSheet).toHaveBeenCalledTimes(1));
   const suggestedName = downloadGradingSheet.mock.calls[0][1];
   expect(suggestedName).toMatch(/_grading_sheet$/);
-  expect(downloadGradingSheet).toHaveBeenNthCalledWith(1, '77', suggestedName, 'xlsx');
-  expect(downloadGradingSheet).toHaveBeenNthCalledWith(2, '77', suggestedName, 'csv');
+  expect(downloadGradingSheet).toHaveBeenCalledWith('77', suggestedName, 'xlsx');
+});
+
+test('rejects a CSV grade upload before calling the API', async () => {
+  await openSection();
+  const file = new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', { type: 'text/csv' });
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
+  const dialog = await screen.findByRole('dialog', { name: 'Batch Upload Failed' });
+  expect(dialog).toHaveTextContent('Please upload an XLSX grading template');
+  expect(batchUploadGrades).not.toHaveBeenCalled();
 });
 
 test('successful Bulk Upload reports exact context and an editable Draft without claiming an IPFS commit', async () => {
   await openSection();
-  const file = new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', {
-    type: 'text/csv',
-  });
+  const file = gradeWorkbook();
 
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
@@ -210,9 +301,7 @@ test.each(['final', 'finals', 'FINAL', 'FINALS'])('normalizes %s encoding season
     value: { startDate: '2020-01-01', endDate: '2099-12-31', semester: '1st Semester', term },
   });
   await openSection();
-  const file = new File(['Student ID,Grade\n26-0001,90'], 'finals.csv', {
-    type: 'text/csv',
-  });
+  const file = gradeWorkbook('finals.xlsx');
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
   await waitFor(() => expect(batchUploadGrades).toHaveBeenCalledWith(file, expect.objectContaining({
@@ -225,7 +314,7 @@ test('a rejected Bulk Upload preserves manually entered grades and shows the bac
   await openSection();
   const gradeInput = screen.getAllByPlaceholderText('60-100')[0];
   fireEvent.change(gradeInput, { target: { value: '88' } });
-  const file = new File(['Student ID,Grade\n26-0001,90'], 'wrong-assignment.csv', { type: 'text/csv' });
+  const file = gradeWorkbook('wrong-assignment.xlsx');
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
   const dialog = await screen.findByRole('dialog', { name: 'Batch Upload Failed' });
@@ -237,7 +326,7 @@ test('a rejected Bulk Upload preserves manually entered grades and shows the bac
 test('a backend-closed encoding period uses the failure modal and saves no upload', async () => {
   batchUploadGrades.mockRejectedValue(new Error('The grade encoding period is closed.'));
   await openSection();
-  const file = new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', { type: 'text/csv' });
+  const file = gradeWorkbook();
 
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
@@ -249,7 +338,7 @@ test('a backend-closed encoding period uses the failure modal and saves no uploa
 
 test('a Midterm upload modal reports only the active term as accepted workflow data', async () => {
   await openSection();
-  const file = new File(['Student ID,Midterm,Finals\n26-0001,90,91'], 'mixed-terms.csv', { type: 'text/csv' });
+  const file = gradeWorkbook('mixed-terms.xlsx');
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
   const dialog = await screen.findByRole('dialog', { name: 'Upload Successful' });
@@ -299,9 +388,7 @@ test('bulk-uploaded Draft values remain editable and a manual correction can be 
   });
   await openSection();
 
-  const file = new File(['Student ID,Grade\n26-0001,90'], 'grades.csv', {
-    type: 'text/csv',
-  });
+  const file = gradeWorkbook();
   fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [file] } });
 
   const gradeInput = screen.getAllByPlaceholderText('60-100')[0];

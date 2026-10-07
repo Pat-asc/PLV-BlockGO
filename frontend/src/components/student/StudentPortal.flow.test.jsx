@@ -40,7 +40,8 @@ test('student subjects and checklist load independently when grade retrieval fai
   await waitFor(() => expect(fetchStudentCurriculum).toHaveBeenCalled());
   expect(await screen.findByText('IT 100')).toBeInTheDocument();
   expect(screen.getByText('In Progress')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '2nd Year' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Year Level' }));
+  fireEvent.click(screen.getByRole('option', { name: '2nd Year' }));
   expect(screen.getByText('Data Structures')).toBeInTheDocument();
   expect(screen.getByText('IT 101')).toBeInTheDocument();
 });

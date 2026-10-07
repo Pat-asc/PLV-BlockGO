@@ -16,5 +16,6 @@ namespace BlockGo.Services
         Task<string> RecordAuditEventAsync(BlockchainAuditEvent auditEvent, string invokerUsername);
         Task<string> ApproveGradeAsync(string recordId, string invokerUsername);
         Task<string> FinalizeGradeAsync(string recordId, string invokerUsername);
+        Task<string> CorrectFinalizedGradeAsync(FinalizedGradeCorrectionRequest request, string invokerUsername);
     }
 }

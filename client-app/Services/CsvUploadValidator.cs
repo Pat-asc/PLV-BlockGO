@@ -73,19 +73,17 @@ public static class CsvUploadValidator
         CancellationToken cancellationToken = default)
     {
         if (file is null || file.Length == 0)
-            return "A non-empty CSV or XLSX grade file is required.";
+            return "A non-empty XLSX grade file is required.";
 
         var extension = Path.GetExtension(file.FileName);
-        if (string.Equals(extension, ".csv", StringComparison.OrdinalIgnoreCase))
-            return await ValidateAsync(file, cancellationToken);
         if (!string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase))
-            return "Unsupported file format. Please upload an XLSX or CSV grading template.";
+            return "Unsupported file format. Please upload an XLSX grading template.";
         if (file.Length >= MaximumFileBytes)
             return "The selected grade file must be less than 10 MB.";
 
         var contentType = (file.ContentType ?? string.Empty).Split(';', 2)[0].Trim();
         if (contentType.Length > 0 && !AllowedWorkbookContentTypes.Contains(contentType))
-            return "Unsupported file format. Please upload an XLSX or CSV grading template.";
+            return "Unsupported file format. Please upload an XLSX grading template.";
 
         var signature = new byte[4];
         await using var stream = file.OpenReadStream();

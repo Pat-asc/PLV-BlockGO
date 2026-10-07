@@ -15,7 +15,17 @@ test("maps explicit assignment and academic-section identities without substitut
   expect(assignment.facultySectionId).not.toBe(assignment.academicSectionId);
 });
 
-test("reconciliation replaces only the requested program with backend-active rows", () => {
+test("preserves authoritative units and keeps unresolved units nullable", () => {
+  const assignments = mapActiveFacultyAssignments({ assignments: [
+    { id: 201, facultyUserId: 9, academicSectionId: 41, units: 2 },
+    { id: 202, facultyUserId: 9, academicSectionId: 42, units: 0 },
+    { id: 203, facultyUserId: 9, academicSectionId: 43, units: null },
+  ] });
+
+  expect(assignments.map((assignment) => assignment.units)).toEqual(["2", "0", null]);
+});
+
+test("reconciliation keeps only backend-authorized active rows", () => {
   localStorage.setItem("registrarAssignments", JSON.stringify([
     { id: 1, program: "BSIT" }, { id: 2, program: "BSCS" },
   ]));
@@ -24,6 +34,6 @@ test("reconciliation replaces only the requested program with backend-active row
     program: { code: "BSIT", name: "BS Information Technology" }, assignments: [],
   }, "BS Information Technology");
 
-  expect(result.assignments).toEqual([{ id: 2, program: "BSCS" }]);
-  expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toEqual([{ id: 2, program: "BSCS" }]);
+  expect(result.assignments).toEqual([]);
+  expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toEqual([]);
 });

@@ -28,10 +28,9 @@ test('grade uploads accept a signed XLSX workbook and reject a renamed non-workb
   expect(await validateGradeUpload(new File(['plain text'], 'grades.xlsx', { type }))).toMatch(/valid XLSX workbook/);
 });
 
-test('grade uploads accept valid CSV and reject unsupported extensions clearly', async () => {
-  expect(await validateGradeUpload(csv())).toBe('');
-  for (const name of ['grades.xls', 'grades.pdf', 'grades.txt', 'grades.png']) {
+test('grade uploads reject CSV and every format other than XLSX clearly', async () => {
+  for (const name of ['grades.csv', 'grades.xls', 'grades.pdf', 'grades.txt', 'grades.png']) {
     expect(await validateGradeUpload(new File(['not a grade template'], name, { type: 'application/octet-stream' })))
-      .toBe('Unsupported file format. Please upload an XLSX or CSV grading template.');
+      .toBe('Unsupported file format. Please upload an XLSX grading template.');
   }
 });

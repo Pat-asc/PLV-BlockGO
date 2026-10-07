@@ -15,12 +15,12 @@ function ChairpersonSidebar({ activeTab, setActiveTab }) {
   const menuItems = [
     { id: "dashboard", label: "Encoding Monitoring" },
     { id: "sectioning", label: "Department Sections" },
-    { id: "assignment", label: "Academic Assignment" },
+    { id: "assignment", label: "Faculty Assignments" },
     { id: "curriculum", label: "Curriculum Builder" },
-    { id: "forReview", label: "For Review" },
-    { id: "returned", label: "Returned" },
-    { id: "approved", label: "Finalize Queue" },
-    { id: "forwarded", label: "Finalized" },
+    { id: "forReview", label: "Grade Review" },
+    { id: "returned", label: "Returned Grades" },
+    { id: "approved", label: "Finalize Grades" },
+    { id: "forwarded", label: "Finalized Grades" },
   ];
 
   return (

@@ -25,5 +25,21 @@ test('switches between card and table views and remembers the choice for the ses
   expect(screen.getByRole('button', { name: 'Cards' })).toHaveAttribute('aria-pressed', 'true');
   fireEvent.click(screen.getByRole('button', { name: 'Table' }));
   expect(screen.getByRole('columnheader', { name: 'Subject Code' })).toBeInTheDocument();
+  expect(screen.getByRole('columnheader', { name: 'Final Grade' })).toBeInTheDocument();
+  expect(screen.getByRole('columnheader', { name: 'Equivalent' })).toBeInTheDocument();
   expect(sessionStorage.getItem('blockgo.student.grades.view')).toBe('table');
+});
+
+test('merges Midterm and Finals for one assignment without duplicating the subject', () => {
+  sessionStorage.clear();
+  render(<StudentHistoricalGrades grades={[
+    { recordId: 'mid-1', studentId: '26-0001', assignmentCycleId: '77', schoolYear: '2026-2027', semester: 'FIRST',
+      subjectCode: 'IT101', subjectTitle: 'Introduction to Computing', term: 'midterm', grade: '85', status: 'Finalized' },
+    { recordId: 'final-1', studentId: '26-0001', assignmentCycleId: '77', schoolYear: '2026-2027', semester: 'FIRST',
+      subjectCode: 'IT101', subjectTitle: 'Introduction to Computing', term: 'finals', grade: '92', finalAverage: '89', status: 'Finalized' },
+  ]} />);
+
+  expect(screen.getAllByText('IT101')).toHaveLength(1);
+  expect(screen.getByText('85')).toBeInTheDocument();
+  expect(screen.getByText('1.75')).toBeInTheDocument();
 });

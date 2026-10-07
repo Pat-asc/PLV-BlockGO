@@ -4,6 +4,7 @@ import {
   approveCurriculum,
   archiveCurriculum,
   assignProgramCurriculum,
+  createAcademicProgram,
   fetchCurriculums,
   publishCurriculum,
   returnCurriculum,
@@ -27,6 +28,7 @@ const CurriculumManagement = () => {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState(null);
   const [batchYear, setBatchYear] = useState(String(new Date().getFullYear()));
+  const [programForm, setProgramForm] = useState({ code: '', name: '' });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -117,6 +119,24 @@ const CurriculumManagement = () => {
 
   const showAssignmentActions = selected?.status === 'PUBLISHED';
 
+  const createProgram = async (event) => {
+    event.preventDefault();
+    const code = programForm.code.trim().toUpperCase().replace(/\s+/g, '');
+    const name = programForm.name.trim().replace(/\s+/g, ' ');
+    if (!/^[A-Z0-9][A-Z0-9-]{1,19}$/.test(code) || name.length < 3) {
+      setNotice({ type: 'error', message: 'Enter a 2-20 character Program Code and a complete Program Name.' });
+      return;
+    }
+    setSaving(true); setNotice(null);
+    try {
+      const response = await createAcademicProgram(code, name);
+      setNotice({ type: 'success', message: response.message || `Academic program ${code} created without a curriculum.` });
+      setProgramForm({ code: '', name: '' });
+      window.dispatchEvent(new CustomEvent('blockgo:academic-data-changed', { detail: { reason: 'academic_program_created', programCode: code } }));
+    } catch (error) { setNotice({ type: 'error', message: error.message }); }
+    finally { setSaving(false); }
+  };
+
   return (
     <div className="space-y-5">
       <header className="border-b border-slate-200 pb-4">
@@ -129,6 +149,13 @@ const CurriculumManagement = () => {
           {notice.message}
         </div>
       ) : null}
+
+      <form onSubmit={createProgram} className="grid gap-3 rounded-xl border border-blue-200 bg-blue-50/40 p-4 md:grid-cols-[180px_minmax(240px,1fr)_auto] md:items-end" aria-label="Create academic program">
+        <label className="text-xs font-semibold text-slate-700">Program Code<input aria-label="Program Code" required maxLength="20" value={programForm.code} onChange={(event) => setProgramForm((current) => ({ ...current, code: event.target.value.replace(/[^a-zA-Z0-9-]/g, '') }))} placeholder="BSIS" className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm uppercase" /></label>
+        <label className="text-xs font-semibold text-slate-700">Program Name<input aria-label="Program Name" required maxLength="160" value={programForm.name} onChange={(event) => setProgramForm((current) => ({ ...current, name: event.target.value }))} placeholder="Bachelor of Science in Information Systems" className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm" /></label>
+        <button disabled={saving} className="h-10 rounded-lg bg-[#003366] px-4 text-sm font-bold text-white disabled:opacity-60">Create Program</button>
+        <p className="text-xs text-slate-600 md:col-span-3">Creates an active program master record only. Curriculum subjects must be created and published separately.</p>
+      </form>
 
       <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Curriculum status filters">
         {tabs.map((tab) => (

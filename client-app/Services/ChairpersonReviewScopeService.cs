@@ -20,7 +20,7 @@ public static class ChairpersonReviewScopeService
         CancellationToken cancellationToken = default)
     {
         return await GetCurrentRecordIdsAsync(connection, activeTerm, activeSemester,
-            new[] { "submittedtochairperson", "chairpersonapproved", "departmentapproved" }, cancellationToken);
+            new[] { "submittedtochairperson", "returned", "chairpersonapproved", "departmentapproved" }, cancellationToken);
     }
 
     public static async Task<HashSet<string>> GetCurrentFinalizedRecordIdsAsync(
@@ -49,13 +49,16 @@ public static class ChairpersonReviewScopeService
             FROM pending_grade_records pgr
             JOIN facultysections fs
               ON fs.id::text = pgr.assignment_cycle_id
-            WHERE fs.is_active = TRUE
-              AND LOWER(TRIM(fs.school_year)) = LOWER(TRIM(pgr.school_year))
+            WHERE LOWER(TRIM(fs.school_year)) = LOWER(TRIM(pgr.school_year))
               AND LOWER(TRIM(fs.semester)) = LOWER(TRIM(pgr.semester))
               AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(pgr.subject_code))
               AND LOWER(TRIM(pgr.semester)) = LOWER(TRIM(@semester))
               AND LOWER(TRIM(pgr.term)) = LOWER(TRIM(@term))
-              AND LOWER(TRIM(pgr.status)) = ANY(@statuses);", connection);
+              AND LOWER(TRIM(pgr.status)) = ANY(@statuses)
+              AND (
+                    fs.is_active = TRUE
+                    OR LOWER(TRIM(pgr.status)) IN ('chairpersonapproved', 'departmentapproved')
+                  );", connection);
         command.Parameters.AddWithValue("term", activeTerm);
         command.Parameters.AddWithValue("semester", activeSemester);
         command.Parameters.AddWithValue("statuses", statuses);

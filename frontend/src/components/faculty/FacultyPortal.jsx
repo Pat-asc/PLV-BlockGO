@@ -8,9 +8,11 @@ import YearTabs from './YearTabs';
 import ProgramCard from './ProgramCard';
 import FacultyCurriculumPanel from './FacultyCurriculumPanel';
 import { calculateFinalAverage, getGradeEquivalent } from '../../utils/gradingHelpers';
+import { validateGradeUpload } from '../../utils/csvUploadValidation';
 import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from '../../utils/studentAcademicHelpers';
 import BackButton from '../shared/BackButton';
 import StatusBadge from '../shared/StatusBadge';
+import '../../assets/FacultyPortal.css';
 
 const normalizeYearLabel = (value) => {
   const raw = String(value || '').trim();
@@ -42,6 +44,18 @@ const getRosterStudentNumber = (student = {}) => String(
 const getOptionalAssignmentValue = (value) => {
   const normalizedValue = String(value || "").trim();
   return normalizedValue || "Not Available";
+};
+const getAssignmentUnits = (...values) => {
+  for (const value of values) {
+    if (value === null || value === undefined || String(value).trim() === "") continue;
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue) && numericValue >= 0) return numericValue;
+  }
+  return null;
+};
+const getAssignmentTitle = (...values) => {
+  const value = values.find((candidate) => String(candidate || "").trim());
+  return value ? String(value).trim() : "Not available";
 };
 const parseTimestamp = (value) => {
   if (!value) return 0;
@@ -605,13 +619,13 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         });
 
         newSections[sectionKey] = {
-          year: normalizeYearLabel(matchedAssignment?.yearLevel || sec.yearLevel),
-          subjectCode: matchedAssignment?.subjectCode || sec.subject || `${sec.department}-${sec.section}`, 
-          subjectTitle: matchedAssignment?.subjectTitle || sec.subject || `Assigned Subject (${sec.department})`, 
+          year: normalizeYearLabel(sec.yearLevel || matchedAssignment?.yearLevel),
+          subjectCode: sec.subject || matchedAssignment?.subjectCode || `${sec.department}-${sec.section}`,
+          subjectTitle: getAssignmentTitle(sec.subjectTitle, matchedAssignment?.subjectTitle),
           sectionCourse: sec.department,
           canonicalSection: sec.canonicalSection || matchedAssignment?.sectionName || sec.section || sectionKey,
           academicSectionId: sec.academicSectionId || null,
-          units: matchedAssignment?.units || "Not Available",
+          units: getAssignmentUnits(sec.units, matchedAssignment?.units),
           schedule: getOptionalAssignmentValue(sec.schedule || matchedAssignment?.schedule),
           day: getOptionalAssignmentValue(matchedAssignment?.day),
           date: getOptionalAssignmentValue(matchedAssignment?.date),
@@ -938,6 +952,18 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     const course = sectionData.sectionCourse || '';
     const canonicalSection = sectionData.canonicalSection || sectionName;
 
+    const validationError = await validateGradeUpload(file);
+    if (validationError) {
+      setUploadResult({
+        type: 'error',
+        title: 'Batch Upload Failed',
+        message: validationError,
+        context: { section: canonicalSection, subjectCode: sectionData.subjectCode, term: encodingTerm, schoolYear, semester },
+      });
+      e.target.value = null;
+      return;
+    }
+
     setUploadingSection(sectionName);
 
     try {
@@ -1039,7 +1065,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
               professor_name: facultyData.name || facultyData.email,
               program: facultyData.department || sectionData.sectionCourse || '',
               term: encodingTerm,
-              units: Number(sectionData.units) || 3,
+              units: getAssignmentUnits(sectionData.units) ?? 0,
               year_level: sectionData.year || "",
               grade: JSON.stringify({
                 midterm: student.midterm,
@@ -1142,7 +1168,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-10 font-sans">
+    <div className="faculty-grade-encoding min-h-screen bg-slate-50 pb-10 font-sans">
       <FacultyHeader
         facultyData={{ ...facultyData, semester: encodingSemester }}
         totalSections={totalSections}
@@ -1298,7 +1324,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                       <input
                         type="file"
                         aria-label="Bulk upload grades workbook"
-                        accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                         onChange={(e) => handleFileUpload(activeSection, e)}
                         disabled={uploadingSection === activeSection || isClosed}
@@ -1316,14 +1342,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                       >
                         Excel Template
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDownloadTemporaryGradingSheet(activeSection, 'csv')}
-                        className="rounded-lg border border-[#003366] bg-white px-3 py-2.5 text-sm font-bold text-[#003366] transition hover:bg-slate-50"
-                      >
-                        CSV Template
-                      </button>
-                      <span className="text-xs font-medium text-slate-500">Accepted formats: XLSX, CSV</span>
                     </div>
                   </>
                 )}

@@ -18,3 +18,14 @@ test('opens Text Size settings and applies a persistent preference immediately',
   expect(document.documentElement.style.getPropertyValue('--blockgo-font-scale')).toBe('1.125');
   expect(localStorage.getItem(TEXT_SIZE_STORAGE_KEY)).toBe('large');
 });
+
+test('supports a controlled open state without changing the default menu behavior', () => {
+  const onOpenChange = jest.fn();
+  const { rerender } = render(<SettingsMenu open={false} onOpenChange={onOpenChange}>Secondary setting</SettingsMenu>);
+  fireEvent.click(screen.getByRole('button', { name: /Settings/i }));
+  expect(onOpenChange).toHaveBeenCalledWith(true);
+  expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+
+  rerender(<SettingsMenu open onOpenChange={onOpenChange}>Secondary setting</SettingsMenu>);
+  expect(screen.getByRole('dialog', { name: 'Settings' })).toHaveTextContent('Secondary setting');
+});

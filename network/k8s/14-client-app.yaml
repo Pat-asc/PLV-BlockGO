@@ -62,8 +62,9 @@ data:
   # Process at most the GCP LB/Ingress pair and stop at the first untrusted hop.
   ForwardedHeaders__ForwardLimit: "2"
   ForwardedHeaders__KnownNetworks__0: 10.72.0.0/16
-  ForwardedHeaders__KnownNetworks__1: 35.191.0.0/16
-  ForwardedHeaders__KnownNetworks__2: 130.211.0.0/22
+  ForwardedHeaders__KnownNetworks__1: 10.96.0.0/16
+  ForwardedHeaders__KnownNetworks__2: 35.191.0.0/16
+  ForwardedHeaders__KnownNetworks__3: 130.211.0.0/22
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -90,6 +91,7 @@ spec:
         ports: [{ name: http, containerPort: 5000 }]
         envFrom:
         - configMapRef: { name: dotnet-service-config }
+        - configMapRef: { name: blockgo-public-hosting }
         env:
         - { name: DOTNET_SERVICE_NAME, value: gateway }
         - { name: DOTNET_SERVICE_PORT, value: "5000" }

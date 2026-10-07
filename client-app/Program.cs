@@ -293,6 +293,7 @@ try
     builder.Services.AddProblemDetails();
 
     var jwtSecret = Environment.GetEnvironmentVariable("JWT_SECRET") ?? throw new InvalidOperationException("JWT_SECRET environment variable is required.");
+    builder.Services.AddSingleton(_ => new GrafanaSessionTokenService(jwtSecret));
     // Keep token validation byte-for-byte compatible with the Node login service.
     var jwtKey = SHA256.HashData(Encoding.UTF8.GetBytes(jwtSecret.Trim()));
 

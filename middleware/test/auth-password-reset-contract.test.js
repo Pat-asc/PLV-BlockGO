@@ -206,3 +206,22 @@ test('22. successful reset increments auth version to invalidate old JWTs', asyn
     await h.service.resetPassword({ email: h.account.email, code: '123456', newPassword: 'NewPassword1!' });
     assert.equal(h.account.auth_version, previous + 1);
 });
+
+test('23. Node and ASP.NET reject JWTs whose auth version is no longer current', () => {
+    const repositoryRoot = path.resolve(__dirname, '..', '..');
+    const authService = fs.readFileSync(path.join(repositoryRoot, 'middleware', 'src', 'services', 'auth-service.js'), 'utf8');
+    const dotnetProgram = fs.readFileSync(path.join(repositoryRoot, 'client-app', 'Program.cs'), 'utf8');
+    assert.match(authService, /authVersion:\s*Number\(account\.auth_version \|\| 1\)/);
+    assert.match(authService, /user\.authVersion !== Number\(decoded\.authVersion \|\| 1\)/);
+    assert.match(dotnetProgram, /SELECT role, auth_version/);
+    assert.match(dotnetProgram, /databaseAuthVersion != tokenAuthVersion/);
+});
+
+test('24. administrator reset increments only the authorized target account version', () => {
+    const repositoryRoot = path.resolve(__dirname, '..', '..');
+    const provisioning = fs.readFileSync(path.join(repositoryRoot, 'client-app', 'Services', 'AccountProvisioningService.cs'), 'utf8');
+    assert.match(provisioning, /"registrar" => target\.Role is "student" or "faculty" or "department_admin"/);
+    assert.match(provisioning, /"system_admin" => target\.Role == "registrar"/);
+    assert.match(provisioning, /SET password_hash = crypt\(@password, gen_salt\('bf'\)\),[\s\S]*auth_version = auth_version \+ 1/);
+    assert.match(provisioning, /WHERE id = @userId/);
+});

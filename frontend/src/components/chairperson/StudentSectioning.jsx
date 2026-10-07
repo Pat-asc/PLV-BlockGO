@@ -12,10 +12,13 @@ import {
   syncSectionedStudentsToStorage,
 } from "../../utils/studentSectioningHelpers";
 import {
+  fetchAcademicPrograms,
   fetchApprovedStudents,
+  fetchCurriculum,
   fetchDepartmentSections,
 } from "../../services/api";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
+import CurriculumViewer from "../shared/CurriculumViewer";
 
 const buildStudentName = (student) => {
   const firstAndMiddle = [
@@ -208,17 +211,19 @@ const splitBackendFullName = (fullName = "") => {
   };
 };
 
-const buildBackendBatch = (department, approvedStudents = [], academicSections = []) => {
+const buildBackendBatch = (department, approvedStudents = [], academicSections = [], departmentAliases = []) => {
   if (!department) return null;
+  const authorizedNames = new Set([department, ...departmentAliases].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean));
 
   const students = approvedStudents
-    .filter((student) => student.department === department)
+    .filter((student) => authorizedNames.has(String(student.department || student.programCode || "").trim().toLowerCase()))
     .map((student) => {
       const inferredYearLevel = normalizeYearLevelLabel(student.yearLevel || student.section);
       const sectionCode = normalizeSectionCode(student.section, inferredYearLevel);
       const names = splitBackendFullName(student.fullname || student.fullName);
 
       return {
+        userId: student.id,
         studentId: student.studentno || student.email || String(student.id || ""),
         sex: student.sex || "",
         firstName: names.firstName,
@@ -230,6 +235,14 @@ const buildBackendBatch = (department, approvedStudents = [], academicSections =
         sectionName: sectionCode ? getDefaultSectionName(department, sectionCode) : "",
         studentType: "Regular",
         remarks: student.assignmentStatus || "",
+        curriculumId: student.curriculumId || null,
+        curriculumName: student.curriculumName || "",
+        curriculumVersion: student.curriculumVersion || "",
+        programCode: student.programCode || "",
+        schoolYear: student.schoolYear || "",
+        semester: student.semester || "",
+        enrollmentId: student.enrollmentId || null,
+        batchYear: student.batchYear || null,
       };
     })
     .sort(compareStudentsByName);
@@ -237,7 +250,7 @@ const buildBackendBatch = (department, approvedStudents = [], academicSections =
   const sectionPlansByCode = new Map();
 
   academicSections
-    .filter((section) => section.department === department)
+    .filter((section) => authorizedNames.has(String(section.department || "").trim().toLowerCase()))
     .forEach((section) => {
       const yearLevel = normalizeYearLevelLabel(section.yearLevel);
       const sectionCode = normalizeSectionCode(
@@ -295,13 +308,18 @@ const mergeBackendBatch = (previousBatches = [], backendBatch) => {
 };
 
 function StudentSectioning({
-  chairpersonDepartment,
   onSectioningSaved,
 }) {
   const isRegistrarMode = false;
   const canEditRoster = false;
   const isChairpersonMode = true;
   const rosterRef = useRef(null);
+  const [programs, setPrograms] = useState([]);
+  const [selectedProgram, setSelectedProgram] = useState("");
+  const [loadingProgram, setLoadingProgram] = useState(false);
+  const [programError, setProgramError] = useState("");
+  const [curriculumView, setCurriculumView] = useState(null);
+  const [curriculumLoading, setCurriculumLoading] = useState(false);
   const [batches, setBatches] = useState(() => {
     const saved = localStorage.getItem(STUDENT_BATCHES_KEY);
     return saved ? JSON.parse(saved) : [];
@@ -351,25 +369,67 @@ function StudentSectioning({
 
   useEffect(() => {
     let cancelled = false;
+    fetchAcademicPrograms()
+      .then((response) => {
+        if (!cancelled) setPrograms(Array.isArray(response?.data) ? response.data : []);
+      })
+      .catch((error) => {
+        if (!cancelled) setProgramError(error.message || "Unable to load authorized programs.");
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleProgramChange = (program) => {
+    setSelectedProgram(program);
+    setSelectedBatchKey("");
+    setSelectedSectionCode("");
+    setStudentSearch("");
+    setPendingRemoval(null);
+    setProgramError("");
+  };
+
+  const handleViewCurriculum = async (student) => {
+    if (!student.curriculumId) return;
+    setCurriculumView({ student, curriculum: null, error: "" });
+    setCurriculumLoading(true);
+    try {
+      const response = await fetchCurriculum(student.curriculumId);
+      setCurriculumView({ student, curriculum: response?.data || null, error: "" });
+    } catch (error) {
+      setCurriculumView({ student, curriculum: null, error: error.message || "Unable to load the assigned curriculum." });
+    } finally {
+      setCurriculumLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
 
     const refreshBackendSectioningData = async () => {
-      if (!chairpersonDepartment) return;
+      if (!selectedProgram) return;
+
+      setLoadingProgram(true);
 
       try {
         const [studentsResponse, sectionsResponse] = await Promise.all([
           fetchApprovedStudents(),
-          fetchDepartmentSections(chairpersonDepartment),
+          fetchDepartmentSections(selectedProgram),
         ]);
 
         if (cancelled) return;
 
+        const selectedProgramRecord = programs.find((program) => program.programCode === selectedProgram || program.programName === selectedProgram);
         const backendBatch = buildBackendBatch(
-          chairpersonDepartment,
+          selectedProgram,
           studentsResponse.students || studentsResponse.data || [],
-          sectionsResponse.data || sectionsResponse.sections || []
+          sectionsResponse.data || sectionsResponse.sections || [],
+          [selectedProgramRecord?.programCode, selectedProgramRecord?.programName]
         );
 
-        if (!backendBatch) return;
+        if (!backendBatch) {
+          setBatches((previousBatches) => previousBatches.filter((batch) => batch.key !== `${BACKEND_BATCH_KEY_PREFIX}|${selectedProgram}`));
+          return;
+        }
 
         setBatches((previousBatches) => {
           const nextBatches = mergeBackendBatch(previousBatches, backendBatch);
@@ -384,7 +444,9 @@ function StudentSectioning({
           return nextBatches;
         });
       } catch (error) {
-        console.error("Failed to refresh backend sectioning data:", error);
+        setProgramError(error.message || "Failed to load sectioning data.");
+      } finally {
+        if (!cancelled) setLoadingProgram(false);
       }
     };
 
@@ -397,13 +459,13 @@ function StudentSectioning({
       cancelled = true;
       window.removeEventListener("blockgo:academic-data-changed", handleAcademicDataChanged);
     };
-  }, [chairpersonDepartment, onSectioningSaved]);
+  }, [programs, selectedProgram, onSectioningSaved]);
 
   const departmentBatches = useMemo(() => {
     return batches
       .filter(
         (batch) =>
-          batch.program === chairpersonDepartment &&
+          batch.program === selectedProgram &&
           ["Forwarded", "Imported"].includes(batch.status || "Forwarded") &&
           !(batch.sectionPlans || []).length
       )
@@ -411,15 +473,15 @@ function StudentSectioning({
         (left, right) =>
           new Date(right.submittedAt || 0) - new Date(left.submittedAt || 0)
       );
-  }, [batches, chairpersonDepartment]);
+  }, [batches, selectedProgram]);
 
   const departmentWorkspaces = useMemo(
     () =>
       batches.filter(
         (batch) =>
-          batch.program === chairpersonDepartment && batch.status !== "Promoted"
+          batch.program === selectedProgram && batch.status !== "Promoted"
       ),
-    [batches, chairpersonDepartment]
+    [batches, selectedProgram]
   );
   const rolloverWorkspaces = isRegistrarMode
     ? batches.filter((batch) => batch.status !== "Promoted")
@@ -431,9 +493,9 @@ function StudentSectioning({
   const departmentAssignments = useMemo(
     () =>
       savedAssignments.filter(
-        (assignment) => assignment.program === chairpersonDepartment
+        (assignment) => assignment.program === selectedProgram
       ),
-    [chairpersonDepartment, savedAssignments]
+    [selectedProgram, savedAssignments]
   );
 
   const savedSectioningWorkspace = departmentWorkspaces.find((batch) =>
@@ -520,7 +582,7 @@ function StudentSectioning({
   const departmentGraduatingStudents = useMemo(
     () =>
       graduatingStudents
-        .filter((student) => student.program === chairpersonDepartment)
+        .filter((student) => student.program === selectedProgram)
         .filter((student) => {
           if (!searchValue) return true;
 
@@ -532,7 +594,7 @@ function StudentSectioning({
               .includes(searchValue)
           );
         }),
-    [chairpersonDepartment, graduatingStudents, searchValue]
+    [selectedProgram, graduatingStudents, searchValue]
   );
   const visibleGraduatingStudents = useMemo(
     () =>
@@ -801,7 +863,7 @@ function StudentSectioning({
   };
 
   const handleGenerateSections = () => {
-    if (!chairpersonDepartment) {
+    if (!selectedProgram) {
       showSystemNotification("Please choose a department first.");
       return;
     }
@@ -822,7 +884,7 @@ function StudentSectioning({
     const targetYearLevel = isRegistrarMode ? "1st Year" : selectedYearLevel;
     const matchingSourceBatch = batches.find(
       (batch) =>
-        batch.program === chairpersonDepartment &&
+        batch.program === selectedProgram &&
         batch.batchYear === resolvedBatchYear &&
         (batch.students || []).length > 0 &&
         batch.status !== "Promoted"
@@ -834,7 +896,7 @@ function StudentSectioning({
       null;
     const workspaceKey = selectedBatch
       ? activeBatchKey
-      : [chairpersonDepartment, resolvedBatchYear, "sectioning"].join("|");
+      : [selectedProgram, resolvedBatchYear, "sectioning"].join("|");
     const createdAt = new Date().toISOString();
     const workspaceId = Number(createdAt.replace(/\D/g, "").slice(0, 13));
     const baseWorkspace =
@@ -842,11 +904,11 @@ function StudentSectioning({
       departmentWorkspaces.find((batch) => batch.key === workspaceKey) || {
         id: workspaceId,
         key: workspaceKey,
-        program: chairpersonDepartment,
+        program: selectedProgram,
         batchYear: resolvedBatchYear,
         submittedTo: isRegistrarMode
           ? "Registrar Sectioning Office"
-          : `${chairpersonDepartment} Chairperson`,
+          : `${selectedProgram} Chairperson`,
         fileName: isRegistrarMode
           ? "Registrar sectioning workspace"
           : "Chairperson sectioning workspace",
@@ -1827,7 +1889,7 @@ function StudentSectioning({
     const nextGraduatingStudents = graduatingStudents.filter(
       (student) =>
         !(
-          student.program === chairpersonDepartment &&
+          student.program === selectedProgram &&
           getGraduatingBatchKey(student) === batchGroup.key
         )
     );
@@ -1844,6 +1906,21 @@ function StudentSectioning({
 
   return (
     <div className="space-y-6">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <label className="block max-w-md">
+          <span className="mb-2 block text-sm font-semibold text-slate-700">Program</span>
+          <select
+            aria-label="Program"
+            value={selectedProgram}
+            onChange={(event) => handleProgramChange(event.target.value)}
+            className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-[#003366]"
+          >
+            <option value="">Select Program</option>
+            {programs.map((program) => <option key={program.programId} value={program.programCode}>{program.programCode} — {program.programName}</option>)}
+          </select>
+        </label>
+        {programError ? <p role="alert" className="mt-3 text-sm text-red-600">{programError}</p> : null}
+      </section>
 
       {isRegistrarMode ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -2450,7 +2527,7 @@ function StudentSectioning({
                 </thead>
                 <tbody>
                   {irregularSubjectAssignments
-                    .filter((assignment) => assignment.program === chairpersonDepartment)
+                    .filter((assignment) => assignment.program === selectedProgram)
                     .filter((assignment) => {
                       if (!searchValue) return true;
 
@@ -2513,7 +2590,7 @@ function StudentSectioning({
                       </tr>
                     ))}
                   {!irregularSubjectAssignments.filter(
-                    (assignment) => assignment.program === chairpersonDepartment
+                    (assignment) => assignment.program === selectedProgram
                   ).length ? (
                     <tr>
                       <td colSpan="7" className="py-8 text-center text-slate-500">
@@ -2528,7 +2605,7 @@ function StudentSectioning({
         </section>
       ) : null}
 
-      <div className={`grid grid-cols-1 gap-6 ${isRegistrarMode ? "xl:grid-cols-[300px_1fr]" : ""}`}>
+      {selectedProgram ? <div className={`grid grid-cols-1 gap-6 ${isRegistrarMode ? "xl:grid-cols-[300px_1fr]" : ""}`}>
         {isRegistrarMode ? (
           <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <h3 className="text-lg font-bold text-[#003366]">Imported Lists</h3>
@@ -2700,7 +2777,9 @@ function StudentSectioning({
                 ) : null}
               </div>
 
-              {sectionSummaries.length ? (
+              {loadingProgram ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">Loading created sections…</div>
+              ) : sectionSummaries.length ? (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
                   {sectionSummaries.map((section) => (
                     <article
@@ -2790,7 +2869,7 @@ function StudentSectioning({
                 <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
                   {isRegistrarMode
                     ? "Generate sections to preview students by section."
-                    : "No registrar-created sections are available yet."}
+                    : "No sections created for this program."}
                 </div>
               )}
             </section>
@@ -2887,6 +2966,7 @@ function StudentSectioning({
                       <th className="px-4 py-3 text-left text-sm">Name</th>
                       <th className="px-4 py-3 text-left text-sm">Sex</th>
                       <th className="px-4 py-3 text-left text-sm">Section</th>
+                      <th className="px-4 py-3 text-left text-sm">Assigned Curriculum</th>
                       {canEditRoster ? (
                         <th className="px-4 py-3 text-left text-sm">Action</th>
                       ) : null}
@@ -2938,6 +3018,9 @@ function StudentSectioning({
                               </span>
                             )}
                           </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {student.curriculumId ? <div><p className="font-semibold">{student.curriculumName || "Assigned curriculum"}</p><p className="text-xs text-slate-500">Version: {student.curriculumVersion || "—"}</p><button type="button" onClick={() => handleViewCurriculum(student)} className="mt-2 rounded-lg border border-[#003366] px-3 py-1.5 text-xs font-semibold text-[#003366] hover:bg-[#003366] hover:text-white">View Curriculum</button></div> : <span className="text-slate-500">No curriculum assigned</span>}
+                          </td>
                           {canEditRoster ? (
                             <td className="px-4 py-3">
                               <button
@@ -2954,7 +3037,7 @@ function StudentSectioning({
                     ) : (
                       <tr>
                         <td
-                          colSpan={canEditRoster ? 5 : 4}
+                          colSpan={canEditRoster ? 6 : 5}
                           className="py-8 text-center text-slate-500"
                         >
                           {selectedSection
@@ -3103,7 +3186,9 @@ function StudentSectioning({
             </section>
             ) : null}
           </main>
-      </div>
+      </div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">Select a Program to view created sections.</div>}
+
+      {curriculumView ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"><div className="max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-2xl bg-slate-50 shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white p-4"><div><h2 className="font-bold text-[#003366]">Assigned Curriculum</h2><p className="text-sm text-slate-500">{curriculumView.student.studentId} · {buildStudentName(curriculumView.student)} · {curriculumView.student.schoolYear || "Current enrollment"} {curriculumView.student.semester || ""}</p></div><button type="button" onClick={() => setCurriculumView(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold">Close</button></div><div className="p-4">{curriculumView.error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">{curriculumView.error}</div> : <CurriculumViewer curricula={curriculumView.curriculum ? [curriculumView.curriculum] : []} currentYear={Number.parseInt(curriculumView.student.yearLevel, 10) || 0} loading={curriculumLoading} emptyMessage="No curriculum assigned" showInternalMetadata />}</div></div></div> : null}
     </div>
   );
 }

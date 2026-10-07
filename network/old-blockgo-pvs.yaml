@@ -1,0 +1,1431 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:50Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-0bbf90d8-3b7d-45ea-8164-3cf579eee6e9
+    resourceVersion: "1791151611475007008"
+    uid: 83bd67b3-f4ee-4f24-a6f2-d74acfead702
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: orderer-1-pvc
+      namespace: plv-main-campus
+      resourceVersion: "1791151609589471000"
+      uid: 0bbf90d8-3b7d-45ea-8164-3cf579eee6e9
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-a/disks/pvc-0bbf90d8-3b7d-45ea-8164-3cf579eee6e9
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-a
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:50Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:47Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-186e16e9-7940-4170-a8dc-da53d5c6c6fe
+    resourceVersion: "1791151607304527010"
+    uid: e6e388e0-817c-46d8-b441-cf5b1b044fac
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: fabric-ca-faculty-pvc
+      namespace: plv-annex-campus
+      resourceVersion: "1791151606200015000"
+      uid: 186e16e9-7940-4170-a8dc-da53d5c6c6fe
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-b/disks/pvc-186e16e9-7940-4170-a8dc-da53d5c6c6fe
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-b
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:47Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:42Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-2397d246-8279-44b7-9728-86794d4e0dbf
+    resourceVersion: "1791151782391951005"
+    uid: 550cd647-b782-4e96-9272-f4bc2efef4ea
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: couchdb-storage-couchdb-registrar-0
+      namespace: plv-main-campus
+      resourceVersion: "1791151781341903011"
+      uid: 2397d246-8279-44b7-9728-86794d4e0dbf
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-a/disks/pvc-2397d246-8279-44b7-9728-86794d4e0dbf
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-a
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:42Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:45Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-2724968f-90b6-4851-b377-43cc1d08c96f
+    resourceVersion: "1791151605915295007"
+    uid: 8ce14e29-6fd3-44b1-850e-e05d0dd1fa4e
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: grafana-data
+      namespace: plv-fabric
+      resourceVersion: "1791151604820015009"
+      uid: 2724968f-90b6-4851-b377-43cc1d08c96f
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-b/disks/pvc-2724968f-90b6-4851-b377-43cc1d08c96f
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-b
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:45Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-05T02:00:01Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-2bf45815-71a9-40cc-9461-8089ee9707a2
+    resourceVersion: "1791165601413791023"
+    uid: 77db74db-f7f0-4f97-8b4e-10909c3474df
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: couchdb-backup-pvc
+      namespace: plv-fabric
+      resourceVersion: "1791165600306671001"
+      uid: 2bf45815-71a9-40cc-9461-8089ee9707a2
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-a/disks/pvc-2bf45815-71a9-40cc-9461-8089ee9707a2
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-a
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-05T02:00:01Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:46Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-4a7e60f6-fddc-4104-8cb2-504ab02e0d2d
+    resourceVersion: "1791151606835039017"
+    uid: d567144e-10e8-498e-b065-b0a116ee2b0d
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: fabric-ca-registrar-pvc
+      namespace: plv-main-campus
+      resourceVersion: "1791151605750015019"
+      uid: 4a7e60f6-fddc-4104-8cb2-504ab02e0d2d
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-a/disks/pvc-4a7e60f6-fddc-4104-8cb2-504ab02e0d2d
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-a
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:46Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:44Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-4c9420bf-53fa-4f98-ae25-65b254b2bcb5
+    resourceVersion: "1791151784310639003"
+    uid: fbfdf6b0-58cb-4371-90f2-a1dd1a6b2d5b
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: peer-faculty-pvc
+      namespace: plv-annex-campus
+      resourceVersion: "1791151783181711009"
+      uid: 4c9420bf-53fa-4f98-ae25-65b254b2bcb5
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-b/disks/pvc-4c9420bf-53fa-4f98-ae25-65b254b2bcb5
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-b
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:44Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:37Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-529a8ee2-0937-4ef6-b833-29a1eb53c8fc
+    resourceVersion: "1791151598040975000"
+    uid: 1f52a445-4f79-4962-af7e-3fa2deb2ce48
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: postgres-storage-postgres-replica-annex-2-0
+      namespace: plv-annex-campus
+      resourceVersion: "1791151596846687004"
+      uid: 529a8ee2-0937-4ef6-b833-29a1eb53c8fc
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-c/disks/pvc-529a8ee2-0937-4ef6-b833-29a1eb53c8fc
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-c
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:37Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:44Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-59bdb3ae-2607-41a0-bbf0-e671bba26fde
+    resourceVersion: "1791151604331679018"
+    uid: 960b476a-81e8-4bb4-bf32-841d9af5d117
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: loki-data
+      namespace: plv-fabric
+      resourceVersion: "1791151603184863015"
+      uid: 59bdb3ae-2607-41a0-bbf0-e671bba26fde
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-a/disks/pvc-59bdb3ae-2607-41a0-bbf0-e671bba26fde
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-a
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:44Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:07:15Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-5b72720f-1e6b-4f06-a5bc-b82eb5fc6e27
+    resourceVersion: "1791151636767375002"
+    uid: 80f10cbe-3536-4839-a4d2-0d5f2fdd2faa
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: orderer-2-pvc
+      namespace: plv-main-campus
+      resourceVersion: "1791151634789679012"
+      uid: 5b72720f-1e6b-4f06-a5bc-b82eb5fc6e27
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-b/disks/pvc-5b72720f-1e6b-4f06-a5bc-b82eb5fc6e27
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-b
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:07:15Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:46Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-77b19585-e5b5-4fbb-af3b-556c1225abf3
+    resourceVersion: "1791151786771647000"
+    uid: 9c604270-8dc8-4686-8390-fc3b8e6cba2d
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: couchdb-wallet-storage-couchdb-wallet-department-0
+      namespace: plv-pubad-campus
+      resourceVersion: "1791151785660959014"
+      uid: 77b19585-e5b5-4fbb-af3b-556c1225abf3
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-c/disks/pvc-77b19585-e5b5-4fbb-af3b-556c1225abf3
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-c
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:46Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:41Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-8271d79e-9006-4e22-869b-1e575ad9879b
+    resourceVersion: "1791151781995103010"
+    uid: 6989de56-a887-4215-89ef-7a0a37580cfe
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: peer-registrar-pvc
+      namespace: plv-main-campus
+      resourceVersion: "1791151780913663002"
+      uid: 8271d79e-9006-4e22-869b-1e575ad9879b
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-a/disks/pvc-8271d79e-9006-4e22-869b-1e575ad9879b
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-a
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:41Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:36Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-87081092-a4af-4495-ac1f-a923fadd5347
+    resourceVersion: "1791151596995007007"
+    uid: 5f27bfa2-6dbd-4ff3-b541-1c2638031e24
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: postgres-storage-postgres-replica-pubad-0
+      namespace: plv-pubad-campus
+      resourceVersion: "1791151595846335022"
+      uid: 87081092-a4af-4495-ac1f-a923fadd5347
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-c/disks/pvc-87081092-a4af-4495-ac1f-a923fadd5347
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-c
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:36Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:07:48Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-87ecb152-9fda-457c-9501-c93007c9df8a
+    resourceVersion: "1791151669740591018"
+    uid: a9adc36f-f773-4886-8670-1a22621030c6
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: orderer-3-pvc
+      namespace: plv-annex-campus
+      resourceVersion: "1791151667645871021"
+      uid: 87ecb152-9fda-457c-9501-c93007c9df8a
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-c/disks/pvc-87ecb152-9fda-457c-9501-c93007c9df8a
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-c
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:07:48Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:51Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-8f3521cf-9f4b-469d-acce-807c1dc39295
+    resourceVersion: "1791151791711727003"
+    uid: 7320d86e-bf2a-4bb5-9c4c-4f62d99b7bb0
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: ipfs-data-ipfs-annex-0
+      namespace: plv-annex-campus
+      resourceVersion: "1791151790649967010"
+      uid: 8f3521cf-9f4b-469d-acce-807c1dc39295
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-b/disks/pvc-8f3521cf-9f4b-469d-acce-807c1dc39295
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-b
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:51Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:36Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-98be3a12-1bb0-4976-8260-339586fa0169
+    resourceVersion: "1791151597186223001"
+    uid: 66ab5634-86c0-40fa-8e8d-652749cc04ab
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: postgres-storage-postgres-replica-annex-0
+      namespace: plv-annex-campus
+      resourceVersion: "1791151595105007003"
+      uid: 98be3a12-1bb0-4976-8260-339586fa0169
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-b/disks/pvc-98be3a12-1bb0-4976-8260-339586fa0169
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-b
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:36Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:42Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-a1f804d0-c200-4acb-979c-eb2fb92ead52
+    resourceVersion: "1791151602250591017"
+    uid: b92734b8-6c0e-4a6c-a672-7a6eba75f30f
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: prometheus-data
+      namespace: plv-fabric
+      resourceVersion: "1791151601136223006"
+      uid: a1f804d0-c200-4acb-979c-eb2fb92ead52
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-c/disks/pvc-a1f804d0-c200-4acb-979c-eb2fb92ead52
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-c
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:42Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:42Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-a47f8d69-5564-4aa0-9a6e-a945aea75a59
+    resourceVersion: "1791151782797343023"
+    uid: 196d8078-f494-4350-8659-d01c7149d4b1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: couchdb-wallet-storage-couchdb-wallet-registrar-0
+      namespace: plv-main-campus
+      resourceVersion: "1791151781680015011"
+      uid: a47f8d69-5564-4aa0-9a6e-a945aea75a59
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-a/disks/pvc-a47f8d69-5564-4aa0-9a6e-a945aea75a59
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-a
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:42Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:51Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-a7b379b7-39a1-4377-a5f3-b9232714381e
+    resourceVersion: "1791151791920719019"
+    uid: 5fc9f87e-b397-4d90-8aee-4a0f06890440
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: ipfs-data-ipfs-pubad-0
+      namespace: plv-pubad-campus
+      resourceVersion: "1791151790815007007"
+      uid: a7b379b7-39a1-4377-a5f3-b9232714381e
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-c/disks/pvc-a7b379b7-39a1-4377-a5f3-b9232714381e
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-c
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:51Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:43Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-ad35c676-7170-49de-b9c6-e063aa602c00
+    resourceVersion: "1791151783906351013"
+    uid: 33965699-f6ca-4e69-9ffe-2398dab7cf8a
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: couchdb-storage-couchdb-faculty-0
+      namespace: plv-annex-campus
+      resourceVersion: "1791151782810863003"
+      uid: ad35c676-7170-49de-b9c6-e063aa602c00
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-b/disks/pvc-ad35c676-7170-49de-b9c6-e063aa602c00
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-b
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:43Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:15Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-b6304e53-2436-4802-a35b-d22e01521ab5
+    resourceVersion: "1791151756153071022"
+    uid: e5026263-4443-411d-ae0c-fffcbaa785b9
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: orderer-6-pvc
+      namespace: plv-pubad-campus
+      resourceVersion: "1791151754251967021"
+      uid: b6304e53-2436-4802-a35b-d22e01521ab5
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-c/disks/pvc-b6304e53-2436-4802-a35b-d22e01521ab5
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-c
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:15Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:45Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-bfb41e31-9fa6-43d5-9345-110d24115dfe
+    resourceVersion: "1791151786341503000"
+    uid: 23630d7b-62d4-46df-a314-c4e96f6b519a
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: peer-department-pvc
+      namespace: plv-pubad-campus
+      resourceVersion: "1791151785248575018"
+      uid: bfb41e31-9fa6-43d5-9345-110d24115dfe
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-c/disks/pvc-bfb41e31-9fa6-43d5-9345-110d24115dfe
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-c
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:45Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:37Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-c18c7a7e-fbb4-4e21-aa57-6698e8f91134
+    resourceVersion: "1791151597585983004"
+    uid: 33a11241-5dc7-4756-ad1d-85f9e75e2e15
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: postgres-storage-postgres-replica-main-0
+      namespace: plv-main-campus
+      resourceVersion: "1791151596500927024"
+      uid: c18c7a7e-fbb4-4e21-aa57-6698e8f91134
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-b/disks/pvc-c18c7a7e-fbb4-4e21-aa57-6698e8f91134
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-b
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:37Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:38Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-c6fb3ec3-e773-4eaa-91a3-f8d4d574203f
+    resourceVersion: "1791151599395231018"
+    uid: cccd49e3-23ef-4075-a305-9e6bf622e86a
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: postgres-storage-postgres-replica-pubad-2-0
+      namespace: plv-pubad-campus
+      resourceVersion: "1791151597262719004"
+      uid: c6fb3ec3-e773-4eaa-91a3-f8d4d574203f
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-a/disks/pvc-c6fb3ec3-e773-4eaa-91a3-f8d4d574203f
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-a
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:38Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:44Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-c7b4094c-4a1b-4bd1-b759-1dc483111b5d
+    resourceVersion: "1791151784613247018"
+    uid: 251f144a-b439-4b58-b3d8-fbfaf29d032d
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: couchdb-wallet-storage-couchdb-wallet-faculty-0
+      namespace: plv-annex-campus
+      resourceVersion: "1791151783511855013"
+      uid: c7b4094c-4a1b-4bd1-b759-1dc483111b5d
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-b/disks/pvc-c7b4094c-4a1b-4bd1-b759-1dc483111b5d
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-b
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:44Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:06:47Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-c8a85bb7-d09c-40d1-b1f1-d7b7e6855c0a
+    resourceVersion: "1791151607831695008"
+    uid: 09aa8e2b-305d-41b2-99c2-d6c72bad537d
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: fabric-ca-department-pvc
+      namespace: plv-pubad-campus
+      resourceVersion: "1791151606727343023"
+      uid: c8a85bb7-d09c-40d1-b1f1-d7b7e6855c0a
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-c/disks/pvc-c8a85bb7-d09c-40d1-b1f1-d7b7e6855c0a
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-c
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:06:47Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:08:48Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-c9478a92-96d9-4191-a230-73765da7331b
+    resourceVersion: "1791151729831183013"
+    uid: df8e95a0-5d33-461c-9aba-19a7abd968a4
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: orderer-5-pvc
+      namespace: plv-pubad-campus
+      resourceVersion: "1791151727964895013"
+      uid: c9478a92-96d9-4191-a230-73765da7331b
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-b/disks/pvc-c9478a92-96d9-4191-a230-73765da7331b
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-b
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:08:48Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:49Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-ced2239c-9c19-474c-b0f5-879221a75d24
+    resourceVersion: "1791151789920015019"
+    uid: 6d62546c-f3de-469f-8993-f533ca2bff90
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: ipfs-data-ipfs-node-0
+      namespace: plv-fabric
+      resourceVersion: "1791151788801823011"
+      uid: ced2239c-9c19-474c-b0f5-879221a75d24
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-a/disks/pvc-ced2239c-9c19-474c-b0f5-879221a75d24
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-a
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:49Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:05:23Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-d21b5835-a9d9-446b-8b4a-1b597473ca16
+    resourceVersion: "1791151525035007022"
+    uid: d7b750f0-2017-4486-9c4d-963fe579dab3
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: postgres-storage-postgres-primary-0
+      namespace: plv-main-campus
+      resourceVersion: "1791151522829807013"
+      uid: d21b5835-a9d9-446b-8b4a-1b597473ca16
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-a/disks/pvc-d21b5835-a9d9-446b-8b4a-1b597473ca16
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-a
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:05:23Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:09:45Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-f4fe6194-91e7-4cae-955e-3895eb775de4
+    resourceVersion: "1791151785926047023"
+    uid: d418af83-57b1-4ea6-ad6f-e29a0937ffc1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: couchdb-storage-couchdb-department-0
+      namespace: plv-pubad-campus
+      resourceVersion: "1791151784835023002"
+      uid: f4fe6194-91e7-4cae-955e-3895eb775de4
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-c/disks/pvc-f4fe6194-91e7-4cae-955e-3895eb775de4
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-c
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:09:45Z"
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    annotations:
+      pv.kubernetes.io/provisioned-by: pd.csi.storage.gke.io
+      volume.kubernetes.io/provisioner-deletion-secret-name: ""
+      volume.kubernetes.io/provisioner-deletion-secret-namespace: ""
+    creationTimestamp: "2026-10-04T22:08:22Z"
+    finalizers:
+    - kubernetes.io/pv-protection
+    - external-attacher/pd-csi-storage-gke-io
+    name: pvc-fc318c1a-44ca-4f55-b096-6ba05d29d0d3
+    resourceVersion: "1791151703509743014"
+    uid: f61c7245-ba9c-4ec7-a564-896475bebd02
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    claimRef:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: orderer-4-pvc
+      namespace: plv-annex-campus
+      resourceVersion: "1791151701595007019"
+      uid: fc318c1a-44ca-4f55-b096-6ba05d29d0d3
+    csi:
+      driver: pd.csi.storage.gke.io
+      fsType: ext4
+      volumeAttributes:
+        storage.kubernetes.io/csiProvisionerIdentity: 1791128997340-1286-pd.csi.storage.gke.io
+      volumeHandle: projects/project-fa00844e-5237-451f-a95/zones/asia-east1-a/disks/pvc-fc318c1a-44ca-4f55-b096-6ba05d29d0d3
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.gke.io/zone
+            operator: In
+            values:
+            - asia-east1-a
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+  status:
+    lastPhaseTransitionTime: "2026-10-04T22:08:22Z"
+    phase: Bound
+kind: List
+metadata:
+  resourceVersion: ""

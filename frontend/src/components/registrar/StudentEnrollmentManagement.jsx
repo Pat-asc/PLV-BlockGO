@@ -1,26 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import SearchField from '../shared/SearchField';
+import BoundedSelect from '../shared/BoundedSelect';
 import {
   fetchApprovedStudents,
+  fetchAcademicPeriodOptions,
   fetchCurriculums,
+  fetchEnrolledStudentSubjects,
   fetchNstpOptions,
+  enrollExistingStudent,
   registrarBulkEnrollStudents,
   registrarBulkUpdateStudents,
+  searchExistingStudentsForEnrollment,
 } from '../../services/api';
 import { buildCsvContent, downloadCsvFile } from '../../utils/studentSectioningHelpers';
 import { downloadTemplateButtonClass } from '../shared/downloadButtonStyles';
-
-const currentSchoolYear = () => {
-  const now = new Date();
-  const start = now.getMonth() >= 5 ? now.getFullYear() : now.getFullYear() - 1;
-  return `${start}-${start + 1}`;
-};
+import { normalizeStudentNameFields } from '../../utils/studentName';
 
 const StudentEnrollmentManagement = ({ programs = [] }) => {
   const [form, setForm] = useState({
     department: programs[0] || '',
-    schoolYear: currentSchoolYear(),
-    semester: new Date().getMonth() >= 5 ? 'FIRST' : 'SECOND',
+    schoolYear: '',
+    semester: '',
     yearLevel: '1',
     curriculumId: '',
     nstpOption: '',
@@ -37,24 +37,49 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   const [enrollmentSearch, setEnrollmentSearch] = useState('');
   const [enrollmentMethod, setEnrollmentMethod] = useState('bulk');
   const [programFilter, setProgramFilter] = useState('');
+  const [existingCandidates, setExistingCandidates] = useState([]);
+  const [selectedExistingId, setSelectedExistingId] = useState('');
+  const [expandedStudentId, setExpandedStudentId] = useState(null);
+  const [subjectDetails, setSubjectDetails] = useState({});
+  const [subjectsLoading, setSubjectsLoading] = useState(null);
+
+  const loadCandidates = useCallback(async (search = '') => {
+    try {
+      const response = await searchExistingStudentsForEnrollment(search);
+      setExistingCandidates(response?.data || []);
+    } catch (error) {
+      setResult({ status: 'Error', message: error.message || 'Existing students could not be searched.' });
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const periodResponse = await fetchAcademicPeriodOptions();
+      const activePeriod = periodResponse?.activeAcademicPeriod;
+      if (!activePeriod?.schoolYear || !activePeriod?.semester) {
+        throw new Error('No active academic period is configured. Open an academic period before enrolling students.');
+      }
       const [studentsResponse, curriculumResponse, nstpResponse] = await Promise.all([
-        fetchApprovedStudents(),
+        fetchApprovedStudents(activePeriod),
         fetchCurriculums('PUBLISHED'),
         typeof fetchNstpOptions === 'function' ? fetchNstpOptions() : Promise.resolve({ data: [] }),
       ]);
       setStudents(studentsResponse?.students || studentsResponse?.data || []);
       setCurricula(curriculumResponse?.data || []);
       setNstpOptions(nstpResponse?.data || []);
+      setForm((current) => ({
+        ...current,
+        schoolYear: activePeriod.schoolYear,
+        semester: activePeriod.semester,
+      }));
+      await loadCandidates();
     } catch (error) {
       setResult({ status: 'Error', message: error.message || 'Enrollment data could not be loaded.' });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadCandidates]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -90,6 +115,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
 
   const validateContext = () => {
     if (!form.department) return 'Select an academic program.';
+    if (!form.schoolYear || !form.semester) return 'No active academic period is configured. Open an academic period before enrolling students.';
     if (!/^\d{4}-\d{4}$/.test(form.schoolYear)) return 'School year must use YYYY-YYYY.';
     const [start, end] = form.schoolYear.split('-').map(Number);
     if (end !== start + 1) return 'School year must contain consecutive years.';
@@ -130,9 +156,10 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
     if (validationError) return setResult({ status: 'Error', message: validationError });
     setSaving(true); setResult(null);
     try {
+      const normalizedName = normalizeStudentNameFields(manualForm);
       const csv = buildCsvContent([
         ['First Name', 'Last Name', 'Middle Name', 'Sex', 'Birthdate', 'Email Address', 'Contact Number', 'Home Address'],
-        [manualForm.firstName, manualForm.lastName, manualForm.middleName, manualForm.sex, manualForm.birthdate, manualForm.email, manualForm.contactNumber, manualForm.homeAddress],
+        [normalizedName.firstName, normalizedName.lastName, normalizedName.middleName, manualForm.sex, manualForm.birthdate, manualForm.email.trim(), manualForm.contactNumber.trim(), manualForm.homeAddress.trim()],
       ]);
       const manualFile = new File([csv], 'manual-student-enrollment.csv', { type: 'text/csv' });
       const response = await registrarBulkEnrollStudents(manualFile, form.department, enrollmentPayload());
@@ -143,6 +170,47 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
       setResult({ status: 'Error', message: error.message || 'Student enrollment failed.' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const enrollSelectedExistingStudent = async (event) => {
+    event.preventDefault();
+    const validationError = validateContext();
+    if (validationError) return setResult({ status: 'Error', message: validationError });
+    if (!selectedExistingId) return setResult({ status: 'Error', message: 'Select an existing Student account.' });
+    setSaving(true); setResult(null);
+    try {
+      const response = await enrollExistingStudent(selectedExistingId, {
+        program: form.department,
+        yearLevel: form.yearLevel,
+        curriculumId: form.curriculumId ? Number(form.curriculumId) : undefined,
+        nstpOption: form.nstpOption || undefined,
+      });
+      setResult(response);
+      setSelectedExistingId('');
+      await load();
+    } catch (error) {
+      setResult({ status: 'Error', message: error.message || 'Existing Student enrollment failed.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleSubjects = async (student) => {
+    if (expandedStudentId === student.id) {
+      setExpandedStudentId(null);
+      return;
+    }
+    setExpandedStudentId(student.id);
+    if (subjectDetails[student.id]) return;
+    setSubjectsLoading(student.id);
+    try {
+      const response = await fetchEnrolledStudentSubjects(student.id, student.schoolYear, student.semester);
+      setSubjectDetails((current) => ({ ...current, [student.id]: response?.data || { subjects: [] } }));
+    } catch (error) {
+      setSubjectDetails((current) => ({ ...current, [student.id]: { subjects: [], error: error.message || 'Subjects could not be loaded.' } }));
+    } finally {
+      setSubjectsLoading(null);
     }
   };
 
@@ -168,19 +236,12 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
               {programs.map((program) => <option key={program} value={program}>{program}</option>)}
             </select>
           </label>
-          <label className="text-xs font-semibold text-slate-700">School Year
-            <input value={form.schoolYear} onChange={(event) => updateField('schoolYear', event.target.value)} placeholder="2026-2027" className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-xs font-normal" />
+          <label className="text-xs font-semibold text-slate-700">Active Academic Period
+            <input aria-label="Active Academic Period" value={form.schoolYear && form.semester ? `${form.schoolYear} · ${form.semester}` : 'Not configured'} readOnly className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 text-xs font-normal text-slate-600" />
           </label>
           <label className="text-xs font-semibold text-slate-700">Year Level
             <select value={form.yearLevel} onChange={(event) => updateField('yearLevel', event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-normal">
               {[1, 2, 3, 4].map((year) => <option key={year} value={year}>{year}{year === 1 ? 'st' : year === 2 ? 'nd' : year === 3 ? 'rd' : 'th'} Year</option>)}
-            </select>
-          </label>
-          <label className="text-xs font-semibold text-slate-700">Semester
-            <select value={form.semester} onChange={(event) => updateField('semester', event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-normal">
-              <option value="FIRST">First Semester</option>
-              <option value="SECOND">Second Semester</option>
-              <option value="MIDYEAR">Midyear</option>
             </select>
           </label>
           <label className="text-xs font-semibold text-slate-700">Curriculum Version
@@ -204,9 +265,10 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h4 className="text-sm font-bold text-[#003366]">Enrollment Method</h4>
-        <div className="mt-3 flex border-b border-slate-200">
+        <div className="mt-3 flex flex-wrap border-b border-slate-200">
           <button type="button" onClick={() => setEnrollmentMethod('bulk')} className={`border-b-2 px-5 py-2 text-xs font-bold transition ${enrollmentMethod === 'bulk' ? 'border-blue-700 bg-blue-50 text-blue-700' : 'border-transparent text-slate-500 hover:text-[#003366]'}`}>⇧ &nbsp; Bulk Upload</button>
-          <button type="button" onClick={() => setEnrollmentMethod('manual')} className={`border-b-2 px-5 py-2 text-xs font-bold transition ${enrollmentMethod === 'manual' ? 'border-blue-700 bg-blue-50 text-blue-700' : 'border-transparent text-slate-500 hover:text-[#003366]'}`}>♙ &nbsp; Manual Entry</button>
+          <button type="button" onClick={() => setEnrollmentMethod('manual')} className={`border-b-2 px-5 py-2 text-xs font-bold transition ${enrollmentMethod === 'manual' ? 'border-blue-700 bg-blue-50 text-blue-700' : 'border-transparent text-slate-500 hover:text-[#003366]'}`}>♙ &nbsp; New Student</button>
+          <button type="button" onClick={() => setEnrollmentMethod('existing')} className={`border-b-2 px-5 py-2 text-xs font-bold transition ${enrollmentMethod === 'existing' ? 'border-blue-700 bg-blue-50 text-blue-700' : 'border-transparent text-slate-500 hover:text-[#003366]'}`}>Existing Student</button>
         </div>
 
         {enrollmentMethod === 'bulk' ? <div>
@@ -220,7 +282,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
             <button type="button" onClick={downloadTemplate} className={downloadTemplateButtonClass}>Download Template</button>
             <button type="button" disabled={saving} onClick={() => upload('enroll')} className="rounded-xl bg-[#003366] px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Upload & Prepare'}</button>
           </div>
-        </div> : <form onSubmit={enrollManualStudent} className="pt-4">
+        </div> : enrollmentMethod === 'manual' ? <form onSubmit={enrollManualStudent} className="pt-4">
           <div className="mb-4 flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-lg text-blue-700">♙</span><div><h5 className="text-sm font-bold text-[#003366]">Manual Student Enrollment</h5></div></div>
           <div className="overflow-hidden rounded-lg border border-slate-200">
             <h6 className="bg-slate-50 px-4 py-3 text-xs font-bold text-[#003366]">Student Information</h6>
@@ -239,12 +301,28 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
             
             <div className="mt-4 flex justify-end gap-2 border-t border-slate-100 p-4"><button type="button" onClick={() => setManualForm(emptyManualForm)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-slate-600">Cancel</button><button disabled={saving || loading} className="rounded-lg bg-[#003366] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : '♙  Save Student'}</button></div>
           </div>
+        </form> : <form onSubmit={enrollSelectedExistingStudent} className="space-y-4 pt-4">
+          <div><h5 className="text-sm font-bold text-[#003366]">Enroll an Existing Student</h5><p className="mt-1 text-xs text-slate-500">Reuse the Student ID and account. A new enrollment will be created for the active period without copying a previous section.</p></div>
+          <BoundedSelect
+            label="Existing Student"
+            value={selectedExistingId}
+            onChange={setSelectedExistingId}
+            onSearch={loadCandidates}
+            searchable
+            options={existingCandidates.map((student) => ({
+              value: student.id,
+              label: `${student.studentNo} · ${student.fullName}${student.email ? ` · ${student.email}` : ''}${student.alreadyEnrolled ? ' · Already enrolled' : ''}`,
+              disabled: student.alreadyEnrolled,
+            }))}
+            className="max-w-2xl"
+          />
+          <button type="submit" disabled={saving || loading || !selectedExistingId} className="rounded-lg bg-[#003366] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? 'Enrolling…' : 'Enroll Existing Student'}</button>
         </form>}
       </section>
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between"><h4 className="text-sm font-bold text-[#003366]">Current Student Enrollments</h4><div className="flex flex-col gap-2 sm:flex-row"><select aria-label="Program / Course" value={programFilter} onChange={(event) => setProgramFilter(event.target.value)} className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs"><option value="">All Programs</option>{availablePrograms.map((program) => <option key={program} value={program}>{program}</option>)}</select><SearchField value={enrollmentSearch} onChange={setEnrollmentSearch} label="Search student enrollments" placeholder="ID, name, email, program, or section" className="sm:w-72" inputClassName="h-9 text-xs"/><button type="button" onClick={load} className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700">Refresh</button></div></div>
-        <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr className="bg-slate-50 text-slate-600"><th className="px-4 py-3">Student</th><th className="px-4 py-3">Program / Year Level</th><th className="px-4 py-3">School Year</th><th className="px-4 py-3">Curriculum</th><th className="px-4 py-3">Status</th></tr></thead><tbody>{visibleStudents.map((student) => <tr key={student.id} className="border-b"><td className="px-4 py-3"><span className="block font-semibold">{student.fullname}</span><span className="text-xs text-slate-500">{student.studentno}</span></td><td className="px-4 py-3">{student.department || 'Unassigned'}<span className="block text-xs text-slate-500">Year {student.yearLevel || '—'}</span></td><td className="px-4 py-3">{student.schoolYear || '—'}</td><td className="px-4 py-3">{student.curriculumVersion || 'Not assigned'}</td><td className="px-4 py-3">{student.enrollmentStatus || student.assignmentStatus || 'Unassigned'}</td></tr>)}{!loading && visibleStudents.length === 0 ? <tr><td colSpan="5" className="px-4 py-8 text-center text-slate-500">{enrollmentSearch.trim() || programFilter ? 'No results found.' : 'No active student enrollment yet.'}</td></tr> : null}</tbody></table></div>
+        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between"><h4 className="text-sm font-bold text-[#003366]">Current Student Enrollments</h4><div className="flex flex-col gap-2 sm:flex-row"><BoundedSelect label="Program / Course" value={programFilter} onChange={setProgramFilter} options={[{ value: '', label: 'All Programs' }, ...availablePrograms.map((program) => ({ value: program, label: program }))]} searchable className="sm:w-64"/><SearchField value={enrollmentSearch} onChange={setEnrollmentSearch} label="Search student enrollments" placeholder="ID, name, email, program, or section" className="sm:w-72" inputClassName="h-9 text-xs"/><button type="button" onClick={load} className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700">Refresh</button></div></div>
+        <div className="overflow-x-auto"><table className="min-w-[980px] text-left text-xs"><thead><tr className="bg-slate-50 text-slate-600"><th className="px-4 py-3">Student</th><th className="px-4 py-3">Program / Year Level</th><th className="px-4 py-3">Section</th><th className="px-4 py-3">Academic Period</th><th className="px-4 py-3">Subjects</th><th className="px-4 py-3">Curriculum</th><th className="px-4 py-3">Status</th></tr></thead><tbody>{visibleStudents.map((student) => <React.Fragment key={student.id}><tr className="border-b"><td className="px-4 py-3"><span className="block font-semibold">{student.fullname}</span><span className="text-xs text-slate-500">{student.studentno}</span></td><td className="max-w-64 break-words px-4 py-3">{student.department || 'Unassigned'}<span className="block text-xs text-slate-500">Year {student.yearLevel || '—'}</span></td><td className="px-4 py-3">{student.section || 'Unassigned'}</td><td className="px-4 py-3">{student.schoolYear || '—'}<span className="block text-xs text-slate-500">{student.semester || '—'}</span></td><td className="px-4 py-3"><button type="button" onClick={() => toggleSubjects(student)} className="rounded-lg border border-blue-200 px-3 py-2 font-semibold text-blue-700">{expandedStudentId === student.id ? 'Hide Subjects' : 'View Subjects'}</button></td><td className="px-4 py-3">{student.curriculumVersion || 'Not assigned'}</td><td className="px-4 py-3">{student.enrollmentStatus || student.assignmentStatus || 'Unassigned'}</td></tr>{expandedStudentId === student.id ? <tr className="border-b bg-slate-50"><td colSpan="7" className="px-4 py-4"><div className="rounded-lg border border-slate-200 bg-white p-4"><h5 className="font-bold text-[#003366]">Assigned Subjects · {student.studentno}</h5>{subjectsLoading === student.id ? <p className="mt-2 text-slate-500">Loading subjects…</p> : subjectDetails[student.id]?.error ? <p className="mt-2 text-red-600">{subjectDetails[student.id].error}</p> : subjectDetails[student.id]?.subjects?.length ? <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{subjectDetails[student.id].subjects.map((subject) => <li key={subject.subjectCode} className="min-w-0 rounded-lg bg-slate-50 p-3"><span className="block font-bold text-[#003366]">{subject.subjectCode}</span><span className="block break-words text-slate-700">{subject.subjectTitle}</span><span className="text-slate-500">{subject.units} units</span></li>)}</ul> : <p className="mt-2 text-slate-500">No subjects assigned yet.</p>}</div></td></tr> : null}</React.Fragment>)}{!loading && visibleStudents.length === 0 ? <tr><td colSpan="7" className="px-4 py-8 text-center text-slate-500">{enrollmentSearch.trim() || programFilter ? 'No results found.' : 'No active student enrollment yet.'}</td></tr> : null}</tbody></table></div>
       </section>
     </div>
   );

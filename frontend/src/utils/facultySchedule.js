@@ -34,6 +34,29 @@ const formatTime = (value) => {
   return `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
 };
 
+const dayAliases = {
+  mon: 'Monday', monday: 'Monday', tue: 'Tuesday', tues: 'Tuesday', tuesday: 'Tuesday',
+  wed: 'Wednesday', wednesday: 'Wednesday', thu: 'Thursday', thur: 'Thursday', thurs: 'Thursday', thursday: 'Thursday',
+  fri: 'Friday', friday: 'Friday', sat: 'Saturday', saturday: 'Saturday', sun: 'Sunday', sunday: 'Sunday',
+};
+
+export const parseFacultyScheduleBlocks = (value) => String(value || '').trim().split(/\s*(?:;|\r?\n)\s*/)
+  .filter(Boolean).flatMap((block) => {
+    const match = block.match(/^([^|]+)\|\s*(\d{1,2}:\d{2}(?:\s*[AP]M)?)\s*[-–—]\s*(\d{1,2}:\d{2}(?:\s*[AP]M)?)$/i);
+    if (!match) return [];
+    const start = toMinutes(match[2]);
+    const end = toMinutes(match[3]);
+    if (start === null || end === null || start >= end) return [];
+    return match[1].split(/\s*(?:\/|,|&|\band\b)\s*/i).map((day) => dayAliases[day.trim().toLowerCase()])
+      .filter(Boolean).map((day) => ({ day, start, end }));
+  });
+
+export const facultySchedulesOverlap = (left, right) => {
+  const first = parseFacultyScheduleBlocks(left);
+  const second = parseFacultyScheduleBlocks(right);
+  return first.some((a) => second.some((b) => a.day === b.day && a.start < b.end && b.start < a.end));
+};
+
 export const isValidScheduleRange = (startTime, endTime) => {
   const start = toMinutes(startTime);
   const end = toMinutes(endTime);

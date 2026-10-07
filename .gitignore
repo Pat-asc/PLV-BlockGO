@@ -39,6 +39,11 @@ temp/
 !/tests/AssignmentRegressionTests/Program.cs
 /tests/AssignmentRegressionTests/bin/
 /tests/AssignmentRegressionTests/obj/
+!/tests/GrafanaSessionChecks/
+!/tests/GrafanaSessionChecks/GrafanaSessionChecks.csproj
+!/tests/GrafanaSessionChecks/Program.cs
+/tests/GrafanaSessionChecks/bin/
+/tests/GrafanaSessionChecks/obj/
 !/tests/StudentSubjectGradeChecks/
 !/tests/StudentSubjectGradeChecks/Program.cs
 /tests/StudentSubjectGradeChecks/bin/

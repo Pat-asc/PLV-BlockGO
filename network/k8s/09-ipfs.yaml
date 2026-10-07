@@ -152,9 +152,10 @@ spec:
         resources:
           requests:
             cpu: 100m
-            memory: 128Mi
-          limits:
             memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 768Mi
       volumes:
       - name: swarm-key
         configMap:
@@ -385,8 +386,8 @@ spec:
         securityContext: { runAsUser: 0, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true }
         command: ["sh", "-c", "mkdir -p /data/ipfs && chown -R 1000:100 /data/ipfs && chmod -R u+rwX,g+rwX /data/ipfs"]
         resources:
-          requests: { cpu: 1m, memory: 4Mi }
-          limits: { memory: 32Mi }
+          requests: { cpu: 25m, memory: 32Mi }
+          limits: { cpu: 100m, memory: 128Mi }
         volumeMounts:
         - { name: ipfs-data, mountPath: /data/ipfs }
       containers:
@@ -418,8 +419,8 @@ spec:
         livenessProbe: { tcpSocket: { port: 5001 }, initialDelaySeconds: 30, periodSeconds: 10, timeoutSeconds: 5 }
         readinessProbe: { tcpSocket: { port: 5001 }, initialDelaySeconds: 15, periodSeconds: 5, timeoutSeconds: 5 }
         resources:
-          requests: { cpu: 10m, memory: 32Mi }
-          limits: { memory: 256Mi }
+          requests: { cpu: 100m, memory: 256Mi }
+          limits: { cpu: 500m, memory: 768Mi }
       volumes:
       - { name: swarm-key, configMap: { name: ipfs-swarm-key } }
       - { name: ipfs-init-volume, configMap: { name: ipfs-init-config, defaultMode: 511 } }
@@ -462,8 +463,8 @@ spec:
         securityContext: { runAsUser: 0, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true }
         command: ["sh", "-c", "mkdir -p /data/ipfs && chown -R 1000:100 /data/ipfs && chmod -R u+rwX,g+rwX /data/ipfs"]
         resources:
-          requests: { cpu: 1m, memory: 4Mi }
-          limits: { memory: 32Mi }
+          requests: { cpu: 25m, memory: 32Mi }
+          limits: { cpu: 100m, memory: 128Mi }
         volumeMounts:
         - { name: ipfs-data, mountPath: /data/ipfs }
       containers:
@@ -495,8 +496,8 @@ spec:
         livenessProbe: { tcpSocket: { port: 5001 }, initialDelaySeconds: 30, periodSeconds: 10, timeoutSeconds: 5 }
         readinessProbe: { tcpSocket: { port: 5001 }, initialDelaySeconds: 15, periodSeconds: 5, timeoutSeconds: 5 }
         resources:
-          requests: { cpu: 10m, memory: 32Mi }
-          limits: { memory: 256Mi }
+          requests: { cpu: 100m, memory: 256Mi }
+          limits: { cpu: 500m, memory: 768Mi }
       volumes:
       - { name: swarm-key, configMap: { name: ipfs-swarm-key } }
       - { name: ipfs-init-volume, configMap: { name: ipfs-init-config, defaultMode: 511 } }

@@ -27,6 +27,8 @@ function RegistrarSidebar({
   managementDefaultTab = "grades",
   managementMenuItems = [],
 }) {
+  const [mobileNavigationOpen, setMobileNavigationOpen] = React.useState(false);
+  const sidebarRef = React.useRef(null);
   const managementTabs = [
     "monitoring",
     "gradeRelease",
@@ -47,8 +49,8 @@ function RegistrarSidebar({
   const enrollmentTabs = ["bulkEnroll", "sectioning", "sectionsCreated", "curriculum"];
   const enrollmentMenuItems = [
     { id: "bulkEnroll", label: "Student Enrollment" },
-    { id: "sectioning", label: "Section Creator" },
-    { id: "sectionsCreated", label: "Sections Created" },
+    { id: "sectioning", label: "Section Management" },
+    { id: "sectionsCreated", label: "Sections" },
     { id: "curriculum", label: "Curriculum Management" },
   ];
   const operationsMenuItems = managementMenuItems.filter(
@@ -65,8 +67,45 @@ function RegistrarSidebar({
   { id: "reports", label: "Reports & PDF" },
 ];
 
+  React.useEffect(() => {
+    const closeOutside = (event) => {
+      if (!sidebarRef.current?.contains(event.target)) setMobileNavigationOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setMobileNavigationOpen(false);
+    };
+    document.addEventListener("mousedown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+
+  const selectTab = (tab) => {
+    setActiveTab(tab);
+    setMobileNavigationOpen(false);
+  };
+
   return (
-    <aside className="w-full max-w-[230px] self-start overflow-x-hidden overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2.5 shadow-sm [scrollbar-gutter:stable] md:h-[calc(100vh-7.5rem)] md:shrink-0 lg:sticky lg:top-6">
+    <aside ref={sidebarRef} className="w-full max-w-none self-start overflow-x-hidden overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2.5 shadow-sm [scrollbar-gutter:stable] md:h-[calc(100vh-7.5rem)] md:max-w-[230px] md:shrink-0 lg:sticky lg:top-6">
+      <button
+        type="button"
+        aria-label="Open Registrar navigation menu"
+        aria-expanded={mobileNavigationOpen}
+        onClick={() => setMobileNavigationOpen((open) => !open)}
+        className="flex min-h-11 w-full items-center justify-between rounded-xl border border-slate-300 px-3 text-sm font-bold text-[#003366] md:hidden"
+      >
+        <span>&#9776; Menu</span>
+        <span className="truncate pl-3 text-xs font-semibold text-slate-600">
+          {menuItems.find((item) => item.id === activeTab)?.label ||
+            enrollmentMenuItems.find((item) => item.id === activeTab)?.label ||
+            managementMenuItems.find((item) => item.id === activeTab)?.label ||
+            "Registrar Navigation"}
+        </span>
+      </button>
+
+      <div className={`${mobileNavigationOpen ? "block" : "hidden"} mt-2 md:mt-0 md:block`}>
       <div className="mb-3 border-b border-slate-200 pb-2">
         <h2 className="text-base font-bold text-[#003366]">Registrar Panel</h2>
 
@@ -121,7 +160,7 @@ function RegistrarSidebar({
                   }
 
                   if (!isManagementItem) {
-                    setActiveTab(item.id);
+                    selectTab(item.id);
                     return;
                   }
 
@@ -165,7 +204,7 @@ function RegistrarSidebar({
                     <button
                       key={enrollmentItem.id}
                       type="button"
-                      onClick={() => setActiveTab(enrollmentItem.id)}
+                      onClick={() => selectTab(enrollmentItem.id)}
                       className={`w-full rounded-lg px-1.5 py-2 text-left text-[11px] font-medium transition ${
                         activeTab === enrollmentItem.id
                           ? "bg-blue-50 font-semibold text-blue-700"
@@ -185,7 +224,7 @@ function RegistrarSidebar({
                     <button
                       key={managementItem.id}
                       type="button"
-                      onClick={() => setActiveTab(managementItem.id)}
+                      onClick={() => selectTab(managementItem.id)}
                       className={`w-full whitespace-nowrap rounded-lg px-1.5 py-2 text-left text-[11px] font-medium transition ${
                         activeTab === managementItem.id
                           ? "bg-blue-100 font-semibold text-blue-700"
@@ -202,6 +241,7 @@ function RegistrarSidebar({
           );
         })}
       </nav>
+      </div>
     </aside>
   );
 }

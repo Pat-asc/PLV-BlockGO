@@ -30,6 +30,12 @@ test('a trusted proxy supplies the original IPv4 client and protocol', async () 
     assert.equal(result.protocol, 'https');
 });
 
+test('the tracker preserves a 100.96 client address supplied by a trusted proxy', async () => {
+    const result = await observedIp(['loopback'], '100.96.2.82');
+    assert.equal(result.ip, '100.96.2.82');
+    assert.equal(result.protocol, 'https');
+});
+
 test('multiple trusted hops resolve from right to left', async () => {
     const result = await observedIp(['loopback', '35.191.0.0/16'], '203.0.113.25, 35.191.10.9');
     assert.equal(result.ip, '203.0.113.25');

@@ -218,6 +218,7 @@ function RegistrarStudentSectioning({
   const [activeTermLoaded, setActiveTermLoaded] = useState(false);
   const schoolYear = `${sectioningBatchYear}-${Number(sectioningBatchYear) + 1}`;
   const [enrolledCount, setEnrolledCount] = useState(0);
+  const [eligibleStudents, setEligibleStudents] = useState([]);
   const [enrolledLoading, setEnrolledLoading] = useState(true);
   const [enrolledError, setEnrolledError] = useState("");
   const [enrollmentRefresh, setEnrollmentRefresh] = useState(0);
@@ -633,6 +634,7 @@ function RegistrarStudentSectioning({
     setEnrolledLoading(true);
     setEnrolledError("");
     setEnrolledCount(0);
+    setEligibleStudents([]);
     setSelectedBatchKey("");
     if (!chairpersonDepartment || !/^\d{4}$/.test(sectioningBatchYear)) {
       setEnrolledLoading(false);
@@ -652,12 +654,13 @@ function RegistrarStudentSectioning({
         const backendSections = (sectionsResponse.data || sectionsResponse.sections || [])
           .filter((section) => String(section.yearLevel) === String(YEAR_LEVEL_PREFIXES[selectedYearLevel]));
         setEnrolledCount(unassigned.length);
+        setEligibleStudents(unassigned);
         const key = [chairpersonDepartment, schoolYear, sectioningSemester, "sectioning"].join("|");
         setBatches((current) => {
           const existing = current.find((batch) => batch.key === key);
           if (!existing && !unassigned.length && !sectioned.length && !backendSections.length) return current;
           const retained = (existing?.students || []).filter((student) => student.yearLevel !== selectedYearLevel);
-          const authoritativeStudents = [...sectioned, ...unassigned].map((student) => ({
+          const authoritativeStudents = sectioned.map((student) => ({
             ...student,
             studentId: student.studentNo,
             // Preserve the official full name; do not guess its component parts.
@@ -806,7 +809,7 @@ function RegistrarStudentSectioning({
     setIsBatchYearPickerOpen(false);
   };
 
-  const handleGenerateSections = async () => {
+  const handleGenerateSections = async (populateEligible = false) => {
     if (enrolledLoading || enrolledError || savingSections) return;
     if (!chairpersonDepartment) {
       showSystemNotification("Please choose a department first.");
@@ -829,7 +832,7 @@ function RegistrarStudentSectioning({
     const targetYearLevel = selectedYearLevel;
     const workspaceKey = selectedBatch
       ? activeBatchKey
-      : [chairpersonDepartment, resolvedBatchYear, "sectioning"].join("|");
+      : [chairpersonDepartment, schoolYear, sectioningSemester, "sectioning"].join("|");
     const createdAt = new Date().toISOString();
     const workspaceId = Number(createdAt.replace(/\D/g, "").slice(0, 13));
     const baseWorkspace =
@@ -853,7 +856,21 @@ function RegistrarStudentSectioning({
         sectionPlans: [],
         removedStudents: [],
       };
-    const existingStudents = baseWorkspace.students || [];
+    const mappedEligibleStudents = populateEligible ? eligibleStudents.map((student) => ({
+      ...student,
+      studentId: student.studentNo,
+      firstName: student.fullName,
+      lastName: "",
+      middleName: "",
+      yearLevel: AVAILABLE_YEAR_LEVELS[Number(student.yearLevel) - 1],
+      sectionCode: "",
+      sectionName: "",
+    })) : [];
+    const existingStudentIds = new Set((baseWorkspace.students || []).map((student) => String(student.studentId).toLowerCase()));
+    const existingStudents = [
+      ...(baseWorkspace.students || []),
+      ...mappedEligibleStudents.filter((student) => !existingStudentIds.has(String(student.studentId).toLowerCase())),
+    ];
     const workspace = {
       ...baseWorkspace,
       students: existingStudents,
@@ -943,7 +960,7 @@ function RegistrarStudentSectioning({
     setSavingSections(false);
     persistBatches(nextBatches);
     setEnrollmentRefresh((current) => current + 1);
-    setEnrolledCount((count) => Math.max(0, count - studentsNeedingSection.length));
+    if (populateEligible) setEnrolledCount((count) => Math.max(0, count - studentsNeedingSection.length));
     setSelectedBatchKey(workspaceKey);
     setSectioningBatchYear(workspace.batchYear || sectioningBatchYear);
     setSelectedYearLevel(targetYearLevel);
@@ -966,7 +983,7 @@ function RegistrarStudentSectioning({
       showSystemNotification(`No eligible unassigned students were found for ${chairpersonDepartment || "this program"}, ${selectedYearLevel}, ${schoolYear} ${sectioningSemester}.`);
       return;
     }
-    await handleGenerateSections();
+    await handleGenerateSections(true);
   };
 
   const handleSectionNameChange = (sectionCode, sectionName) => {
@@ -2846,7 +2863,7 @@ function RegistrarStudentSectioning({
 
                 <button
                   type="button"
-                  onClick={handleGenerateSections}
+                  onClick={() => handleGenerateSections(false)}
                   disabled={enrolledLoading || !!enrolledError || savingSections}
                   className="h-8 whitespace-nowrap rounded-md bg-[#003366] px-3 text-[11px] font-semibold text-white transition hover:bg-[#00264d]"
                 >
@@ -2874,6 +2891,9 @@ function RegistrarStudentSectioning({
                   Finalize
                 </button>
               </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Save Sections keeps the planning roster editable. Finalize verifies every enrolled student is assigned, then locks this program roster for the active academic period.
+              </p>
 
             </section>
           ) : null}

@@ -3,15 +3,23 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import StudentEnrollmentManagement from './StudentEnrollmentManagement';
 import {
   fetchApprovedStudents,
+  fetchAcademicPeriodOptions,
   fetchCurriculums,
+  fetchEnrolledStudentSubjects,
+  enrollExistingStudent,
   registrarBulkEnrollStudents,
+  searchExistingStudentsForEnrollment,
 } from '../../services/api';
 
 jest.mock('../../services/api', () => ({
   fetchApprovedStudents: jest.fn(),
+  fetchAcademicPeriodOptions: jest.fn(),
   fetchCurriculums: jest.fn(),
+  fetchEnrolledStudentSubjects: jest.fn(),
+  enrollExistingStudent: jest.fn(),
   registrarBulkEnrollStudents: jest.fn(),
   registrarBulkUpdateStudents: jest.fn(),
+  searchExistingStudentsForEnrollment: jest.fn(),
 }));
 
 const program = 'Bachelor of Science in Information Technology';
@@ -43,7 +51,16 @@ beforeEach(() => {
       programCode: 'BSIT',
     }],
   });
+  fetchAcademicPeriodOptions.mockResolvedValue({
+    activeAcademicPeriod: { schoolYear: '2026-2027', semester: 'FIRST' },
+  });
   registrarBulkEnrollStudents.mockResolvedValue({ status: 'Success', message: 'Student enrollment saved.' });
+  searchExistingStudentsForEnrollment.mockResolvedValue({ data: [
+    { id: 77, studentNo: '25-0042', fullName: 'Existing Student', email: 'existing@plv.edu.ph', alreadyEnrolled: false },
+    { id: 78, studentNo: '25-0043', fullName: 'Already Enrolled', email: 'enrolled@plv.edu.ph', alreadyEnrolled: true },
+  ] });
+  enrollExistingStudent.mockResolvedValue({ status: 'Success', message: 'Existing Student enrolled.' });
+  fetchEnrolledStudentSubjects.mockResolvedValue({ data: { subjects: [] } });
 });
 
 test('manually enrolls a student in the selected academic period and curriculum', async () => {
@@ -52,10 +69,10 @@ test('manually enrolls a student in the selected academic period and curriculum'
   await screen.findByText('Juan Dela Cruz');
   await waitFor(() => expect(screen.getByLabelText(/curriculum version/i)).toHaveValue('7'));
 
-  fireEvent.change(screen.getByLabelText(/school year/i), { target: { value: '2026-2027' } });
-  fireEvent.change(screen.getByLabelText(/^semester/i), { target: { value: 'SECOND' } });
+  expect(screen.getByLabelText(/active academic period/i)).toHaveValue('2026-2027 · FIRST');
+  expect(screen.queryByLabelText(/^semester/i)).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText(/^year level/i), { target: { value: '2' } });
-  fireEvent.click(screen.getByRole('button', { name: /manual entry/i }));
+  fireEvent.click(screen.getByRole('button', { name: /new student/i }));
   expect(screen.getByLabelText(/^sex/i)).toBeRequired();
   fireEvent.change(screen.getByLabelText(/first name/i), { target: { value: 'Maria' } });
   fireEvent.change(screen.getByLabelText(/last name/i), { target: { value: 'Santos' } });
@@ -75,8 +92,15 @@ test('manually enrolls a student in the selected academic period and curriculum'
     curriculumId: '7',
     schoolYear: '2026-2027',
     yearLevel: '2',
-    semester: 'SECOND',
+    semester: 'FIRST',
   });
+});
+
+test('blocks enrollment clearly when no active academic period exists', async () => {
+  fetchAcademicPeriodOptions.mockResolvedValue({ activeAcademicPeriod: null });
+  render(<StudentEnrollmentManagement programs={[program]} />);
+  expect(await screen.findByText(/No active academic period is configured/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/active academic period/i)).toHaveValue('Not configured');
 });
 
 test('filters current enrollments by the dynamic Program / Course dropdown', async () => {
@@ -86,7 +110,8 @@ test('filters current enrollments by the dynamic Program / Course dropdown', asy
   ] });
   render(<StudentEnrollmentManagement programs={[program]} />);
   await screen.findByText('BSIT Student');
-  fireEvent.change(screen.getByLabelText('Program / Course'), { target: { value: 'Bachelor of Science in Accountancy' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Program / Course' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Bachelor of Science in Accountancy' }));
   expect(screen.getByText('BSA Student')).toBeInTheDocument();
   expect(screen.queryByText('BSIT Student')).not.toBeInTheDocument();
 });
@@ -101,4 +126,30 @@ test('accepts a newly loaded active program without a hardcoded mapping', async 
   expect(Array.from(programSelect.options).map((option) => option.value)).toContain(newProgram);
   fireEvent.change(programSelect, { target: { value: newProgram } });
   expect(programSelect).toHaveValue(newProgram);
+});
+
+test('searches for and enrolls an existing Student identity without creating a new account', async () => {
+  render(<StudentEnrollmentManagement programs={[program]} />);
+  await screen.findByText('Juan Dela Cruz');
+  fireEvent.click(screen.getByRole('button', { name: /^existing student$/i }));
+  fireEvent.click(screen.getAllByRole('button', { name: /^existing student$/i })[1]);
+  fireEvent.change(screen.getByLabelText(/search existing student/i), { target: { value: '25-0042' } });
+  await waitFor(() => expect(searchExistingStudentsForEnrollment).toHaveBeenCalledWith('25-0042'));
+  fireEvent.click(await screen.findByRole('option', { name: /25-0042.*existing student/i }));
+  fireEvent.click(screen.getByRole('button', { name: /enroll existing student/i }));
+  await waitFor(() => expect(enrollExistingStudent).toHaveBeenCalledWith('77', {
+    program,
+    yearLevel: '1',
+    curriculumId: 7,
+    nstpOption: undefined,
+  }));
+  expect(registrarBulkEnrollStudents).not.toHaveBeenCalled();
+});
+
+test('shows a clear empty state when the exact-period enrollment has no assigned subjects', async () => {
+  render(<StudentEnrollmentManagement programs={[program]} />);
+  await screen.findByText('Juan Dela Cruz');
+  fireEvent.click(screen.getByRole('button', { name: /view subjects/i }));
+  expect(await screen.findByText('No subjects assigned yet.')).toBeInTheDocument();
+  expect(fetchEnrolledStudentSubjects).toHaveBeenCalledWith(42, '2026-2027', 'FIRST');
 });

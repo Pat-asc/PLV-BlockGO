@@ -179,6 +179,10 @@ export const releaseStudentGrades = async (payload) => fetchWithAuth('/Grades/re
     method: 'POST',
     body: JSON.stringify(payload),
 });
+export const releaseProgramGrades = async (payload) => fetchWithAuth('/Grades/release-program', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+});
 
 // ==================== MANAGED ACCOUNTS ====================
 export const createStaffAccount = async (account) => fetchWithAuth('/AccountManagement/staff', {
@@ -210,13 +214,28 @@ export const resetManagedAccountPassword = async (userId, newPassword) => {
 
 // ==================== CURRICULUM CHECKLISTS ====================
 export const fetchAcademicPrograms = async () => fetchWithAuth('/Curriculums/programs');
+export const createAcademicProgram = async (programCode, programName) => fetchWithAuth('/Curriculums/programs', {
+    method: 'POST',
+    body: JSON.stringify({ programCode, programName }),
+});
 export const fetchCurriculums = async (status = '') => fetchWithAuth(`/Curriculums${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+export const fetchAssignedCurriculum = async (program, batchYear = null) => {
+    const query = new URLSearchParams({ program });
+    if (batchYear != null && batchYear !== '') query.set('batchYear', String(batchYear));
+    return fetchWithAuth(`/Curriculums/assigned?${query}`);
+};
 export const fetchCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}`);
 export const createCurriculum = async (curriculum) => fetchWithAuth('/Curriculums', { method: 'POST', body: JSON.stringify(curriculum) });
 export const updateCurriculum = async (id, curriculum) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(curriculum) });
 export const addCurriculumSubject = async (id, subject) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/subjects`, { method: 'POST', body: JSON.stringify(subject) });
+export const bulkImportCurriculumSubjects = async (id, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/subjects/bulk-import`, { method: 'POST', body: form });
+};
 export const updateCurriculumSubject = async (id, subjectId, subject) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/subjects/${encodeURIComponent(subjectId)}`, { method: 'PUT', body: JSON.stringify(subject) });
 export const removeCurriculumSubject = async (id, subjectId) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/subjects/${encodeURIComponent(subjectId)}`, { method: 'DELETE' });
+export const removeCurriculumSubjects = async (id, subjectIds) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/subjects/bulk`, { method: 'DELETE', body: JSON.stringify({ subjectIds }) });
 export const submitCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/submit`, { method: 'POST' });
 export const approveCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/approve`, { method: 'POST' });
 export const returnCurriculum = async (id, reason) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/return`, { method: 'POST', body: JSON.stringify({ reason }) });
@@ -540,9 +559,24 @@ export const fetchUserProfile = async (email, role) => {
     return await fetchWithAuth(`/Auth/user-profile?email=${encodeURIComponent(email)}&role=${encodeURIComponent(role)}`);
 };
 
-export const fetchApprovedStudents = async () => {
-    return await fetchWithAuth(`/Auth/students/approved`);
+export const fetchApprovedStudents = async (academicPeriod = null) => {
+    const query = academicPeriod?.schoolYear && academicPeriod?.semester
+        ? `?schoolYear=${encodeURIComponent(academicPeriod.schoolYear)}&semester=${encodeURIComponent(academicPeriod.semester)}`
+        : '';
+    return await fetchWithAuth(`/Auth/students/approved${query}`);
 };
+
+export const searchExistingStudentsForEnrollment = async (search = '') =>
+    fetchWithAuth(`/Auth/students/enrollment-candidates?search=${encodeURIComponent(search)}`);
+
+export const enrollExistingStudent = async (studentId, enrollment) =>
+    fetchWithAuth(`/Auth/students/${encodeURIComponent(studentId)}/enroll-existing`, {
+        method: 'POST',
+        body: JSON.stringify(enrollment),
+    });
+
+export const fetchEnrolledStudentSubjects = async (studentId, schoolYear, semester) =>
+    fetchWithAuth(`/Auth/students/${encodeURIComponent(studentId)}/assigned-subjects?schoolYear=${encodeURIComponent(schoolYear)}&semester=${encodeURIComponent(semester)}`);
 
 export const fetchStudentTranscript = async (studentUserId) => {
     return await fetchWithAuth(`/Transcript/students/${encodeURIComponent(studentUserId)}`);
@@ -612,20 +646,24 @@ export const assignFacultyLoadToBackend = async (assignmentData) => {
     });
 };
 
-export const bulkAssignFacultyLoads = async (assignments) => {
+export const buildBulkFacultyAssignmentRequest = (assignments, context = {}) => ({
+    selectedAcademicSectionId: Number(context.selectedAcademicSectionId) || null,
+    assignments: assignments.map((assignment) => ({
+        clientId: String(assignment.id || assignment.clientId || ''),
+        facultyUserId: Number(assignment.facultyUserId || assignment.facultyId),
+        subjectCode: assignment.subjectCode || assignment.subject || '',
+        program: assignment.program || '',
+        section: assignment.sectionName || assignment.section || '',
+        schoolYear: assignment.schoolYear || '',
+        semester: assignment.semesterCode || assignment.semester || '',
+        schedule: serializeAssignmentSchedule(assignment),
+    })),
+});
+
+export const bulkAssignFacultyLoads = async (assignments, context = {}) => {
     return await fetchWithAuth('/Auth/faculty/assignments/bulk', {
         method: 'POST',
-        body: JSON.stringify({
-            assignments: assignments.map((assignment) => ({
-                clientId: String(assignment.id || assignment.clientId || ''),
-                facultyUserId: Number(assignment.facultyUserId || assignment.facultyId),
-                subjectCode: assignment.subjectCode || assignment.subject || '',
-                academicSectionId: Number(assignment.academicSectionId),
-                schoolYear: assignment.schoolYear || '',
-                semester: assignment.semesterCode || assignment.semester || '',
-                schedule: serializeAssignmentSchedule(assignment),
-            })),
-        }),
+        body: JSON.stringify(buildBulkFacultyAssignmentRequest(assignments, context)),
     });
 };
 
@@ -840,6 +878,13 @@ export const fetchGradeHistory = async (recordId) => {
     return await fetchWithAuth(`/Grades/history/${encodeURIComponent(recordId)}`);
 };
 
+export const correctFinalizedGrade = async (payload) => {
+    return await fetchWithAuth('/Grades/correct-finalized', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+    });
+};
+
 export const correctGrade = async (payload) => {
     return await fetchWithAuth('/Grades/correct', {
         method: 'POST',
@@ -955,8 +1000,8 @@ export const searchRegistrarRecords = async (params = {}) => {
 
 export const downloadGradingSheet = async (facultySectionId, suggestedName = 'Faculty_Grade_Template', format = 'xlsx') => {
     const normalizedFormat = String(format || '').toLowerCase();
-    if (!['xlsx', 'csv'].includes(normalizedFormat)) {
-        throw new Error('Unsupported template format. Choose XLSX or CSV.');
+    if (normalizedFormat !== 'xlsx') {
+        throw new Error('Only XLSX grading templates are supported because CSV cannot preserve formulas or worksheets.');
     }
     const baseUrl = getBaseUrl('/GradeTemplate');
     const token = getAuthToken();

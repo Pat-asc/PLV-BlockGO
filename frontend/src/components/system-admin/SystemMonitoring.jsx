@@ -94,6 +94,7 @@ function AlertsTable({ alerts, metricsAvailable, onResolve }) {
             <th className="px-4 py-3">Alert</th>
             <th className="px-4 py-3">Severity</th>
             <th className="px-4 py-3">Component</th>
+            <th className="px-4 py-3">IP Tracker</th>
             <th className="px-4 py-3">Summary</th>
             <th className="px-4 py-3">Action</th>
           </tr>
@@ -104,6 +105,7 @@ function AlertsTable({ alerts, metricsAvailable, onResolve }) {
               <td className="px-4 py-4 font-bold text-slate-900">{alert.name}</td>
               <td className="px-4 py-4"><StatusBadge status={alert.severity === 'critical' ? 'down' : 'warning'} label={alert.severity} /></td>
               <td className="px-4 py-4 text-slate-700">{alert.component}</td>
+              <td className="px-4 py-4 font-mono font-bold text-slate-700">{alert.ipTracker ?? '--'}</td>
               <td className="max-w-xl px-4 py-4 text-slate-700">{alert.summary}</td>
               <td className="px-4 py-4">{alert.eventId ? <button type="button" onClick={() => onResolve?.(alert.eventId)} className="rounded-md bg-slate-800 px-3 py-2 text-xs font-bold text-white">Resolve</button> : <span className="text-xs text-slate-400">Managed by Prometheus</span>}</td>
             </tr>

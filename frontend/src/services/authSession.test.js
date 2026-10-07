@@ -1,4 +1,5 @@
 import {
+  broadcastAuthInvalidation,
   clearAuthSession,
   decodeAuthToken,
   getAuthToken,
@@ -73,5 +74,35 @@ test('ignores a logout event for a different signed-in account', () => {
     detail: { type: 'logout', account: 'faculty-b@plv.edu.ph', reason: 'manual_logout' },
   }));
   expect(listener).not.toHaveBeenCalled();
+  unsubscribe();
+});
+
+test('a matching cross-tab storage logout clears this tab session', () => {
+  const token = tokenFor('faculty', 'faculty-a@plv.edu.ph');
+  setAuthSession(token, 'faculty');
+  const unsubscribe = subscribeToAuthSessionEvents(() => clearAuthSession());
+
+  window.dispatchEvent(new StorageEvent('storage', {
+    key: 'blockgo.auth.event',
+    newValue: JSON.stringify({
+      type: 'logout', account: 'faculty-a@plv.edu.ph', reason: 'password_changed', nonce: 'test',
+    }),
+  }));
+
+  expect(getAuthToken()).toBeNull();
+  unsubscribe();
+});
+
+test('password invalidation broadcasts only to tabs using the affected account', () => {
+  const listener = jest.fn(() => clearAuthSession());
+  setAuthSession(tokenFor('student', 'student@plv.edu.ph'), 'student');
+  const unsubscribe = subscribeToAuthSessionEvents(listener);
+
+  broadcastAuthInvalidation('student@plv.edu.ph', 'password_reset');
+
+  expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+    account: 'student@plv.edu.ph', reason: 'password_reset',
+  }));
+  expect(getAuthToken()).toBeNull();
   unsubscribe();
 });

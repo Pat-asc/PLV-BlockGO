@@ -29,6 +29,8 @@ public static class FacultyAssignmentRosterService
         int AcademicSectionId, int ProgramId, string SchoolYear, string Semester,
         string EnrollmentStatus, string? EnrollmentStudentNo = null);
 
+    public sealed record SubjectMetadata(string Title, decimal Units);
+
     public sealed record Resolution(ResolutionStatus Status, Assignment? Value, string? Message);
 
     public static bool IsOwnedBy(Assignment assignment, string? facultyEmail) =>
@@ -154,5 +156,37 @@ public static class FacultyAssignmentRosterService
                 reader.IsDBNull(10) ? null : reader.GetString(10)));
         }
         return students;
+    }
+
+    public static async Task<SubjectMetadata?> ResolveSubjectMetadataAsync(
+        NpgsqlConnection connection, Assignment assignment, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(@"
+            SELECT MIN(subject.subject_title), MIN(subject.units)
+            FROM academicsections section
+            JOIN academic_programs program
+              ON LOWER(section.department) IN (LOWER(program.program_code), LOWER(program.program_name))
+             AND program.is_active = TRUE
+            JOIN program_curriculum_assignments program_assignment
+              ON program_assignment.program_id = program.program_id
+            JOIN curriculums curriculum
+              ON curriculum.curriculum_id = program_assignment.curriculum_id
+             AND curriculum.program_id = program.program_id
+             AND curriculum.status = 'PUBLISHED'
+            JOIN curriculum_subjects subject
+              ON subject.curriculum_id = curriculum.curriculum_id
+             AND subject.year_level = section.year_level
+             AND subject.semester = @semester
+             AND LOWER(subject.subject_code) = LOWER(@subjectCode)
+            WHERE section.id = @academicSectionId
+              AND section.is_active = TRUE
+            HAVING COUNT(DISTINCT (LOWER(BTRIM(subject.subject_title)), subject.units)) = 1;", connection);
+        command.Parameters.AddWithValue("academicSectionId", assignment.AcademicSectionId);
+        command.Parameters.AddWithValue("semester", assignment.Semester);
+        command.Parameters.AddWithValue("subjectCode", assignment.Subject);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(0) && !reader.IsDBNull(1)
+            ? new SubjectMetadata(reader.GetString(0), reader.GetDecimal(1))
+            : null;
     }
 }

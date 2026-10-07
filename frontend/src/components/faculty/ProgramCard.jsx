@@ -12,6 +12,8 @@ const ProgramCard = ({
   onSubmit,
 }) => {
   const totalStudents = sectionData.students?.length || 0;
+  const displaySection = sectionData.canonicalSection || sectionName;
+  const hasUnits = sectionData.units !== null && sectionData.units !== undefined && String(sectionData.units).trim() !== '';
   const displaySchedule = formatFacultySchedule(
     sectionData.schedule === 'Not Available' ? '' : sectionData.schedule,
     sectionData.day === 'Not Available' ? '' : sectionData.day
@@ -50,17 +52,17 @@ const ProgramCard = ({
   return (
     <article className="flex h-full flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="min-w-0 break-words">
           <p className="text-sm font-extrabold tracking-wide text-blue-700">{sectionData.subjectCode || 'Subject'}</p>
-          <h2 className="mt-1 line-clamp-2 text-base font-bold leading-5 text-slate-900">{sectionData.subjectTitle || 'Untitled subject'}</h2>
+          <h2 className="mt-1 line-clamp-2 text-base font-bold leading-5 text-slate-900">{sectionData.subjectTitle || 'Not available'}</h2>
         </div>
         <StatusBadge status={workflowStatus} />
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-y border-slate-100 py-3 text-sm">
-        <span className="font-bold text-[#003366]">{sectionName}</span>
+        <span className="font-bold text-[#003366]">Section: {displaySection}</span>
         {sectionData.sectionCourse ? <span className="text-slate-500">{sectionData.sectionCourse}</span> : null}
-        <span className="text-slate-500">{sectionData.units || 0} Units</span>
+        <span className="text-slate-500">Units: {hasUnits ? sectionData.units : 'N/A'}</span>
       </div>
 
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">

@@ -1,12 +1,12 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import RegistrarGradeRelease from './RegistrarGradeRelease';
-import { fetchGradeReleaseCandidates, releaseStudentGrades } from '../../services/api';
+import { fetchGradeReleaseCandidates, releaseProgramGrades } from '../../services/api';
 import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 
 jest.mock('../../services/api', () => ({
   fetchGradeReleaseCandidates: jest.fn(),
-  releaseStudentGrades: jest.fn(),
+  releaseProgramGrades: jest.fn(),
 }));
 jest.mock('../../services/SystemDialogContext', () => ({ requestSystemConfirmation: jest.fn() }));
 jest.mock('../../services/NotificationContext', () => ({ showSystemNotification: jest.fn() }));
@@ -23,18 +23,19 @@ beforeEach(() => {
   jest.clearAllMocks();
   fetchGradeReleaseCandidates.mockResolvedValue({ data: [candidate] });
   requestSystemConfirmation.mockResolvedValue(true);
-  releaseStudentGrades.mockResolvedValue({ message: 'Finalized grades released successfully.' });
+  releaseProgramGrades.mockResolvedValue({ message: 'Finalized program grades released successfully.' });
 });
 
-test('previews finalized subjects and releases one student after confirmation', async () => {
+test('previews finalized students and releases the exact program batch after confirmation', async () => {
   render(<RegistrarGradeRelease />);
-  expect(await screen.findByText('Juan Dela Cruz')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'View Subjects (1)' }));
+  expect(await screen.findByRole('button', { name: 'Release BSIT Grades' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'View Students (1)' }));
+  expect(screen.getByText('Juan Dela Cruz')).toBeInTheDocument();
   expect(screen.getByText('IT 101')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Release Grades' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Release BSIT Grades' }));
 
-  await waitFor(() => expect(releaseStudentGrades).toHaveBeenCalledWith({
-    studentIdentifier: 'student@plv.edu.ph', schoolYear: '2026-2027', semester: 'FIRST', term: 'finals',
+  await waitFor(() => expect(releaseProgramGrades).toHaveBeenCalledWith({
+    program: 'BSIT', schoolYear: '2026-2027', semester: 'FIRST', term: 'finals',
   }));
   expect(requestSystemConfirmation).toHaveBeenCalled();
 });

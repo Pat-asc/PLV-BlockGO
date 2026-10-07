@@ -9,7 +9,7 @@ spec:
   storageClassName: fabric-storage
   resources:
     requests:
-      storage: 20Gi
+      storage: 10Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -61,9 +61,7 @@ spec:
         - name: ORDERER_GENERAL_LOCALMSPDIR
           value: /var/hyperledger/orderer/msp
         - name: ORDERER_GENERAL_BOOTSTRAPMETHOD
-          value: file
-        - name: ORDERER_GENERAL_BOOTSTRAPFILE
-          value: /var/hyperledger/orderer/orderer.genesis.block
+          value: none
         - name: ORDERER_GENERAL_TLS_ENABLED
           value: "true"
         - name: ORDERER_GENERAL_TLS_PRIVATEKEY
@@ -96,8 +94,9 @@ spec:
           value: "[/var/hyperledger/orderer/tls/ca.crt]"
         resources:
           requests:
-            cpu: "250m"
-            memory: "512Mi"
+            cpu: "150m"
+            memory: "256Mi"
+          limits: {cpu: 500m, memory: 768Mi}
         volumeMounts:
         - name: orderer-storage
           mountPath: /var/hyperledger/production

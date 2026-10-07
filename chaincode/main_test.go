@@ -100,8 +100,83 @@ func TestChairpersonFullApprovalAndFinalizationPath(t *testing.T) {
 	if record.FinalizedBy != "chairperson@plv.edu.ph" || record.FinalizedAt != finalizedAt.Format(time.RFC3339Nano) {
 		t.Fatalf("finalization audit fields are incorrect: %+v", record)
 	}
+	if record.GradeVersion != 1 || record.LogicalGradeID != record.ID {
+		t.Fatalf("first finalized generation was not initialized as grade version 1: %+v", record)
+	}
 	if record.Version != 5 {
 		t.Fatalf("approval and finalization must each create one version, got %d", record.Version)
+	}
+}
+
+func TestFinalizedCorrectionCreatesLinkedVersionWithoutChangingIdentity(t *testing.T) {
+	record := testRecord(statusFinalized, "midterm", "BSIT")
+	record.GradeVersion = 1
+	record.TransactionID = "tx-v1"
+	original := record
+	correctedAt := time.Date(2026, 10, 3, 7, 8, 9, 0, time.UTC)
+	err := applyFinalizedCorrection(&record, FinalizedGradeCorrection{
+		RecordID: record.ID, NewGrade: "88", Reason: "Incorrect final examination score encoded.", ExpectedGradeVersion: 1,
+	}, "chair@plv.edu.ph", correctedAt)
+	if err != nil {
+		t.Fatalf("valid finalized correction failed: %v", err)
+	}
+	if record.GradeVersion != 2 || record.Grade != "88" || record.PreviousTxID != "tx-v1" {
+		t.Fatalf("correction did not create a linked v2: %+v", record)
+	}
+	if record.StudentNo != original.StudentNo || record.SubjectCode != original.SubjectCode ||
+		record.AssignmentCycleID != original.AssignmentCycleID || record.SchoolYear != original.SchoolYear ||
+		record.Semester != original.Semester || record.Term != original.Term {
+		t.Fatalf("correction changed logical grade identity: before=%+v after=%+v", original, record)
+	}
+}
+
+func TestFinalizedCorrectionRequiresReasonAndCurrentVersion(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		reason     string
+		expected   int
+		want       string
+	}{
+		{"empty reason", " ", 1, "correction reason"},
+		{"stale version", "Valid correction reason", 2, "version conflict"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			record := testRecord(statusFinalized, "finals", "BSIT")
+			record.GradeVersion = 1
+			original := record
+			err := applyFinalizedCorrection(&record, FinalizedGradeCorrection{
+				RecordID: record.ID, NewGrade: "90", Reason: test.reason, ExpectedGradeVersion: test.expected,
+			}, "chair@plv.edu.ph", time.Now().UTC())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %q error, got %v", test.want, err)
+			}
+			if !reflect.DeepEqual(record, original) {
+				t.Fatalf("rejected correction mutated the record: before=%+v after=%+v", original, record)
+			}
+		})
+	}
+}
+
+func TestSecondFinalizedCorrectionCreatesVersionThree(t *testing.T) {
+	record := testRecord(statusFinalized, "finals", "BSIT")
+	record.GradeVersion = 2
+	record.TransactionID = "tx-v2"
+	err := applyFinalizedCorrection(&record, FinalizedGradeCorrection{
+		RecordID: record.ID, NewGrade: "91", Reason: "Second verified correction", ExpectedGradeVersion: 2,
+	}, "chair@plv.edu.ph", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("second correction failed: %v", err)
+	}
+	if record.GradeVersion != 3 || record.PreviousTxID != "tx-v2" {
+		t.Fatalf("second correction was not linked as v3: %+v", record)
+	}
+}
+
+func TestLegacyFinalizedGradeReadsAsVersionOne(t *testing.T) {
+	record := testRecord(statusFinalized, "midterm", "BSIT")
+	record.GradeVersion = 0
+	if version := finalizedGradeVersion(record); version != 1 {
+		t.Fatalf("legacy finalized grade version = %d, want 1", version)
 	}
 }
 

@@ -790,6 +790,8 @@ jobs:
           bash -n "$SCRIPT"
           shellcheck --severity=warning "$SCRIPT"
 
+          bash network/k8s/test-public-hosting.sh
+
       - name: Run offline infrastructure verification
         env:
           FABRIC_BOOTSTRAP: "false"

@@ -12,7 +12,7 @@ spec:
     kind: Deployment
     name: middleware-api
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 4
   metrics:
   - type: Resource
     resource:
@@ -48,7 +48,7 @@ metadata:
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: auth-service }
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 4
   metrics:
   - type: Resource
     resource:
@@ -63,7 +63,7 @@ metadata:
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: ledger-service }
   minReplicas: 2
-  maxReplicas: 6
+  maxReplicas: 4
   metrics:
   - type: Resource
     resource:
@@ -82,7 +82,7 @@ metadata:
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: grade-upload-service }
   minReplicas: 2
-  maxReplicas: 4
+  maxReplicas: 3
   metrics:
   - type: Resource
     resource:
@@ -100,7 +100,7 @@ spec:
     kind: Deployment
     name: dotnet-api-gateway
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 4
   metrics:
   - type: Resource
     resource:
@@ -117,7 +117,7 @@ metadata:
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: dotnet-auth-service }
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 4
   metrics:
   - type: Resource
     resource:
@@ -132,7 +132,7 @@ metadata:
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: dotnet-academic-service }
   minReplicas: 2
-  maxReplicas: 4
+  maxReplicas: 3
   metrics:
   - type: Resource
     resource:
@@ -147,7 +147,7 @@ metadata:
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: dotnet-grade-service }
   minReplicas: 2
-  maxReplicas: 6
+  maxReplicas: 4
   metrics:
   - type: Resource
     resource:
@@ -166,7 +166,7 @@ metadata:
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: dotnet-operations-service }
   minReplicas: 2
-  maxReplicas: 4
+  maxReplicas: 3
   metrics:
   - type: Resource
     resource:
@@ -181,7 +181,7 @@ metadata:
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: dotnet-realtime-service }
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 4
   metrics:
   - type: Resource
     resource:

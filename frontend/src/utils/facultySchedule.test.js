@@ -1,5 +1,6 @@
 import {
   buildFacultySchedule,
+  facultySchedulesOverlap,
   formatFacultySchedule,
   isValidScheduleRange,
   parseFacultySchedule,
@@ -11,6 +12,17 @@ test('builds, parses, and formats a canonical faculty schedule', () => {
   expect(stored).toBe('Monday | 08:00-10:00');
   expect(parseFacultySchedule(stored)).toEqual({ day: 'Monday', startTime: '08:00', endTime: '10:00' });
   expect(formatFacultySchedule(stored)).toBe('Monday • 8:00 AM–10:00 AM');
+});
+
+test('detects exact and partial schedule overlaps but permits adjacent classes', () => {
+  expect(facultySchedulesOverlap('Monday | 08:00-10:00', 'Monday | 08:00-10:00')).toBe(true);
+  expect(facultySchedulesOverlap('Monday | 08:00-10:00', 'Monday | 09:00-11:00')).toBe(true);
+  expect(facultySchedulesOverlap('Monday | 08:00-10:00', 'Monday | 10:00-12:00')).toBe(false);
+});
+
+test('does not conflict across different days or academic periods handled by the caller', () => {
+  expect(facultySchedulesOverlap('Monday | 08:00-10:00', 'Tuesday | 09:00-11:00')).toBe(false);
+  expect(facultySchedulesOverlap('Mon / Wed | 08:00-10:00', 'Wednesday | 09:00-11:00')).toBe(true);
 });
 
 test('preserves readable legacy and multiple-day schedule values', () => {

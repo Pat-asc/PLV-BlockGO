@@ -9,4 +9,4 @@ Disallow: /system-admin
 Disallow: /reset-password
 Disallow: /api/
 
-Sitemap: https://plv-blockgo.com/sitemap.xml
+Sitemap: __BLOCKGO_RUNTIME_PUBLIC_ORIGIN__/sitemap.xml

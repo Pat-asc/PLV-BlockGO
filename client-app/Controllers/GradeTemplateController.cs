@@ -123,8 +123,8 @@ namespace Client_app.Controllers
             [FromQuery] string format = "xlsx")
         {
             var normalizedFormat = (format ?? string.Empty).Trim().ToLowerInvariant();
-            if (normalizedFormat is not ("xlsx" or "csv"))
-                return BadRequest(new { status = "Error", message = "Unsupported template format. Choose XLSX or CSV." });
+            if (normalizedFormat != "xlsx")
+                return BadRequest(new { status = "Error", message = "Only XLSX grading templates are supported because CSV cannot preserve formulas or worksheets." });
 
             try
             {
@@ -148,12 +148,6 @@ namespace Client_app.Controllers
 
                 string safeSection = string.Join("_", assignment.CanonicalSection.Split(Path.GetInvalidFileNameChars()));
                 var fileStem = $"{assignment.Subject}_{safeSection}_{assignment.SchoolYear}_{assignment.Semester}";
-                if (normalizedFormat == "csv")
-                {
-                    var csv = FacultyGradeWorkbookService.BuildCsv(assignment, students);
-                    return File(csv, "text/csv; charset=utf-8", $"{fileStem}.csv");
-                }
-
                 var workbook = FacultyGradeWorkbookService.Build(assignment, students);
                 return File(workbook, FacultyGradeWorkbookService.ContentType, $"{fileStem}.xlsx");
             }

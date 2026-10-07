@@ -34,11 +34,11 @@ const RegistrarGradesView = ({
         { id: 'gradeRelease', label: 'Grade Release' },
         { id: 'grades', label: 'Grades Ledger' },
         { id: 'transcript', label: 'Transcript of Records' },
-        { id: 'assigning', label: 'Assigning' },
+        { id: 'assigning', label: 'Account Assignments' },
         { id: 'bulkEnroll', label: 'Student Enrollment' },
         { id: 'createAccounts', label: 'Create Staff Accounts' },
         { id: 'curriculum', label: 'Curriculum Management' },
-        { id: 'tickets', label: 'Report System Error' },
+        { id: 'tickets', label: 'Support Tickets' },
         { id: 'passwordResets', label: 'Password Management' },
         { id: 'revokeAccounts', label: 'Account Revocation' },
     ];
@@ -837,7 +837,7 @@ const RegistrarGradesView = ({
                     {mainTab === 'sectioning' && (
                         <div className="space-y-3">
                             <div>
-                                <h2 className="text-xl font-bold text-slate-900">Section Creator</h2>
+                                <h2 className="text-xl font-bold text-slate-900">Section Management</h2>
                                 
                             </div>
                             <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm lg:grid-cols-[1fr_250px] lg:items-end">
