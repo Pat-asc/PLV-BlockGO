@@ -81,10 +81,7 @@ const namedCsvFile = (name, code) => {
   return file;
 };
 
-const fillCurriculum = (program, code, version) => {
-  const programSelect = screen.queryByRole('combobox', { name: 'Program for new curriculum' }) ||
-    screen.getByText('Select program').closest('select');
-  fireEvent.change(programSelect, { target: { value: program } });
+const fillCurriculum = (code, version) => {
   fireEvent.change(screen.getByPlaceholderText('Curriculum Code'), { target: { value: code } });
   fireEvent.change(screen.getByPlaceholderText('Curriculum Name'), { target: { value: code + ' Name' } });
   fireEvent.change(screen.getByPlaceholderText('Version'), { target: { value: version } });
@@ -117,7 +114,7 @@ test('creates separate same-program versions and accepts a second drop after sub
   render(<CurriculumBuilder department="" />);
   fireEvent.click(await screen.findByRole('button', { name: 'Bulk Upload' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Create Curriculum' })).toBeEnabled());
-  fillCurriculum('BSIT', 'BSIT-2026', '1.0');
+  fillCurriculum('BSIT-2026', '1.0');
   await waitFor(() => expect(screen.getByRole('button', { name: /Drag and drop your CSV file here/i })).toBeEnabled());
   fireEvent.drop(screen.getByRole('button', { name: /Drag and drop your CSV file here/i }), { dataTransfer: { files: [namedCsvFile('first.csv', 'IT 101')] } });
   await waitFor(() => expect(stored[0].subjects).toHaveLength(1));
@@ -128,7 +125,7 @@ test('creates separate same-program versions and accepts a second drop after sub
   expect(screen.getByRole('button', { name: /Drag and drop your CSV file here/i })).toBeDisabled();
   expect(screen.queryByText('IT 101')).not.toBeInTheDocument();
   expect(screen.getByLabelText('Curriculum CSV file')).toHaveValue('');
-  fillCurriculum('BSIT', 'BSIT-2027', '2.0');
+  fillCurriculum('BSIT-2027', '2.0');
   await waitFor(() => expect(screen.getByRole('button', { name: /Drag and drop your CSV file here/i })).toBeEnabled());
   fireEvent.drop(screen.getByRole('button', { name: /Drag and drop your CSV file here/i }), { dataTransfer: { files: [namedCsvFile('second.csv', 'IT 201')] } });
   await waitFor(() => expect(stored[0].subjects).toHaveLength(1));
@@ -138,14 +135,13 @@ test('creates separate same-program versions and accepts a second drop after sub
   });
   expect(stored.find((item) => item.curriculumId === 101)).toMatchObject({ curriculumVersion: '2.0', status: 'DRAFT' });
   fireEvent.click(screen.getByRole('button', { name: 'Create New Checklist' }));
-  fillCurriculum('BSIT', 'BSIT-2027-DUP', '2.0');
+  fillCurriculum('BSIT-2027-DUP', '2.0');
   expect(await screen.findByText('That curriculum code or program version already exists.')).toBeInTheDocument();
   expect(stored).toHaveLength(2);
 });
 
-test('keeps curricula for different programs independent', async () => {
+test('automatically creates curricula under the department-owned non-IT program', async () => {
   fetchAcademicPrograms.mockResolvedValue({ data: [
-    { programId: 1, programCode: 'BSIT', programName: 'Bachelor of Science in Information Technology' },
     { programId: 2, programCode: 'BSEE', programName: 'Bachelor of Science in Electrical Engineering' },
   ] });
   const stored = [];
@@ -155,14 +151,12 @@ test('keeps curricula for different programs independent', async () => {
     stored.push(item);
     return { data: item };
   });
-  render(<CurriculumBuilder department="" />);
-  await screen.findByRole('option', { name: /BSIT/ });
-  fillCurriculum('BSIT', 'BSIT-2026', '1.0');
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Create New Checklist' })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Create New Checklist' }));
-  fillCurriculum('BSEE', 'BSEE-2026', '1.0');
-  await waitFor(() => expect(stored).toHaveLength(2));
-  expect(stored.map((item) => [item.programCode, item.curriculumId])).toEqual([['BSIT', 1], ['BSEE', 2]]);
+  render(<CurriculumBuilder department="Bachelor of Science in Electrical Engineering" />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Create Curriculum' })).toBeEnabled());
+  fillCurriculum('BSEE-2026', '1.0');
+  await waitFor(() => expect(stored).toHaveLength(1));
+  expect(stored[0]).toMatchObject({ programCode: 'BSEE', curriculumId: 1 });
+  expect(screen.queryByRole('combobox', { name: 'Program for new curriculum' })).not.toBeInTheDocument();
 });
 
 test('automatically shows the assigned published version without a version dropdown', async () => {
@@ -210,7 +204,7 @@ test('IT Department curriculum creation keeps BSIT after the selector is removed
   })));
 });
 
-test('non-IT departments retain the existing program selector', async () => {
+test('non-IT departments automatically use their owned program without a selector', async () => {
   fetchAcademicPrograms.mockResolvedValue({ data: [
     { programId: 2, programCode: 'BSEE', programName: 'Bachelor of Science in Electrical Engineering' },
   ] });
@@ -218,8 +212,9 @@ test('non-IT departments retain the existing program selector', async () => {
 
   render(<CurriculumBuilder department="Bachelor of Science in Electrical Engineering" />);
 
-  const selector = await screen.findByRole('combobox', { name: 'Program for new curriculum' });
-  expect(selector).toHaveValue('BSEE');
+  expect(await screen.findByRole('button', { name: 'Create Curriculum' })).toBeInTheDocument();
+  expect(screen.queryByRole('combobox', { name: 'Program for new curriculum' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Select program/i)).not.toBeInTheDocument();
   expect(fetchAssignedCurriculum).toHaveBeenCalledWith('BSEE');
 });
 

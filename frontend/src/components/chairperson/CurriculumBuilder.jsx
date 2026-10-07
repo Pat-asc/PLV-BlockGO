@@ -21,7 +21,6 @@ const itDepartmentNames = new Set([
 const CurriculumBuilder = ({ department = '' }) => {
   const normalizedDepartment = department.trim().toLowerCase();
   const isItDepartment = itDepartmentNames.has(normalizedDepartment);
-  const [programs, setPrograms] = useState([]);
   const [curricula, setCurricula] = useState([]);
   const [assignedCurriculum, setAssignedCurriculum] = useState(null);
   const [selectedId, setSelectedId] = useState('');
@@ -66,7 +65,7 @@ const CurriculumBuilder = ({ department = '' }) => {
       const assignment = assignedResult?.data || null;
       const assigned = assignment?.curriculum || null;
       const editableDraft = allCurricula.find((item) => ['DRAFT', 'RETURNED'].includes(item.status));
-      setPrograms(owned); setCurricula(allCurricula);
+      setCurricula(allCurricula);
       setAssignedCurriculum(assignment);
       setSelectedId((current) => current === null ? null : String(assigned?.curriculumId || editableDraft?.curriculumId || ''));
       setCurriculumForm((current) => ({
@@ -79,16 +78,15 @@ const CurriculumBuilder = ({ department = '' }) => {
       }));
     } catch (error) {
       if (isLocalMode) {
-        const fallbackProgram = { programId: 'local-bsit', programCode: 'BSIT', programName: department || 'College of Information Technology and Engineering' };
         const saved = JSON.parse(localStorage.getItem(localCurriculumKey) || 'null');
         const fallbackCurriculum = saved || { curriculumId: 'local-draft', programCode: 'BSIT', curriculumCode: 'BSIT-2026', curriculumName: 'BSIT Curriculum 2026', curriculumVersion: '1.0', schoolYear: '2025-2026', status: 'DRAFT', subjects: [], totalUnits: 0 };
-        setPrograms([fallbackProgram]); setCurricula([fallbackCurriculum]); setAssignedCurriculum(null); setSelectedId(String(fallbackCurriculum.curriculumId));
+        setCurricula([fallbackCurriculum]); setAssignedCurriculum(null); setSelectedId(String(fallbackCurriculum.curriculumId));
         setCurriculumForm((current) => ({ ...current, programCode: 'BSIT' }));
         setNotice({ type: 'success', message: 'Local curriculum workspace loaded.' });
       } else setNotice({ type: 'error', message: error.message });
     }
     finally { setLoading(false); }
-  }, [department, isItDepartment, isLocalMode, normalizedDepartment]);
+  }, [isItDepartment, isLocalMode, normalizedDepartment]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -118,7 +116,7 @@ const CurriculumBuilder = ({ department = '' }) => {
     setSelectedId(null);
     setCurriculumForm({
       ...emptyCurriculum,
-      programCode: isItDepartment ? itProgramCode : '',
+      programCode: isItDepartment ? itProgramCode : curriculumForm.programCode,
     });
     setSubjectForm(emptySubject);
     setEditingId(null);
@@ -310,7 +308,7 @@ const CurriculumBuilder = ({ department = '' }) => {
     </section>
 
     <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-slate-600">{selected ? `${selected.programCode} · ${selected.curriculumVersion} (${selected.status})` : 'New curriculum checklist'}</span>{selected && <button type="button" disabled={saving} onClick={startNewCurriculum} className="rounded-lg border border-blue-700 px-3 py-2 text-xs font-bold text-blue-700 disabled:opacity-50">Create New Checklist</button>}</div>
-      {!selected && <form onSubmit={create} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><h2 className="mb-3 font-bold">Curriculum Information</h2><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">{!isItDepartment && <select aria-label="Program for new curriculum" required value={curriculumForm.programCode} onChange={(e) => setCurriculumForm({ ...curriculumForm, programCode: e.target.value })} className={inputClass}><option value="">Select program</option>{programs.map((item) => <option key={item.programId} value={item.programCode}>{item.programCode} — {item.programName}</option>)}</select>}{[['curriculumCode', 'Curriculum Code'], ['curriculumName', 'Curriculum Name'], ['curriculumVersion', 'Version'], ['schoolYear', 'School Year']].map(([field, placeholder]) => <input key={field} required placeholder={placeholder} value={curriculumForm[field]} onChange={(e) => setCurriculumForm({ ...curriculumForm, [field]: e.target.value })} className={inputClass} />)}</div><button disabled={saving} className="mt-3 rounded-lg bg-[#073b82] px-4 py-2 text-xs font-bold text-white">Create Curriculum</button></form>}
+      {!selected && <form onSubmit={create} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><h2 className="mb-3 font-bold">Curriculum Information</h2><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{[['curriculumCode', 'Curriculum Code'], ['curriculumName', 'Curriculum Name'], ['curriculumVersion', 'Version'], ['schoolYear', 'School Year']].map(([field, placeholder]) => <input key={field} required placeholder={placeholder} value={curriculumForm[field]} onChange={(e) => setCurriculumForm({ ...curriculumForm, [field]: e.target.value })} className={inputClass} />)}</div><button disabled={saving || !curriculumForm.programCode} className="mt-3 rounded-lg bg-[#073b82] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Create Curriculum</button></form>}
     {mode === 'manual' ? <>
       {selected && <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><h2 className="font-bold">▧ Curriculum Information</h2></div><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">{[['programCode', 'Program'], ['curriculumCode', 'Curriculum Code'], ['curriculumName', 'Curriculum Name'], ['curriculumVersion', 'Version'], ['schoolYear', 'School Year']].map(([field, label]) => <label key={field} className="text-xs text-slate-600">{label}<input disabled={!editable || field === 'programCode' || field === 'curriculumVersion'} value={selected[field] || ''} onChange={(e) => updateSelected(field, e.target.value)} className={inputClass} /></label>)}</div>{selected.registrarComment && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><strong>Registrar comment:</strong> {selected.registrarComment}</p>}
       {editable && !editingId && renderSubjectForm()}
