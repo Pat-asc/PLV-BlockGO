@@ -830,32 +830,22 @@ namespace Client_app.Controllers
         public async Task<IActionResult> GetFacultyCurricula(CancellationToken cancellationToken)
         {
             await using var connection = await OpenConnectionAsync(cancellationToken);
+            var authorizedProgramIds = await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(
+                connection, ActorEmail(), cancellationToken);
+            if (authorizedProgramIds.Count == 0)
+                return Ok(new { status = "Success", data = Array.Empty<CurriculumDto>() });
+
             var ids = new List<long>();
             await using (var command = new NpgsqlCommand(@"
                 SELECT DISTINCT c.curriculum_id
-                FROM users u
-                JOIN facultysections fs ON fs.user_id = u.id AND fs.is_active = TRUE
-                JOIN academicsections section
-                  ON section.id = fs.academic_section_id
-                 AND section.is_active = TRUE
-                JOIN academic_programs p
-                  ON LOWER(COALESCE(section.department, fs.department)) IN (LOWER(p.program_code), LOWER(p.program_name))
-                 AND p.is_active = TRUE
-                JOIN academic_periods period
-                  ON period.school_year = fs.school_year
-                 AND period.semester = fs.semester
-                 AND period.status = 'ACTIVE'
-                JOIN program_curriculum_assignments pca ON pca.program_id = p.program_id
+                FROM program_curriculum_assignments pca
                 JOIN curriculums c ON c.curriculum_id = pca.curriculum_id
-                    AND c.program_id = p.program_id
+                    AND c.program_id = pca.program_id
                     AND c.status = 'PUBLISHED'
-                WHERE LOWER(u.email) = LOWER(@actor)
-                  AND LOWER(u.role) = 'faculty'
-                  AND LOWER(u.status) = 'approved'
-                  AND u.is_active = TRUE
+                WHERE pca.program_id = ANY(@programIds)
                 ORDER BY c.curriculum_id DESC;", connection))
             {
-                command.Parameters.AddWithValue("actor", ActorEmail());
+                command.Parameters.AddWithValue("programIds", authorizedProgramIds.ToArray());
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken);
                 while (await reader.ReadAsync(cancellationToken)) ids.Add(reader.GetInt64(0));
             }
@@ -962,29 +952,19 @@ namespace Client_app.Controllers
             if (role == "faculty")
             {
                 if (curriculum.Status != CurriculumStatuses.Published) return false;
+                var authorizedProgramIds = await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(
+                    connection, ActorEmail(), cancellationToken);
+                if (!authorizedProgramIds.Contains(curriculum.ProgramId)) return false;
+
                 await using var facultyCommand = new NpgsqlCommand(@"
                     SELECT COUNT(*)
-                    FROM users u
-                    JOIN facultysections fs ON fs.user_id = u.id AND fs.is_active = TRUE
-                    JOIN academicsections section
-                      ON section.id = fs.academic_section_id
-                     AND section.is_active = TRUE
-                    JOIN academic_programs p
-                      ON p.program_id = @programId
-                     AND LOWER(COALESCE(section.department, fs.department)) IN (LOWER(p.program_code), LOWER(p.program_name))
-                     AND p.is_active = TRUE
-                    JOIN academic_periods period
-                      ON period.school_year = fs.school_year
-                     AND period.semester = fs.semester
-                     AND period.status = 'ACTIVE'
-                    JOIN program_curriculum_assignments assignment
-                      ON assignment.program_id = p.program_id
-                     AND assignment.curriculum_id = @curriculumId
-                    WHERE LOWER(u.email) = LOWER(@actor)
-                      AND LOWER(u.role) = 'faculty'
-                      AND LOWER(u.status) = 'approved'
-                      AND u.is_active = TRUE;", connection);
-                facultyCommand.Parameters.AddWithValue("actor", ActorEmail());
+                    FROM program_curriculum_assignments assignment
+                    JOIN curriculums published
+                      ON published.curriculum_id = assignment.curriculum_id
+                     AND published.program_id = assignment.program_id
+                     AND published.status = 'PUBLISHED'
+                    WHERE assignment.program_id = @programId
+                      AND assignment.curriculum_id = @curriculumId;", connection);
                 facultyCommand.Parameters.AddWithValue("programId", curriculum.ProgramId);
                 facultyCommand.Parameters.AddWithValue("curriculumId", curriculum.CurriculumId);
                 return Convert.ToInt64(await facultyCommand.ExecuteScalarAsync(cancellationToken)) > 0;
