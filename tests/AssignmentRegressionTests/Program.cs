@@ -342,6 +342,50 @@ Check(enrollmentControllerSource.Contains("[Authorize(Roles = \"registrar,depart
     "Chairperson student curriculum visibility is not enrollment-authoritative and department scoped.");
 Pass(184, "Chairperson student curriculum list is enrollment-authoritative and scoped");
 
+var facultyCurriculumStart = curriculumControllerSource.IndexOf("GetFacultyCurricula", StringComparison.Ordinal);
+var facultyCurriculumEnd = curriculumControllerSource.IndexOf("TransitionAsync", facultyCurriculumStart, StringComparison.Ordinal);
+var facultyCurriculumSource = curriculumControllerSource[facultyCurriculumStart..facultyCurriculumEnd];
+Check(facultyCurriculumSource.Contains("JOIN facultysections fs") &&
+      facultyCurriculumSource.Contains("fs.is_active = TRUE") &&
+      facultyCurriculumSource.Contains("section.id = fs.academic_section_id") &&
+      facultyCurriculumSource.Contains("period.school_year = fs.school_year") &&
+      facultyCurriculumSource.Contains("period.semester = fs.semester") &&
+      facultyCurriculumSource.Contains("period.status = 'ACTIVE'") &&
+      facultyCurriculumSource.Contains("LOWER(subject.subject_code) = LOWER(fs.subject)") &&
+      facultyCurriculumSource.Contains("subject.year_level = section.year_level") &&
+      facultyCurriculumSource.Contains("subject.semester = fs.semester") &&
+      facultyCurriculumSource.Contains("c.status = 'PUBLISHED'"),
+    "Faculty curriculum lookup is not constrained to an active exact subject, section, program, and academic period.");
+Pass(185, "Faculty curriculum endpoint uses exact authorized assignment context");
+
+var publishCurriculumStart = curriculumControllerSource.IndexOf("public async Task<IActionResult> Publish", StringComparison.Ordinal);
+var publishCurriculumEnd = curriculumControllerSource.IndexOf("[HttpPost(\"{id:long}/archive\")]", publishCurriculumStart, StringComparison.Ordinal);
+var publishCurriculumSource = curriculumControllerSource[publishCurriculumStart..publishCurriculumEnd];
+Check(publishCurriculumSource.Contains("ActivateProgramCurriculumAsync(") &&
+      publishCurriculumSource.IndexOf("ActivateProgramCurriculumAsync(", StringComparison.Ordinal) <
+      publishCurriculumSource.IndexOf("CommitAsync", StringComparison.Ordinal),
+    "Publishing does not atomically advance the program's active curriculum assignment.");
+Pass(186, "publishing activates the curriculum before transaction commit");
+
+var facultyAuthorizationStart = curriculumControllerSource.IndexOf("if (role == \"faculty\")", StringComparison.Ordinal);
+var facultyAuthorizationEnd = curriculumControllerSource.IndexOf("await using (var command", facultyAuthorizationStart, StringComparison.Ordinal);
+var facultyAuthorizationSource = curriculumControllerSource[facultyAuthorizationStart..facultyAuthorizationEnd];
+Check(facultyAuthorizationSource.Contains("assignment.curriculum_id = @curriculumId") &&
+      facultyAuthorizationSource.Contains("LOWER(subject.subject_code) = LOWER(fs.subject)") &&
+      facultyAuthorizationSource.Contains("subject.year_level = section.year_level") &&
+      facultyAuthorizationSource.Contains("period.status = 'ACTIVE'"),
+    "Direct Faculty curriculum access can bypass exact active assignment ownership.");
+Pass(187, "direct Faculty curriculum access preserves assignment authorization");
+
+var curriculumRepairMigration = await File.ReadAllTextAsync(
+    FindRepositoryFile("migrations", "027_repair_program_curriculum_assignments.sql"));
+Check(curriculumRepairMigration.Contains("WHERE curriculum.status = 'PUBLISHED'") &&
+      curriculumRepairMigration.Contains("DISTINCT ON (curriculum.program_id)") &&
+      curriculumRepairMigration.Contains("ON CONFLICT (program_id) DO UPDATE") &&
+      curriculumRepairMigration.Contains("IS DISTINCT FROM EXCLUDED.curriculum_id"),
+    "The production data repair is not idempotent or does not select one published curriculum per program.");
+Pass(188, "program curriculum repair migration is idempotent and published-only");
+
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
 if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 

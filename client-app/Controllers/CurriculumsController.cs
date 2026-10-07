@@ -716,6 +716,8 @@ namespace Client_app.Controllers
                 publish.Parameters.AddWithValue("id", id);
                 await publish.ExecuteNonQueryAsync(cancellationToken);
             }
+            await ActivateProgramCurriculumAsync(
+                connection, transaction, curriculum.ProgramId, id, actor.Id, cancellationToken);
             var affectedStudents = 0;
             await _auditLog.LogAsync(actor.Email, actor.Role, "CURRICULUM_PUBLISHED", "curriculum", id.ToString(),
                 new { status = curriculum.Status }, new { status = CurriculumStatuses.Published },
@@ -832,14 +834,30 @@ namespace Client_app.Controllers
             await using (var command = new NpgsqlCommand(@"
                 SELECT DISTINCT c.curriculum_id
                 FROM users u
-                LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
-                LEFT JOIN facultysections fs ON fs.user_id = u.id
-                JOIN academic_programs p ON LOWER(p.program_name) = LOWER(COALESCE(fs.department, fp.department))
-                                         OR LOWER(p.program_code) = LOWER(COALESCE(fs.department, fp.department))
+                JOIN facultysections fs ON fs.user_id = u.id AND fs.is_active = TRUE
+                JOIN academicsections section
+                  ON section.id = fs.academic_section_id
+                 AND section.is_active = TRUE
+                JOIN academic_programs p
+                  ON LOWER(COALESCE(section.department, fs.department)) IN (LOWER(p.program_code), LOWER(p.program_name))
+                 AND p.is_active = TRUE
+                JOIN academic_periods period
+                  ON period.school_year = fs.school_year
+                 AND period.semester = fs.semester
+                 AND period.status = 'ACTIVE'
                 JOIN program_curriculum_assignments pca ON pca.program_id = p.program_id
                 JOIN curriculums c ON c.curriculum_id = pca.curriculum_id
-                    AND c.status IN ('PUBLISHED', 'ARCHIVED')
-                WHERE LOWER(u.email) = LOWER(@actor) AND LOWER(u.role) = 'faculty'
+                    AND c.program_id = p.program_id
+                    AND c.status = 'PUBLISHED'
+                JOIN curriculum_subjects subject
+                  ON subject.curriculum_id = c.curriculum_id
+                 AND LOWER(subject.subject_code) = LOWER(fs.subject)
+                 AND subject.year_level = section.year_level
+                 AND subject.semester = fs.semester
+                WHERE LOWER(u.email) = LOWER(@actor)
+                  AND LOWER(u.role) = 'faculty'
+                  AND LOWER(u.status) = 'approved'
+                  AND u.is_active = TRUE
                 ORDER BY c.curriculum_id DESC;", connection))
             {
                 command.Parameters.AddWithValue("actor", ActorEmail());
@@ -952,16 +970,33 @@ namespace Client_app.Controllers
                 await using var facultyCommand = new NpgsqlCommand(@"
                     SELECT COUNT(*)
                     FROM users u
-                    JOIN academic_programs p ON p.program_id = @programId
+                    JOIN facultysections fs ON fs.user_id = u.id AND fs.is_active = TRUE
+                    JOIN academicsections section
+                      ON section.id = fs.academic_section_id
+                     AND section.is_active = TRUE
+                    JOIN academic_programs p
+                      ON p.program_id = @programId
+                     AND LOWER(COALESCE(section.department, fs.department)) IN (LOWER(p.program_code), LOWER(p.program_name))
+                     AND p.is_active = TRUE
+                    JOIN academic_periods period
+                      ON period.school_year = fs.school_year
+                     AND period.semester = fs.semester
+                     AND period.status = 'ACTIVE'
+                    JOIN program_curriculum_assignments assignment
+                      ON assignment.program_id = p.program_id
+                     AND assignment.curriculum_id = @curriculumId
+                    JOIN curriculum_subjects subject
+                      ON subject.curriculum_id = assignment.curriculum_id
+                     AND LOWER(subject.subject_code) = LOWER(fs.subject)
+                     AND subject.year_level = section.year_level
+                     AND subject.semester = fs.semester
                     WHERE LOWER(u.email) = LOWER(@actor)
-                      AND (
-                          EXISTS (SELECT 1 FROM facultyprofiles fp WHERE fp.user_id = u.id
-                                  AND (LOWER(fp.department) = LOWER(p.program_name) OR LOWER(fp.department) = LOWER(p.program_code)))
-                          OR EXISTS (SELECT 1 FROM facultysections fs WHERE fs.user_id = u.id
-                                     AND (LOWER(fs.department) = LOWER(p.program_name) OR LOWER(fs.department) = LOWER(p.program_code)))
-                      );", connection);
+                      AND LOWER(u.role) = 'faculty'
+                      AND LOWER(u.status) = 'approved'
+                      AND u.is_active = TRUE;", connection);
                 facultyCommand.Parameters.AddWithValue("actor", ActorEmail());
                 facultyCommand.Parameters.AddWithValue("programId", curriculum.ProgramId);
+                facultyCommand.Parameters.AddWithValue("curriculumId", curriculum.CurriculumId);
                 return Convert.ToInt64(await facultyCommand.ExecuteScalarAsync(cancellationToken)) > 0;
             }
             await using (var command = new NpgsqlCommand($@"
@@ -1182,7 +1217,7 @@ namespace Client_app.Controllers
             return (reader.GetInt32(0), reader.GetString(1), reader.GetString(2));
         }
 
-        private static async Task<int> AssignProgramCurriculumAsync(
+        private static async Task ActivateProgramCurriculumAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
             int programId,
@@ -1205,6 +1240,18 @@ namespace Client_app.Controllers
                 assignment.Parameters.AddWithValue("actorId", actorId);
                 await assignment.ExecuteNonQueryAsync(cancellationToken);
             }
+        }
+
+        private static async Task<int> AssignProgramCurriculumAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            int programId,
+            long curriculumId,
+            int actorId,
+            CancellationToken cancellationToken)
+        {
+            await ActivateProgramCurriculumAsync(
+                connection, transaction, programId, curriculumId, actorId, cancellationToken);
 
             int affectedStudents;
             await using (var enrollments = new NpgsqlCommand(@"
