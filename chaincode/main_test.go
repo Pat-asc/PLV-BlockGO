@@ -40,6 +40,34 @@ func TestChairpersonIdentityAuthorization(t *testing.T) {
 	}
 }
 
+func TestRegistrarIsSoleLedgerFinalizer(t *testing.T) {
+	if !isRegistrarIdentity("RegistrarMSP", "registrar") {
+		t.Fatal("canonical Registrar identity was denied finalization")
+	}
+	for _, identity := range [][2]string{{"DepartmentMSP", "department_admin"}, {"FacultyMSP", "faculty"}, {"RegistrarMSP", "student"}} {
+		if isRegistrarIdentity(identity[0], identity[1]) {
+			t.Fatalf("non-Registrar identity %s/%s was allowed to finalize", identity[0], identity[1])
+		}
+	}
+}
+
+func TestApprovedSnapshotComparisonPreservesExactGradePayload(t *testing.T) {
+	staged := testRecord(statusDepartmentApproved, "finals", "BSIT")
+	ledger := staged
+	if !sameApprovedGradeSnapshot(staged, ledger) {
+		t.Fatal("identical approved and ledger snapshots did not match")
+	}
+	ledger.Grade = `{"midterm":"88","finals":"92","finalAverage":"90.00"}`
+	if sameApprovedGradeSnapshot(staged, ledger) {
+		t.Fatal("a reformatted grade payload was accepted as the exact approved snapshot")
+	}
+	ledger = staged
+	ledger.StudentNo = "26-9999"
+	if sameApprovedGradeSnapshot(staged, ledger) {
+		t.Fatal("a grade associated with another Student ID was accepted")
+	}
+}
+
 func TestChairpersonDepartmentScope(t *testing.T) {
 	record := testRecord(statusDepartmentApproved, "midterm", "BSIT")
 	if !departmentScopeAllows("BSIT", true, record) {
@@ -132,10 +160,10 @@ func TestFinalizedCorrectionCreatesLinkedVersionWithoutChangingIdentity(t *testi
 
 func TestFinalizedCorrectionRequiresReasonAndCurrentVersion(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		reason     string
-		expected   int
-		want       string
+		name     string
+		reason   string
+		expected int
+		want     string
 	}{
 		{"empty reason", " ", 1, "correction reason"},
 		{"stale version", "Valid correction reason", 2, "version conflict"},

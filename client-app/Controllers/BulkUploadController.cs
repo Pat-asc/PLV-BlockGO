@@ -341,7 +341,7 @@ namespace BlockGo.Controllers
                     approvedCount += await cmd.ExecuteNonQueryAsync();
                 }
 
-                return Ok(new { status = "Success", message = $"{approvedCount} grades approved by the Chairperson and ready for Chairperson finalization.", approvedCount });
+                return Ok(new { status = "Success", message = $"{approvedCount} grades approved by the Chairperson and ready for Registrar finalization.", approvedCount });
             }
             catch (Exception ex)
             {
@@ -350,15 +350,15 @@ namespace BlockGo.Controllers
         }
 
         [HttpPost("finalize-grades")]
-        [Authorize(Roles = "department_admin")]
+        [Authorize(Roles = "registrar")]
         public IActionResult RetiredBulkGradeFinalization()
         {
             // Retired: this legacy route does not perform the authoritative
-            // section-scope checks now required for Chairperson finalization.
+            // approved-snapshot checks now required for Registrar finalization.
             return StatusCode(StatusCodes.Status410Gone, new
             {
                 status = "Error",
-                message = "This legacy bulk-finalization route is retired. Chairpersons must use the scoped grade finalization workflow."
+                message = "This legacy bulk-finalization route is retired. Registrars must use the approved grade finalization workflow."
             });
         }
 

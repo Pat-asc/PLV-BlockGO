@@ -114,7 +114,7 @@ test.each(['csv', 'xls'])('template download rejects unsupported %s before makin
   expect(global.fetch).not.toHaveBeenCalled();
 });
 
-test('Chairperson finalization queue uses the current-cycle backend queue', async () => {
+test('Registrar finalization queue uses the current-cycle backend queue', async () => {
   await fetchRegistrarFinalizationQueue();
 
   expect(global.fetch.mock.calls[0][0]).toContain('/Grades/finalization-queue');

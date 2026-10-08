@@ -31,6 +31,7 @@ function RegistrarSidebar({
   const sidebarRef = React.useRef(null);
   const managementTabs = [
     "monitoring",
+    "gradeFinalization",
     "gradeRelease",
     "grades",
     "transcript",

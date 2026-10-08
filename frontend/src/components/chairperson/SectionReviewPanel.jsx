@@ -374,7 +374,7 @@ function SectionReviewPanel({
           >
             {isApproving ? "Approving…" : "Approve Section"}
           </button>
-          <button
+          {onFinalize ? <button
             onClick={() => {
               setFinalizeError("");
               setFinalizeConfirmationOpen(true);
@@ -383,7 +383,9 @@ function SectionReviewPanel({
             className="min-h-10 rounded-lg bg-[#003366] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#00264d] disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             {isFinalizing ? "Finalizingâ€¦" : "Finalize Grades"}
-          </button>
+          </button> : selectedSection.reviewStatus === "approved" ? (
+            <p className="rounded-lg bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800">Awaiting Registrar finalization</p>
+          ) : null}
         </div>
       </div>
 
@@ -404,7 +406,7 @@ function SectionReviewPanel({
         </div>
       </Modal>
 
-      <Modal
+      {onFinalize ? <Modal
         isOpen={finalizeConfirmationOpen}
         onClose={() => { if (!isFinalizing) setFinalizeConfirmationOpen(false); }}
         title="Finalize Grades"
@@ -419,7 +421,7 @@ function SectionReviewPanel({
           <button type="button" onClick={() => setFinalizeConfirmationOpen(false)} disabled={isFinalizing} className="min-h-11 rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
           <button type="button" onClick={confirmFinalize} disabled={isFinalizing} className="min-h-11 rounded-xl bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400">{isFinalizing ? "Finalizing…" : "Finalize Grades"}</button>
         </div>
-      </Modal>
+      </Modal> : null}
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <h3 className="text-lg font-bold text-[#003366]">Decision Log</h3>
         

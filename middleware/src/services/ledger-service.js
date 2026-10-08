@@ -275,7 +275,8 @@ function submitRoute(path, roles, transaction, message, status = 200, withBody =
 
 submitRoute('/api/update-grade', ['faculty', 'department_admin', 'registrar'], 'UpdateGrade', 'Grade updated', 200, true);
 submitRoute('/api/approve-grade/:id', ['department_admin'], 'ApproveGrade', 'Grade approved');
-submitRoute('/api/finalize-grade/:id', ['department_admin'], 'FinalizeRecord', 'Record finalized');
+submitRoute('/api/finalize-grade/:id', ['registrar'], 'FinalizeRecord', 'Record finalized');
+submitRoute('/api/finalize-approved-grades', ['registrar'], 'FinalizeApprovedGrades', 'Approved grades finalized', 200, true);
 submitRoute('/api/correct-finalized-grade', ['department_admin'], 'CorrectFinalizedGrade', 'Corrected grade finalized as a new ledger version', 200, true);
 submitRoute('/api/return-grade/:id', ['department_admin', 'registrar'], 'ReturnGrade', 'Record returned for revision');
 

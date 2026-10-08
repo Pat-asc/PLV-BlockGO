@@ -90,7 +90,7 @@ const RegistrarTranscriptOfRecords = ({ students = [] }) => {
     <section className="space-y-5 print:bg-white">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
         <h2 className="text-2xl font-bold text-[#003366]">Transcript of Records</h2>
-        <p className="mt-1 text-sm text-slate-500">Generate a Registrar-authorized TOR from Chairperson-finalized ledger grades.</p>
+        <p className="mt-1 text-sm text-slate-500">Generate a Registrar-authorized TOR from Registrar-finalized ledger grades.</p>
         <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
           <SearchField value={search} onChange={setSearch} label="Search students" placeholder="Number, name, email, program, or section" />
           <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">

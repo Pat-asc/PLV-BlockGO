@@ -287,6 +287,28 @@ namespace BlockGo.Services
             return await response.Content.ReadAsStringAsync();
         }
 
+        public async Task<string> FinalizeApprovedGradesAsync(IEnumerable<AcademicRecord> records, string invokerUsername)
+        {
+            var approvedRecords = records.ToArray();
+            _logger?.LogInformation("Finalizing approved grade batch ({Count} records) as {User}", approvedRecords.Length, invokerUsername);
+
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{_middlewareBaseUrl}/api/finalize-approved-grades")
+            {
+                Content = JsonContent.Create(approvedRecords)
+            };
+            request.Headers.Add("x-user-identity", invokerUsername);
+
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await MiddlewareErrorAsync(response, "FinalizeApprovedGrades");
+                _logger?.LogError(error, "Fabric approved-grade batch finalization failed as {Invoker}", invokerUsername);
+                throw error;
+            }
+
+            return await response.Content.ReadAsStringAsync();
+        }
+
         public async Task<string> CorrectFinalizedGradeAsync(FinalizedGradeCorrectionRequest correction, string invokerUsername)
         {
             var request = new HttpRequestMessage(HttpMethod.Post, $"{_middlewareBaseUrl}/api/correct-finalized-grade")

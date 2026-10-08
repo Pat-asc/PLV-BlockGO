@@ -21,6 +21,7 @@ import RegistrarGradesLedger from './RegistrarGradesLedger';
 import { exportRegistrarGradesLedgerPdf } from '../../utils/registrarGradesLedgerPdf';
 import RegistrarTranscriptOfRecords from './RegistrarTranscriptOfRecords';
 import RegistrarGradeRelease from './RegistrarGradeRelease';
+import RegistrarGradeFinalization from './RegistrarGradeFinalization';
 
 const RegistrarGradesView = ({
     loggedInEmail = '',
@@ -31,6 +32,7 @@ const RegistrarGradesView = ({
     onLogout,
 }) => {
     const managementMenuItems = [
+        { id: 'gradeFinalization', label: 'Finalize Grades' },
         { id: 'gradeRelease', label: 'Grade Release' },
         { id: 'grades', label: 'Grades Ledger' },
         { id: 'transcript', label: 'Transcript of Records' },
@@ -889,6 +891,7 @@ const RegistrarGradesView = ({
                             onExport={handleDownloadLedgerPDF}
                         />
                     )}
+                    {mainTab === 'gradeFinalization' && <RegistrarGradeFinalization />}
                     {mainTab === 'gradeRelease' && <RegistrarGradeRelease />}
                     {mainTab === 'transcript' && <RegistrarTranscriptOfRecords students={approvedStudents} />}
                     {mainTab === 'legacy-grades-monitoring' && (

@@ -3069,6 +3069,11 @@ namespace BlockGo.Controllers
             public List<string> RecordIds { get; set; } = new();
         }
 
+        public sealed class FinalizeGradesRequest
+        {
+            public List<string> RecordIds { get; set; } = new();
+        }
+
         [HttpPost("approve")]
         [Authorize(Roles = "department_admin")]
         public async Task<IActionResult> ApproveGrades([FromBody] ApproveGradesRequest request)
@@ -3199,8 +3204,154 @@ namespace BlockGo.Controllers
             });
         }
 
+        [HttpPost("finalize")]
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> FinalizeGrades([FromBody] FinalizeGradesRequest request)
+        {
+            var invokerId = AuthenticatedEmail();
+            var recordIds = (request?.RecordIds ?? new List<string>())
+                .Where(recordId => !string.IsNullOrWhiteSpace(recordId))
+                .Select(recordId => recordId.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (recordIds.Length == 0)
+                return BadRequest(new { status = "Error", message = "At least one approved grade record is required." });
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(HttpContext.RequestAborted);
+                await EnsurePendingGradeSchemaAsync(connection);
+
+                var activePeriod = await GradeEncodingPeriodService.GetConfiguredAsync(
+                    connection, cancellationToken: HttpContext.RequestAborted);
+                var queue = await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(
+                    connection, activePeriod.Term, activePeriod.Semester, HttpContext.RequestAborted);
+                var requested = new HashSet<string>(recordIds, StringComparer.OrdinalIgnoreCase);
+                var approvedRecords = queue.Where(record => requested.Contains(record.Id)).ToArray();
+                if (approvedRecords.Length != recordIds.Length)
+                {
+                    var finalizedLedgerRecords = await LoadFinalizedLedgerRecordsAsync(invokerId);
+                    var finalizedRequested = finalizedLedgerRecords
+                        .Where(record => requested.Contains(record.Id))
+                        .ToArray();
+                    if (finalizedRequested.Length == recordIds.Length)
+                    {
+                        return Ok(new
+                        {
+                            status = "Success",
+                            message = "The approved section was already finalized on the ledger.",
+                            finalizedCount = finalizedRequested.Length,
+                            idempotent = true,
+                            transactionIds = finalizedRequested
+                                .Select(record => record.TransactionId)
+                                .Where(transactionId => !string.IsNullOrWhiteSpace(transactionId))
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .ToArray()
+                        });
+                    }
+                    return Conflict(new { status = "Error", message = "One or more grades are no longer in the current Finalize queue. Refresh before retrying." });
+                }
+
+                foreach (var record in approvedRecords)
+                    if (!await CanAccessGradeRecordAsync(connection, record.Id, invokerId, "registrar"))
+                        return Forbid();
+
+                await using (var promote = new NpgsqlCommand(@"
+                    UPDATE pending_grade_records
+                    SET status = 'DepartmentApproved', date = @date
+                    WHERE id = ANY(@recordIds)
+                      AND LOWER(TRIM(status)) IN ('chairpersonapproved', 'departmentapproved');", connection))
+                {
+                    promote.Parameters.AddWithValue("recordIds", recordIds);
+                    promote.Parameters.AddWithValue("date", DateTime.UtcNow.ToString("o"));
+                    var promoted = await promote.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+                    if (promoted != recordIds.Length)
+                        return Conflict(new { status = "Error", message = "The approved section changed while it was being finalized. Refresh before retrying." });
+                }
+                foreach (var record in approvedRecords) record.Status = "DepartmentApproved";
+
+                var middlewareResponse = await _blockchainService.FinalizeApprovedGradesAsync(approvedRecords, invokerId);
+                using var responseDocument = JsonDocument.Parse(middlewareResponse);
+                var responseRoot = responseDocument.RootElement;
+                var detailsJson = responseRoot.TryGetProperty("details", out var detailsElement)
+                    ? detailsElement.GetString()
+                    : responseRoot.GetRawText();
+                if (string.IsNullOrWhiteSpace(detailsJson))
+                    throw new InvalidOperationException("Fabric did not return the finalized grade batch for verification.");
+
+                var finalizedRecords = JsonSerializer.Deserialize<List<AcademicRecord>>(
+                    detailsJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? new List<AcademicRecord>();
+                var finalizedById = finalizedRecords
+                    .Where(record => !string.IsNullOrWhiteSpace(record.Id))
+                    .ToDictionary(record => record.Id, StringComparer.OrdinalIgnoreCase);
+                var unverified = approvedRecords.FirstOrDefault(staged =>
+                    !finalizedById.TryGetValue(staged.Id, out var finalized) ||
+                    !GradeLedgerMatch.IsSameGrade(staged, finalized) ||
+                    !string.Equals(finalized.Status, "Finalized", StringComparison.OrdinalIgnoreCase));
+                if (unverified != null)
+                    throw new InvalidOperationException($"Fabric grade {unverified.Id} did not verify against its approved staging snapshot.");
+
+                await using var cleanupTransaction = await connection.BeginTransactionAsync(HttpContext.RequestAborted);
+                await using (var cleanup = new NpgsqlCommand(@"
+                    DELETE FROM pending_grade_records
+                    WHERE id = ANY(@recordIds)
+                      AND LOWER(TRIM(status)) = 'departmentapproved';", connection, cleanupTransaction))
+                {
+                    cleanup.Parameters.AddWithValue("recordIds", recordIds);
+                    var deleted = await cleanup.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+                    if (deleted != recordIds.Length)
+                    {
+                        await using var remainingCommand = new NpgsqlCommand(
+                            "SELECT COUNT(*) FROM pending_grade_records WHERE id = ANY(@recordIds);",
+                            connection, cleanupTransaction);
+                        remainingCommand.Parameters.AddWithValue("recordIds", recordIds);
+                        var remaining = Convert.ToInt32(await remainingCommand.ExecuteScalarAsync(HttpContext.RequestAborted));
+                        if (remaining > 0)
+                        {
+                            await cleanupTransaction.RollbackAsync(HttpContext.RequestAborted);
+                            throw new InvalidOperationException("Finalized grades were verified, but approved staging changed before cleanup; staging was retained for reconciliation.");
+                        }
+                    }
+                }
+                await cleanupTransaction.CommitAsync(HttpContext.RequestAborted);
+
+                try
+                {
+                    await NotifyAcademicDataChangedAsync("grade_finalized", approvedRecords[0].Course, invokerId);
+                }
+                catch (Exception notificationException)
+                {
+                    _logger.LogWarning(notificationException, "Approved grade batch was finalized, but its notification could not be delivered");
+                }
+
+                return Ok(new
+                {
+                    status = "Success",
+                    message = "Approved section finalized and verified on the ledger.",
+                    finalizedCount = approvedRecords.Length,
+                    transactionIds = finalizedRecords
+                        .Select(record => record.TransactionId)
+                        .Where(transactionId => !string.IsNullOrWhiteSpace(transactionId))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray()
+                });
+            }
+            catch (LedgerMiddlewareException ex)
+            {
+                _logger.LogError(ex, "Fabric batch finalization failed; approved staging remains retryable");
+                return StatusCode((int)ex.StatusCode, new { status = "Error", code = ex.Code, message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Registrar batch finalization failed; approved staging was retained unless ledger verification completed");
+                return StatusCode(500, new { status = "Error", message = "The section could not be finalized. Its approved data was preserved; refresh before retrying." });
+            }
+        }
+
         [HttpPost("finalize/{recordId}")]
-        [Authorize(Roles = "department_admin")]
+        [Authorize(Roles = "registrar")]
         public async Task<IActionResult> FinalizeGrade(string recordId, [FromQuery] string invokerId)
         {
             invokerId = AuthenticatedEmail();
@@ -3209,7 +3360,7 @@ namespace BlockGo.Controllers
             {
                 using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
-                if (!await CanAccessGradeRecordAsync(conn, recordId, invokerId, "department_admin"))
+                if (!await CanAccessGradeRecordAsync(conn, recordId, invokerId, "registrar"))
                     return Forbid();
 
                 // The explicit approval endpoint records the Chairperson's review. Finalization
@@ -3361,13 +3512,13 @@ namespace BlockGo.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Chairperson finalization failed for {RecordId}; approved staging was not removed before ledger verification", recordId);
+                _logger.LogError(ex, "Registrar finalization failed for {RecordId}; approved staging was not removed before ledger verification", recordId);
                 return StatusCode(500, new { status = "Error", message = "The grade could not be finalized. Its approved state was preserved; refresh before retrying." });
             }
         }
 
         [HttpGet("finalization-queue")]
-        [Authorize(Roles = "department_admin")]
+        [Authorize(Roles = "registrar")]
         public async Task<IActionResult> GetFinalizationQueue()
         {
             try
@@ -3381,13 +3532,13 @@ namespace BlockGo.Controllers
                     connection, activePeriod.Term, activePeriod.Semester, HttpContext.RequestAborted);
                 var authorizedRecords = new List<AcademicRecord>();
                 foreach (var record in records)
-                    if (await CanAccessGradeRecordAsync(connection, record.Id, AuthenticatedEmail(), "department_admin"))
+                    if (await CanAccessGradeRecordAsync(connection, record.Id, AuthenticatedEmail(), "registrar"))
                         authorizedRecords.Add(record);
                 return Ok(new { status = "Success", data = authorizedRecords });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to load the current Chairperson finalization queue");
+                _logger.LogError(ex, "Failed to load the current Registrar finalization queue");
                 return StatusCode(500, new { status = "Error", message = "The Finalize queue is temporarily unavailable." });
             }
         }

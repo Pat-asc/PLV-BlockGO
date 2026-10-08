@@ -9,7 +9,7 @@ test('clearer Chairperson labels preserve the workflow tab identifiers', () => {
   expect(setActiveTab).toHaveBeenCalledWith('forReview');
   fireEvent.click(screen.getByRole('button', { name: 'Returned Grades' }));
   expect(setActiveTab).toHaveBeenCalledWith('returned');
-  fireEvent.click(screen.getByRole('button', { name: 'Finalize Grades' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Approved Grades' }));
   expect(setActiveTab).toHaveBeenCalledWith('approved');
   fireEvent.click(screen.getByRole('button', { name: 'Finalized Grades' }));
   expect(setActiveTab).toHaveBeenCalledWith('forwarded');

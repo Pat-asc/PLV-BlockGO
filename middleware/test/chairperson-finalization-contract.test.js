@@ -8,7 +8,7 @@ const { classifyLedgerError } = require('../src/fabric/ledger-errors');
 const root = path.resolve(__dirname, '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
-test('finalization is Chairperson-only at every executable authorization boundary', () => {
+test('finalization is Registrar-only at every executable authorization boundary', () => {
   const controller = read('client-app', 'Controllers', 'GradeController.cs');
   const legacyController = read('client-app', 'Controllers', 'BulkUploadController.cs');
   const ledger = read('middleware', 'src', 'services', 'ledger-service.js');
@@ -22,17 +22,16 @@ test('finalization is Chairperson-only at every executable authorization boundar
     legacyController.indexOf('[HttpGet("staged")]')
   );
 
-  assert.match(finalizeAction, /Authorize\(Roles = "department_admin"\)/);
-  assert.doesNotMatch(finalizeAction, /Authorize\(Roles = "[^"]*registrar/);
-  assert.match(ledger, /finalize-grade\/:id', \['department_admin'\]/);
-  assert.match(chaincode, /Only an authorized Chairperson can finalize records/);
-  assert.match(chaincode, /mspID == "DepartmentMSP" && \(role == "department_admin" \|\| role == "deptAdmin"\)/);
-  assert.doesNotMatch(chaincode.slice(chaincode.indexOf('func (cc *SmartContract) finalizeRecord'),
-    chaincode.indexOf('func (cc *SmartContract) getAllGrades')), /isRegistrar|Master Registrar/);
+  assert.match(finalizeAction, /Authorize\(Roles = "registrar"\)/);
+  assert.doesNotMatch(finalizeAction, /Authorize\(Roles = "department_admin"\)/);
+  assert.match(ledger, /finalize-grade\/:id', \['registrar'\]/);
+  assert.match(ledger, /finalize-approved-grades', \['registrar'\]/);
+  assert.match(chaincode, /Only an authorized Registrar can finalize records/);
+  assert.match(chaincode, /isRegistrarIdentity\(mspID, role\)/);
   assert.match(chaincode, /academicScopeAllows\(stub, role, record\)/);
   assert.match(chaincode, /FinalizedBy\s+string/);
   assert.match(chaincode, /FinalizedAt\s+string/);
-  assert.match(retiredBulkAction, /Authorize\(Roles = "department_admin"\)/);
+  assert.match(retiredBulkAction, /Authorize\(Roles = "registrar"\)/);
   assert.match(retiredBulkAction, /StatusCodes\.Status410Gone/);
   assert.doesNotMatch(retiredBulkAction, /SubmitGradeAsync|FinalizeGradeAsync|DELETE FROM bulk_grade_staging/);
 });
@@ -47,18 +46,19 @@ test('Chairperson enrollment embeds the canonical role and department in the sig
   ]);
 });
 
-test('Finalize uses the authenticated Chairperson wallet identity and preserves structured denials', () => {
+test('Finalize uses the authenticated Registrar wallet identity and preserves structured denials', () => {
   const ledger = read('middleware', 'src', 'services', 'ledger-service.js');
   const route = ledger.slice(ledger.indexOf('function submitRoute'), ledger.indexOf("app.post('/api/batch-issue-grade'"));
   assert.match(route, /actor = await actorForRequest\(req\)/);
   assert.match(route, /contractForUser\(actor\.username, actor\.dbRole\)/);
-  assert.match(route, /submitRoute\('\/api\/finalize-grade\/:id', \['department_admin'\], 'FinalizeRecord'/);
+  assert.match(route, /submitRoute\('\/api\/finalize-grade\/:id', \['registrar'\], 'FinalizeRecord'/);
+  assert.match(route, /submitRoute\('\/api\/finalize-approved-grades', \['registrar'\], 'FinalizeApprovedGrades'/);
   assert.doesNotMatch(route, /system-admin-registrar|contractForUser\([^,]+,\s*['"]registrar['"]\)/);
 
   for (const reason of [
-    'OBAC/ABAC Denied: Only an authorized Chairperson can finalize records to the ledger.',
-    "ABAC Denied: Grade is outside the Chairperson's authoritative department scope",
-    'Invalid grade transition: Chairperson may finalize only department-approved grades'
+    'OBAC/ABAC Denied: Only an authorized Registrar can finalize records to the ledger.',
+    "ABAC Denied: Grade is outside the Registrar's authority",
+    'Invalid grade transition: Registrar may finalize only department-approved grades'
   ]) {
     assert.deepEqual(classifyLedgerError(new Error(reason), 'FinalizeRecord'), {
       code: 'CHAINCODE_DENIED', status: 403,
@@ -67,27 +67,19 @@ test('Finalize uses the authenticated Chairperson wallet identity and preserves 
   }
 });
 
-test('application finalization keeps approval distinct, preserves cycle identity, and deletes staging only after verification', () => {
+test('application batch finalization preserves approved snapshots and deletes staging only after verification', () => {
   const controller = read('client-app', 'Controllers', 'GradeController.cs');
-  const action = controller.slice(
-    controller.indexOf('[HttpPost("finalize/{recordId}")]'),
-    controller.indexOf('[HttpGet("finalization-queue")]')
-  );
-  const approveCall = action.indexOf('ApproveGradeAsync(recordId, invokerId)');
-  const finalizeCall = action.indexOf('FinalizeGradeAsync(recordId, invokerId)');
-  const verifiedFinalized = action.indexOf('!string.Equals(finalizedRecord.Status, "Finalized"');
-  const stagingDelete = action.indexOf('DELETE FROM pending_grade_records WHERE id = @id', verifiedFinalized);
+  const action = controller.slice(controller.indexOf('[HttpPost("finalize")]'), controller.indexOf('[HttpPost("finalize/{recordId}")]'));
+  const batchCall = action.indexOf('FinalizeApprovedGradesAsync(approvedRecords, invokerId)');
+  const verifiedFinalized = action.indexOf('!string.Equals(finalized.Status, "Finalized"');
+  const stagingDelete = action.indexOf('DELETE FROM pending_grade_records', verifiedFinalized);
 
-  assert.ok(approveCall >= 0 && finalizeCall > approveCall, 'Fabric approval must precede the separate finalize call');
-  assert.ok(verifiedFinalized > finalizeCall && stagingDelete > verifiedFinalized,
-    'approved staging must survive until Fabric Finalized is read back and verified');
-  assert.match(action, /status, assignment_cycle_id/);
-  assert.match(action, /AssignmentCycleId = reader\.IsDBNull\(22\)/);
-  assert.match(action, /SubmitGradeAsync\(pendingRecord, invokerId\)/,
-    'missing approved staging must be issued by the authenticated Chairperson');
-  assert.doesNotMatch(action, /SubmitGradeAsync\(pendingRecord, facId\)/,
-    'finalization must not impersonate the original Faculty identity');
-  assert.match(read('chaincode', 'main.go'), /applyIssueAttribution\(&record, role, submitterID\)/);
+  assert.ok(batchCall >= 0 && verifiedFinalized > batchCall && stagingDelete > verifiedFinalized,
+    'approved staging must survive until the committed Fabric batch is verified');
+  assert.match(action, /GradeLedgerMatch\.IsSameGrade\(staged, finalized\)/);
+  assert.match(action, /RegistrarFinalizationScopeService\.GetCurrentApprovedAsync/);
+  assert.match(read('chaincode', 'main.go'), /sameApprovedGradeSnapshot\(staged, record\)/);
+  assert.match(read('chaincode', 'main.go'), /FinalizeApprovedGrades/);
 });
 
 test('approval remains an intermediate Chairperson-only transition', () => {
@@ -95,7 +87,7 @@ test('approval remains an intermediate Chairperson-only transition', () => {
   const ledger = read('middleware', 'src', 'services', 'ledger-service.js');
   const approvalAction = controller.slice(
     controller.indexOf('[HttpPost("approve")]'),
-    controller.indexOf('[HttpPost("finalize/{recordId}")]')
+    controller.indexOf('[HttpPost("finalize")]')
   );
 
   assert.match(approvalAction, /SET status = 'ChairpersonApproved'/);
@@ -116,12 +108,14 @@ test('Student and Registrar visibility remain Finalized-only', () => {
   assert.match(ledger, /role === 'registrar'[\s\S]*grade\.status[\s\S]*=== 'finalized'/);
 });
 
-test('Registrar navigation exposes reports but no grade-finalization action', () => {
+test('Registrar navigation exposes the approved grade-finalization action', () => {
   const sidebar = read('frontend', 'src', 'components', 'registrar', 'RegistrarSidebar.jsx');
-  assert.doesNotMatch(sidebar, /Grade Finalization/);
+  const view = read('frontend', 'src', 'components', 'registrar', 'RegistrarGradesView.jsx');
+  assert.match(view, /gradeFinalization.*Finalize Grades/);
+  assert.match(view, /RegistrarGradeFinalization/);
   assert.match(sidebar, /Reports & PDF/);
   assert.equal(
-    fs.existsSync(path.join(root, 'frontend', 'src', 'components', 'registrar', 'GradeFinalization.jsx')),
-    false
+    fs.existsSync(path.join(root, 'frontend', 'src', 'components', 'registrar', 'RegistrarGradeFinalization.jsx')),
+    true
   );
 });

@@ -49,6 +49,25 @@ Check(RegistrarGradeLedgerMetadataService.IsBrowsableStatus("Finalized") &&
           .Any(RegistrarGradeLedgerMetadataService.IsBrowsableStatus),
     "Registrar ledger browsing exposed a grade before authoritative finalization.");
 Pass(82, "Registrar ledger visibility is Finalized-only");
+var exactApprovedSnapshot = new AcademicRecord
+{
+    Id = "approved-exact", StudentHash = "student@plv.edu.ph", StudentNo = "26-0042",
+    Section = "BSIT 1-1", SubjectCode = "IT 101", SchoolYear = "2026-2027",
+    Semester = "FIRST", Grade = "{\"midterm\":\"88.50\",\"finals\":\"91.25\"}"
+};
+var exactLedgerSnapshot = new AcademicRecord
+{
+    Id = exactApprovedSnapshot.Id, StudentHash = exactApprovedSnapshot.StudentHash,
+    StudentNo = exactApprovedSnapshot.StudentNo, Section = exactApprovedSnapshot.Section,
+    SubjectCode = exactApprovedSnapshot.SubjectCode, SchoolYear = exactApprovedSnapshot.SchoolYear,
+    Semester = exactApprovedSnapshot.Semester, Grade = exactApprovedSnapshot.Grade
+};
+Check(GradeLedgerMatch.IsSameGrade(exactApprovedSnapshot, exactLedgerSnapshot),
+    "An unchanged approved grade did not match its ledger payload.");
+exactLedgerSnapshot.Grade = "{\"midterm\":\"88.5\",\"finals\":\"91.25\"}";
+Check(!GradeLedgerMatch.IsSameGrade(exactApprovedSnapshot, exactLedgerSnapshot),
+    "A reformatted grade payload passed exact finalization verification.");
+Pass(198, "approved grade payload formatting is preserved exactly through finalization");
 var studentAttempt = new StudentSubjectAttempt(
     10, "student@plv.edu.ph", "26-0042", "IT 101", "2026-2027", "FIRST", "BSIT 1-1", "104");
 var finalizedStudentGrade = new AcademicRecord
@@ -62,8 +81,8 @@ var releasedFinalizedGrades = new[] { finalizedStudentGrade }
     .Where(record => GradeReleasePolicy.IsVisibleToStudent(record, releasedGradeIds));
 var visibleResolution = StudentSubjectGradeResolver.Resolve(studentAttempt, releasedFinalizedGrades);
 Check(visibleResolution.IsFinalized && visibleResolution.FinalizedGrade == 92m,
-    "A released Chairperson-finalized grade was not visible to its exact student and assignment cycle.");
-Pass(92, "released Chairperson Finalized grade is student-visible");
+    "A released Registrar-finalized grade was not visible to its exact student and assignment cycle.");
+Pass(92, "released Registrar Finalized grade is student-visible");
 Check(!GradeReleasePolicy.IsVisibleToStudent(finalizedStudentGrade, new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
     "An unreleased Finalized grade became student-visible.");
 Pass(111, "unreleased Finalized grade remains hidden from students");
@@ -992,7 +1011,7 @@ await Exec("INSERT INTO grade_assignment_cycles(record_id,assignment_cycle_id) V
 var approvedHistoryCount=await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-chair-approved','current-approved','current-finalized')");
 var finalizationQueue=await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST");
 Check(finalizationQueue.Select(record=>record.Id).SequenceEqual(new[]{"current-chair-approved","old-approved","current-approved"}),
-    "Chairperson finalization queue omitted approved captured-assignment staging."); Pass(66,"Chairperson finalization queue includes approved active and captured historical cycles");
+    "Registrar finalization queue omitted approved captured-assignment staging."); Pass(66,"Registrar finalization queue includes approved active and captured historical cycles");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='current-finalized'")==1,
     "Finalized history was removed while selecting the active queue."); Pass(67,"finalized history remains stored outside active queue");
 await Exec(@"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term)

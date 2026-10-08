@@ -19,7 +19,7 @@ function ChairpersonSidebar({ activeTab, setActiveTab }) {
     { id: "curriculum", label: "Curriculum Builder" },
     { id: "forReview", label: "Grade Review" },
     { id: "returned", label: "Returned Grades" },
-    { id: "approved", label: "Finalize Grades" },
+    { id: "approved", label: "Approved Grades" },
     { id: "forwarded", label: "Finalized Grades" },
   ];
 

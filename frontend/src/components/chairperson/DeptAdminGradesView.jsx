@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { fetchAllGrades, approveGrade, finalizeGrade, returnGrade, batchUploadGrades, fetchDepartmentSections, batchEnrollStudentsToSection, dropStudent, fetchApprovedFaculties, unassignFacultySection, openDecryptedIpfsFile, getSystemSetting, issueGrade } from '../../services/api';
+import { fetchAllGrades, approveGrade, returnGrade, batchUploadGrades, fetchDepartmentSections, batchEnrollStudentsToSection, dropStudent, fetchApprovedFaculties, unassignFacultySection, openDecryptedIpfsFile, getSystemSetting, issueGrade } from '../../services/api';
 import { useNotification } from '../../services/NotificationContext';
 import ChairpersonHeader from './ChairpersonHeader';
 import ChairpersonSidebar from './ChairpersonSidebar';
@@ -510,7 +510,6 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     const [activeEncodingTerm, setActiveEncodingTerm] = useState("midterm");
     const academicEventGuardRef = useRef(createAcademicEventGuard());
     const approveInFlightRef = useRef(false);
-    const finalizeInFlightRef = useRef(false);
 
     useEffect(() => {
         const fetchThreshold = async () => {
@@ -989,6 +988,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             latestSelectedSection.latestStatusTimestamp !== selectedReviewSection.latestStatusTimestamp ||
             latestSelectedSection.encodedCount !== selectedReviewSection.encodedCount ||
             latestSelectedSection.finalizedAt !== selectedReviewSection.finalizedAt ||
+            latestSelectedSection.grades !== selectedReviewSection.grades ||
+            latestSelectedSection.students !== selectedReviewSection.students ||
             latestSelectedSection.referenceGrades !== selectedReviewSection.referenceGrades ||
             nextSelectedSection.ipfsCid !== selectedReviewSection.ipfsCid;
         if (selectionChanged) {
@@ -1249,62 +1250,6 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             throw e;
         } finally {
             approveInFlightRef.current = false;
-        }
-    };
-
-    const handleBulkFinalize = async () => {
-        if (!selectedReviewSection) throw new Error('Select an approved section before finalizing.');
-        if (finalizeInFlightRef.current) return;
-        finalizeInFlightRef.current = true;
-        try {
-            const recordsToForward = grades.filter(g => {
-                const facId = g.facultyId || g.faculty_id || g.FacultyId || 'Unknown';
-                const status = (g.status || g.Status || '').toLowerCase();
-                const normalizedFacultyId = normalizeFacultyIdentity(facId) || facId;
-                const subjectCode = g.subject_code || g.subjectCode || g.SubjectCode || '';
-                const departmentName = g.department || g.course || g.Course || '';
-                const sectionName =
-                    getRecordSectionKey(g) ||
-                    g.record_section ||
-                    buildSectionDisplayName({
-                        departmentName,
-                        sectionValue: g.student_section || g.studentSection || '',
-                        subjectCode,
-                    }) ||
-                    departmentName;
-                const schoolYear = g.schoolYear || g.SchoolYear || '2024';
-                const semester = g.semester || g.Semester || '2nd Semester';
-                const gradingTerm = normalizeGradeTerm(g.term || g.Term || activeEncodingTerm);
-
-                return (
-                    normalizeText(normalizedFacultyId) === normalizeText(selectedReviewSection.facultyId) &&
-                    normalizeText(sectionName) === normalizeText(selectedReviewSection.sectionName) &&
-                    normalizeText(subjectCode) === normalizeText(selectedReviewSection.subjectCode) &&
-                    normalizeText(schoolYear) === normalizeText(selectedReviewSection.schoolYear) &&
-                    normalizeText(semester) === normalizeText(selectedReviewSection.semester) &&
-                    gradingTerm === normalizeGradeTerm(selectedReviewSection.term) &&
-                    status.includes('approve')
-                );
-            });
-
-            if (recordsToForward.length === 0) {
-                throw new Error('No approved grade records remain to finalize. The section may already be finalized; refresh and try again.');
-            }
-            for (const g of recordsToForward) await finalizeGrade(g.id, loggedInEmail);
-            setSelectedReviewSection(null);
-            const refreshed = await loadGrades();
-            addNotification(
-                refreshed
-                    ? "Section finalized and verified on the ledger successfully!"
-                    : "Section finalized, but the tracking list could not be refreshed.",
-                refreshed ? "success" : "warning"
-            );
-        } catch(e) {
-            await loadGrades();
-            addNotification(`Error finalizing section: ${e.message}`, "error");
-            throw e;
-        } finally {
-            finalizeInFlightRef.current = false;
         }
     };
 
@@ -1579,7 +1524,6 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                     selectedSection={selectedReviewSection} 
                                     activeTerm={activeEncodingTerm}
                                     onApprove={handleBulkApprove} 
-                                    onFinalize={handleBulkFinalize}
                                     onSendBack={(notes) => handleBulkReturn(notes)} 
                                     onViewIpfs={handleViewIpfs}
                                     onBack={() => setSelectedReviewSection(null)}

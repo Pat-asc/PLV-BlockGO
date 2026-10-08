@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import DeptAdminGradesView, { resolveRawStudentEntry } from './DeptAdminGradesView';
 import {
   approveGrade, fetchAllGrades, fetchApprovedFaculties, fetchDepartmentSections,
-  fetchFacultySections, finalizeGrade, getSystemSetting, returnGrade,
+  fetchFacultySections, getSystemSetting, returnGrade,
 } from '../../services/api';
 
 const mockAddNotification = jest.fn();
@@ -28,7 +28,7 @@ jest.mock('./SectionReviewPanel', () => ({ selectedSection, onApprove, onFinaliz
       {selectedSection.referenceGrades?.[selectedSection.students?.[0]?.studentId]?.grade || '-'}
     </span>
     <button type="button" onClick={() => onApprove('').catch(() => {})}>Approve selected section</button>
-    <button type="button" onClick={() => onFinalize('').catch(() => {})}>Finalize selected section</button>
+    {onFinalize && <button type="button" onClick={() => onFinalize('').catch(() => {})}>Finalize selected section</button>}
     <button type="button" onClick={() => onSendBack('Correct the encoded grade')}>Return selected section</button>
   </div>
 ));
@@ -44,7 +44,7 @@ jest.mock('./ChairpersonSidebar', () => ({ setActiveTab }) => (
   </div>
 ));
 jest.mock('../../services/api', () => ({
-  fetchAllGrades: jest.fn(), approveGrade: jest.fn(), finalizeGrade: jest.fn(), returnGrade: jest.fn(),
+  fetchAllGrades: jest.fn(), approveGrade: jest.fn(), returnGrade: jest.fn(),
   batchUploadGrades: jest.fn(), fetchFacultySections: jest.fn(), fetchFacultyStudents: jest.fn(),
   fetchDepartmentSections: jest.fn(), batchEnrollStudentsToSection: jest.fn(), dropStudent: jest.fn(),
   fetchApprovedFaculties: jest.fn(), unassignFacultySection: jest.fn(), openDecryptedIpfsFile: jest.fn(),
@@ -291,7 +291,7 @@ test('Finalized tracking reports load failure instead of a false empty state', a
   consoleError.mockRestore();
 });
 
-test('finalization API failure reconciles and leaves the approved record available', async () => {
+test('Chairperson approved records remain visible but ledger finalization is Registrar-owned', async () => {
   const approvedRecord = {
     id: 'approved-grade', assignment_cycle_id: '41', student_no: '26-0001', student_name: 'Student',
     faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT', record_section: 'BSIT 1-1',
@@ -299,42 +299,10 @@ test('finalization API failure reconciles and leaves the approved record availab
     status: 'DepartmentApproved', grade: JSON.stringify({ midterm: 85 }),
   };
   fetchAllGrades.mockResolvedValue({ data: [approvedRecord] });
-  finalizeGrade.mockRejectedValue(new Error('Ledger unavailable.'));
-
   render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
   fireEvent.click(screen.getByRole('button', { name: 'Approved' }));
   await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved'));
   fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Finalize selected section' }));
-
-  await waitFor(() => expect(finalizeGrade).toHaveBeenCalledTimes(1));
-  await waitFor(() => expect(fetchAllGrades.mock.calls.length).toBeGreaterThan(1));
+  expect(screen.queryByRole('button', { name: 'Finalize selected section' })).not.toBeInTheDocument();
   expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved');
-});
-
-test('successful finalization removes the approved item and shows authoritative Finalized tracking', async () => {
-  const approvedRecord = {
-    id: 'approved-grade', assignment_cycle_id: '41', student_no: '26-0001', student_name: 'Student',
-    faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT', record_section: 'BSIT 1-1',
-    section: 'BSIT 1-1', subject_code: 'IT 101', school_year: '2026-2027', semester: 'FIRST',
-    term: 'midterm', status: 'ChairpersonApproved', grade: JSON.stringify({ midterm: 85 }),
-  };
-  fetchAllGrades
-    .mockResolvedValueOnce({ data: [approvedRecord] })
-    .mockResolvedValue({ data: [{
-      ...approvedRecord, status: 'Finalized', finalized_at: '2026-09-28T10:00:00Z',
-      finalized_by: 'chair@plv.edu.ph',
-    }] });
-  finalizeGrade.mockResolvedValue({ status: 'Success' });
-
-  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
-  fireEvent.click(screen.getByRole('button', { name: 'Approved' }));
-  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved'));
-  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Finalize selected section' }));
-
-  await waitFor(() => expect(finalizeGrade).toHaveBeenCalledTimes(1));
-  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:0'));
-  fireEvent.click(screen.getByRole('button', { name: 'Finalized' }));
-  expect(screen.getByTestId('review-rows')).toHaveTextContent('forwarded:1:forwarded');
 });

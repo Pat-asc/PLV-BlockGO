@@ -312,6 +312,14 @@ export const finalizeGrade = async (recordId, invokerId) => {
     });
 };
 
+export const finalizeApprovedGrades = async (recordIds) => {
+    const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
+    return await fetchWithAuth('/Grades/finalize', {
+        method: 'POST',
+        body: JSON.stringify({ recordIds: ids })
+    });
+};
+
 export const returnGrade = async (id, note, invokerId = '') => {
     return await fetchWithAuth(`/Grades/return/${encodeURIComponent(id)}`, {
         method: 'POST',
@@ -951,8 +959,8 @@ export const fetchStagedGrades = async (status = '') => {
     return await fetchWithAuth(`/BulkUpload/staged?status=${encodeURIComponent(status)}`);
 };
 
-export const fetchRegistrarFinalizationQueue = async () => {
-    return await fetchWithAuth('/Grades/finalization-queue');
+export const fetchRegistrarFinalizationQueue = async ({ signal } = {}) => {
+    return await fetchWithAuth('/Grades/finalization-queue', { cache: 'no-store', signal });
 };
 
 
