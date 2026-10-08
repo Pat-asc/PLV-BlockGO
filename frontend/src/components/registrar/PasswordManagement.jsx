@@ -6,6 +6,22 @@ import PasswordStrength from '../shared/PasswordStrength';
 import { isPasswordValid, PASSWORD_POLICY_MESSAGE } from '../../utils/passwordPolicy';
 import SearchField from '../shared/SearchField';
 
+const normalizedAccountValues = (values) => values
+  .map((value) => String(value || '').trim().toLowerCase())
+  .filter(Boolean);
+
+const accountIdentityValues = (account) => normalizedAccountValues([
+  account.name,
+  account.accountCode,
+  account.email,
+]);
+
+const accountMetadataValues = (account) => normalizedAccountValues([
+  account.roleLabel,
+  account.role,
+  account.department,
+]);
+
 const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = [], onRefresh }) => {
   const [roleFilter, setRoleFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -31,7 +47,21 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
 
   const visibleAccounts = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return accounts.filter((account) => (roleFilter === 'all' || account.role === roleFilter) && (!query || [account.name, account.email, account.accountCode, account.department].some((value) => String(value || '').toLowerCase().includes(query))));
+    return accounts
+      .filter((account) => roleFilter === 'all' || account.role === roleFilter)
+      .map((account) => {
+        const identityValues = accountIdentityValues(account);
+        const metadataValues = accountMetadataValues(account);
+        const rank = !query ? 0
+          : identityValues.some((value) => value.startsWith(query)) ? 0
+            : identityValues.some((value) => value.includes(query)) ? 1
+              : metadataValues.some((value) => value.startsWith(query)) ? 2
+                : metadataValues.some((value) => value.includes(query)) ? 3 : 4;
+        return { account, rank };
+      })
+      .filter(({ rank }) => rank < 4)
+      .sort((left, right) => left.rank - right.rank || left.account.name.localeCompare(right.account.name))
+      .map(({ account }) => account);
   }, [accounts, roleFilter, search]);
 
   const selected = accounts.find((account) => account.key === selectedId);
@@ -67,6 +97,12 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
         <label className="block text-[11px] font-semibold text-slate-700">Account Type<select value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value); setSelectedId(''); }} className={fieldClass}><option value="all">All Accounts</option><option value="student">Students</option><option value="faculty">Faculty</option><option value="department_admin">Department Administrators</option></select></label>
         <SearchField value={search} onChange={(value) => { setSearch(value); setSelectedId(''); }} label="Search Account" placeholder="Name, ID, email, role, or department" inputClassName="h-9 text-xs" />
         {search.trim() && visibleAccounts.length === 0 ? <p className="text-xs text-slate-500">No results found.</p> : null}
+        {search.trim() && visibleAccounts.length > 0 ? <div role="listbox" aria-label="Matching accounts" className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-1.5">
+          {visibleAccounts.map((account) => <button key={account.key} type="button" role="option" aria-selected={account.key === selectedId} onClick={() => setSelectedId(account.key)} className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition ${account.key === selectedId ? 'bg-blue-100 text-blue-900' : 'bg-white text-slate-700 hover:bg-blue-50'}`}>
+            <span className="min-w-0"><span className="block truncate text-xs font-semibold">{account.name}</span><span className="block truncate text-[10px] text-slate-500">{account.accountCode} · {account.email}</span></span>
+            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">{account.roleLabel}</span>
+          </button>)}
+        </div> : null}
         <label className="block text-[11px] font-semibold text-slate-700">Account<select required value={selectedId} onChange={(event) => setSelectedId(event.target.value)} className={fieldClass}><option value="">Select an account</option>{visibleAccounts.map((account) => <option key={account.key} value={account.key}>{account.roleLabel} — {account.name} — {account.accountCode}</option>)}</select></label>
       </div>
     </section>
