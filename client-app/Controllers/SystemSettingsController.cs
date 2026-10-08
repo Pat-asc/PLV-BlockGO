@@ -101,6 +101,19 @@ namespace Client_app.Controllers
                     }
                 }
 
+                if (activeSchoolYear is null)
+                {
+                    var legacyPeriod = await EncodingPeriodSettingService.ResolveActiveEnrollmentPeriodAsync(
+                        conn, cancellationToken: HttpContext.RequestAborted);
+                    if (legacyPeriod.HasValue)
+                    {
+                        activeSchoolYear = legacyPeriod.Value.SchoolYear;
+                        activeSemester = legacyPeriod.Value.Semester;
+                        if (!schoolYears.Contains(activeSchoolYear, StringComparer.OrdinalIgnoreCase))
+                            schoolYears.Insert(0, activeSchoolYear);
+                    }
+                }
+
                 var now = DateTime.UtcNow;
                 var startYear = now.Month >= 6 ? now.Year : now.Year - 1;
                 var currentSchoolYear = $"{startYear}-{startYear + 1}";

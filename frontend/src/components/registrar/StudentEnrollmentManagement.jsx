@@ -16,6 +16,8 @@ import { buildCsvContent, downloadCsvFile } from '../../utils/studentSectioningH
 import { downloadTemplateButtonClass } from '../shared/downloadButtonStyles';
 import { normalizeStudentNameFields } from '../../utils/studentName';
 
+const normalizeProgramIdentity = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
 const StudentEnrollmentManagement = ({ programs = [] }) => {
   const [form, setForm] = useState({
     department: programs[0] || '',
@@ -55,19 +57,23 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const periodResponse = await fetchAcademicPeriodOptions();
+      const [periodResult, curriculumResult, nstpResult] = await Promise.allSettled([
+        fetchAcademicPeriodOptions(),
+        fetchCurriculums('PUBLISHED'),
+        typeof fetchNstpOptions === 'function' ? fetchNstpOptions() : Promise.resolve({ data: [] }),
+      ]);
+      setCurricula(curriculumResult.status === 'fulfilled' ? curriculumResult.value?.data || [] : []);
+      setNstpOptions(nstpResult.status === 'fulfilled' ? nstpResult.value?.data || [] : []);
+      if (periodResult.status === 'rejected') throw periodResult.reason;
+      if (curriculumResult.status === 'rejected') throw curriculumResult.reason;
+
+      const periodResponse = periodResult.value;
       const activePeriod = periodResponse?.activeAcademicPeriod;
       if (!activePeriod?.schoolYear || !activePeriod?.semester) {
         throw new Error('No active academic period is configured. Open an academic period before enrolling students.');
       }
-      const [studentsResponse, curriculumResponse, nstpResponse] = await Promise.all([
-        fetchApprovedStudents(activePeriod),
-        fetchCurriculums('PUBLISHED'),
-        typeof fetchNstpOptions === 'function' ? fetchNstpOptions() : Promise.resolve({ data: [] }),
-      ]);
+      const studentsResponse = await fetchApprovedStudents(activePeriod);
       setStudents(studentsResponse?.students || studentsResponse?.data || []);
-      setCurricula(curriculumResponse?.data || []);
-      setNstpOptions(nstpResponse?.data || []);
       setForm((current) => ({
         ...current,
         schoolYear: activePeriod.schoolYear,
@@ -84,11 +90,13 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   useEffect(() => { load(); }, [load]);
 
   const matchingCurricula = useMemo(
-    () => curricula.filter((curriculum) =>
-      [curriculum.programName, curriculum.programCode]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase() === String(form.department).toLowerCase())
-    ),
+    () => {
+      const selectedProgram = normalizeProgramIdentity(form.department);
+      return curricula.filter((curriculum) =>
+        [curriculum.programName, curriculum.programCode]
+          .some((value) => normalizeProgramIdentity(value) === selectedProgram)
+      );
+    },
     [curricula, form.department]
   );
   const visibleStudents = useMemo(() => {

@@ -101,6 +101,8 @@ test('blocks enrollment clearly when no active academic period exists', async ()
   render(<StudentEnrollmentManagement programs={[program]} />);
   expect(await screen.findByText(/No active academic period is configured/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/active academic period/i)).toHaveValue('Not configured');
+  await waitFor(() => expect(screen.getByLabelText(/curriculum version/i)).toHaveValue('7'));
+  expect(fetchCurriculums).toHaveBeenCalledWith('PUBLISHED');
 });
 
 test('filters current enrollments by the dynamic Program / Course dropdown', async () => {

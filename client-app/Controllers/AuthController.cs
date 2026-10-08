@@ -403,20 +403,19 @@ namespace Client_app.Controllers
             NpgsqlTransaction? transaction,
             CancellationToken cancellationToken = default)
         {
-            var periods = new List<(string SchoolYear, string Semester)>();
-            await using var command = new NpgsqlCommand(@"
-                SELECT DISTINCT school_year, semester
-                FROM academic_periods
-                WHERE UPPER(status) = 'ACTIVE'
-                ORDER BY school_year, semester;", connection, transaction);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-                periods.Add((NormalizeSchoolYear(reader.GetString(0)), NormalizeEnrollmentSemester(reader.GetString(1))));
-            if (periods.Count == 0)
+            (string SchoolYear, string Semester)? period;
+            try
+            {
+                period = await EncodingPeriodSettingService.ResolveActiveEnrollmentPeriodAsync(
+                    connection, transaction, cancellationToken);
+            }
+            catch (InvalidOperationException exception)
+            {
+                throw new ArgumentException(exception.Message, exception);
+            }
+            if (!period.HasValue)
                 throw new ArgumentException("No active academic period is configured. Open an academic period before enrolling students.");
-            if (periods.Count > 1)
-                throw new ArgumentException("Multiple active academic periods are configured. Resolve the academic-period conflict before enrolling students.");
-            return periods[0];
+            return period.Value;
         }
 
         private static async Task<(int Id, string Code, string Name)> ResolveEnrollmentProgramAsync(
@@ -467,17 +466,44 @@ namespace Client_app.Controllers
             string? curriculumVersion,
             CancellationToken cancellationToken = default)
         {
-            await using var command = new NpgsqlCommand(@"
-                SELECT assignment.curriculum_id
-                FROM program_curriculum_assignments assignment
-                JOIN curriculums curriculum ON curriculum.curriculum_id = assignment.curriculum_id
-                WHERE assignment.program_id = @programId
-                  AND curriculum.program_id = @programId
-                LIMIT 1;", connection, transaction);
+            var sql = curriculumId.HasValue
+                ? @"SELECT curriculum_id FROM curriculums
+                    WHERE curriculum_id = @curriculumId AND program_id = @programId
+                      AND status = 'PUBLISHED'"
+                : !string.IsNullOrWhiteSpace(curriculumVersion)
+                    ? @"SELECT curriculum_id FROM curriculums
+                        WHERE program_id = @programId AND status = 'PUBLISHED'
+                          AND (LOWER(curriculum_version) = LOWER(@curriculumVersion)
+                            OR LOWER(curriculum_code) = LOWER(@curriculumVersion))
+                        ORDER BY published_at DESC NULLS LAST, updated_at DESC, curriculum_id DESC
+                        LIMIT 1"
+                    : @"SELECT candidate.curriculum_id
+                        FROM (
+                            SELECT assignment.curriculum_id, 0 AS priority,
+                                   curriculum.published_at, curriculum.updated_at
+                            FROM program_curriculum_assignments assignment
+                            JOIN curriculums curriculum ON curriculum.curriculum_id = assignment.curriculum_id
+                            WHERE assignment.program_id = @programId
+                              AND curriculum.program_id = @programId
+                              AND curriculum.status = 'PUBLISHED'
+                            UNION ALL
+                            SELECT curriculum.curriculum_id, 1 AS priority,
+                                   curriculum.published_at, curriculum.updated_at
+                            FROM curriculums curriculum
+                            WHERE curriculum.program_id = @programId
+                              AND curriculum.status = 'PUBLISHED'
+                        ) candidate
+                        ORDER BY candidate.priority, candidate.published_at DESC NULLS LAST,
+                                 candidate.updated_at DESC, candidate.curriculum_id DESC
+                        LIMIT 1";
+            await using var command = new NpgsqlCommand(sql, connection, transaction);
             command.Parameters.AddWithValue("programId", programId);
+            if (curriculumId.HasValue) command.Parameters.AddWithValue("curriculumId", curriculumId.Value);
+            if (!string.IsNullOrWhiteSpace(curriculumVersion))
+                command.Parameters.AddWithValue("curriculumVersion", curriculumVersion.Trim());
             var result = await command.ExecuteScalarAsync(cancellationToken);
             if (result is null && (curriculumId.HasValue || !string.IsNullOrWhiteSpace(curriculumVersion)))
-                throw new ArgumentException("This academic program does not have an active curriculum. A Department Head must assign one for the program.");
+                throw new ArgumentException("The selected curriculum is not a published curriculum for this academic program.");
             return result is null ? null : Convert.ToInt64(result);
         }
 
@@ -1111,8 +1137,8 @@ namespace Client_app.Controllers
                                 LOWER(COALESCE(prog.program_code, sp.department)),
                                 LOWER(COALESCE(prog.program_name, sp.department)))))
                     ORDER BY sp.full_name", conn);
-                cmd.Parameters.AddWithValue("schoolYear", (object?)periodYear ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("semester", (object?)periodSemester ?? DBNull.Value);
+                cmd.Parameters.Add("schoolYear", NpgsqlTypes.NpgsqlDbType.Varchar).Value = (object?)periodYear ?? DBNull.Value;
+                cmd.Parameters.Add("semester", NpgsqlTypes.NpgsqlDbType.Varchar).Value = (object?)periodSemester ?? DBNull.Value;
                 cmd.Parameters.AddWithValue("isRegistrar", isRegistrar);
                 cmd.Parameters.AddWithValue("actorEmail", actorEmail);
                 using (cmd)
@@ -3397,23 +3423,10 @@ namespace Client_app.Controllers
 
                 using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
-                var activeEnrollmentPeriods = new List<(string SchoolYear, string Semester)>();
-                await using (var activePeriodCommand = new NpgsqlCommand(@"
-                    SELECT DISTINCT school_year, semester
-                    FROM academic_periods
-                    WHERE UPPER(status) = 'ACTIVE'
-                    ORDER BY school_year, semester;", conn))
-                await using (var activePeriodReader = await activePeriodCommand.ExecuteReaderAsync())
-                {
-                    while (await activePeriodReader.ReadAsync())
-                        activeEnrollmentPeriods.Add((activePeriodReader.GetString(0), activePeriodReader.GetString(1)));
-                }
-                if (activeEnrollmentPeriods.Count == 0)
-                    throw new ArgumentException("No active academic period is configured. Open an academic period before enrolling students.");
-                if (activeEnrollmentPeriods.Count > 1)
-                    throw new ArgumentException("Multiple active academic periods are configured. Resolve the academic-period conflict before enrolling students.");
-                schoolYear = NormalizeSchoolYear(activeEnrollmentPeriods[0].SchoolYear);
-                semester = NormalizeEnrollmentSemester(activeEnrollmentPeriods[0].Semester);
+                var activeEnrollmentPeriod = await ResolveActiveEnrollmentPeriodAsync(
+                    conn, null, HttpContext.RequestAborted);
+                schoolYear = activeEnrollmentPeriod.SchoolYear;
+                semester = activeEnrollmentPeriod.Semester;
                 if (!string.IsNullOrWhiteSpace(nstpOption))
                 {
                     await using var nstp = new NpgsqlCommand(@"

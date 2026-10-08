@@ -26,6 +26,52 @@ public static class EncodingPeriodSettingService
             : base("No active academic period exists. Use Reset Encoding Season to open an academic period before saving the schedule.") { }
     }
 
+    public static async Task<(string SchoolYear, string Semester)?> ResolveActiveEnrollmentPeriodAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction = null,
+        CancellationToken cancellationToken = default)
+    {
+        var periods = new List<(string SchoolYear, string Semester)>();
+        await using (var command = new NpgsqlCommand(@"
+            SELECT DISTINCT school_year, semester
+            FROM academic_periods
+            WHERE UPPER(status) = 'ACTIVE'
+            ORDER BY school_year, semester;", connection, transaction))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var schoolYear = GradeAcademicPeriod.SchoolYear(reader.GetString(0));
+                var semester = GradeAcademicPeriod.Semester(reader.GetString(1));
+                if (schoolYear is not null && semester is not null)
+                    periods.Add((schoolYear, semester));
+            }
+        }
+
+        if (periods.Count > 1)
+            throw new InvalidOperationException("Multiple active academic periods are configured. Resolve the academic-period conflict before enrolling students.");
+        if (periods.Count == 1) return periods[0];
+
+        await using var legacyCommand = new NpgsqlCommand(@"
+            SELECT value FROM systemsettings
+            WHERE LOWER(key) = 'encoding_period'
+            LIMIT 1;", connection, transaction);
+        var rawValue = (await legacyCommand.ExecuteScalarAsync(cancellationToken))?.ToString();
+        if (string.IsNullOrWhiteSpace(rawValue)) return null;
+
+        try
+        {
+            var setting = JsonNode.Parse(rawValue) as JsonObject;
+            var schoolYear = GradeAcademicPeriod.SchoolYear(setting?["schoolYear"]?.GetValue<string>());
+            var semester = GradeAcademicPeriod.Semester(setting?["semester"]?.GetValue<string>());
+            return schoolYear is not null && semester is not null ? (schoolYear, semester) : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     public static async Task<string> SaveAsync(
         NpgsqlConnection connection, string value, string actor = "unknown",
         CancellationToken cancellationToken = default)
