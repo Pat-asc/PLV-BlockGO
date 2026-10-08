@@ -15,7 +15,7 @@ const section = {
   progress: 100,
   students: [{ studentId: '26-0001', studentNo: '26-0001', fullName: 'Student A' }],
   grades: {
-    '26-0001': { midterm: '85', finals: '90', standing: 'active' },
+    '26-0001': { recordId: 'grade-001', midterm: '85', finals: '90', standing: 'active' },
   },
   reviewLogs: [],
 };
@@ -47,6 +47,23 @@ test('finals review renders preserved Midterm and active Finals values', () => {
   expect(screen.getByRole('columnheader', { name: 'Reference' })).toBeInTheDocument();
   expect(screen.getByText('85')).toBeInTheDocument();
   expect(screen.getByText('90')).toBeInTheDocument();
+});
+
+test('staged grade IDs do not expose Fabric history before finalization', () => {
+  renderPanel('midterm');
+
+  expect(screen.getByText('Not yet finalized')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'View Version History' })).not.toBeInTheDocument();
+});
+
+test('finalized grades expose the immutable version history control', () => {
+  render(<SectionReviewPanel {...{
+    selectedSection: { ...section, reviewStatus: 'forwarded' }, activeTerm: 'midterm',
+    onSendBack: jest.fn(), onApprove: jest.fn(), onFinalize: jest.fn(), onViewIpfs: jest.fn(),
+  }} />);
+
+  expect(screen.getByRole('button', { name: 'View Version History' })).toBeInTheDocument();
+  expect(screen.queryByText('Not yet finalized')).not.toBeInTheDocument();
 });
 
 test('comparison rows align by authoritative Student ID without changing grade mappings', () => {
