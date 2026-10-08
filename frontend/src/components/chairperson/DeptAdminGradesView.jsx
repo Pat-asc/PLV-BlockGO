@@ -201,6 +201,15 @@ const parseStoredGrade = (rawGrade) => {
 };
 
 const normalizeText = (value = '') => String(value || '').trim().toLowerCase();
+export const resolveRawStudentEntry = ({ rawStudentEntries = [], rosterStudentId, index, allowPositionalFallback = false }) => {
+    const normalizedRosterStudentId = normalizeText(rosterStudentId);
+    const identityMatch = rawStudentEntries.find((entry) =>
+        [entry?.studentNumber, entry?.studentKey]
+            .some((value) => normalizeText(value) === normalizedRosterStudentId)
+    );
+
+    return identityMatch || (allowPositionalFallback ? rawStudentEntries[index] : null) || null;
+};
 const normalizeGradeTerm = (value = '') => {
     const normalized = normalizeText(value);
     if (normalized === 'final' || normalized === 'finals') return 'finals';
@@ -846,9 +855,12 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                             student.name ||
                             [student.lastName, student.firstName].filter(Boolean).join(', ') ||
                             (rosterStudentId.includes('@') ? rosterStudentId.split('@')[0] : rosterStudentId);
-                        const rawEntry = g.rawStudentEntries[index] || g.rawStudentEntries.find((entry) =>
-                            normalizeText(entry.studentNumber) === normalizeText(rosterStudentId)
-                        ) || null;
+                        const rawEntry = resolveRawStudentEntry({
+                            rawStudentEntries: g.rawStudentEntries,
+                            rosterStudentId,
+                            index,
+                            allowPositionalFallback: placeholderOnly,
+                        });
                         const gradeRecord =
                             (rawEntry && rawEntry.grade) ||
                             g.grades[rosterStudentId] ||

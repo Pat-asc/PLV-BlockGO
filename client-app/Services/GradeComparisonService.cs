@@ -48,14 +48,14 @@ public static class GradeComparisonService
 
         if (reference is null)
         {
-            var historicalGrade = ResolveSubmissionHistoryReference(current, currentGrade, submissionHistory);
-            if (historicalGrade is null)
+            var submittedGradeSnapshot = ResolveSubmittedGradeSnapshot(current, currentGrade, submissionHistory);
+            if (submittedGradeSnapshot is null)
                 return new(currentGrade, null, ReferenceNotFound);
 
             return new(
                 currentGrade,
-                historicalGrade,
-                currentGrade is not null && GradesEqual(currentGrade, historicalGrade) ? Match : Mismatch,
+                submittedGradeSnapshot,
+                currentGrade is not null && GradesEqual(currentGrade, submittedGradeSnapshot) ? Match : Mismatch,
                 current.Id,
                 null,
                 null,
@@ -77,7 +77,7 @@ public static class GradeComparisonService
             "FABRIC_FINALIZED");
     }
 
-    private static string? ResolveSubmissionHistoryReference(
+    private static string? ResolveSubmittedGradeSnapshot(
         AcademicRecord current,
         string? currentGrade,
         IEnumerable<GradeComparisonHistoryEntry>? submissionHistory)
@@ -90,20 +90,13 @@ public static class GradeComparisonService
             .ThenByDescending(entry => entry.Timestamp)
             .ToList();
 
-        for (var index = 0; index < entries.Count; index++)
+        foreach (var entry in entries)
         {
-            var newGrade = HistoryGrade(entries[index].NewGrade, current.Term);
-            if (newGrade is null || !GradesEqual(currentGrade, newGrade)) continue;
-
-            var oldGrade = HistoryGrade(entries[index].OldGrade, current.Term);
-            if (oldGrade is not null) return oldGrade;
-
-            for (var olderIndex = index + 1; olderIndex < entries.Count; olderIndex++)
-            {
-                var priorNewGrade = HistoryGrade(entries[olderIndex].NewGrade, current.Term);
-                if (priorNewGrade is not null) return priorNewGrade;
-            }
-            return null;
+            // newgrade is the request payload captured alongside the staging write.
+            // Comparing it with the value read back from pending_grade_records makes
+            // first submissions verifiable and exposes unaudited database changes.
+            var submittedGrade = HistoryGrade(entry.NewGrade, current.Term);
+            if (submittedGrade is not null) return submittedGrade;
         }
 
         return null;

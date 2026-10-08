@@ -116,26 +116,28 @@ var correctionHistory = new[]
     new GradeComparisonHistoryEntry(1, corrected.Id, null, "1.75", "Initial Grade Entry", DateTimeOffset.UtcNow.AddMinutes(-5))
 };
 var historicalComparison = GradeComparisonService.Compare(corrected, Array.Empty<AcademicRecord>(), correctionHistory);
-Check(historicalComparison.ReferenceGrade == "1.75" &&
-      historicalComparison.IntegrityStatus == GradeComparisonService.Mismatch &&
+Check(historicalComparison.ReferenceGrade == "2.00" &&
+      historicalComparison.IntegrityStatus == GradeComparisonService.Match &&
       historicalComparison.ReferenceSource == "POSTGRES_SUBMISSION_HISTORY",
-    "returned-grade correction uses the previous PostgreSQL submission version");
+    "returned-grade correction uses the submitted PostgreSQL request snapshot");
 
 var equivalentHistory = new[]
 {
     new GradeComparisonHistoryEntry(2, current.Id, "1.50", "1.5", "Precision-only update", DateTimeOffset.UtcNow)
 };
 var equivalentHistoricalComparison = GradeComparisonService.Compare(Record("1.5"), Array.Empty<AcademicRecord>(), equivalentHistory);
-Check(equivalentHistoricalComparison.ReferenceGrade == "1.50" &&
+Check(equivalentHistoricalComparison.ReferenceGrade == "1.5" &&
       equivalentHistoricalComparison.IntegrityStatus == GradeComparisonService.Match,
-    "historical precision is preserved while numeric equivalents match");
+    "submitted snapshot precision is preserved while numeric equivalents match");
 
 var firstSubmissionHistory = new[]
 {
     new GradeComparisonHistoryEntry(1, current.Id, null, "1.75", "Initial Grade Entry", DateTimeOffset.UtcNow)
 };
-Check(GradeComparisonService.Compare(current, Array.Empty<AcademicRecord>(), firstSubmissionHistory).IntegrityStatus == GradeComparisonService.ReferenceNotFound,
-    "first submission is not compared with itself");
+var firstSubmissionComparison = GradeComparisonService.Compare(current, Array.Empty<AcademicRecord>(), firstSubmissionHistory);
+Check(firstSubmissionComparison.ReferenceGrade == "1.75" &&
+      firstSubmissionComparison.IntegrityStatus == GradeComparisonService.Match,
+    "first submission uses its audited pre-commit request snapshot");
 
 var statusAndCorrectionHistory = new[]
 {
@@ -143,7 +145,7 @@ var statusAndCorrectionHistory = new[]
     new GradeComparisonHistoryEntry(2, corrected.Id, "1.75", "2.00", "Correction", DateTimeOffset.UtcNow.AddMinutes(-1)),
     new GradeComparisonHistoryEntry(1, corrected.Id, null, "1.75", "Initial Grade Entry", DateTimeOffset.UtcNow.AddMinutes(-2))
 };
-Check(GradeComparisonService.Compare(corrected, Array.Empty<AcademicRecord>(), statusAndCorrectionHistory).ReferenceGrade == "1.75",
+Check(GradeComparisonService.Compare(corrected, Array.Empty<AcademicRecord>(), statusAndCorrectionHistory).ReferenceGrade == "2.00",
     "workflow status audit rows are never interpreted as grades");
 
 var wrongRecordHistory = new[]
@@ -157,8 +159,9 @@ var staleSameRecordHistory = new[]
 {
     new GradeComparisonHistoryEntry(2, current.Id, "1.00", "1.25", "Stale update", DateTimeOffset.UtcNow)
 };
-Check(GradeComparisonService.Compare(current, Array.Empty<AcademicRecord>(), staleSameRecordHistory).IntegrityStatus == GradeComparisonService.ReferenceNotFound,
-    "history that does not produce the current grade cannot become its reference");
+var staleComparison = GradeComparisonService.Compare(current, Array.Empty<AcademicRecord>(), staleSameRecordHistory);
+Check(staleComparison.ReferenceGrade == "1.25" && staleComparison.IntegrityStatus == GradeComparisonService.Mismatch,
+    "unaudited PostgreSQL value changes produce a mismatch against the submitted snapshot");
 
 var multipleHistoryVersions = new[]
 {
@@ -166,8 +169,9 @@ var multipleHistoryVersions = new[]
     new GradeComparisonHistoryEntry(2, corrected.Id, "1.50", "1.75", "Earlier correction", DateTimeOffset.UtcNow.AddMinutes(-1)),
     new GradeComparisonHistoryEntry(1, corrected.Id, null, "1.50", "Initial Grade Entry", DateTimeOffset.UtcNow.AddMinutes(-2))
 };
-Check(GradeComparisonService.Compare(corrected, Array.Empty<AcademicRecord>(), multipleHistoryVersions).ReferenceGrade == "1.75",
-    "latest applicable prior submission version is selected");
+var latestSnapshotComparison = GradeComparisonService.Compare(corrected, Array.Empty<AcademicRecord>(), multipleHistoryVersions);
+Check(latestSnapshotComparison.ReferenceGrade == "2.00" && latestSnapshotComparison.IntegrityStatus == GradeComparisonService.Match,
+    "latest submitted PostgreSQL request snapshot is selected");
 
 var ledgerPreferred = GradeComparisonService.Compare(corrected, new[] { Finalized("1.25", 3) }, correctionHistory);
 Check(ledgerPreferred.ReferenceGrade == "1.25" && ledgerPreferred.ReferenceSource == "FABRIC_FINALIZED",
@@ -184,8 +188,8 @@ var finalsHistory = new[]
         DateTimeOffset.UtcNow)
 };
 var finalsHistoricalComparison = GradeComparisonService.Compare(finalsCurrent, Array.Empty<AcademicRecord>(), finalsHistory);
-Check(finalsHistoricalComparison.ReferenceGrade == "88.50" && finalsHistoricalComparison.IntegrityStatus == GradeComparisonService.Mismatch,
-    "structured submission history selects the active term without losing precision");
+Check(finalsHistoricalComparison.ReferenceGrade == "90" && finalsHistoricalComparison.IntegrityStatus == GradeComparisonService.Match,
+    "structured submitted snapshot selects the active term without losing precision");
 
 var unusableFinalizedReference = Finalized("{\"standing\":\"active\"}");
 var unavailableComparison = GradeComparisonService.Compare(current, new[] { unusableFinalizedReference });

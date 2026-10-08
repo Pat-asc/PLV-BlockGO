@@ -1,6 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import DeptAdminGradesView from './DeptAdminGradesView';
+import DeptAdminGradesView, { resolveRawStudentEntry } from './DeptAdminGradesView';
 import {
   approveGrade, fetchAllGrades, fetchApprovedFaculties, fetchDepartmentSections,
   fetchFacultySections, finalizeGrade, getSystemSetting, returnGrade,
@@ -60,6 +60,20 @@ beforeEach(() => {
   fetchApprovedFaculties.mockResolvedValue({ status: 'Success', faculties: [] });
   fetchDepartmentSections.mockResolvedValue({ status: 'Success', data: [] });
   fetchFacultySections.mockResolvedValue({ status: 'Success', sections: [] });
+});
+
+test('roster remapping uses Student ID before array position', () => {
+  const rawStudentEntries = [
+    { studentNumber: '26-0002', grade: { midterm: '82' }, referenceGrade: { grade: '82' } },
+    { studentNumber: '26-0001', grade: { midterm: '91' }, referenceGrade: { grade: '91' } },
+  ];
+
+  expect(resolveRawStudentEntry({
+    rawStudentEntries, rosterStudentId: '26-0001', index: 0,
+  })).toBe(rawStudentEntries[1]);
+  expect(resolveRawStudentEntry({
+    rawStudentEntries, rosterStudentId: 'legacy-placeholder', index: 0, allowPositionalFallback: true,
+  })).toBe(rawStudentEntries[0]);
 });
 
 test('encoding-season reset clears and refetches Chairperson For Review without logout', async () => {
