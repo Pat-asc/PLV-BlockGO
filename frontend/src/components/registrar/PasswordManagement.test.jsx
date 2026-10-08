@@ -29,12 +29,18 @@ test('automatically displays matching accounts from every allowed role while typ
   expect(options[2]).toHaveTextContent('Alice Cruz');
 });
 
-test('selects an automatically displayed account result', () => {
+test('selects an account, closes results, and reopens them after the search is edited', () => {
   render(<PasswordManagement students={students} faculties={faculties} departmentAdmins={departmentAdmins} onRefresh={jest.fn()} />);
 
-  fireEvent.change(screen.getByRole('searchbox', { name: 'Search Account' }), { target: { value: 'David' } });
+  const search = screen.getByRole('searchbox', { name: 'Search Account' });
+  fireEvent.change(search, { target: { value: 'Dav' } });
   fireEvent.click(within(screen.getByRole('listbox', { name: 'Matching accounts' })).getByRole('option', { name: /David Reyes/i }));
 
+  expect(screen.queryByRole('listbox', { name: 'Matching accounts' })).not.toBeInTheDocument();
   expect(screen.getByRole('combobox', { name: 'Account' })).toHaveValue('faculty:2');
   expect(screen.getByRole('button', { name: /reset password/i })).toBeEnabled();
+
+  fireEvent.change(search, { target: { value: 'Davi' } });
+  expect(screen.getByRole('listbox', { name: 'Matching accounts' })).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Account' })).toHaveValue('');
 });
