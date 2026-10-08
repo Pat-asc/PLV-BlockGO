@@ -18,6 +18,8 @@ function classifyLedgerError(error, functionName = '') {
         return { code: 'WALLET_UNAVAILABLE', status: 503, reason: 'Fabric wallet storage is unavailable.' };
     if (/(?:discoveryservice|channel).*access denied|access denied.*(?:discoveryservice|channel)/i.test(reason))
         return { code: 'CHANNEL_ACCESS_DENIED', status: 503, reason: 'Fabric channel discovery or access was denied.' };
+    if (/discoveryservice.*failed constructing descriptor|failed constructing descriptor.*chaincodes?/i.test(reason))
+        return { code: 'FABRIC_DISCOVERY_FAILED', status: 503, reason: 'Fabric could not construct a reachable endorsement plan.' };
     if (functionName === 'ReadGrade' && /\brecord (?:not found|does not exist)\b/i.test(reason))
         return { code: 'GRADE_NOT_FOUND', status: 404, reason: 'Record not found on the Fabric ledger.' };
     if (functionName === 'IssueGrade' && /\brecord already exists\b/i.test(reason))

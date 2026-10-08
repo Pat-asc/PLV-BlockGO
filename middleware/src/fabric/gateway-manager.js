@@ -119,8 +119,8 @@ function fabricEndpointUrls() {
 
 function fabricDiscoveryEnabled() {
     const configured = process.env.FABRIC_DISCOVERY_ENABLED;
-    if (configured !== undefined) return ['1', 'true', 'yes', 'on'].includes(String(configured).trim().toLowerCase());
-    return Boolean(process.env.KUBERNETES_SERVICE_HOST);
+    return configured !== undefined &&
+        ['1', 'true', 'yes', 'on'].includes(String(configured).trim().toLowerCase());
 }
 
 function profileForIdentity(identity) {

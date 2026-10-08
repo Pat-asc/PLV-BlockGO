@@ -35,7 +35,9 @@ data:
   FABRIC_CA_DEPARTMENT_TLS_CERT: /etc/hyperledger/fabric-ca-roots/department-tls-cert.pem
   FABRIC_CA_INSECURE_TLS: "false"
   FABRIC_GATEWAY_TLS_ROOTS: /etc/hyperledger/fabric-gateway-tls
-  FABRIC_DISCOVERY_ENABLED: "true"
+  # Peers run in separate campus namespaces and advertise namespace-local gossip
+  # addresses. Use the gateway's explicit cross-namespace FQDN profile instead.
+  FABRIC_DISCOVERY_ENABLED: "false"
   FABRIC_HA_ENABLED: "true"
   FABRIC_DISABLED_ORDERERS: "orderer5,orderer6"
   FABRIC_PEER_REGISTRAR_2_URL: grpcs://peer-registrar-2.plv-main-campus.svc.cluster.local:7051

@@ -122,6 +122,22 @@ test('Kubernetes service-discovery URLs in application ConfigMaps resolve to dec
     }
 });
 
+test('ledger gateway uses static cross-namespace peer endpoints in Kubernetes', () => {
+    const middlewareConfig = byKey.get('plv-fabric/ConfigMap/middleware-service-config');
+    const gatewaySource = fs.readFileSync(path.join(repoRoot, 'middleware', 'src', 'fabric', 'gateway-manager.js'), 'utf8');
+
+    assert.equal(middlewareConfig?.data?.FABRIC_DISCOVERY_ENABLED, 'false');
+    assert.match(gatewaySource, /configured !== undefined &&[\s\S]*\['1', 'true', 'yes', 'on'\]/);
+    assert.doesNotMatch(gatewaySource, /return Boolean\(process\.env\.KUBERNETES_SERVICE_HOST\)/);
+    for (const endpoint of [
+        'peer-registrar.plv-main-campus.svc.cluster.local',
+        'peer-faculty.plv-annex-campus.svc.cluster.local',
+        'peer-department.plv-pubad-campus.svc.cluster.local'
+    ]) {
+        assert.match(gatewaySource, new RegExp(endpoint.replaceAll('.', '\\.')));
+    }
+});
+
 test('GKE Ingress sends every frontend API family to its owning gateway', () => {
     const ingress = byKey.get('plv-fabric/Ingress/main-ingress');
     assert.ok(ingress, 'main-ingress is missing');
