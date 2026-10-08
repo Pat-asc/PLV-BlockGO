@@ -699,6 +699,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     facultyEncodingStatus: 'In Progress',
                     reviewStatus: 'pending',
                     grades: {},
+                    referenceGrades: {},
                     students: [],
                     rawStudentEntries: [],
                     ipfsCid: g.ipfs_cid || g.IpfsCID || g.ipfsCid || null,
@@ -737,6 +738,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             const studentName = resolvedStudentIdentity.studentName || getRecordStudentName(g);
             const { firstName, lastName } = splitStudentName(studentName);
             const previousGrade = groups[key].grades[studentKey] || {};
+            const previousReference = groups[key].referenceGrades[studentKey] || {};
+            const referenceGrade = g.reference_grade ?? g.referenceGrade ?? g.ReferenceGrade;
             const mergedGrade = {
                 recordId: g.id || g.Id || previousGrade.recordId || '',
                 midterm: parsedGrade.midterm || previousGrade.midterm || '-',
@@ -757,6 +760,12 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 });
             }
             groups[key].grades[studentKey] = mergedGrade;
+            groups[key].referenceGrades[studentKey] = {
+                ...previousReference,
+                ...(referenceGrade !== null && referenceGrade !== undefined && String(referenceGrade).trim() !== ''
+                    ? { grade: referenceGrade }
+                    : {}),
+            };
             groups[key].encodedCount = Object.values(groups[key].grades).filter((grade) =>
                 activeEncodingTerm === 'finals'
                     ? hasEncodedValue(grade.finals) && grade.finals !== '-'
@@ -767,6 +776,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 studentNumber,
                 studentName,
                 grade: groups[key].grades[studentKey],
+                referenceGrade: groups[key].referenceGrades[studentKey],
             });
             
             let normalizedReviewStatus = 'pending';
@@ -822,6 +832,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
 
                 if (placeholderOnly || rosterStudents.length === g.students.length) {
                     const remappedGrades = {};
+                    const remappedReferenceGrades = {};
 
                     g.students = rosterStudents.map((student, index) => {
                         const rosterStudentId =
@@ -842,8 +853,13 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                             (rawEntry && rawEntry.grade) ||
                             g.grades[rosterStudentId] ||
                             {};
+                        const referenceGradeRecord =
+                            (rawEntry && rawEntry.referenceGrade) ||
+                            g.referenceGrades[rosterStudentId] ||
+                            {};
 
                         remappedGrades[rosterStudentId] = gradeRecord;
+                        remappedReferenceGrades[rosterStudentId] = referenceGradeRecord;
 
                         return {
                             studentId: rosterStudentId,
@@ -855,6 +871,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     });
 
                     g.grades = remappedGrades;
+                    g.referenceGrades = remappedReferenceGrades;
                 }
             }
 
@@ -960,6 +977,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             latestSelectedSection.latestStatusTimestamp !== selectedReviewSection.latestStatusTimestamp ||
             latestSelectedSection.encodedCount !== selectedReviewSection.encodedCount ||
             latestSelectedSection.finalizedAt !== selectedReviewSection.finalizedAt ||
+            latestSelectedSection.referenceGrades !== selectedReviewSection.referenceGrades ||
             nextSelectedSection.ipfsCid !== selectedReviewSection.ipfsCid;
         if (selectionChanged) {
             setSelectedReviewSection(nextSelectedSection);

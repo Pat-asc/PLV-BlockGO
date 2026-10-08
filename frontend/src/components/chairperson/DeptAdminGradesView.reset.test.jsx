@@ -24,6 +24,9 @@ jest.mock('../faculty/FacultyStatusTable', () => ({ rows = [], viewMode, loadErr
 jest.mock('./SectionReviewPanel', () => ({ selectedSection, onApprove, onFinalize, onSendBack }) => (
   <div>
     <span>{selectedSection.reviewNote}</span>
+    <span data-testid="reference-grade">
+      {selectedSection.referenceGrades?.[selectedSection.students?.[0]?.studentId]?.grade || '-'}
+    </span>
     <button type="button" onClick={() => onApprove('').catch(() => {})}>Approve selected section</button>
     <button type="button" onClick={() => onFinalize('').catch(() => {})}>Finalize selected section</button>
     <button type="button" onClick={() => onSendBack('Correct the encoded grade')}>Return selected section</button>
@@ -81,6 +84,24 @@ test('encoding-season reset clears and refetches Chairperson For Review without 
 
   await waitFor(() => expect(fetchAllGrades).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:0'));
+});
+
+test('maps the backend reference grade into the selected Chairperson comparison section', async () => {
+  fetchAllGrades.mockResolvedValue({ data: [{
+    id: 'comparison-grade', assignment_cycle_id: '41', student_no: '26-0001',
+    student_name: 'Reference Student', faculty_id: 'faculty@plv.edu.ph',
+    department: 'BSIT', course: 'BSIT', record_section: 'BSIT 1-1', section: 'BSIT 1-1',
+    subject_code: 'IT 101', school_year: '2026-2027', semester: 'FIRST', term: 'midterm',
+    status: 'SubmittedToChairperson', grade: JSON.stringify({ midterm: 85 }),
+    reference_grade: '82.50', integrity_status: 'MISMATCH',
+  }] });
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'For Review' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:1'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
+
+  expect(screen.getByTestId('reference-grade')).toHaveTextContent('82.50');
 });
 
 test('one realtime section event creates one notification and its listener is cleaned up', async () => {
