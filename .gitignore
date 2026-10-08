@@ -25,6 +25,11 @@ temp/
 *.cache
 *.cache.json
 /tests/*
+!/tests/GradeComparisonChecks/
+!/tests/GradeComparisonChecks/GradeComparisonChecks.csproj
+!/tests/GradeComparisonChecks/Program.cs
+/tests/GradeComparisonChecks/bin/
+/tests/GradeComparisonChecks/obj/
 !/tests/ClientIpForwardingChecks/
 !/tests/ClientIpForwardingChecks/ClientIpForwardingChecks.csproj
 !/tests/ClientIpForwardingChecks/Program.cs

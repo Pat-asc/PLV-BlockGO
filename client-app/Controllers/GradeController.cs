@@ -2506,6 +2506,7 @@ namespace BlockGo.Controllers
             try
             {
                 var allGrades = new List<AcademicRecord>();
+                var authoritativeLedgerGrades = new List<AcademicRecord>();
 
                 try {
                     var jsonResult = await _blockchainService.GetAllGradesAsync(invokerId);
@@ -2516,7 +2517,11 @@ namespace BlockGo.Controllers
                             dataElement.GetRawText(), 
                             new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
                         );
-                        if (blockchainGrades != null) allGrades.AddRange(blockchainGrades);
+                        if (blockchainGrades != null)
+                        {
+                            authoritativeLedgerGrades.AddRange(blockchainGrades);
+                            allGrades.AddRange(blockchainGrades);
+                        }
                     }
                 } catch (Exception ex) {
                     _logger.LogWarning(ex, "Could not fetch blockchain grades for role {Role}, user {User}", jwtRole, invokerId);
@@ -2714,6 +2719,9 @@ namespace BlockGo.Controllers
 
                 foreach(var g in allGrades) 
                 {
+                    var comparison = jwtRole == "department_admin" && pendingGradesById.ContainsKey(g.Id ?? string.Empty)
+                        ? GradeComparisonService.Compare(g, authoritativeLedgerGrades)
+                        : new GradeComparisonResult(null, null, GradeComparisonService.ReferenceNotFound);
                     registrarAssignments.TryGetValue(g.AssignmentCycleId ?? string.Empty, out var assignmentMetadata);
                     RegistrarGradeLedgerMetadataService.StudentIdentity? officialStudent = null;
                     if (!string.IsNullOrWhiteSpace(g.StudentNo)) registrarStudents.TryGetValue(g.StudentNo, out officialStudent);
@@ -2802,6 +2810,14 @@ namespace BlockGo.Controllers
                         { "term", g.Term ?? "" },
                         { "units", g.Units },
                         { "grade", g.Grade ?? "" },
+                        { "current_grade", comparison.CurrentGrade ?? "" },
+                        { "reference_grade", comparison.ReferenceGrade! },
+                        { "referenceGrade", comparison.ReferenceGrade! },
+                        { "integrity_status", comparison.IntegrityStatus },
+                        { "integrityStatus", comparison.IntegrityStatus },
+                        { "reference_record_id", comparison.ReferenceRecordId ?? "" },
+                        { "reference_grade_version", comparison.ReferenceGradeVersion ?? 0 },
+                        { "reference_transaction_id", comparison.ReferenceTransactionId ?? "" },
                         { "semester", FirstNonBlank(assignmentMetadata?.Semester, g.Semester) },
                         { "school_year", FirstNonBlank(assignmentMetadata?.SchoolYear, g.SchoolYear) },
                         { "schoolYear", FirstNonBlank(assignmentMetadata?.SchoolYear, g.SchoolYear) },
