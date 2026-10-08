@@ -157,18 +157,51 @@ test('comparison rows align by authoritative Student ID without changing grade m
   const bodyRows = within(tables[0]).getAllByRole('row').slice(1);
   const referenceRows = within(tables[1]).getAllByRole('row').slice(1);
   expect(bodyRows.map((row) => within(row).getAllByRole('cell')[1].textContent)).toEqual([
-    'Reyes, Carla', 'Abarquez, Ana', 'Cruz, Juan A', 'Cruz, Juan B', 'Cruz, Juan A',
+    'Abarquez, Ana', 'Cruz, Juan A', 'Cruz, Juan A', 'Cruz, Juan B', 'Reyes, Carla',
   ]);
   expect(bodyRows.map((row) => within(row).getAllByRole('cell')[0].textContent)).toEqual([
-    '26-0001', '26-0002', '26-0003', '26-0004', '26-0005',
+    '26-0002', '26-0003', '26-0005', '26-0004', '26-0001',
   ]);
-  expect(within(bodyRows[0]).getByText('91')).toBeInTheDocument();
-  expect(within(bodyRows[1]).getByText('95')).toBeInTheDocument();
-  expect(within(referenceRows[0]).getByText('81')).toBeInTheDocument();
-  expect(within(referenceRows[1]).getByText('85')).toBeInTheDocument();
+  expect(within(bodyRows[0]).getByText('95')).toBeInTheDocument();
+  expect(within(bodyRows[4]).getByText('91')).toBeInTheDocument();
+  expect(within(referenceRows[0]).getByText('85')).toBeInTheDocument();
+  expect(within(referenceRows[4]).getByText('81')).toBeInTheDocument();
   expect(students.map((student) => student.studentNo)).toEqual([
     '26-0001', '26-0004', '26-0005', '26-0003', '26-0002',
   ]);
+});
+
+test("high finals equivalents highlight the student's name as a Dean's List grade-range candidate", () => {
+  const selectedSection = {
+    ...section,
+    totalStudents: 2,
+    encodedCount: 2,
+    students: [
+      { studentId: '26-0001', fullName: 'Candidate Student' },
+      { studentId: '26-0002', fullName: 'Regular Student' },
+    ],
+    grades: {
+      '26-0001': { midterm: '91.50', finals: '91.50', standing: 'active' },
+      '26-0002': { midterm: '86', finals: '84', standing: 'active' },
+    },
+  };
+
+  render(<SectionReviewPanel {...{
+    selectedSection, activeTerm: 'finals', onSendBack: jest.fn(), onApprove: jest.fn(),
+    onFinalize: jest.fn(), onViewIpfs: jest.fn(),
+  }} />);
+
+  expect(screen.getByText(/Official eligibility still depends on all semester subjects/)).toBeInTheDocument();
+  expect(screen.getAllByText('91.50')).toHaveLength(2);
+  expect(screen.getAllByText('Candidate Student')).toHaveLength(2);
+  screen.getAllByText('Candidate Student').forEach((name) => {
+    expect(name).toHaveAttribute('data-deans-list-candidate', 'true');
+    expect(name).toHaveClass('bg-amber-200');
+  });
+  screen.getAllByText('Regular Student').forEach((name) => {
+    expect(name).toHaveAttribute('data-deans-list-candidate', 'false');
+    expect(name).not.toHaveClass('bg-amber-200');
+  });
 });
 
 test('approval requires confirmation and cancel makes no request', () => {

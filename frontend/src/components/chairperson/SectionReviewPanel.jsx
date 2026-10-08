@@ -31,6 +31,20 @@ const compareStudentReviewRows = (left, right) => {
   return 0;
 };
 
+const compareGradeReviewRows = (left, right, activeTerm) => {
+  const gradeField = String(activeTerm).toLowerCase() === "finals" ? "finals" : "midterm";
+  const leftGrade = Number(left[gradeField]);
+  const rightGrade = Number(right[gradeField]);
+  const leftHasGrade = Number.isFinite(leftGrade) && leftGrade > 0;
+  const rightHasGrade = Number.isFinite(rightGrade) && rightGrade > 0;
+
+  if (leftHasGrade && rightHasGrade && leftGrade !== rightGrade) {
+    return rightGrade - leftGrade;
+  }
+  if (leftHasGrade !== rightHasGrade) return leftHasGrade ? -1 : 1;
+  return compareStudentReviewRows(left, right);
+};
+
 function SectionReviewPanel({
   selectedSection,
   activeTerm,
@@ -123,6 +137,15 @@ function SectionReviewPanel({
         finalAverage !== "-" && !Number.isNaN(Number(finalAverage))
           ? getGradeEquivalent(Number(finalAverage))
           : finalAverage;
+      const standing = record.standing || "active";
+      const normalizedStanding = String(standing).toLowerCase();
+      const equivalentNumber = Number(gradeEquivalent);
+      const isDeansListCandidate =
+        String(activeTerm).toLowerCase() === "finals" &&
+        Number.isFinite(equivalentNumber) &&
+        equivalentNumber > 0 &&
+        equivalentNumber <= 1.75 &&
+        !["dropped", "unofficially_dropped", "withdrawn", "incomplete"].includes(normalizedStanding);
 
       return {
         id: studentId,
@@ -144,11 +167,12 @@ function SectionReviewPanel({
           (String(activeTerm).toLowerCase() === 'finals' ? record.midterm : "-"),
         finalAverage,
         gradeEquivalent,
-        standing: record.standing || "active",
+        standing,
+        isDeansListCandidate,
         flagged: !!record.flagged,
         status: computeGradeStatus(record, activeTerm),
       };
-    }).sort(compareStudentReviewRows);
+    }).sort((left, right) => compareGradeReviewRows(left, right, activeTerm));
   }, [selectedSection, activeTerm]);
 
   const summary = useMemo(() => {
@@ -296,12 +320,18 @@ function SectionReviewPanel({
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
             <h3 className="text-lg font-bold text-[#003366]">Grade Comparison</h3>
-            <p className="text-sm text-slate-500">Rows are aligned by authoritative Student ID, never by name or array position.</p>
+            <p className="text-sm text-slate-500">Rows are ranked by the submitted grade from highest to lowest and remain aligned by authoritative Student ID.</p>
+            {String(activeTerm).toLowerCase() === "finals" ? (
+              <p className="mt-1 flex items-center gap-2 text-xs text-amber-800">
+                <span className="h-3 w-3 rounded-sm bg-amber-200 ring-1 ring-amber-400" aria-hidden="true" />
+                Highlighted names have a final grade in the Dean&apos;s List range (1.75 or better). Official eligibility still depends on all semester subjects.
+              </p>
+            ) : null}
           </div>
         </div>
         <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-2" data-testid="grade-comparison-grid">
-          <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200"><h4 className="sticky left-0 bg-[#003366] px-4 py-3 font-bold text-white">Current / Submitted</h4><table className="min-w-[680px] table-fixed text-sm"><thead className="bg-slate-100 text-left"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">{getEncodingTermLabel(activeTerm)}</th><th className="w-28 px-3 py-2">Status</th><th className="w-32 px-3 py-2">Ledger History</th></tr></thead><tbody>{rows.map((row) => <tr key={`current-${row.id}`} className={`border-t ${row.flagged ? 'bg-red-50' : ''}`}><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium">{row.name}</td><td className="px-3 py-2 font-semibold">{String(activeTerm).toLowerCase() === 'finals' ? row.finals : row.midterm}</td><td className="break-words px-3 py-2 capitalize">{String(row.status).replaceAll('_', ' ')}</td><td className="px-3 py-2">{selectedSection.reviewStatus === 'forwarded' && row.recordId ? <GradeVersionHistory recordId={row.recordId} allowCorrection /> : <span className="text-xs text-slate-400">Not yet finalized</span>}</td></tr>)}</tbody></table></div>
-          <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200"><h4 className="sticky left-0 bg-slate-700 px-4 py-3 font-bold text-white">Comparison / Reference</h4><table className="min-w-[560px] table-fixed text-sm"><thead className="bg-slate-100 text-left"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">Reference</th><th className="w-28 px-3 py-2">Standing</th></tr></thead><tbody>{rows.map((row) => <tr key={`reference-${row.id}`} className="border-t"><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium">{row.name}</td><td className="px-3 py-2 font-semibold">{row.referenceGrade}</td><td className="break-words px-3 py-2 capitalize">{String(row.standing).replaceAll('_', ' ')}</td></tr>)}</tbody></table></div>
+          <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200"><h4 className="sticky left-0 bg-[#003366] px-4 py-3 font-bold text-white">Current / Submitted</h4><table className="min-w-[680px] table-fixed text-sm"><thead className="bg-slate-100 text-left"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">{getEncodingTermLabel(activeTerm)}</th><th className="w-28 px-3 py-2">Status</th><th className="w-32 px-3 py-2">Ledger History</th></tr></thead><tbody>{rows.map((row) => <tr key={`current-${row.id}`} className={`border-t ${row.flagged ? 'bg-red-50' : ''}`}><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium"><span data-deans-list-candidate={row.isDeansListCandidate ? "true" : "false"} title={row.isDeansListCandidate ? "Dean's List grade-range candidate" : undefined} className={row.isDeansListCandidate ? "rounded bg-amber-200 px-1.5 py-0.5 font-bold text-amber-950 ring-1 ring-amber-400" : ""}>{row.name}</span></td><td className="px-3 py-2 font-semibold">{String(activeTerm).toLowerCase() === 'finals' ? row.finals : row.midterm}</td><td className="break-words px-3 py-2 capitalize">{String(row.status).replaceAll('_', ' ')}</td><td className="px-3 py-2">{selectedSection.reviewStatus === 'forwarded' && row.recordId ? <GradeVersionHistory recordId={row.recordId} allowCorrection /> : <span className="text-xs text-slate-400">Not yet finalized</span>}</td></tr>)}</tbody></table></div>
+          <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200"><h4 className="sticky left-0 bg-slate-700 px-4 py-3 font-bold text-white">Comparison / Reference</h4><table className="min-w-[560px] table-fixed text-sm"><thead className="bg-slate-100 text-left"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">Reference</th><th className="w-28 px-3 py-2">Standing</th></tr></thead><tbody>{rows.map((row) => <tr key={`reference-${row.id}`} className="border-t"><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium"><span data-deans-list-candidate={row.isDeansListCandidate ? "true" : "false"} title={row.isDeansListCandidate ? "Dean's List grade-range candidate" : undefined} className={row.isDeansListCandidate ? "rounded bg-amber-200 px-1.5 py-0.5 font-bold text-amber-950 ring-1 ring-amber-400" : ""}>{row.name}</span></td><td className="px-3 py-2 font-semibold">{row.referenceGrade}</td><td className="break-words px-3 py-2 capitalize">{String(row.standing).replaceAll('_', ' ')}</td></tr>)}</tbody></table></div>
         </div>
       </div>
 
