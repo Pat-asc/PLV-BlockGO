@@ -49,6 +49,70 @@ test('finals review renders preserved Midterm and active Finals values', () => {
   expect(screen.getByText('90')).toBeInTheDocument();
 });
 
+test('section review details reports active Midterm outcomes and special standings', () => {
+  const students = [
+    { studentId: '26-0001', fullName: 'Passing Student' },
+    { studentId: '26-0002', fullName: 'Failing Student' },
+    { studentId: '26-0003', fullName: 'Dropped Student' },
+    { studentId: '26-0004', fullName: 'Unofficially Dropped Student' },
+    { studentId: '26-0005', fullName: 'Withdrawn Student' },
+    { studentId: '26-0006', fullName: 'Incomplete Student' },
+    { studentId: '26-0007', fullName: 'Pending Student' },
+  ];
+  const selectedSection = {
+    ...section,
+    totalStudents: students.length,
+    encodedCount: 6,
+    students,
+    grades: {
+      '26-0001': { midterm: '85', standing: 'active', flagged: true },
+      '26-0002': { midterm: '70', standing: 'active' },
+      '26-0003': { midterm: '-', standing: 'dropped' },
+      '26-0004': { midterm: '-', standing: 'unofficially_dropped' },
+      '26-0005': { midterm: '-', standing: 'withdrawn' },
+      '26-0006': { midterm: '-', standing: 'incomplete' },
+      '26-0007': { midterm: '-', standing: 'active' },
+    },
+  };
+
+  render(<SectionReviewPanel {...{
+    selectedSection, activeTerm: 'midterm', onSendBack: jest.fn(), onApprove: jest.fn(),
+    onFinalize: jest.fn(), onViewIpfs: jest.fn(),
+  }} />);
+
+  expect(screen.getByText('Passed').parentElement).toHaveTextContent('Passed1');
+  expect(screen.getByText('Failed').parentElement).toHaveTextContent('Failed1');
+  expect(screen.getByText('D').parentElement).toHaveTextContent('D1');
+  expect(screen.getByText('UD').parentElement).toHaveTextContent('UD1');
+  expect(screen.getByText('W').parentElement).toHaveTextContent('W1');
+  expect(screen.getByText('INC').parentElement).toHaveTextContent('INC1');
+  expect(screen.getByText('Flagged').parentElement).toHaveTextContent('Flagged1');
+});
+
+test('section review details uses the combined grade for Finals outcomes', () => {
+  const selectedSection = {
+    ...section,
+    totalStudents: 2,
+    encodedCount: 2,
+    students: [
+      { studentId: '26-0001', fullName: 'Passing Student' },
+      { studentId: '26-0002', fullName: 'Failing Student' },
+    ],
+    grades: {
+      '26-0001': { midterm: '80', finals: '70', standing: 'active' },
+      '26-0002': { midterm: '74', finals: '74', standing: 'active' },
+    },
+  };
+
+  render(<SectionReviewPanel {...{
+    selectedSection, activeTerm: 'finals', onSendBack: jest.fn(), onApprove: jest.fn(),
+    onFinalize: jest.fn(), onViewIpfs: jest.fn(),
+  }} />);
+
+  expect(screen.getByText('Passed').parentElement).toHaveTextContent('Passed1');
+  expect(screen.getByText('Failed').parentElement).toHaveTextContent('Failed1');
+});
+
 test('staged grade IDs do not expose Fabric history before finalization', () => {
   renderPanel('midterm');
 

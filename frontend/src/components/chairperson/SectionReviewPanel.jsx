@@ -155,12 +155,10 @@ function SectionReviewPanel({
     return rows.reduce(
       (acc, row) => {
         const normalizedStanding = String(row.standing || "").toLowerCase();
-        const numericFinalAverage = Number(row.finalAverage);
+        const normalizedStatus = String(row.status || "").toLowerCase();
 
-        if (Number.isFinite(numericFinalAverage)) {
-          if (numericFinalAverage >= 75) acc.passed += 1;
-          else acc.failed += 1;
-        }
+        if (normalizedStatus === "passed") acc.passed += 1;
+        if (normalizedStatus === "failed") acc.failed += 1;
 
         if (normalizedStanding === "dropped") acc.d += 1;
         if (normalizedStanding === "unofficially_dropped") acc.ud += 1;
