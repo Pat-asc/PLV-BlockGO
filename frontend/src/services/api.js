@@ -278,8 +278,8 @@ export const getAllGrades = async (invokerId = 'system') => {
     return await fetchWithAuth(`/Grades/all?invokerId=${encodeURIComponent(invokerId)}`);
 };
 
-export const fetchAllGrades = async (invokerId) => {
-    return await fetchWithAuth(`/Grades/all?invokerId=${encodeURIComponent(invokerId)}`);
+export const fetchAllGrades = async (invokerId, options = {}) => {
+    return await fetchWithAuth(`/Grades/all?invokerId=${encodeURIComponent(invokerId)}`, options);
 };
 
 export const issueGradeToBlockchain = async (gradeData) => {
@@ -522,6 +522,14 @@ export const fetchChairpersonGradeRecords = async (invokerId = 'chairperson') =>
 export const approveGrade = async (recordIds, invokerId) => {
     const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
     return await fetchWithAuth(`/Grades/approve?invokerId=${encodeURIComponent(invokerId)}`, {
+        method: 'POST',
+        body: JSON.stringify({ recordIds: ids })
+    });
+};
+
+export const sendGradesToRegistrar = async (recordIds) => {
+    const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
+    return await fetchWithAuth('/Grades/send-to-registrar', {
         method: 'POST',
         body: JSON.stringify({ recordIds: ids })
     });

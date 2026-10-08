@@ -9,7 +9,7 @@ const expected = {
     '/api/fabric/register-user': 'identity', '/api/enroll': 'identity', '/api/register': 'identity', '/api/revoke': 'identity', '/api/wallet/person@example.edu': 'identity',
     '/api/all-grades': 'ledger', '/api/student-transactions': 'ledger', '/api/admin/ledger-transactions': 'ledger', '/api/grade-history/GRADE-1': 'ledger',
     '/api/fabric/audit-event': 'ledger', '/api/issue-grade': 'ledger', '/api/get-grade/GRADE-1': 'ledger',
-    '/api/update-grade': 'ledger', '/api/correct-finalized-grade': 'ledger', '/api/approve-grade/GRADE-1': 'ledger', '/api/finalize-grade/GRADE-1': 'ledger',
+    '/api/update-grade': 'ledger', '/api/correct-finalized-grade': 'ledger', '/api/finalize-approved-grades': 'ledger', '/api/approve-grade/GRADE-1': 'ledger', '/api/finalize-grade/GRADE-1': 'ledger',
     '/api/return-grade/GRADE-1': 'ledger', '/api/batch-issue-grade': 'ledger',
     '/api/batch-upload': 'upload', '/api/upload-grades': 'upload',
     '/api/SystemSettings': 'settings', '/api/SystemSettings/EncodingPeriod': 'settings', '/api/SystemSettings/reset-season': 'settings'
@@ -31,6 +31,7 @@ test('documented compatibility routes expose their intended HTTP methods', () =>
     assert.deepEqual(allowedMethods('/api/crypto/hash-password'), ['POST']);
     assert.deepEqual(allowedMethods('/api/password-reset-assistance'), ['POST']);
     assert.deepEqual(allowedMethods('/api/correct-finalized-grade'), ['POST']);
+    assert.deepEqual(allowedMethods('/api/finalize-approved-grades'), ['POST']);
     assert.deepEqual(allowedMethods('/api/SystemSettings/EncodingPeriod'), ['GET']);
     assert.deepEqual(allowedMethods('/api/SystemSettings/reset-season'), ['POST']);
 });

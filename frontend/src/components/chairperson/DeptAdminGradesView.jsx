@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { fetchAllGrades, approveGrade, returnGrade, batchUploadGrades, fetchDepartmentSections, batchEnrollStudentsToSection, dropStudent, fetchApprovedFaculties, unassignFacultySection, openDecryptedIpfsFile, getSystemSetting, issueGrade } from '../../services/api';
+import { fetchAllGrades, approveGrade, sendGradesToRegistrar, returnGrade, batchUploadGrades, fetchDepartmentSections, batchEnrollStudentsToSection, dropStudent, fetchApprovedFaculties, unassignFacultySection, openDecryptedIpfsFile, getSystemSetting, issueGrade } from '../../services/api';
 import { useNotification } from '../../services/NotificationContext';
 import ChairpersonHeader from './ChairpersonHeader';
 import ChairpersonSidebar from './ChairpersonSidebar';
@@ -28,7 +28,7 @@ const ASSIGNMENT_CHANGE_REASONS = new Set([
 const GRADE_CHANGE_REASONS = new Set([
     'grade_recorded', 'section_submitted', 'grades_bulk_uploaded', 'grade_corrected', 'grade_approved',
     'grade_finalized', 'finals_grade_submitted', 'grade_flagged', 'grade_unflagged', 'grade_returned',
-    'academic_status_updated', 'student_grades_released', 'encoding_season_reset',
+    'grades_sent_to_registrar', 'academic_status_updated', 'student_grades_released', 'encoding_season_reset',
 ]);
 
 const getRecordGrade = (record) => record?.grade || record?.Grade || '';
@@ -168,14 +168,34 @@ const normalizeFacultyIdentity = (value = '') => {
     return normalizeText(normalized);
 };
 
+const readRawJsonScalar = (rawJson, keys) => {
+    for (const key of keys) {
+        const escapedKey = String(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const match = String(rawJson).match(new RegExp(`"${escapedKey}"\\s*:\\s*(?:"((?:\\\\.|[^"\\\\])*)"|([^,}\\s]+))`, 'i'));
+        if (!match) continue;
+        if (match[1] !== undefined) {
+            try {
+                return JSON.parse(`"${match[1]}"`);
+            } catch {
+                return match[1];
+            }
+        }
+        if (match[2] !== undefined && !['null', 'undefined'].includes(match[2].toLowerCase())) return match[2];
+    }
+    return undefined;
+};
+
 const parseStoredGrade = (rawGrade) => {
     if (!rawGrade) return { midterm: '', finals: '', finalAverage: '', standing: 'active', flagged: false };
     if (typeof rawGrade === 'number') return { midterm: '', finals: '', finalAverage: rawGrade, standing: 'active', flagged: false };
     if (typeof rawGrade === 'string' && rawGrade.trim().startsWith('{')) {
         try {
             const parsed = JSON.parse(rawGrade);
+            const preservedMidterm = readRawJsonScalar(rawGrade, ['midterm', 'midterms', 'midtermGrade', 'midterm_grade']);
+            const preservedFinals = readRawJsonScalar(rawGrade, ['finals', 'final', 'finalGrade', 'final_grade', 'finalsGrade', 'finals_grade']);
+            const preservedAverage = readRawJsonScalar(rawGrade, ['finalAverage', 'grade']);
                 
-                let computedRaw = parsed.finalAverage || parsed.final || parsed.grade || '';
+                let computedRaw = preservedAverage ?? parsed.finalAverage ?? parsed.final ?? parsed.grade ?? '';
                 const mid = parseFloat(parsed.midterm);
                 const fin = parseFloat(parsed.finals);
                 if (!isNaN(mid) && !isNaN(fin)) {
@@ -187,8 +207,8 @@ const parseStoredGrade = (rawGrade) => {
                 }
 
             return {
-                midterm: parsed.midterm || '',
-                finals: parsed.finals || '',
+                midterm: preservedMidterm ?? parsed.midterm ?? '',
+                finals: preservedFinals ?? parsed.finals ?? '',
                     finalAverage: computedRaw,
                 standing: parsed.standing || parsed.remarks || 'active',
                 flagged: !!parsed.flagged,
@@ -510,6 +530,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     const [activeEncodingTerm, setActiveEncodingTerm] = useState("midterm");
     const academicEventGuardRef = useRef(createAcademicEventGuard());
     const approveInFlightRef = useRef(false);
+    const sendToRegistrarInFlightRef = useRef(false);
+    const gradesRequestGenerationRef = useRef(0);
 
     useEffect(() => {
         const fetchThreshold = async () => {
@@ -715,6 +737,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     latestStatusTimestamp: 0,
                     latestStatusPriority: 0,
                     reviewNote: '',
+                    workflowStatuses: new Set(),
                 };
             }
             
@@ -792,6 +815,9 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             else if (status.includes('departmentapproved') || status.includes('chairpersonapproved') || status === 'approved') normalizedReviewStatus = 'approved';
             else if (status.includes('issued') || status.includes('submitted') || status === '') normalizedReviewStatus = 'submitted';
             else if (status.includes('returned') || status.includes('rejected')) normalizedReviewStatus = 'returned';
+            groups[key].workflowStatuses.add(normalizedReviewStatus);
+            groups[key].hasChairpersonApproved = groups[key].hasChairpersonApproved || status.includes('chairpersonapproved');
+            groups[key].hasDepartmentApproved = groups[key].hasDepartmentApproved || status.includes('departmentapproved');
 
             const incomingTimestamp = parseStatusTimestamp(g.date || g.Date);
             const incomingPriority = SECTION_STATUS_PRIORITY[normalizedReviewStatus] || 0;
@@ -812,6 +838,17 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             }
         });
         return Object.values(groups).map(g => {
+            if (g.workflowStatuses.size === 1 && g.workflowStatuses.has('forwarded')) {
+                g.reviewStatus = 'forwarded';
+            } else if (g.workflowStatuses.has('approved')) {
+                g.reviewStatus = 'approved';
+            } else if (g.workflowStatuses.has('submitted')) {
+                g.reviewStatus = 'submitted';
+            } else if (g.workflowStatuses.has('returned')) {
+                g.reviewStatus = 'returned';
+            }
+            g.canSendToRegistrar = g.reviewStatus === 'approved' && Boolean(g.hasChairpersonApproved);
+            g.sentToRegistrar = g.reviewStatus === 'approved' && !g.hasChairpersonApproved && Boolean(g.hasDepartmentApproved);
             const matchedAssignment = resolveAssignmentForSectionGroup(
                 g,
                 savedAssignments,
@@ -933,6 +970,10 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     }, [activeEncodingTerm, departmentFaculties, grades]);
 
     useEffect(() => {
+        setSelectedReviewSection(null);
+    }, [mainTab]);
+
+    useEffect(() => {
         if (!selectedReviewSection?.reviewKey) return;
 
         const latestSelectedSection =
@@ -998,12 +1039,16 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     }, [facultyRows, grades, selectedReviewSection]);
 
     const loadGrades = useCallback(async () => {
+        const requestGeneration = gradesRequestGenerationRef.current + 1;
+        gradesRequestGenerationRef.current = requestGeneration;
         try {
-            const response = await fetchAllGrades(loggedInEmail);
+            const response = await fetchAllGrades(loggedInEmail, { cache: 'no-store' });
+            if (requestGeneration !== gradesRequestGenerationRef.current) return false;
             setGrades(Array.isArray(response) ? response : (response.data || []));
             setGradesLoadError('');
             return true;
         } catch (error) {
+            if (requestGeneration !== gradesRequestGenerationRef.current) return false;
             console.error('Could not load Chairperson grade tracking.', {
                 department,
                 message: error.message,
@@ -1240,7 +1285,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             const refreshed = await loadGrades();
             addNotification(
                 refreshed
-                    ? "Section approved and moved to the Finalize queue."
+                    ? "Section approved. It is ready to be sent to the Registrar."
                     : "Section approved, but the tracking list could not be refreshed.",
                 refreshed ? "success" : "warning"
             );
@@ -1250,6 +1295,54 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             throw e;
         } finally {
             approveInFlightRef.current = false;
+        }
+    };
+
+    const handleSendToRegistrar = async () => {
+        if (!selectedReviewSection) throw new Error('Select an approved section before sending.');
+        if (sendToRegistrarInFlightRef.current) return;
+        sendToRegistrarInFlightRef.current = true;
+        try {
+            const recordsToSend = grades.filter((g) => {
+                const normalizedFacultyId = normalizeFacultyIdentity(g.facultyId || g.faculty_id || g.FacultyId || 'Unknown');
+                const subjectCode = g.subject_code || g.subjectCode || g.SubjectCode || '';
+                const departmentName = g.department || g.course || g.Course || '';
+                const sectionName = getRecordSectionKey(g) || g.record_section || buildSectionDisplayName({
+                    departmentName,
+                    sectionValue: g.student_section || g.studentSection || '',
+                    subjectCode,
+                }) || departmentName;
+                const schoolYear = g.schoolYear || g.SchoolYear || '2024';
+                const semester = g.semester || g.Semester || '2nd Semester';
+                const gradingTerm = normalizeGradeTerm(g.term || g.Term || activeEncodingTerm);
+                const status = normalizeText(g.status || g.Status);
+
+                return normalizeText(normalizedFacultyId) === normalizeText(selectedReviewSection.facultyId) &&
+                    normalizeText(sectionName) === normalizeText(selectedReviewSection.sectionName) &&
+                    normalizeText(subjectCode) === normalizeText(selectedReviewSection.subjectCode) &&
+                    normalizeText(schoolYear) === normalizeText(selectedReviewSection.schoolYear) &&
+                    normalizeText(semester) === normalizeText(selectedReviewSection.semester) &&
+                    gradingTerm === normalizeGradeTerm(selectedReviewSection.term) &&
+                    status === 'chairpersonapproved';
+            });
+
+            if (!recordsToSend.length) {
+                throw new Error('This section has already been sent or is no longer eligible for handoff. Refresh the Approved Grades tab.');
+            }
+            await sendGradesToRegistrar(recordsToSend.map((grade) => grade.id));
+            const refreshed = await loadGrades();
+            addNotification(
+                refreshed
+                    ? 'Approved grades sent to the Registrar Finalize queue.'
+                    : 'Grades were sent, but the Approved Grades list could not be refreshed.',
+                refreshed ? 'success' : 'warning'
+            );
+        } catch (error) {
+            await loadGrades();
+            addNotification(`Error sending grades to Registrar: ${error.message}`, 'error');
+            throw error;
+        } finally {
+            sendToRegistrarInFlightRef.current = false;
         }
     };
 
@@ -1524,6 +1617,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                     selectedSection={selectedReviewSection} 
                                     activeTerm={activeEncodingTerm}
                                     onApprove={handleBulkApprove} 
+                                    onSendToRegistrar={handleSendToRegistrar}
                                     onSendBack={(notes) => handleBulkReturn(notes)} 
                                     onViewIpfs={handleViewIpfs}
                                     onBack={() => setSelectedReviewSection(null)}

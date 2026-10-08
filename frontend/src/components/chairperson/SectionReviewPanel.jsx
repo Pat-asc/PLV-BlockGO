@@ -50,7 +50,7 @@ function SectionReviewPanel({
   activeTerm,
   onSendBack,
   onApprove,
-  onFinalize,
+  onSendToRegistrar,
   onViewIpfs,
   onBack,
 }) {
@@ -58,11 +58,11 @@ function SectionReviewPanel({
   const [approveConfirmationOpen, setApproveConfirmationOpen] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [approveError, setApproveError] = useState("");
-  const [finalizeConfirmationOpen, setFinalizeConfirmationOpen] = useState(false);
-  const [isFinalizing, setIsFinalizing] = useState(false);
-  const [finalizeError, setFinalizeError] = useState("");
+  const [handoffConfirmationOpen, setHandoffConfirmationOpen] = useState(false);
+  const [isSendingToRegistrar, setIsSendingToRegistrar] = useState(false);
+  const [handoffError, setHandoffError] = useState("");
   const approveInFlightRef = useRef(false);
-  const finalizeInFlightRef = useRef(false);
+  const handoffInFlightRef = useRef(false);
   const note = selectedSection
     ? draftNotes[selectedSection.reviewKey] ?? selectedSection.reviewNote ?? ""
     : "";
@@ -72,10 +72,10 @@ function SectionReviewPanel({
     setApproveError("");
     approveInFlightRef.current = false;
     setIsApproving(false);
-    setFinalizeConfirmationOpen(false);
-    setFinalizeError("");
-    finalizeInFlightRef.current = false;
-    setIsFinalizing(false);
+    setHandoffConfirmationOpen(false);
+    setHandoffError("");
+    handoffInFlightRef.current = false;
+    setIsSendingToRegistrar(false);
   }, [selectedSection?.reviewKey]);
 
   const confirmApprove = async () => {
@@ -94,19 +94,19 @@ function SectionReviewPanel({
     }
   };
 
-  const confirmFinalize = async () => {
-    if (finalizeInFlightRef.current) return;
-    finalizeInFlightRef.current = true;
-    setIsFinalizing(true);
-    setFinalizeError("");
+  const confirmHandoff = async () => {
+    if (handoffInFlightRef.current) return;
+    handoffInFlightRef.current = true;
+    setIsSendingToRegistrar(true);
+    setHandoffError("");
     try {
-      await onFinalize(note);
-      setFinalizeConfirmationOpen(false);
+      await onSendToRegistrar();
+      setHandoffConfirmationOpen(false);
     } catch (error) {
-      setFinalizeError(error?.message || "Finalization could not be completed. Please try again.");
+      setHandoffError(error?.message || "The grades could not be sent to the Registrar. Please refresh and try again.");
     } finally {
-      finalizeInFlightRef.current = false;
-      setIsFinalizing(false);
+      handoffInFlightRef.current = false;
+      setIsSendingToRegistrar(false);
     }
   };
 
@@ -359,7 +359,7 @@ function SectionReviewPanel({
         <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <button
             onClick={() => onSendBack(note)}
-            disabled={!note.trim() || selectedSection.reviewStatus === "forwarded"}
+            disabled={!note.trim() || selectedSection.reviewStatus === "forwarded" || selectedSection.sentToRegistrar}
             className="min-h-10 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             Send Back to Faculty
@@ -374,18 +374,16 @@ function SectionReviewPanel({
           >
             {isApproving ? "Approving…" : "Approve Section"}
           </button>
-          {onFinalize ? <button
+          {(selectedSection.reviewStatus === "approved" || selectedSection.reviewStatus === "forwarded") && <button
             onClick={() => {
-              setFinalizeError("");
-              setFinalizeConfirmationOpen(true);
+              setHandoffError("");
+              setHandoffConfirmationOpen(true);
             }}
-            disabled={selectedSection.reviewStatus !== "approved" || isFinalizing}
+            disabled={!onSendToRegistrar || !selectedSection.canSendToRegistrar || isSendingToRegistrar}
             className="min-h-10 rounded-lg bg-[#003366] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#00264d] disabled:cursor-not-allowed disabled:bg-slate-300"
           >
-            {isFinalizing ? "Finalizingâ€¦" : "Finalize Grades"}
-          </button> : selectedSection.reviewStatus === "approved" ? (
-            <p className="rounded-lg bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800">Awaiting Registrar finalization</p>
-          ) : null}
+            Send to Registrar
+          </button>}
         </div>
       </div>
 
@@ -393,7 +391,7 @@ function SectionReviewPanel({
         isOpen={approveConfirmationOpen}
         onClose={() => { if (!isApproving) setApproveConfirmationOpen(false); }}
         title="Approve Grades"
-        description="Are you sure you want to approve these grades? Once approved, they will move to the Finalize Queue for final review."
+        description="Are you sure you want to approve these grades? Once approved, they can be sent to the Registrar for finalization."
         closeOnBackdrop={!isApproving}
         closeOnEscape={!isApproving}
       >
@@ -406,20 +404,20 @@ function SectionReviewPanel({
         </div>
       </Modal>
 
-      {onFinalize ? <Modal
-        isOpen={finalizeConfirmationOpen}
-        onClose={() => { if (!isFinalizing) setFinalizeConfirmationOpen(false); }}
-        title="Finalize Grades"
-        description="Are you sure you want to finalize these grades? Once finalized, they will become visible to the student and available to the Registrar."
-        closeOnBackdrop={!isFinalizing}
-        closeOnEscape={!isFinalizing}
+      {onSendToRegistrar ? <Modal
+        isOpen={handoffConfirmationOpen}
+        onClose={() => { if (!isSendingToRegistrar) setHandoffConfirmationOpen(false); }}
+        title="Send to Registrar"
+        description="Send this approved section to the Registrar Finalize queue? The approved grade values will not be changed."
+        closeOnBackdrop={!isSendingToRegistrar}
+        closeOnEscape={!isSendingToRegistrar}
       >
-        {finalizeError && (
-          <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{finalizeError}</p>
+        {handoffError && (
+          <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{handoffError}</p>
         )}
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-          <button type="button" onClick={() => setFinalizeConfirmationOpen(false)} disabled={isFinalizing} className="min-h-11 rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
-          <button type="button" onClick={confirmFinalize} disabled={isFinalizing} className="min-h-11 rounded-xl bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400">{isFinalizing ? "Finalizing…" : "Finalize Grades"}</button>
+          <button type="button" onClick={() => setHandoffConfirmationOpen(false)} disabled={isSendingToRegistrar} className="min-h-11 rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+          <button type="button" onClick={confirmHandoff} disabled={isSendingToRegistrar} className="min-h-11 rounded-xl bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400">Send to Registrar</button>
         </div>
       </Modal> : null}
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">

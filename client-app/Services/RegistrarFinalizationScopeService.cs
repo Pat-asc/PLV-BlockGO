@@ -28,7 +28,7 @@ public static class RegistrarFinalizationScopeService
              AND LOWER(TRIM(fs.school_year)) = LOWER(TRIM(pgr.school_year))
              AND LOWER(TRIM(fs.semester)) = LOWER(TRIM(pgr.semester))
              AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(pgr.subject_code))
-            WHERE LOWER(TRIM(pgr.status)) IN ('chairpersonapproved', 'departmentapproved')
+            WHERE LOWER(TRIM(pgr.status)) = 'departmentapproved'
               AND LOWER(TRIM(pgr.semester)) = LOWER(TRIM(@semester))
               AND LOWER(TRIM(pgr.term)) = LOWER(TRIM(@term))
             ORDER BY pgr.school_year, pgr.semester, pgr.course, pgr.section,

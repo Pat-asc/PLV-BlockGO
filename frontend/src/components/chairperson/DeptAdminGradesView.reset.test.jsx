@@ -1,9 +1,9 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import DeptAdminGradesView, { resolveRawStudentEntry } from './DeptAdminGradesView';
 import {
   approveGrade, fetchAllGrades, fetchApprovedFaculties, fetchDepartmentSections,
-  fetchFacultySections, getSystemSetting, returnGrade,
+  fetchFacultySections, getSystemSetting, returnGrade, sendGradesToRegistrar,
 } from '../../services/api';
 
 const mockAddNotification = jest.fn();
@@ -21,14 +21,18 @@ jest.mock('../faculty/FacultyStatusTable', () => ({ rows = [], viewMode, loadErr
     {rows[0] && <button type="button" onClick={() => onSelectSection(rows[0])}>Select first section</button>}
   </div>
 ));
-jest.mock('./SectionReviewPanel', () => ({ selectedSection, onApprove, onFinalize, onSendBack }) => (
+jest.mock('./SectionReviewPanel', () => ({ selectedSection, onApprove, onSendToRegistrar, onSendBack }) => (
   <div>
     <span>{selectedSection.reviewNote}</span>
+    <span data-testid="selected-section">{selectedSection.reviewKey}</span>
+    <span data-testid="current-grade">
+      {selectedSection.grades?.[selectedSection.students?.[0]?.studentId]?.midterm || '-'}
+    </span>
     <span data-testid="reference-grade">
       {selectedSection.referenceGrades?.[selectedSection.students?.[0]?.studentId]?.grade || '-'}
     </span>
     <button type="button" onClick={() => onApprove('').catch(() => {})}>Approve selected section</button>
-    {onFinalize && <button type="button" onClick={() => onFinalize('').catch(() => {})}>Finalize selected section</button>}
+    {onSendToRegistrar && <button type="button" disabled={!selectedSection.canSendToRegistrar} onClick={() => onSendToRegistrar().catch(() => {})}>Send to Registrar</button>}
     <button type="button" onClick={() => onSendBack('Correct the encoded grade')}>Return selected section</button>
   </div>
 ));
@@ -48,7 +52,7 @@ jest.mock('../../services/api', () => ({
   batchUploadGrades: jest.fn(), fetchFacultySections: jest.fn(), fetchFacultyStudents: jest.fn(),
   fetchDepartmentSections: jest.fn(), batchEnrollStudentsToSection: jest.fn(), dropStudent: jest.fn(),
   fetchApprovedFaculties: jest.fn(), unassignFacultySection: jest.fn(), openDecryptedIpfsFile: jest.fn(),
-  getSystemSetting: jest.fn(), issueGrade: jest.fn(),
+  getSystemSetting: jest.fn(), issueGrade: jest.fn(), sendGradesToRegistrar: jest.fn(),
 }));
 
 beforeEach(() => {
@@ -304,5 +308,77 @@ test('Chairperson approved records remain visible but ledger finalization is Reg
   await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved'));
   fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
   expect(screen.queryByRole('button', { name: 'Finalize selected section' })).not.toBeInTheDocument();
+  expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved');
+});
+
+test('approved grade preserves 91.50 and one handoff disables Send to Registrar without relabeling it', async () => {
+  const approvedRecord = {
+    id: 'approved-exact-grade', assignment_cycle_id: '41', student_no: '26-0001', student_name: 'Exact Student',
+    faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT', record_section: 'BSIT 1-1',
+    section: 'BSIT 1-1', subject_code: 'IT 101', school_year: '2026-2027', semester: 'FIRST', term: 'midterm',
+    status: 'ChairpersonApproved', grade: '{"midterm":91.50}',
+  };
+  fetchAllGrades
+    .mockResolvedValueOnce({ data: [approvedRecord] })
+    .mockResolvedValue({ data: [{ ...approvedRecord, status: 'DepartmentApproved' }] });
+  sendGradesToRegistrar.mockResolvedValue({ status: 'Success', sentCount: 1 });
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Approved' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
+  expect(screen.getByTestId('current-grade')).toHaveTextContent('91.50');
+  expect(screen.getByRole('button', { name: 'Send to Registrar' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Send to Registrar' }));
+
+  await waitFor(() => expect(sendGradesToRegistrar).toHaveBeenCalledWith(['approved-exact-grade']));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Send to Registrar' })).toBeDisabled());
+  expect(screen.getByTestId('current-grade')).toHaveTextContent('91.50');
+});
+
+test.each([
+  ['Returned'],
+  ['Approved'],
+])('switching Grade Review to %s clears its selected detail', async (buttonName) => {
+  fetchAllGrades.mockResolvedValue({ data: [{
+    id: 'review-grade', assignment_cycle_id: '41', student_no: '26-0001', student_name: 'Student',
+    faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT', record_section: 'BSIT 1-1',
+    section: 'BSIT 1-1', subject_code: 'IT 101', school_year: '2026-2027', semester: 'FIRST',
+    term: 'midterm', status: 'SubmittedToChairperson', grade: JSON.stringify({ midterm: '88' }),
+  }] });
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'For Review' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forReview:1'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
+  expect(screen.getByTestId('selected-section')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: buttonName }));
+  expect(screen.queryByTestId('selected-section')).not.toBeInTheDocument();
+});
+
+test('an older Grade Review response cannot overwrite a newer Approved Grades reload', async () => {
+  let resolveOlderRequest;
+  const baseRecord = {
+    id: 'race-grade', assignment_cycle_id: '41', student_no: '26-0001', student_name: 'Student',
+    faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT', record_section: 'BSIT 1-1',
+    section: 'BSIT 1-1', subject_code: 'IT 101', school_year: '2026-2027', semester: 'FIRST',
+    term: 'midterm', grade: '{"midterm":"89.00"}',
+  };
+  fetchAllGrades
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveOlderRequest = resolve; }))
+    .mockResolvedValue({ data: [{ ...baseRecord, status: 'DepartmentApproved' }] });
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  await waitFor(() => expect(fetchAllGrades).toHaveBeenCalledTimes(1));
+  fireEvent(window, new CustomEvent('blockgo:academic-data-changed', { detail: {
+    reason: 'grades_sent_to_registrar', department: 'BSIT', actor: 'registrar@plv.edu.ph', changedAt: 'race-newer',
+  } }));
+  await waitFor(() => expect(fetchAllGrades).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole('button', { name: 'Approved' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved'));
+
+  await act(async () => {
+    resolveOlderRequest({ data: [{ ...baseRecord, status: 'SubmittedToChairperson' }] });
+  });
   expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved');
 });

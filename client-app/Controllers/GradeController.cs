@@ -3074,6 +3074,11 @@ namespace BlockGo.Controllers
             public List<string> RecordIds { get; set; } = new();
         }
 
+        public sealed class SendGradesToRegistrarRequest
+        {
+            public List<string> RecordIds { get; set; } = new();
+        }
+
         [HttpPost("approve")]
         [Authorize(Roles = "department_admin")]
         public async Task<IActionResult> ApproveGrades([FromBody] ApproveGradesRequest request)
@@ -3204,6 +3209,114 @@ namespace BlockGo.Controllers
             });
         }
 
+        [HttpPost("send-to-registrar")]
+        [Authorize(Roles = "department_admin")]
+        public async Task<IActionResult> SendGradesToRegistrar([FromBody] SendGradesToRegistrarRequest request)
+        {
+            var invokerId = AuthenticatedEmail();
+            var recordIds = (request?.RecordIds ?? new List<string>())
+                .Where(recordId => !string.IsNullOrWhiteSpace(recordId))
+                .Select(recordId => recordId.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (recordIds.Length == 0)
+                return BadRequest(new { status = "Error", message = "At least one approved grade record is required." });
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(HttpContext.RequestAborted);
+                await EnsurePendingGradeSchemaAsync(connection);
+
+                foreach (var recordId in recordIds)
+                    if (!await CanAccessGradeRecordAsync(connection, recordId, invokerId, "department_admin"))
+                        return Forbid();
+
+                var activePeriod = await GradeEncodingPeriodService.GetConfiguredAsync(
+                    connection, cancellationToken: HttpContext.RequestAborted);
+                await using var transaction = await connection.BeginTransactionAsync(HttpContext.RequestAborted);
+                var statuses = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                await using (var statusCommand = new NpgsqlCommand(@"
+                    SELECT id, status
+                    FROM pending_grade_records
+                    WHERE id = ANY(@recordIds)
+                    FOR UPDATE;", connection, transaction))
+                {
+                    statusCommand.Parameters.AddWithValue("recordIds", recordIds);
+                    await using var reader = await statusCommand.ExecuteReaderAsync(HttpContext.RequestAborted);
+                    while (await reader.ReadAsync(HttpContext.RequestAborted))
+                        statuses[reader.GetString(0)] = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+                }
+
+                if (statuses.Count != recordIds.Length)
+                {
+                    await transaction.RollbackAsync(HttpContext.RequestAborted);
+                    return Conflict(new { status = "Error", message = "One or more approved grades no longer exist in staging. Refresh before sending." });
+                }
+
+                var invalidStatus = statuses.FirstOrDefault(entry =>
+                    !string.Equals(entry.Value, "ChairpersonApproved", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(entry.Value, "DepartmentApproved", StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrEmpty(invalidStatus.Key))
+                {
+                    await transaction.RollbackAsync(HttpContext.RequestAborted);
+                    return Conflict(new { status = "Error", message = $"A grade in {invalidStatus.Value} status cannot be sent to the Registrar." });
+                }
+
+                var unsentCount = statuses.Count(entry =>
+                    string.Equals(entry.Value, "ChairpersonApproved", StringComparison.OrdinalIgnoreCase));
+                var sentCount = 0;
+                if (unsentCount > 0)
+                {
+                    await using var sendCommand = new NpgsqlCommand(@"
+                        UPDATE pending_grade_records pgr
+                        SET status = 'DepartmentApproved', date = @date
+                        FROM facultysections fs
+                        WHERE pgr.id = ANY(@recordIds)
+                          AND LOWER(TRIM(pgr.status)) = 'chairpersonapproved'
+                          AND fs.id::text = pgr.assignment_cycle_id
+                          AND LOWER(TRIM(fs.school_year)) = LOWER(TRIM(pgr.school_year))
+                          AND LOWER(TRIM(fs.semester)) = LOWER(TRIM(pgr.semester))
+                          AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(pgr.subject_code))
+                          AND LOWER(TRIM(pgr.semester)) = LOWER(TRIM(@semester))
+                          AND LOWER(TRIM(pgr.term)) = LOWER(TRIM(@term));", connection, transaction);
+                    sendCommand.Parameters.AddWithValue("recordIds", recordIds);
+                    sendCommand.Parameters.AddWithValue("date", DateTime.UtcNow.ToString("o"));
+                    sendCommand.Parameters.AddWithValue("semester", activePeriod.Semester);
+                    sendCommand.Parameters.AddWithValue("term", activePeriod.Term);
+                    sentCount = await sendCommand.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+                }
+
+                if (sentCount != unsentCount)
+                {
+                    await transaction.RollbackAsync(HttpContext.RequestAborted);
+                    return Conflict(new { status = "Error", message = "The approved section changed before handoff. Nothing was sent; refresh and try again." });
+                }
+
+                await transaction.CommitAsync(HttpContext.RequestAborted);
+                try
+                {
+                    await NotifyAcademicDataChangedAsync("grades_sent_to_registrar", null, invokerId);
+                }
+                catch (Exception notificationException)
+                {
+                    _logger.LogWarning(notificationException, "Grades were sent to the Registrar, but the handoff notification failed");
+                }
+                return Ok(new
+                {
+                    status = "Success",
+                    message = "Approved grades were sent to the Registrar Finalize queue.",
+                    sentCount,
+                    idempotent = unsentCount == 0
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Chairperson handoff to Registrar failed for {Chairperson}", invokerId);
+                return StatusCode(500, new { status = "Error", message = "The approved grades could not be sent. Their current state was preserved; refresh before retrying." });
+            }
+        }
+
         [HttpPost("finalize")]
         [Authorize(Roles = "registrar")]
         public async Task<IActionResult> FinalizeGrades([FromBody] FinalizeGradesRequest request)
@@ -3256,20 +3369,6 @@ namespace BlockGo.Controllers
                 foreach (var record in approvedRecords)
                     if (!await CanAccessGradeRecordAsync(connection, record.Id, invokerId, "registrar"))
                         return Forbid();
-
-                await using (var promote = new NpgsqlCommand(@"
-                    UPDATE pending_grade_records
-                    SET status = 'DepartmentApproved', date = @date
-                    WHERE id = ANY(@recordIds)
-                      AND LOWER(TRIM(status)) IN ('chairpersonapproved', 'departmentapproved');", connection))
-                {
-                    promote.Parameters.AddWithValue("recordIds", recordIds);
-                    promote.Parameters.AddWithValue("date", DateTime.UtcNow.ToString("o"));
-                    var promoted = await promote.ExecuteNonQueryAsync(HttpContext.RequestAborted);
-                    if (promoted != recordIds.Length)
-                        return Conflict(new { status = "Error", message = "The approved section changed while it was being finalized. Refresh before retrying." });
-                }
-                foreach (var record in approvedRecords) record.Status = "DepartmentApproved";
 
                 var middlewareResponse = await _blockchainService.FinalizeApprovedGradesAsync(approvedRecords, invokerId);
                 using var responseDocument = JsonDocument.Parse(middlewareResponse);
@@ -3363,20 +3462,6 @@ namespace BlockGo.Controllers
                 if (!await CanAccessGradeRecordAsync(conn, recordId, invokerId, "registrar"))
                     return Forbid();
 
-                // The explicit approval endpoint records the Chairperson's review. Finalization
-                // promotes that reviewed staging state before committing it to Fabric. Keeping
-                // DepartmentApproved as the retryable intermediate state preserves compatibility
-                // with records approved before this workflow change.
-                using (var promote = new NpgsqlCommand(@"
-                    UPDATE pending_grade_records
-                    SET status = 'DepartmentApproved', date = @date
-                    WHERE id = @id AND LOWER(status) = 'chairpersonapproved';", conn))
-                {
-                    promote.Parameters.AddWithValue("id", recordId);
-                    promote.Parameters.AddWithValue("date", DateTime.UtcNow.ToString("o"));
-                    await promote.ExecuteNonQueryAsync();
-                }
-                
                 using var cmd = new NpgsqlCommand(@"
                     SELECT id, student_hash, student_no, student_name, section, course, subject_code, grade,
                            semester, school_year, faculty_id, date, ipfs_cid, note,

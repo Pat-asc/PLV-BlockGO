@@ -251,49 +251,60 @@ test('failed approval remains retryable and shows a safe error', async () => {
   expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve Grades' })).toBeEnabled();
 });
 
-test('finalization requires confirmation and cancel makes no request', () => {
-  const onFinalize = jest.fn();
+test('Registrar handoff keeps the exact label and cancel makes no request', () => {
+  const onSendToRegistrar = jest.fn();
   render(<SectionReviewPanel {...{
-    selectedSection: { ...section, reviewStatus: 'approved' }, activeTerm: 'finals',
-    onSendBack: jest.fn(), onApprove: jest.fn(), onFinalize, onViewIpfs: jest.fn(),
+    selectedSection: { ...section, reviewStatus: 'approved', canSendToRegistrar: true }, activeTerm: 'finals',
+    onSendBack: jest.fn(), onApprove: jest.fn(), onSendToRegistrar, onViewIpfs: jest.fn(),
   }} />);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Finalize Grades' }));
-  expect(screen.getByRole('dialog', { name: 'Finalize Grades' })).toBeInTheDocument();
-  expect(onFinalize).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Send to Registrar' }));
+  expect(screen.getByRole('dialog', { name: 'Send to Registrar' })).toBeInTheDocument();
+  expect(onSendToRegistrar).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  expect(onFinalize).not.toHaveBeenCalled();
+  expect(onSendToRegistrar).not.toHaveBeenCalled();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
-test('confirmation calls finalization exactly once and disables repeat submission while busy', async () => {
-  let resolveFinalize;
-  const onFinalize = jest.fn(() => new Promise((resolve) => { resolveFinalize = resolve; }));
+test('confirmation sends exactly once and disables repeat handoff while busy', async () => {
+  let resolveHandoff;
+  const onSendToRegistrar = jest.fn(() => new Promise((resolve) => { resolveHandoff = resolve; }));
   render(<SectionReviewPanel {...{
-    selectedSection: { ...section, reviewStatus: 'approved' }, activeTerm: 'finals',
-    onSendBack: jest.fn(), onApprove: jest.fn(), onFinalize, onViewIpfs: jest.fn(),
+    selectedSection: { ...section, reviewStatus: 'approved', canSendToRegistrar: true }, activeTerm: 'finals',
+    onSendBack: jest.fn(), onApprove: jest.fn(), onSendToRegistrar, onViewIpfs: jest.fn(),
   }} />);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Finalize Grades' }));
-  const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Finalize Grades' });
+  fireEvent.click(screen.getByRole('button', { name: 'Send to Registrar' }));
+  const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Send to Registrar' });
   fireEvent.click(confirm);
   fireEvent.click(confirm);
-  expect(onFinalize).toHaveBeenCalledTimes(1);
-  expect(within(screen.getByRole('dialog')).getByRole('button', { name: /Finalizing/ })).toBeDisabled();
+  expect(onSendToRegistrar).toHaveBeenCalledTimes(1);
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Send to Registrar' })).toBeDisabled();
 
-  resolveFinalize();
+  resolveHandoff();
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 });
 
-test('failed finalization remains retryable and shows a safe error', async () => {
-  const onFinalize = jest.fn().mockRejectedValueOnce(new Error('Ledger verification failed.'));
+test('failed Registrar handoff remains retryable and shows a safe error', async () => {
+  const onSendToRegistrar = jest.fn().mockRejectedValueOnce(new Error('Handoff state could not be verified.'));
   render(<SectionReviewPanel {...{
-    selectedSection: { ...section, reviewStatus: 'approved' }, activeTerm: 'finals',
-    onSendBack: jest.fn(), onApprove: jest.fn(), onFinalize, onViewIpfs: jest.fn(),
+    selectedSection: { ...section, reviewStatus: 'approved', canSendToRegistrar: true }, activeTerm: 'finals',
+    onSendBack: jest.fn(), onApprove: jest.fn(), onSendToRegistrar, onViewIpfs: jest.fn(),
   }} />);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Finalize Grades' }));
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Finalize Grades' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Ledger verification failed.');
-  expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Finalize Grades' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Send to Registrar' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Send to Registrar' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Handoff state could not be verified.');
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Send to Registrar' })).toBeEnabled();
+});
+
+test('sent Registrar handoff remains labeled Send to Registrar and is disabled', () => {
+  render(<SectionReviewPanel {...{
+    selectedSection: { ...section, reviewStatus: 'approved', canSendToRegistrar: false, sentToRegistrar: true },
+    activeTerm: 'finals', onSendBack: jest.fn(), onApprove: jest.fn(),
+    onSendToRegistrar: jest.fn(), onViewIpfs: jest.fn(),
+  }} />);
+
+  expect(screen.getByRole('button', { name: 'Send to Registrar' })).toBeDisabled();
+  expect(screen.queryByText('Awaiting Registrar finalization')).not.toBeInTheDocument();
 });
