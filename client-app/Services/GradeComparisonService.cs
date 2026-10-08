@@ -10,7 +10,16 @@ public sealed record GradeComparisonResult(
     string IntegrityStatus,
     string? ReferenceRecordId = null,
     int? ReferenceGradeVersion = null,
-    string? ReferenceTransactionId = null);
+    string? ReferenceTransactionId = null,
+    string? ReferenceSource = null);
+
+public sealed record GradeComparisonHistoryEntry(
+    long Sequence,
+    string RecordId,
+    string? OldGrade,
+    string? NewGrade,
+    string? Reason,
+    DateTimeOffset Timestamp);
 
 public static class GradeComparisonService
 {
@@ -21,7 +30,8 @@ public static class GradeComparisonService
 
     public static GradeComparisonResult Compare(
         AcademicRecord current,
-        IEnumerable<AcademicRecord> authoritativeRecords)
+        IEnumerable<AcademicRecord> authoritativeRecords,
+        IEnumerable<GradeComparisonHistoryEntry>? submissionHistory = null)
     {
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(authoritativeRecords);
@@ -37,12 +47,25 @@ public static class GradeComparisonService
             .FirstOrDefault();
 
         if (reference is null)
-            return new(currentGrade, null, ReferenceNotFound);
+        {
+            var historicalGrade = ResolveSubmissionHistoryReference(current, currentGrade, submissionHistory);
+            if (historicalGrade is null)
+                return new(currentGrade, null, ReferenceNotFound);
+
+            return new(
+                currentGrade,
+                historicalGrade,
+                currentGrade is not null && GradesEqual(currentGrade, historicalGrade) ? Match : Mismatch,
+                current.Id,
+                null,
+                null,
+                "POSTGRES_SUBMISSION_HISTORY");
+        }
 
         var referenceGrade = ComparableGrade(reference.Grade, current.Term);
         if (currentGrade is null || referenceGrade is null)
             return new(currentGrade, referenceGrade, ReferenceGradeUnavailable,
-                reference.Id, FinalizedVersion(reference), reference.TransactionId);
+                reference.Id, FinalizedVersion(reference), reference.TransactionId, "FABRIC_FINALIZED");
 
         return new(
             currentGrade,
@@ -50,7 +73,50 @@ public static class GradeComparisonService
             GradesEqual(currentGrade, referenceGrade) ? Match : Mismatch,
             reference.Id,
             FinalizedVersion(reference),
-            reference.TransactionId);
+            reference.TransactionId,
+            "FABRIC_FINALIZED");
+    }
+
+    private static string? ResolveSubmissionHistoryReference(
+        AcademicRecord current,
+        string? currentGrade,
+        IEnumerable<GradeComparisonHistoryEntry>? submissionHistory)
+    {
+        if (currentGrade is null || submissionHistory is null) return null;
+
+        var entries = submissionHistory
+            .Where(entry => string.Equals(entry.RecordId?.Trim(), current.Id?.Trim(), StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(entry => entry.Sequence)
+            .ThenByDescending(entry => entry.Timestamp)
+            .ToList();
+
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var newGrade = HistoryGrade(entries[index].NewGrade, current.Term);
+            if (newGrade is null || !GradesEqual(currentGrade, newGrade)) continue;
+
+            var oldGrade = HistoryGrade(entries[index].OldGrade, current.Term);
+            if (oldGrade is not null) return oldGrade;
+
+            for (var olderIndex = index + 1; olderIndex < entries.Count; olderIndex++)
+            {
+                var priorNewGrade = HistoryGrade(entries[olderIndex].NewGrade, current.Term);
+                if (priorNewGrade is not null) return priorNewGrade;
+            }
+            return null;
+        }
+
+        return null;
+    }
+
+    private static string? HistoryGrade(string? value, string? term)
+    {
+        var normalized = value?.Trim().ToLowerInvariant();
+        if (normalized is null or "" or "draft" or "returned" or "submitted" or
+            "submittedtochairperson" or "chairpersonapproved" or "departmentapproved" or
+            "approved" or "issued" or "corrected" or "finalized")
+            return null;
+        return ComparableGrade(value, term);
     }
 
     public static bool IsSameLogicalRecord(AcademicRecord current, AcademicRecord reference)
@@ -178,8 +244,6 @@ public static class GradeComparisonService
     {
         var trimmed = value?.Trim();
         if (string.IsNullOrWhiteSpace(trimmed)) return null;
-        return decimal.TryParse(trimmed, NumberStyles.Number, CultureInfo.InvariantCulture, out var number)
-            ? number.ToString("0.############################", CultureInfo.InvariantCulture)
-            : trimmed;
+        return trimmed;
     }
 }

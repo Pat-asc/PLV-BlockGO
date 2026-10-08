@@ -750,6 +750,7 @@ namespace BlockGo.Controllers
                     existingCommand.Parameters.AddWithValue("term", activeEncodingPeriod.Term);
                     existingGradePayload = (await existingCommand.ExecuteScalarAsync())?.ToString();
                 }
+                var previousSameTermGradePayload = existingGradePayload;
                 if (activeEncodingPeriod.Term == GradeAcademicTerm.Finals && string.IsNullOrWhiteSpace(existingGradePayload))
                 {
                     existingGradePayload = await TryGetFinalizedMidtermPayloadAsync(
@@ -872,8 +873,8 @@ namespace BlockGo.Controllers
                         INSERT INTO gradecorrectionlogs (recordid, oldgrade, newgrade, reasontext, approvedby, timestamp) 
                         VALUES (@rid, @old, @new, @reason, @appr, CURRENT_TIMESTAMP)", conn, transaction);
                     cmdLog.Parameters.AddWithValue("rid", stagedId.ToString() ?? "");
-                    cmdLog.Parameters.AddWithValue("old", DBNull.Value);
-                    cmdLog.Parameters.AddWithValue("new", request.Grade ?? "");
+                    cmdLog.Parameters.AddWithValue("old", previousSameTermGradePayload != null ? (object)previousSameTermGradePayload : DBNull.Value);
+                    cmdLog.Parameters.AddWithValue("new", blockchainRecord.Grade ?? "");
                     cmdLog.Parameters.AddWithValue("reason", "Initial Grade Entry (Staged)");
                     cmdLog.Parameters.AddWithValue("appr", effectiveFacultyId ?? (object)DBNull.Value);
                     await cmdLog.ExecuteNonQueryAsync();
@@ -1904,6 +1905,7 @@ namespace BlockGo.Controllers
                             }
 
                             blockchainRecord.Id = existingId ?? Guid.NewGuid().ToString();
+                            var previousSameTermGradePayload = existingGradeJson;
 
                             if (string.Equals(term, GradeAcademicTerm.Finals, StringComparison.OrdinalIgnoreCase) &&
                                 string.IsNullOrWhiteSpace(existingGradeJson))
@@ -1983,8 +1985,8 @@ namespace BlockGo.Controllers
                                     INSERT INTO gradecorrectionlogs (recordid, oldgrade, newgrade, reasontext, approvedby, timestamp) 
                                     VALUES (@rid, @old, @new, @reason, @appr, CURRENT_TIMESTAMP)", conn, transaction);
                                 cmdLog.Parameters.AddWithValue("rid", blockchainRecord.Id ?? "");
-                                cmdLog.Parameters.AddWithValue("old", (object)DBNull.Value);
-                                cmdLog.Parameters.AddWithValue("new", GetGradeLogValue(record.Grade, term));
+                                cmdLog.Parameters.AddWithValue("old", previousSameTermGradePayload != null ? (object)previousSameTermGradePayload : DBNull.Value);
+                                cmdLog.Parameters.AddWithValue("new", blockchainRecord.Grade ?? "");
                                 cmdLog.Parameters.AddWithValue("reason", "Bulk Excel/CSV Upload (Staged)");
                                 cmdLog.Parameters.AddWithValue("appr", effectiveFacultyId ?? facultyId ?? (object)DBNull.Value);
                                 await cmdLog.ExecuteNonQueryAsync();
@@ -2135,6 +2137,7 @@ namespace BlockGo.Controllers
                 cmdCheck.Parameters.AddWithValue("id", correction.RecordID);
                 string? existingPending = null;
                 string? existingStatus = null;
+                string? authoritativeOldGrade = null;
                 await using (var pendingReader = await cmdCheck.ExecuteReaderAsync())
                 {
                     if (await pendingReader.ReadAsync())
@@ -2146,6 +2149,7 @@ namespace BlockGo.Controllers
 
                 if (existingPending != null)
                 {
+                    authoritativeOldGrade = existingPending;
                     if (!string.Equals(existingStatus, "Returned", StringComparison.OrdinalIgnoreCase))
                         return Conflict(new { status = "Error", message = "Only a Chairperson-returned grade can be corrected." });
                     using var cmdUpdate = new NpgsqlCommand("UPDATE pending_grade_records SET grade = @grade, status = 'Corrected', date = @dt WHERE id = @id", conn);
@@ -2163,6 +2167,7 @@ namespace BlockGo.Controllers
                     if (!string.Equals(gradeToUpdate.Status, "Returned", StringComparison.OrdinalIgnoreCase))
                         return Conflict(new { status = "Error", message = "Only a Chairperson-returned grade can be corrected." });
 
+                    authoritativeOldGrade = gradeToUpdate.Grade;
                     gradeToUpdate.Grade = correction.NewGrade ?? "";
                     gradeToUpdate.FacultyId = correction.ApprovedBy ?? "";
                     gradeToUpdate.Date = DateTime.UtcNow.ToString("yyyy-MM-dd");
@@ -2174,7 +2179,7 @@ namespace BlockGo.Controllers
                     INSERT INTO gradecorrectionlogs (recordid, oldgrade, newgrade, reasontext, approvedby, timestamp) 
                     VALUES (@rid, @old, @new, @reason, @appr, CURRENT_TIMESTAMP)", conn);
                 cmdLog.Parameters.AddWithValue("rid", correction.RecordID ?? (object)DBNull.Value);
-                cmdLog.Parameters.AddWithValue("old", correction.OldGrade != null ? (object)correction.OldGrade : DBNull.Value);
+                cmdLog.Parameters.AddWithValue("old", authoritativeOldGrade != null ? (object)authoritativeOldGrade : DBNull.Value);
                 cmdLog.Parameters.AddWithValue("new", correction.NewGrade != null ? (object)correction.NewGrade : DBNull.Value);
                 cmdLog.Parameters.AddWithValue("reason", correction.ReasonText ?? "");
                 cmdLog.Parameters.AddWithValue("appr", correction.ApprovedBy ?? "");
@@ -2578,6 +2583,8 @@ namespace BlockGo.Controllers
                 }
                 await reader.CloseAsync();
 
+                var comparisonHistoryByRecordId = new Dictionary<string, List<GradeComparisonHistoryEntry>>(StringComparer.OrdinalIgnoreCase);
+
                 var assignmentCycles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 using (var cycleCommand = new NpgsqlCommand("SELECT record_id, assignment_cycle_id FROM grade_assignment_cycles", conn))
                 using (var cycleReader = await cycleCommand.ExecuteReaderAsync())
@@ -2717,10 +2724,50 @@ namespace BlockGo.Controllers
                         (!string.IsNullOrWhiteSpace(programCode) && (grade.Section ?? "").Contains(programCode, StringComparison.OrdinalIgnoreCase))).ToList();
                 }
 
+                if (jwtRole == "department_admin")
+                {
+                    var authorizedPendingRecordIds = allGrades
+                        .Select(grade => grade.Id ?? string.Empty)
+                        .Where(recordId => pendingGradesById.ContainsKey(recordId))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                    if (authorizedPendingRecordIds.Length > 0)
+                    {
+                        using var historyCommand = new NpgsqlCommand(@"
+                            SELECT logid, recordid, oldgrade, newgrade, reasontext, timestamp
+                            FROM gradecorrectionlogs
+                            WHERE recordid = ANY(@recordIds)
+                            ORDER BY logid DESC;", conn);
+                        historyCommand.Parameters.AddWithValue("recordIds", authorizedPendingRecordIds);
+                        using var historyReader = await historyCommand.ExecuteReaderAsync();
+                        while (await historyReader.ReadAsync())
+                        {
+                            var recordId = historyReader.IsDBNull(1) ? string.Empty : historyReader.GetString(1);
+                            if (string.IsNullOrWhiteSpace(recordId)) continue;
+                            if (!comparisonHistoryByRecordId.TryGetValue(recordId, out var entries))
+                            {
+                                entries = new List<GradeComparisonHistoryEntry>();
+                                comparisonHistoryByRecordId[recordId] = entries;
+                            }
+                            var timestamp = historyReader.IsDBNull(5)
+                                ? DateTimeOffset.MinValue
+                                : new DateTimeOffset(DateTime.SpecifyKind(historyReader.GetDateTime(5), DateTimeKind.Utc));
+                            entries.Add(new GradeComparisonHistoryEntry(
+                                historyReader.GetInt32(0),
+                                recordId,
+                                historyReader.IsDBNull(2) ? null : historyReader.GetString(2),
+                                historyReader.IsDBNull(3) ? null : historyReader.GetString(3),
+                                historyReader.IsDBNull(4) ? null : historyReader.GetString(4),
+                                timestamp));
+                        }
+                    }
+                }
+
                 foreach(var g in allGrades) 
                 {
+                    comparisonHistoryByRecordId.TryGetValue(g.Id ?? string.Empty, out var comparisonHistory);
                     var comparison = jwtRole == "department_admin" && pendingGradesById.ContainsKey(g.Id ?? string.Empty)
-                        ? GradeComparisonService.Compare(g, authoritativeLedgerGrades)
+                        ? GradeComparisonService.Compare(g, authoritativeLedgerGrades, comparisonHistory)
                         : new GradeComparisonResult(null, null, GradeComparisonService.ReferenceNotFound);
                     registrarAssignments.TryGetValue(g.AssignmentCycleId ?? string.Empty, out var assignmentMetadata);
                     RegistrarGradeLedgerMetadataService.StudentIdentity? officialStudent = null;
@@ -2818,6 +2865,7 @@ namespace BlockGo.Controllers
                         { "reference_record_id", comparison.ReferenceRecordId ?? "" },
                         { "reference_grade_version", comparison.ReferenceGradeVersion ?? 0 },
                         { "reference_transaction_id", comparison.ReferenceTransactionId ?? "" },
+                        { "reference_source", comparison.ReferenceSource ?? "" },
                         { "semester", FirstNonBlank(assignmentMetadata?.Semester, g.Semester) },
                         { "school_year", FirstNonBlank(assignmentMetadata?.SchoolYear, g.SchoolYear) },
                         { "schoolYear", FirstNonBlank(assignmentMetadata?.SchoolYear, g.SchoolYear) },
@@ -3378,6 +3426,7 @@ namespace BlockGo.Controllers
                 {
                     return NotFound(new { status = "Error", message = "Original grade record not found on blockchain." });
                 }
+                var previousGradePayload = gradeRecord.Grade;
 
                 // 2. Parse the existing Grade JSON payload to get the midterm grade
                 string midtermGradeStr = "";
@@ -3418,7 +3467,7 @@ namespace BlockGo.Controllers
                         INSERT INTO gradecorrectionlogs (recordid, oldgrade, newgrade, reasontext, approvedby, timestamp) 
                         VALUES (@rid, @old, @new, @reason, @appr, CURRENT_TIMESTAMP)", conn);
                     cmdLog.Parameters.AddWithValue("rid", recordId);
-                    cmdLog.Parameters.AddWithValue("old", GetGradeLogValue(gradeRecord.Grade, "midterm"));
+                    cmdLog.Parameters.AddWithValue("old", GetGradeLogValue(previousGradePayload, "finals"));
                     cmdLog.Parameters.AddWithValue("new", GetGradeLogValue(newGradePayload, "finals"));
                     cmdLog.Parameters.AddWithValue("reason", "Finals Grade Entry");
                     cmdLog.Parameters.AddWithValue("appr", invokerId);
