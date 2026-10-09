@@ -4,6 +4,9 @@ namespace BlockGo.Models
 {
     public class GradeRequest
     {
+        [JsonIgnore]
+        public int UploadRowNumber { get; set; }
+
         [JsonPropertyName("student_id")]
         public string StudentId { get; set; } = string.Empty;
 

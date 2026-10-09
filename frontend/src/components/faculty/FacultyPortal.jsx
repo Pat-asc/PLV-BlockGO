@@ -1588,6 +1588,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                     <tr>
                       <th className="px-4 py-3 font-bold">Row</th>
                       <th className="px-4 py-3 font-bold">Student ID</th>
+                      <th className="px-4 py-3 font-bold">Code</th>
                       <th className="px-4 py-3 font-bold">Reason</th>
                     </tr>
                   </thead>
@@ -1596,6 +1597,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                       <tr key={`${error.studentId || 'row'}-${index}`} className="border-t border-slate-200">
                         <td className="px-4 py-3 font-semibold text-slate-700">{error.rowNumber || '—'}</td>
                         <td className="px-4 py-3 font-semibold text-slate-700">{error.studentId || 'Unknown'}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-slate-600">{error.code || '—'}</td>
                         <td className="px-4 py-3 text-slate-600">{error.reason || 'No reason provided'}</td>
                       </tr>
                     ))}

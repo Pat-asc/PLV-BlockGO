@@ -404,6 +404,81 @@ test('bulk-uploaded Draft values remain editable and a manual correction can be 
   })));
 });
 
+test('Finals Bulk Upload awaits the backend reload and displays the persisted student value', async () => {
+  getSystemSetting.mockResolvedValue({ status: 'Success', value: {
+    startDate: '2020-01-01', endDate: '2099-12-31', semester: '1st Semester', term: 'finals',
+  } });
+  batchUploadGrades.mockImplementation(async () => {
+    fetchAllGrades.mockResolvedValue({ data: [{
+      id: 'finals-grade-1', assignment_cycle_id: 77, student_no: '26-0001',
+      record_section: 'BSIT 1-1', subject_code: 'IT 101', status: 'Draft',
+      grade: JSON.stringify({ midterm: '88.50', finals: '91.50', standing: 'active' }), date: '2026-10-09',
+    }] });
+    return { status: 'Success', totalProcessed: 1, successful: 1, failed: 0 };
+  });
+  await openSection();
+
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [gradeWorkbook('finals.xlsx')] } });
+
+  await waitFor(() => expect(screen.getAllByPlaceholderText('60-100')[1]).toHaveValue(91.5));
+  expect(fetchAllGrades.mock.calls.length).toBeGreaterThanOrEqual(2);
+  expect(screen.getByRole('dialog', { name: 'Upload Successful' })).toHaveTextContent('1 of 1 grade rows were saved');
+});
+
+test('Finals Bulk Upload reloads a persisted INC standing instead of showing a missing student grade', async () => {
+  getSystemSetting.mockResolvedValue({ status: 'Success', value: {
+    startDate: '2020-01-01', endDate: '2099-12-31', semester: '1st Semester', term: 'finals',
+  } });
+  batchUploadGrades.mockImplementation(async () => {
+    fetchAllGrades.mockResolvedValue({ data: [{
+      id: 'finals-special-1', assignment_cycle_id: 77, student_no: '26-0001',
+      record_section: 'BSIT 1-1', subject_code: 'IT 101', status: 'Draft',
+      grade: JSON.stringify({ midterm: '88.50', finals: '', standing: 'incomplete' }), date: '2026-10-09',
+    }] });
+    return { status: 'Success', totalProcessed: 1, successful: 1, failed: 0 };
+  });
+  await openSection();
+
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [gradeWorkbook('finals-special.xlsx')] } });
+
+  await waitFor(() => expect(screen.getByRole('combobox')).toHaveValue('incomplete'));
+  expect(screen.getAllByPlaceholderText('60-100')[1]).toHaveValue(null);
+});
+
+test('partial Bulk Upload reports invariant counts and the exact failed workbook row', async () => {
+  batchUploadGrades.mockResolvedValue({
+    status: 'Partial Success', totalProcessed: 2, successful: 1, failed: 1,
+    errors: [{ rowNumber: 3, studentId: '26-0002', code: 'TRUSTED_MIDTERM_NOT_FOUND', reason: 'Student is not ENROLLED.' }],
+  });
+  await openSection();
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [gradeWorkbook()] } });
+
+  const dialog = await screen.findByRole('dialog', { name: 'Upload Partially Completed' });
+  expect(dialog).toHaveTextContent('Processed: 2 | Saved: 1 | Failed: 1');
+  expect(dialog).toHaveTextContent('26-0002');
+  expect(dialog).toHaveTextContent('TRUSTED_MIDTERM_NOT_FOUND');
+  expect(dialog).toHaveTextContent('Student is not ENROLLED.');
+  expect(within(dialog).getByText('3')).toBeInTheDocument();
+});
+
+test('fully rejected Bulk Upload retains backend counts and row-specific errors', async () => {
+  const error = new Error('No grade rows were saved.');
+  error.data = {
+    totalProcessed: 1, successful: 0, failed: 1,
+    errors: [{ rowNumber: 2, studentId: '26-9999', code: 'TRUSTED_MIDTERM_NOT_FOUND', reason: 'Student ID is not in this assignment roster.' }],
+  };
+  batchUploadGrades.mockRejectedValue(error);
+  await openSection();
+  fireEvent.change(screen.getByLabelText('Bulk upload grades workbook'), { target: { files: [gradeWorkbook()] } });
+
+  const dialog = await screen.findByRole('dialog', { name: 'Batch Upload Failed' });
+  expect(dialog).toHaveTextContent('Processed: 1 | Saved: 0 | Failed: 1');
+  expect(dialog).toHaveTextContent('26-9999');
+  expect(dialog).toHaveTextContent('TRUSTED_MIDTERM_NOT_FOUND');
+  expect(dialog).toHaveTextContent('Student ID is not in this assignment roster.');
+  expect(within(dialog).getByText('2')).toBeInTheDocument();
+});
+
 test('only explicit submission locks a bulk-imported Draft, while Returned remains editable', async () => {
   fetchAllGrades.mockResolvedValue({ data: [{ id: 'grade-1', assignment_cycle_id: 77, student_no: '26-0001',
     record_section: 'BSIT 1-1', subject_code: 'IT 101', status: 'SubmittedToChairperson',

@@ -523,46 +523,44 @@ namespace BlockGo.Controllers
             return GradeAcademicTerm.Midterm;
         }
 
-        private async Task<string?> TryGetFinalizedMidtermPayloadAsync(
+        private sealed record TrustedMidtermResolution(
+            string? Payload, string? Source, string? ErrorCode = null, string? ErrorMessage = null);
+
+        private async Task<TrustedMidtermResolution> ResolveTrustedMidtermPayloadAsync(
             NpgsqlConnection connection,
-            string assignmentCycleId,
+            FacultyAssignmentRosterService.Assignment assignment,
+            string studentNumber,
             string studentHash,
-            string subjectCode,
-            string facultyIdentity,
+            Func<Task<List<AcademicRecord>>> loadFinalizedLedgerRecords,
             CancellationToken cancellationToken)
         {
-            var recordIds = new List<string>();
-            await using (var command = new NpgsqlCommand(@"
-                SELECT record_id
-                FROM grade_assignment_cycles
-                WHERE assignment_cycle_id = @assignmentCycleId;", connection))
+            var context = new TrustedMidtermGradeService.Context(
+                assignment.Id.ToString(), studentNumber, studentHash, assignment.Subject,
+                assignment.CanonicalSection, assignment.SchoolYear, assignment.Semester);
+            var postgresSnapshot = await TrustedMidtermGradeService.FindPostgresSnapshotAsync(
+                connection, context, cancellationToken);
+            if (postgresSnapshot is not null)
             {
-                command.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-                while (await reader.ReadAsync(cancellationToken)) recordIds.Add(reader.GetString(0));
+                return new(postgresSnapshot.Payload, postgresSnapshot.Source);
             }
 
-            foreach (var recordId in recordIds)
+            try
             {
-                try
-                {
-                    var rawRecord = await _blockchainService.GetGradeAsync(recordId, facultyIdentity);
-                    var record = JsonSerializer.Deserialize<AcademicRecord>(rawRecord,
-                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                    if (record != null &&
-                        string.Equals(record.Status, "Finalized", StringComparison.OrdinalIgnoreCase) &&
-                        GradeAcademicTerm.Normalize(record.Term, string.Empty) == GradeAcademicTerm.Midterm &&
-                        string.Equals(record.StudentHash, studentHash, StringComparison.OrdinalIgnoreCase) &&
-                        string.Equals(record.SubjectCode, subjectCode, StringComparison.OrdinalIgnoreCase))
-                        return record.Grade;
-                }
-                catch (LedgerGradeNotFoundException)
-                {
-                    _logger.LogWarning("Mapped Midterm ledger record {RecordId} was not found.", recordId);
-                }
+                var ledgerSnapshot = TrustedMidtermGradeService.FindFinalizedLedgerSnapshot(
+                    await loadFinalizedLedgerRecords(), context);
+                return ledgerSnapshot is null
+                    ? new(null, null, "TRUSTED_MIDTERM_NOT_FOUND",
+                        "No trusted Midterm grade exists for this student and exact academic assignment.")
+                    : new(ledgerSnapshot.Payload, ledgerSnapshot.Source);
             }
-
-            return null;
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception,
+                    "Trusted Midterm ledger fallback unavailable for student {StudentNumber}, FacultySectionId={FacultySectionId}",
+                    studentNumber, assignment.Id);
+                return new(null, null, "TRUSTED_MIDTERM_STORAGE_UNAVAILABLE",
+                    "The trusted Midterm grade was not available from PostgreSQL, and finalized ledger history could not be read.");
+            }
         }
 
         private static async Task<string> ResolveFacultyDisplayNameAsync(NpgsqlConnection connection, string email)
@@ -739,23 +737,50 @@ namespace BlockGo.Controllers
                     SELECT grade
                     FROM pending_grade_records
                     WHERE assignment_cycle_id = @assignmentCycleId
-                      AND LOWER(TRIM(student_hash)) = LOWER(TRIM(@studentHash))
+                      AND (
+                            LOWER(BTRIM(COALESCE(student_no, ''))) = LOWER(BTRIM(@studentNumber))
+                            OR (
+                                NULLIF(BTRIM(COALESCE(student_no, '')), '') IS NULL
+                                AND LOWER(BTRIM(student_hash)) = LOWER(BTRIM(@studentHash))
+                            )
+                          )
                       AND LOWER(TRIM(subject_code)) = LOWER(TRIM(@subjectCode))
+                      AND LOWER(BTRIM(section)) = LOWER(BTRIM(@section))
+                      AND LOWER(BTRIM(school_year)) = LOWER(BTRIM(@schoolYear))
+                      AND LOWER(BTRIM(semester)) = LOWER(BTRIM(@semester))
                       AND LOWER(COALESCE(term, '')) = LOWER(@term)
                     LIMIT 1;", conn))
                 {
                     existingCommand.Parameters.AddWithValue("assignmentCycleId", assignmentCycleId);
+                    existingCommand.Parameters.AddWithValue("studentNumber", stuNumber);
                     existingCommand.Parameters.AddWithValue("studentHash", stuEmail);
                     existingCommand.Parameters.AddWithValue("subjectCode", facultyAssignment.Subject);
+                    existingCommand.Parameters.AddWithValue("section", facultyAssignment.CanonicalSection);
+                    existingCommand.Parameters.AddWithValue("schoolYear", facultyAssignment.SchoolYear);
+                    existingCommand.Parameters.AddWithValue("semester", facultyAssignment.Semester);
                     existingCommand.Parameters.AddWithValue("term", activeEncodingPeriod.Term);
                     existingGradePayload = (await existingCommand.ExecuteScalarAsync())?.ToString();
                 }
                 var previousSameTermGradePayload = existingGradePayload;
-                if (activeEncodingPeriod.Term == GradeAcademicTerm.Finals && string.IsNullOrWhiteSpace(existingGradePayload))
+                if (activeEncodingPeriod.Term == GradeAcademicTerm.Finals &&
+                    !GradeEncodingPeriodService.HasGradeForTerm(existingGradePayload, GradeAcademicTerm.Midterm))
                 {
-                    existingGradePayload = await TryGetFinalizedMidtermPayloadAsync(
-                        conn, assignmentCycleId, stuEmail, facultyAssignment.Subject,
-                        effectiveFacultyId ?? jwtUser, HttpContext.RequestAborted);
+                    var trustedMidterm = await ResolveTrustedMidtermPayloadAsync(
+                        conn, facultyAssignment, stuNumber, stuEmail,
+                        () => LoadFinalizedLedgerRecordsAsync(effectiveFacultyId ?? jwtUser),
+                        HttpContext.RequestAborted);
+                    if (trustedMidterm.Payload is null)
+                    {
+                        var response = new {
+                            status = "Error",
+                            code = trustedMidterm.ErrorCode,
+                            message = trustedMidterm.ErrorMessage
+                        };
+                        return trustedMidterm.ErrorCode == "TRUSTED_MIDTERM_STORAGE_UNAVAILABLE"
+                            ? StatusCode(StatusCodes.Status503ServiceUnavailable, response)
+                            : Conflict(response);
+                    }
+                    existingGradePayload = trustedMidterm.Payload;
                 }
                 request.Grade = GradeEncodingPeriodService.ProjectIncomingGradePayload(
                     incomingGradePayload, existingGradePayload, activeEncodingPeriod.Term);
@@ -1447,6 +1472,7 @@ namespace BlockGo.Controllers
                 var failureCount = 0;
                 var errors = new List<BulkUploadError>();
                 var parsedRecords = new List<GradeRequest>();
+                Task<List<AcademicRecord>>? finalizedMidtermLedgerTask = null;
                 int? workbookFacultySectionId = null;
 
                 var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
@@ -1727,7 +1753,7 @@ namespace BlockGo.Controllers
                         facultyAssignment.Id, canonicalRoster.Count,
                         canonicalRoster.All(student => !string.IsNullOrWhiteSpace(student.StudentNo)));
                     var rosterStudentNumbers = canonicalRoster
-                        .Select(student => student.StudentNo)
+                        .Select(student => GradeUploadValuePolicy.NormalizeStudentIdentifier(student.StudentNo))
                         .ToHashSet(StringComparer.OrdinalIgnoreCase);
                     // Process all extracted records uniformly
                     var processedCombos = new HashSet<string>();
@@ -1833,7 +1859,8 @@ namespace BlockGo.Controllers
                             var assignmentCycleId = facultyAssignment.Id.ToString();
                             blockchainRecord.SchoolYear = facultyAssignment.SchoolYear;
                             blockchainRecord.Semester = facultyAssignment.Semester;
-                            if (!rosterStudentNumbers.Contains(stuNumber.Trim()))
+                            var normalizedStudentNumber = GradeUploadValuePolicy.NormalizeStudentIdentifier(stuNumber);
+                            if (!rosterStudentNumbers.Contains(normalizedStudentNumber))
                             {
                                 failureCount++;
                                 errors.Add(new BulkUploadError { RowNumber = record.UploadRowNumber, StudentId = record.StudentId ?? string.Empty, Reason = "Student is not ENROLLED in this faculty assignment's exact section and period." });
@@ -1844,8 +1871,25 @@ namespace BlockGo.Controllers
                             string? existingGradeJson = null;
                             string? existingStatus = null;
 
-                            using (var cmdCheck = new NpgsqlCommand("SELECT id, grade, status FROM pending_grade_records WHERE LOWER(student_hash) = LOWER(@sh) AND LOWER(subject_code) = LOWER(@subj) AND school_year = @sy AND semester = @sem AND LOWER(section) = LOWER(@sec) AND assignment_cycle_id = @assignmentCycleId AND LOWER(COALESCE(term, '')) = LOWER(@term) LIMIT 1", conn))
+                            using (var cmdCheck = new NpgsqlCommand(@"
+                                SELECT id, grade, status
+                                FROM pending_grade_records
+                                WHERE (
+                                        LOWER(BTRIM(COALESCE(student_no, ''))) = LOWER(BTRIM(@studentNumber))
+                                        OR (
+                                            NULLIF(BTRIM(COALESCE(student_no, '')), '') IS NULL
+                                            AND LOWER(BTRIM(student_hash)) = LOWER(BTRIM(@sh))
+                                        )
+                                      )
+                                  AND LOWER(BTRIM(subject_code)) = LOWER(BTRIM(@subj))
+                                  AND LOWER(BTRIM(school_year)) = LOWER(BTRIM(@sy))
+                                  AND LOWER(BTRIM(semester)) = LOWER(BTRIM(@sem))
+                                  AND LOWER(BTRIM(section)) = LOWER(BTRIM(@sec))
+                                  AND assignment_cycle_id = @assignmentCycleId
+                                  AND LOWER(BTRIM(COALESCE(term, ''))) = LOWER(BTRIM(@term))
+                                LIMIT 1", conn))
                             {
+                                cmdCheck.Parameters.AddWithValue("studentNumber", normalizedStudentNumber);
                                 cmdCheck.Parameters.AddWithValue("sh", blockchainRecord.StudentHash ?? "");
                                 cmdCheck.Parameters.AddWithValue("subj", blockchainRecord.SubjectCode ?? "");
                                 cmdCheck.Parameters.AddWithValue("sy", blockchainRecord.SchoolYear ?? "");
@@ -1889,15 +1933,26 @@ namespace BlockGo.Controllers
                             var previousSameTermGradePayload = existingGradeJson;
 
                             if (string.Equals(term, GradeAcademicTerm.Finals, StringComparison.OrdinalIgnoreCase) &&
-                                string.IsNullOrWhiteSpace(existingGradeJson))
+                                !GradeEncodingPeriodService.HasGradeForTerm(existingGradeJson, GradeAcademicTerm.Midterm))
                             {
-                                existingGradeJson = await TryGetFinalizedMidtermPayloadAsync(
-                                    conn,
-                                    assignmentCycleId,
+                                var trustedMidterm = await ResolveTrustedMidtermPayloadAsync(
+                                    conn, facultyAssignment, blockchainRecord.StudentNo ?? record.StudentId ?? string.Empty,
                                     blockchainRecord.StudentHash ?? string.Empty,
-                                    facultyAssignment.Subject,
-                                    effectiveFacultyId ?? facultyId ?? string.Empty,
+                                    () => finalizedMidtermLedgerTask ??= LoadFinalizedLedgerRecordsAsync(
+                                        effectiveFacultyId ?? facultyId ?? string.Empty),
                                     HttpContext.RequestAborted);
+                                if (trustedMidterm.Payload is null)
+                                {
+                                    failureCount++;
+                                    errors.Add(new BulkUploadError {
+                                        RowNumber = record.UploadRowNumber,
+                                        StudentId = record.StudentId ?? string.Empty,
+                                        Code = trustedMidterm.ErrorCode,
+                                        Reason = trustedMidterm.ErrorMessage ?? "Trusted Midterm history is unavailable."
+                                    });
+                                    continue;
+                                }
+                                existingGradeJson = trustedMidterm.Payload;
                             }
 
                             blockchainRecord.Grade = GradeEncodingPeriodService.ProjectIncomingGradePayload(
@@ -1982,7 +2037,7 @@ namespace BlockGo.Controllers
                                     "Bulk grade staging transaction failed for student {StudentId}, FacultySectionId={FacultySectionId}, term={Term}",
                                     record.StudentId, facultyAssignment.Id, term);
                                 failureCount++;
-                                errors.Add(new BulkUploadError { RowNumber = record.UploadRowNumber, StudentId = record.StudentId ?? "", Reason = "The grade could not be saved. No changes were committed for this row." });
+                                errors.Add(new BulkUploadError { RowNumber = record.UploadRowNumber, StudentId = record.StudentId ?? "", Code = "GRADE_ROW_WRITE_FAILED", Reason = "The grade could not be saved. No changes were committed for this row." });
                             }
                         }
                         catch (Exception ex)
@@ -1994,9 +2049,8 @@ namespace BlockGo.Controllers
                             errors.Add(new BulkUploadError {
                                 RowNumber = record.UploadRowNumber,
                                 StudentId = record.StudentId ?? "ERROR",
-                                Reason = string.Equals(term, GradeAcademicTerm.Finals, StringComparison.OrdinalIgnoreCase)
-                                    ? "The Final Term grade could not be saved because its trusted Midterm history or grade storage was unavailable."
-                                    : "The grade could not be saved because grade storage was unavailable."
+                                Code = "GRADE_ROW_PROCESSING_FAILED",
+                                Reason = "The grade row could not be processed because grade storage was unavailable."
                             });
                         }
                     }

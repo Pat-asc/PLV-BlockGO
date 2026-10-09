@@ -24,6 +24,71 @@ Check(new[] { "final", "finals", "FINAL", "FINALS" }.All(term => GradeAcademicTe
     "Finals aliases did not normalize to the canonical term."); Pass(60, "finals aliases normalize to finals");
 Check(GradeAcademicTerm.Normalize("midterm") == GradeAcademicTerm.Midterm && GradeAcademicTerm.Normalize("MIDTERMS") == GradeAcademicTerm.Midterm,
     "Midterm normalization regressed."); Pass(61, "midterm aliases normalize to midterm");
+var exactFinalsUpload = GradeUploadValuePolicy.BuildPayload("91.50", null, "91.50", "finals");
+Check(GradeUploadValuePolicy.GetTermValue(exactFinalsUpload, "finals") == "91.50" &&
+      GradeUploadValuePolicy.TryValidatePayload(exactFinalsUpload, "finals", out _),
+    "A valid Finals grade lost its exact submitted precision or failed validation.");
+Pass(199, "Finals upload preserves exact numeric text");
+foreach (var special in new[] { "D", "UD", "W", "INC" })
+{
+    var payload = GradeUploadValuePolicy.BuildPayload(special, null, special, "finals");
+    Check(GradeUploadValuePolicy.HasValueForTerm(payload, "finals") &&
+          GradeUploadValuePolicy.TryValidatePayload(payload, "finals", out _),
+        $"Special Finals value {special} was not accepted as an explicit academic standing.");
+}
+Pass(200, "Finals upload accepts D UD W and INC without decimal coercion");
+var mergedSpecialFinals = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+    GradeUploadValuePolicy.BuildPayload("INC", null, "INC", "finals"), "{\"midterm\":\"88.50\"}", "finals");
+Check(mergedSpecialFinals.Contains("\"midterm\":\"88.50\"") && mergedSpecialFinals.Contains("\"standing\":\"incomplete\""),
+    "A special Finals upload lost the trusted Midterm or its standing.");
+Pass(201, "special Finals upload preserves existing Midterm history");
+Check(GradeUploadValuePolicy.NormalizeStudentIdentifier("\uFEFF\u200B\u00A0 26-0001 \u2060") == "26-0001",
+    "Hidden spreadsheet characters changed the authoritative Student Number match.");
+Pass(203, "bulk upload normalizes hidden Student Number characters without using row order");
+
+var realisticFinalsRows = Enumerable.Range(1, 25).Select(index => new AcademicRecord
+{
+    Id = $"midterm-{index}",
+    AssignmentCycleId = "501",
+    StudentNo = $"26-{index:0000}",
+    StudentHash = $"student{index}@plv.edu.ph",
+    SubjectCode = "IT 101",
+    Section = "BSIT 1-1",
+    SchoolYear = "2026-2027",
+    Semester = "FIRST",
+    Term = "midterm",
+    Status = "Finalized",
+    Grade = $"{{\"midterm\":\"{80 + (index % 10)}.50\"}}",
+    GradeVersion = 1
+}).Reverse().ToArray();
+var realisticFinalsSuccessful = 0;
+foreach (var index in Enumerable.Range(1, 25))
+{
+    var context = new TrustedMidtermGradeService.Context(
+        "501", $"26-{index:0000}", $"student{index}@plv.edu.ph", "IT 101",
+        "BSIT 1-1", "2026-2027", "FIRST");
+    var trustedMidterm = TrustedMidtermGradeService.FindFinalizedLedgerSnapshot(realisticFinalsRows, context);
+    Check(trustedMidterm is not null && trustedMidterm.RecordId == $"midterm-{index}",
+        $"Finals row {index} resolved another student's Midterm after roster reordering.");
+    var merged = GradeEncodingPeriodService.ProjectIncomingGradePayload(
+        "{\"finals\":\"91.50\"}", trustedMidterm!.Payload, "finals");
+    Check(GradeUploadValuePolicy.GetTermValue(merged, "midterm") == $"{80 + (index % 10)}.50" &&
+          GradeUploadValuePolicy.GetTermValue(merged, "finals") == "91.50",
+        $"Finals row {index} overwrote its trusted Midterm or lost Finals precision.");
+    realisticFinalsSuccessful++;
+}
+Check(realisticFinalsSuccessful == 25,
+    "A realistic 25-student Finals upload did not account for every valid student row.");
+Pass(204, "25 reordered Finals rows resolve the same student's trusted Midterm and preserve exact grades");
+
+var wrongStudentContext = new TrustedMidtermGradeService.Context(
+    "501", "26-9999", "missing@plv.edu.ph", "IT 101", "BSIT 1-1", "2026-2027", "FIRST");
+Check(TrustedMidtermGradeService.FindFinalizedLedgerSnapshot(realisticFinalsRows, wrongStudentContext) is null,
+    "A missing student's Finals row borrowed another student's trusted Midterm.");
+var wrongAssignmentContext = wrongStudentContext with { StudentNumber = "26-0001", StudentHash = "student1@plv.edu.ph", AssignmentCycleId = "999" };
+Check(TrustedMidtermGradeService.FindFinalizedLedgerSnapshot(realisticFinalsRows, wrongAssignmentContext) is null,
+    "A Finals row crossed Faculty assignment cycles while resolving Midterm history.");
+Pass(205, "missing or wrong-assignment Midterm identity fails closed without positional fallback");
 
 var openMidterm = GradeEncodingPeriodService.ParseOpen(
     "{\"semester\":\"First Semester\",\"startDate\":\"2026-09-01\",\"endDate\":\"2026-09-30\",\"term\":\"MIDTERM\"}",
@@ -145,6 +210,19 @@ Check(FacultyGradeWorkbookService.Headers.Select((header, index) => sheet.Cell(1
       sheet.Cell("P2").GetString() == "2026-2027",
     "XLSX grading template does not preserve its headers, roster, or authoritative assignment context.");
 Pass(106, "XLSX template preserves headers roster and assignment context");
+using (var specialWorkbook = new XLWorkbook(new MemoryStream(bytes)))
+using (var specialStream = new MemoryStream())
+{
+    var specialSheet = specialWorkbook.Worksheet(FacultyGradeWorkbookService.GradeSheetName);
+    specialSheet.Cell("L2").Clear(XLClearOptions.Contents);
+    specialSheet.Cell("L2").Value = "INC";
+    specialWorkbook.SaveAs(specialStream);
+    specialStream.Position = 0;
+    var parsedSpecial = FacultyGradeWorkbookService.Parse(specialStream);
+    Check(parsedSpecial.Rows.Count == 2 && parsedSpecial.Rows[0].Values["final_grade"] == "INC",
+        "The canonical XLSX parser dropped or rejected a special Finals row.");
+}
+Pass(202, "XLSX parser retains special Finals values and every roster row");
 var csvBytes = System.Text.Encoding.UTF8.GetBytes("Student ID,Midterm Grade,Final Grade\n26-0001,85,90");
 await using (var csvStream = new MemoryStream(csvBytes))
 {
@@ -430,7 +508,7 @@ Check(curriculumRepairMigration.Contains("WHERE curriculum.status = 'PUBLISHED'"
 Pass(188, "program curriculum repair migration is idempotent and published-only");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=197;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=197;i++) Skip(i); Skip(206); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -1046,9 +1124,16 @@ await Exec("INSERT INTO systemsettings(key,value) VALUES('encoding_period','{\"s
 var dbPeriod=await GradeEncodingPeriodService.GetOpenAsync(db,new DateOnly(2026,9,22));
 Check(dbPeriod.Term=="midterm" && dbPeriod.Semester=="FIRST","Database encoding period was not authoritative."); Pass(75,"PostgreSQL authoritative Midterm period");
 var dbMidtermPayload=GradeEncodingPeriodService.ProjectIncomingGradePayload("{\"midterm\":\"85\",\"finals\":\"90\"}",null,dbPeriod.Term);
-await Exec($"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term) VALUES('qa-midterm','106','26-0701','SubmittedToChairperson','{dbMidtermPayload.Replace("'", "''")}','IT 101','2026-2027','FIRST','midterm')");
+await Exec($"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,section,subject_code,school_year,semester,term,date) VALUES('qa-midterm','106','26-0701','SubmittedToChairperson','{dbMidtermPayload.Replace("'", "''")}','qa-midterm@plv.edu.ph','BSIT 1-1','IT 101','2026-2027','FIRST','midterm','2026-09-22')");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='qa-midterm' AND grade::jsonb ? 'midterm' AND NOT (grade::jsonb ? 'finals')")==1,
     "PostgreSQL Draft retained closed Finals data."); Pass(76,"Midterm persistence contains no Finals field");
+var trustedPostgresMidterm = await TrustedMidtermGradeService.FindPostgresSnapshotAsync(db,
+    new TrustedMidtermGradeService.Context("106", "26-0701", "qa-midterm@plv.edu.ph", "IT 101",
+        "BSIT 1-1", "2026-2027", "FIRST"));
+Check(trustedPostgresMidterm is not null && trustedPostgresMidterm.Source == "POSTGRESQL_MIDTERM" &&
+      GradeUploadValuePolicy.GetTermValue(trustedPostgresMidterm.Payload, "midterm") == "85",
+    "Finals encoding did not resolve the exact persisted PostgreSQL Midterm snapshot.");
+Pass(206,"trusted Midterm resolves from exact PostgreSQL student and assignment identity before Fabric");
 await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term) VALUES('qa-future','106','26-0702','SubmittedToChairperson','{\"finals\":\"90\"}','IT 101','2026-2027','FIRST','finals')");
 var midtermReviewIds=await ChairpersonReviewScopeService.GetCurrentVisibleRecordIdsAsync(db,"midterm","FIRST");
 Check(midtermReviewIds.Contains("qa-midterm") && !midtermReviewIds.Contains("qa-future"),"Chairperson scope exposed a closed-term row.");

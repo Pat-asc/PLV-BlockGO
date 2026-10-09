@@ -81,7 +81,10 @@ public static class GradeUploadValuePolicy
     public static bool IsSpecialValue(string? value) => ResolveStanding(value) is not null;
 
     public static string NormalizeStudentIdentifier(string? value) =>
-        (value ?? string.Empty).Trim().Trim('\uFEFF', '\u200B', '\u2060').Trim();
+        new string((value ?? string.Empty)
+            .Where(character => character is not ('\uFEFF' or '\u200B' or '\u2060' or '\u00A0'))
+            .ToArray())
+            .Trim();
 
     public static string GetTermValue(string? payload, string? term)
     {
