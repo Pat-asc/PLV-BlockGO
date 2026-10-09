@@ -28,6 +28,20 @@ public static class GradeComparisonService
     public const string ReferenceNotFound = "REFERENCE_NOT_FOUND";
     public const string ReferenceGradeUnavailable = "REFERENCE_GRADE_UNAVAILABLE";
 
+    public static GradeComparisonResult FromFinalized(AcademicRecord finalized)
+    {
+        ArgumentNullException.ThrowIfNull(finalized);
+        var grade = ComparableGrade(finalized.Grade, finalized.Term);
+        return new(
+            grade,
+            grade,
+            grade is null ? ReferenceGradeUnavailable : Match,
+            finalized.Id,
+            FinalizedVersion(finalized),
+            finalized.TransactionId,
+            "FABRIC_FINALIZED");
+    }
+
     public static GradeComparisonResult Compare(
         AcademicRecord current,
         IEnumerable<AcademicRecord> authoritativeRecords,

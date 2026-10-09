@@ -257,6 +257,14 @@ const SECTION_STATUS_PRIORITY = {
     approved: 3,
     forwarded: 4,
 };
+const normalizeRecordReviewStatus = (status = '') => {
+    const normalized = normalizeText(status);
+    if (normalized.includes('finalized') || normalized.includes('forwarded')) return 'forwarded';
+    if (normalized.includes('departmentapproved') || normalized.includes('chairpersonapproved') || normalized === 'approved') return 'approved';
+    if (normalized.includes('issued') || normalized.includes('submitted') || normalized === '') return 'submitted';
+    if (normalized.includes('returned') || normalized.includes('rejected')) return 'returned';
+    return 'pending';
+};
 const hasEncodedValue = (value) => String(value ?? '').trim() !== '';
 const getRecordStudentNumber = (record) => (
     record?.student_no ||
@@ -698,6 +706,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             const semester = g.semester || g.Semester || matchedAssignment?.semester || '2nd Semester';
             const gradingTerm = normalizeGradeTerm(g.term || g.Term || activeEncodingTerm);
             const status = (g.status || g.Status || '').toLowerCase();
+            const workflowPartition = normalizeRecordReviewStatus(status);
             const key = [
                 facId,
                 normalizeText(resolvedDepartmentName),
@@ -706,6 +715,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 normalizeText(schoolYear),
                 normalizeText(semester),
                 gradingTerm,
+                workflowPartition,
             ].join('|');
 
             if (!groups[key]) {
@@ -810,11 +820,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 referenceGrade: groups[key].referenceGrades[studentKey],
             });
             
-            let normalizedReviewStatus = 'pending';
-            if (status.includes('finalized') || status.includes('forwarded')) normalizedReviewStatus = 'forwarded';
-            else if (status.includes('departmentapproved') || status.includes('chairpersonapproved') || status === 'approved') normalizedReviewStatus = 'approved';
-            else if (status.includes('issued') || status.includes('submitted') || status === '') normalizedReviewStatus = 'submitted';
-            else if (status.includes('returned') || status.includes('rejected')) normalizedReviewStatus = 'returned';
+            const normalizedReviewStatus = workflowPartition;
             groups[key].workflowStatuses.add(normalizedReviewStatus);
             groups[key].hasChairpersonApproved = groups[key].hasChairpersonApproved || status.includes('chairpersonapproved');
             groups[key].hasDepartmentApproved = groups[key].hasDepartmentApproved || status.includes('departmentapproved');

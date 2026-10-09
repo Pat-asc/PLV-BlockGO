@@ -44,6 +44,13 @@ var matching = GradeComparisonService.Compare(current, new[] { trusted });
 Check(matching.CurrentGrade == "1.75" && matching.ReferenceGrade == "1.75", "current and reference grades are returned");
 Check(matching.IntegrityStatus == GradeComparisonService.Match, "equal grades produce MATCH");
 
+var finalizedProjection = GradeComparisonService.FromFinalized(Finalized("{\"midterm\":91.50}"));
+Check(finalizedProjection.CurrentGrade == "91.50" &&
+      finalizedProjection.ReferenceGrade == "91.50" &&
+      finalizedProjection.IntegrityStatus == GradeComparisonService.Match &&
+      finalizedProjection.ReferenceSource == "FABRIC_FINALIZED",
+    "Fabric-only finalized rows retain an exact authoritative reference grade");
+
 var mismatch = GradeComparisonService.Compare(current, new[] { Finalized("2.00") });
 Check(mismatch.IntegrityStatus == GradeComparisonService.Mismatch, "different grades produce MISMATCH");
 

@@ -2768,7 +2768,9 @@ namespace BlockGo.Controllers
                     comparisonHistoryByRecordId.TryGetValue(g.Id ?? string.Empty, out var comparisonHistory);
                     var comparison = jwtRole == "department_admin" && pendingGradesById.ContainsKey(g.Id ?? string.Empty)
                         ? GradeComparisonService.Compare(g, authoritativeLedgerGrades, comparisonHistory)
-                        : new GradeComparisonResult(null, null, GradeComparisonService.ReferenceNotFound);
+                        : jwtRole == "department_admin" && string.Equals(g.Status, "Finalized", StringComparison.OrdinalIgnoreCase)
+                            ? GradeComparisonService.FromFinalized(g)
+                            : new GradeComparisonResult(null, null, GradeComparisonService.ReferenceNotFound);
                     registrarAssignments.TryGetValue(g.AssignmentCycleId ?? string.Empty, out var assignmentMetadata);
                     RegistrarGradeLedgerMetadataService.StudentIdentity? officialStudent = null;
                     if (!string.IsNullOrWhiteSpace(g.StudentNo)) registrarStudents.TryGetValue(g.StudentNo, out officialStudent);

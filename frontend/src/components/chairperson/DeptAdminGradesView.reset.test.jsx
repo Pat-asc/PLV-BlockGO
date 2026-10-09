@@ -285,6 +285,40 @@ test('a Finalized record leaves For Review and remains in current Finalized trac
   expect(screen.getByTestId('review-rows')).toHaveTextContent('forwarded:1:forwarded');
 });
 
+test('a partially finalized legacy section is split between Approved and Finalized without cross-student reference loss', async () => {
+  const shared = {
+    assignment_cycle_id: '3', faculty_id: 'faculty@plv.edu.ph', department: 'BSIT', course: 'BSIT',
+    record_section: 'BSIT 1-1', section: 'BSIT 1-1', subject_code: 'IT 101',
+    school_year: '2026-2027', semester: 'FIRST', term: 'midterm',
+  };
+  fetchAllGrades.mockResolvedValue({ data: [
+    {
+      ...shared, id: 'still-approved', student_no: '26-0022', student_name: 'Approved Student',
+      status: 'ChairpersonApproved', grade: '{"midterm":"86"}', reference_grade: '86',
+    },
+    {
+      ...shared, id: 'already-finalized', student_no: '26-0016', student_name: 'Finalized Student',
+      status: 'Finalized', grade: '{"midterm":"90"}', reference_grade: '90',
+      finalized_at: '2026-10-08T08:16:12Z', transaction_id: 'fabric-tx',
+    },
+  ] });
+
+  render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" loggedInName="Chair" department="BSIT" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Approved' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('approved:1:approved'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
+  expect(screen.getByTestId('current-grade')).toHaveTextContent('86');
+  expect(screen.getByTestId('reference-grade')).toHaveTextContent('86');
+  expect(screen.getByRole('button', { name: 'Send to Registrar' })).toBeEnabled();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Finalized' }));
+  await waitFor(() => expect(screen.getByTestId('review-rows')).toHaveTextContent('forwarded:1:forwarded'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select first section' }));
+  expect(screen.getByTestId('current-grade')).toHaveTextContent('90');
+  expect(screen.getByTestId('reference-grade')).toHaveTextContent('90');
+  expect(screen.getByRole('button', { name: 'Send to Registrar' })).toBeDisabled();
+});
+
 test('Finalized tracking reports load failure instead of a false empty state', async () => {
   const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
   fetchAllGrades.mockRejectedValue(new Error('service unavailable'));
