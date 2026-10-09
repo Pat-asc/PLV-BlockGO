@@ -167,7 +167,7 @@ const parseGradeValue = (value) => {
   if (!normalized) return "";
 
   const numeric = Number(normalized);
-  return Number.isNaN(numeric) ? "" : numeric;
+  return Number.isNaN(numeric) ? "" : normalized;
 };
 
 const hasEncodedGrade = (value) => {
@@ -436,6 +436,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
       const recordHasEncodedValueForTerm = (record, term) => {
         const parsedGrade = parseSavedGrade(record?.grade || record?.Grade);
+        if (parsedGrade.standing && parsedGrade.standing !== STUDENT_STATUS_ACTIVE) return true;
         return term === "finals"
           ? hasEncodedGrade(parsedGrade.finals)
           : hasEncodedGrade(parsedGrade.midterm);
@@ -1008,7 +1009,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             : 'All records processed successfully.'
         });
         updateSectionTermStatus(sectionName, encodingTerm, 'draft');
-        loadFacultyData();
+        await loadFacultyData();
       } else {
         setUploadResult({
           type: 'error',
@@ -1019,11 +1020,20 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       }
     } catch (err) {
       console.error(err);
+      const errorData = err?.data || {};
       setUploadResult({
         type: 'error',
         title: 'Batch Upload Failed',
         message: err.message,
         context: { section: canonicalSection, subjectCode: sectionData.subjectCode, term: encodingTerm, schoolYear, semester },
+        counts: Number.isFinite(errorData.totalProcessed) ? {
+          processed: errorData.totalProcessed,
+          successful: errorData.successful || 0,
+          failed: errorData.failed || 0,
+        } : null,
+        details: Array.isArray(errorData.errors) && errorData.errors.length > 0
+          ? errorData.errors
+          : null,
       });
     } finally {
       setUploadingSection(null);
@@ -1567,7 +1577,8 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
               </div>
             ) : (
               <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-                Nothing was submitted or finalized. Existing on-screen grades were preserved.
+                <p>Nothing was submitted or finalized. Existing on-screen grades were preserved.</p>
+                {uploadResult.counts && <p className="mt-2 text-xs">Processed: {uploadResult.counts.processed} | Saved: {uploadResult.counts.successful} | Failed: {uploadResult.counts.failed}</p>}
               </div>
             )}
             {Array.isArray(uploadResult.details) ? (
@@ -1575,6 +1586,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                 <table className="w-full border-collapse text-left text-sm">
                   <thead className="bg-slate-100 text-slate-700">
                     <tr>
+                      <th className="px-4 py-3 font-bold">Row</th>
                       <th className="px-4 py-3 font-bold">Student ID</th>
                       <th className="px-4 py-3 font-bold">Reason</th>
                     </tr>
@@ -1582,6 +1594,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                   <tbody>
                     {uploadResult.details.map((error, index) => (
                       <tr key={`${error.studentId || 'row'}-${index}`} className="border-t border-slate-200">
+                        <td className="px-4 py-3 font-semibold text-slate-700">{error.rowNumber || '—'}</td>
                         <td className="px-4 py-3 font-semibold text-slate-700">{error.studentId || 'Unknown'}</td>
                         <td className="px-4 py-3 text-slate-600">{error.reason || 'No reason provided'}</td>
                       </tr>

@@ -12,6 +12,10 @@ const idOf = (person) => String(person?.id || person?.email || "");
 const years = ["1st Year", "2nd Year", "3rd Year", "4th Year"];
 const terms = { FIRST: "1st Semester", SECOND: "2nd Semester", MIDYEAR: "Summer" };
 const identity = (item) => [item.academicSectionId || `${item.program}|${item.sectionName}`, item.schoolYear, item.semester, item.subjectCode].join("|");
+const scheduleIdentity = (facultyId, academicSectionId, schoolYear, semester, subjectCode) =>
+  [facultyId, academicSectionId, schoolYear, semester, subjectCode]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .join("|");
 function Icon({ type }) {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{type === "search" ? <><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></> : type === "book" ? <><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h6M9 11h6M9 15h4"/></> : type === "save" ? <><path d="M4 3h13l3 3v15H4zM8 3v6h8V3M8 21v-8h8v8"/></> : type === "cap" ? <><path d="m2 9 10-5 10 5-10 5zM6 12v5l6 3 6-3v-5M22 9v7"/></> : type === "upload" ? <><path d="M12 16V3m-5 5 5-5 5 5M4 15v6h16v-6"/></> : type === "trash" ? <><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></> : <><circle cx="12" cy="7" r="4"/><path d="M4 21v-3a8 8 0 0 1 16 0v3z"/></>}</svg>;
 }
@@ -98,7 +102,13 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     (assignmentOptions.assignments || []).forEach((item) => {
       const schedule = parseFacultySchedule(item.schedule, item.day);
       if (!schedule.day) return;
-      persistedSchedules[`${item.facultyUserId || item.facultyId}|${item.academicSectionId}|${item.schoolYear}`] = schedule;
+      persistedSchedules[scheduleIdentity(
+        item.facultyUserId || item.facultyId,
+        item.academicSectionId,
+        item.schoolYear,
+        item.semesterCode || item.semester,
+        item.subjectCode
+      )] = schedule;
     });
     setSchedules((current) => ({ ...persistedSchedules, ...current }));
   }, [assignmentOptions.assignments]);
@@ -185,7 +195,13 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     : saved.map((item) => ({ ...item, assignmentState: "saved" }));
   const totalUnits = rows.reduce((sum, item) => sum + (Number(item.units) || 0), 0);
   const pendingUnits = professorDraft.reduce((sum, item) => sum + (Number(item.units) || 0), 0);
-  const scheduleKeyFor = (section, facultyId = professor) => `${facultyId}|${section.academicSectionId}|${section.schoolYear}`;
+  const scheduleKeyFor = (section, facultyId = professor, selectedSubjectCode = subjectCode) => scheduleIdentity(
+    facultyId,
+    section.academicSectionId,
+    section.schoolYear,
+    section.semesterCode,
+    selectedSubjectCode
+  );
   const selectProfessor = (person) => { setProfessor(idOf(person)); setLookup(""); setProfessorListOpen(false); };
   const add = (section, index) => {
     if (!subject || !selectedProfessor) return;

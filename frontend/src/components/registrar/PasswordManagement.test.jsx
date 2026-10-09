@@ -13,7 +13,7 @@ const faculties = [
   { id: 2, fullname: 'David Reyes', accountId: 'FAC-002', email: 'david@plv.edu.ph', department: 'BSCS' },
 ];
 const departmentAdmins = [
-  { id: 3, fullname: 'Alice Cruz', accountId: 'CHAIR-003', email: 'alice@plv.edu.ph', department: 'Data Science' },
+  { id: 3, fullname: 'Alice Cruz', accountId: 'CHAIR-003', email: 'alice@plv.edu.ph', department: 'Bachelor of Science in Information Technology', programCode: 'BSIT', programName: 'Bachelor of Science in Information Technology' },
 ];
 
 test('automatically displays matching accounts from every allowed role while typing', () => {
@@ -43,4 +43,31 @@ test('selects an account, closes results, and reopens them after the search is e
   fireEvent.change(search, { target: { value: 'Davi' } });
   expect(screen.getByRole('listbox', { name: 'Matching accounts' })).toBeInTheDocument();
   expect(screen.getByRole('combobox', { name: 'Account' })).toHaveValue('');
+});
+
+test('shows the authoritative Chairperson program in search, dropdown, and selected details', () => {
+  render(<PasswordManagement students={students} faculties={faculties} departmentAdmins={departmentAdmins} onRefresh={jest.fn()} />);
+
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search Account' }), { target: { value: 'BSIT' } });
+  const result = within(screen.getByRole('listbox', { name: 'Matching accounts' })).getByRole('option', { name: /Alice Cruz/i });
+  expect(result).toHaveTextContent('Alice Cruz');
+  expect(result).toHaveTextContent('Department Administrator • BSIT');
+
+  const accountSelect = screen.getByRole('combobox', { name: 'Account' });
+  expect(within(accountSelect).getByRole('option', { name: /Alice Cruz.*BSIT/i })).toBeInTheDocument();
+  fireEvent.click(result);
+  expect(screen.getByLabelText('Selected account details')).toHaveTextContent('Bachelor of Science in Information Technology');
+});
+
+test('does not append Chairperson program metadata to Student or Faculty results', () => {
+  render(<PasswordManagement students={students} faculties={faculties} departmentAdmins={departmentAdmins} onRefresh={jest.fn()} />);
+
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search Account' }), { target: { value: 'Daria' } });
+  const studentResult = within(screen.getByRole('listbox', { name: 'Matching accounts' })).getByRole('option');
+  expect(studentResult).toHaveTextContent('Student');
+  expect(studentResult).not.toHaveTextContent('BSIT');
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search Account' }), { target: { value: 'David' } });
+  const facultyResult = within(screen.getByRole('listbox', { name: 'Matching accounts' })).getByRole('option');
+  expect(facultyResult).toHaveTextContent('Faculty');
+  expect(facultyResult).not.toHaveTextContent('BSCS');
 });

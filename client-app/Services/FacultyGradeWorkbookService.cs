@@ -43,6 +43,8 @@ public static class FacultyGradeWorkbookService
             ws.Cell(row, 16).Value = assignment.SchoolYear;
             ws.Cell(row, 17).Value = assignment.Semester;
         }
+        ws.Columns(7, 7).Style.NumberFormat.Format = "0.00";
+        ws.Columns(12, 13).Style.NumberFormat.Format = "0.00";
         ws.Columns().AdjustToContents();
         ws.Range(1, 1, 1, Headers.Length).Style.Font.Bold = true;
         ws.SheetView.FreezeRows(1);
@@ -63,7 +65,7 @@ public static class FacultyGradeWorkbookService
     public static decimal WeightedGrade(decimal quizzes, decimal assignments, decimal attendance, decimal exam) =>
         decimal.Round((quizzes * .20m) + (assignments * .10m) + (attendance * .10m) + (exam * .60m), 2);
 
-    public static ParsedWorkbook Parse(Stream stream)
+    public static ParsedWorkbook Parse(Stream stream, bool validateRows = true)
     {
         using var workbook = new XLWorkbook(stream);
         if (!workbook.TryGetWorksheet(GradeSheetName, out var sheet))
@@ -104,20 +106,25 @@ public static class FacultyGradeWorkbookService
             var hasAnyValue = values.Values.Any(value => !string.IsNullOrWhiteSpace(value));
             if (string.IsNullOrWhiteSpace(studentId))
             {
-                if (hasAnyValue) throw new ArgumentException($"Row {row.RowNumber()} — Student ID is required.");
+                if (hasAnyValue && validateRows) throw new ArgumentException($"Row {row.RowNumber()} — Student ID is required.");
+                if (hasAnyValue) rows.Add(new(row.RowNumber(), values));
                 continue;
             }
-            if (!studentIds.Add(studentId))
+            if (!studentIds.Add(studentId) && validateRows)
                 throw new ArgumentException($"Row {row.RowNumber()} — duplicate Student ID {studentId}.");
 
-            foreach (var key in new[] { "quizzes_20", "assignments_10", "attendance_10", "midterm_exam_60", "midterm_grade",
-                         "final_quizzes_20", "final_assignments_10", "final_attendance_10", "final_exam_60", "final_grade", "final_average" })
+            if (validateRows)
             {
-                if (!values.TryGetValue(key, out var value) || string.IsNullOrWhiteSpace(value)) continue;
-                if (row.Cell(headerMap[key]).HasFormula) continue;
-                if (!decimal.TryParse(value, System.Globalization.NumberStyles.Number,
-                        System.Globalization.CultureInfo.InvariantCulture, out var number) || number is < 0 or > 100)
-                    throw new ArgumentException($"Row {row.RowNumber()} — '{headerRow.Cell(headerMap[key]).GetString()}' must be a number from 0 to 100.");
+                foreach (var key in new[] { "quizzes_20", "assignments_10", "attendance_10", "midterm_exam_60", "midterm_grade",
+                             "final_quizzes_20", "final_assignments_10", "final_attendance_10", "final_exam_60", "final_grade", "final_average" })
+                {
+                    if (!values.TryGetValue(key, out var value) || string.IsNullOrWhiteSpace(value)) continue;
+                    if (row.Cell(headerMap[key]).HasFormula) continue;
+                    if (key is "midterm_grade" or "final_grade" && GradeUploadValuePolicy.IsSpecialValue(value)) continue;
+                    if (!decimal.TryParse(value, System.Globalization.NumberStyles.Number,
+                            System.Globalization.CultureInfo.InvariantCulture, out var number) || number is < 0 or > 100)
+                        throw new ArgumentException($"Row {row.RowNumber()} — '{headerRow.Cell(headerMap[key]).GetString()}' must be a number from 0 to 100.");
+                }
             }
             rows.Add(new(row.RowNumber(), values));
         }

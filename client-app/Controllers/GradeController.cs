@@ -1139,46 +1139,8 @@ namespace BlockGo.Controllers
             return outputStream.ToArray();
         }
 
-        private static double ToUniversityGrade(double rawAverage)
-        {
-            if (rawAverage <= 0) return 0;
-            if (rawAverage >= 98.5) return 1.00;
-            if (rawAverage >= 94) return 1.25;
-            if (rawAverage >= 91) return 1.50;
-            if (rawAverage >= 88) return 1.75;
-            if (rawAverage >= 84) return 2.00;
-            if (rawAverage >= 81) return 2.25;
-            if (rawAverage >= 78) return 2.50;
-            if (rawAverage >= 75) return 3.00;
-            return 5.00;
-        }
-
-        private static string BuildUploadedGradePayload(string? rawGrade, string? rawMidterm, string? rawFinals, string? term)
-        {
-            if (string.IsNullOrWhiteSpace(rawGrade) && string.IsNullOrWhiteSpace(rawMidterm) && string.IsNullOrWhiteSpace(rawFinals)) return "";
-            if (!string.IsNullOrWhiteSpace(rawGrade) && rawGrade.TrimStart().StartsWith("{")) return rawGrade;
-
-            var activeTerm = GradeAcademicTerm.Normalize(term);
-            var midterm = double.TryParse(rawMidterm, out var parsedMidterm) ? parsedMidterm : 0;
-            var finals = double.TryParse(rawFinals, out var parsedFinals) ? parsedFinals : 0;
-
-            if (double.TryParse(rawGrade, out var parsedGrade))
-            {
-                if (activeTerm == "finals" && finals <= 0) finals = parsedGrade;
-                if (activeTerm == "midterm" && midterm <= 0) midterm = parsedGrade;
-            }
-
-            var rawAverage = activeTerm == "finals"
-                ? (midterm > 0 ? (midterm + finals) / 2 : finals)
-                : midterm;
-
-            return JsonSerializer.Serialize(new
-            {
-                midterm = midterm > 0 ? midterm.ToString("0.##") : "",
-                finals = finals > 0 ? finals.ToString("0.##") : "",
-                finalAverage = ToUniversityGrade(rawAverage).ToString("0.00")
-            });
-        }
+        private static string BuildUploadedGradePayload(string? rawGrade, string? rawMidterm, string? rawFinals, string? term) =>
+            GradeUploadValuePolicy.BuildPayload(rawGrade, rawMidterm, rawFinals, term);
 
         private delegate string? GetValDelegate(params string[] cols);
 
@@ -1503,7 +1465,7 @@ namespace BlockGo.Controllers
                     {
                         await using (var validationStream = System.IO.File.OpenRead(tempFile))
                         {
-                            var parsedWorkbook = FacultyGradeWorkbookService.Parse(validationStream);
+                            var parsedWorkbook = FacultyGradeWorkbookService.Parse(validationStream, validateRows: false);
                             workbookFacultySectionId = parsedWorkbook.FacultySectionId;
                         }
                         using var workbook = new XLWorkbook(tempFile);
@@ -1547,7 +1509,7 @@ namespace BlockGo.Controllers
                                     {
                                         var cell = row.Cell(headerMap[col]);
                                         var val = "";
-                                        try { val = cell.HasFormula ? cell.CachedValue.ToString() : cell.Value.ToString(); }
+                                        try { val = cell.HasFormula ? cell.CachedValue.ToString() : cell.GetFormattedString(CultureInfo.InvariantCulture); }
                                         catch { val = cell.Value.ToString(); }
                                         if (!string.IsNullOrWhiteSpace(val)) return val.Trim();
                                     }
@@ -1572,11 +1534,17 @@ namespace BlockGo.Controllers
                                 new[] { "final_quizzes_20" }, new[] { "final_assignments_10" },
                                 new[] { "final_attendance_10" }, new[] { "final_exam_60" }) ?? GetVal("final_grade", "finals_grade");
 
-                            var sId = GetVal("student_id", "student_no", "id_number", "student_number");
-                            if (string.IsNullOrEmpty(sId)) continue;
+                            var sId = GradeUploadValuePolicy.NormalizeStudentIdentifier(
+                                GetVal("student_id", "student_no", "id_number", "student_number"));
+                            if (string.IsNullOrEmpty(sId))
+                            {
+                                parsedRecords.Add(new GradeRequest { UploadRowNumber = row.RowNumber() });
+                                continue;
+                            }
 
                             parsedRecords.Add(new GradeRequest
                             {
+                                UploadRowNumber = row.RowNumber(),
                                 StudentId = sId ?? "",
                                 StudentName = GetVal("student_name", "student", "full_name", "name") ?? "",
                                 Section = !string.IsNullOrWhiteSpace(section) ? section : (GetVal("section", "class_section", "sec") ?? ""),
@@ -1680,7 +1648,8 @@ namespace BlockGo.Controllers
                                 var computedFinals = WeightedGrade(
                                     "final_quizzes_20", "final_assignments_10", "final_attendance_10", "final_exam_60");
 
-                                var sId = GetVal("student_id", "student_no", "id_number", "student_number");
+                                var sId = GradeUploadValuePolicy.NormalizeStudentIdentifier(
+                                    GetVal("student_id", "student_no", "id_number", "student_number"));
                                 if (string.IsNullOrEmpty(sId))
                                 {
                                     if (fields.Any(value => !string.IsNullOrWhiteSpace(value)))
@@ -1692,6 +1661,7 @@ namespace BlockGo.Controllers
 
                                 parsedRecords.Add(new GradeRequest
                                 {
+                                    UploadRowNumber = lineNum,
                                     StudentId = sId ?? "",
                                     StudentName = GetVal("student_name", "student", "full_name", "name") ?? "",
                                     Section = !string.IsNullOrWhiteSpace(section) ? section : (GetVal("section", "class_section", "sec") ?? ""),
@@ -1765,11 +1735,21 @@ namespace BlockGo.Controllers
                     {
                         try
                         {
-                            if (string.IsNullOrEmpty(record.StudentId) ||
-                                !GradeEncodingPeriodService.HasGradeForTerm(record.Grade, term))
+                            if (string.IsNullOrWhiteSpace(record.StudentId))
                             {
                                 failureCount++;
                                 errors.Add(new BulkUploadError {
+                                    RowNumber = record.UploadRowNumber,
+                                    StudentId = "UNKNOWN",
+                                    Reason = "Student ID is required."
+                                });
+                                continue;
+                            }
+                            if (!GradeUploadValuePolicy.HasValueForTerm(record.Grade, term))
+                            {
+                                failureCount++;
+                                errors.Add(new BulkUploadError {
+                                    RowNumber = record.UploadRowNumber,
                                     StudentId = record.StudentId ?? "UNKNOWN",
                                     Reason = $"Missing {term} grade. Closed-term values were ignored."
                                 });
@@ -1780,17 +1760,16 @@ namespace BlockGo.Controllers
                             if (!string.Equals(uploadedSubjectCode, facultyAssignment.Subject, StringComparison.OrdinalIgnoreCase))
                             {
                                 failureCount++;
-                                errors.Add(new BulkUploadError { StudentId = record.StudentId ?? "", Reason = "Uploaded subject does not match the selected faculty assignment." });
+                                errors.Add(new BulkUploadError { RowNumber = record.UploadRowNumber, StudentId = record.StudentId ?? "", Reason = "Uploaded subject does not match the selected faculty assignment." });
                                 continue;
                             }
-                            var uploadedGradeValue = GetGradeLogValue(record.Grade, term);
-                            if (!decimal.TryParse(uploadedGradeValue, NumberStyles.Number, CultureInfo.InvariantCulture, out var numericGrade) ||
-                                numericGrade is < 60 or > 100)
+                            if (!GradeUploadValuePolicy.TryValidatePayload(record.Grade, term, out var gradeValidationError))
                             {
                                 failureCount++;
                                 errors.Add(new BulkUploadError {
+                                    RowNumber = record.UploadRowNumber,
                                     StudentId = record.StudentId ?? "UNKNOWN",
-                                    Reason = $"The {term} grade must be a number from 60 to 100."
+                                    Reason = gradeValidationError
                                 });
                                 continue;
                             }
@@ -1805,7 +1784,7 @@ namespace BlockGo.Controllers
                             var comboKey = $"{record.StudentId.ToLower()}_{facultyAssignment.Subject.ToLower()}";
                             if (processedCombos.Contains(comboKey)) {
                                 failureCount++;
-                                errors.Add(new BulkUploadError { StudentId = record.StudentId, Reason = "Duplicate subject detected in upload" });
+                                errors.Add(new BulkUploadError { RowNumber = record.UploadRowNumber, StudentId = record.StudentId, Reason = "Duplicate Student ID and subject in upload." });
                                 continue;
                             }
                             processedCombos.Add(comboKey);
@@ -1835,7 +1814,7 @@ namespace BlockGo.Controllers
                             if (stuEmail == null)
                             {
                                 failureCount++;
-                                errors.Add(new BulkUploadError { StudentId = record.StudentId ?? "", Reason = "Student account not found. Registrar registration is required before grade upload." });
+                                errors.Add(new BulkUploadError { RowNumber = record.UploadRowNumber, StudentId = record.StudentId ?? "", Reason = "Student account not found. Registrar registration is required before grade upload." });
                                 continue;
                             }
                             var blockchainRecord = record.ToBlockchainRecord("PLV");
@@ -1857,7 +1836,7 @@ namespace BlockGo.Controllers
                             if (!rosterStudentNumbers.Contains(stuNumber.Trim()))
                             {
                                 failureCount++;
-                                errors.Add(new BulkUploadError { StudentId = record.StudentId, Reason = "Student is not ENROLLED in this faculty assignment's exact section and period." });
+                                errors.Add(new BulkUploadError { RowNumber = record.UploadRowNumber, StudentId = record.StudentId ?? string.Empty, Reason = "Student is not ENROLLED in this faculty assignment's exact section and period." });
                                 continue;
                             }
 
@@ -1889,6 +1868,7 @@ namespace BlockGo.Controllers
                             {
                                 failureCount++;
                                 errors.Add(new BulkUploadError {
+                                    RowNumber = record.UploadRowNumber,
                                     StudentId = record.StudentId ?? "",
                                     Reason = "This grade is already submitted or approved and cannot be edited by Faculty."
                                 });
@@ -1898,6 +1878,7 @@ namespace BlockGo.Controllers
                             {
                                 failureCount++;
                                 errors.Add(new BulkUploadError {
+                                    RowNumber = record.UploadRowNumber,
                                     StudentId = record.StudentId ?? "",
                                     Reason = $"Conflict preview: an existing {existingStatus} grade would be overwritten. Confirm overwrite and upload again to replace it."
                                 });
@@ -2001,7 +1982,7 @@ namespace BlockGo.Controllers
                                     "Bulk grade staging transaction failed for student {StudentId}, FacultySectionId={FacultySectionId}, term={Term}",
                                     record.StudentId, facultyAssignment.Id, term);
                                 failureCount++;
-                                errors.Add(new BulkUploadError { StudentId = record.StudentId ?? "", Reason = "The grade could not be saved. No changes were committed for this row." });
+                                errors.Add(new BulkUploadError { RowNumber = record.UploadRowNumber, StudentId = record.StudentId ?? "", Reason = "The grade could not be saved. No changes were committed for this row." });
                             }
                         }
                         catch (Exception ex)
@@ -2011,6 +1992,7 @@ namespace BlockGo.Controllers
                                 record.StudentId, facultyAssignment.Id, term);
                             failureCount++;
                             errors.Add(new BulkUploadError {
+                                RowNumber = record.UploadRowNumber,
                                 StudentId = record.StudentId ?? "ERROR",
                                 Reason = string.Equals(term, GradeAcademicTerm.Finals, StringComparison.OrdinalIgnoreCase)
                                     ? "The Final Term grade could not be saved because its trusted Midterm history or grade storage was unavailable."

@@ -47,7 +47,10 @@ const fetchWithAuth = async (endpoint, options = {}) => {
         const sessionRejected = response.status === 401 ||
             (response.status === 403 && /invalid|expired|revoked|inactive|no longer authorized/i.test(errorMessage));
         if (sessionRejected) expireAuthSession(response.status === 401 ? 'unauthorized' : 'revoked');
-        throw new Error(errorMessage);
+        const apiError = new Error(errorMessage);
+        apiError.status = response.status;
+        apiError.data = errorData;
+        throw apiError;
     }
 
     return await response.json();

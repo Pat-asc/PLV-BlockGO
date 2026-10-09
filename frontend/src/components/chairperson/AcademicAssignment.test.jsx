@@ -565,3 +565,58 @@ test("failed reset refresh preserves the last confirmed current assignment", asy
   expect(screen.getByText("Saved")).toBeInTheDocument();
 });
 
+test("keeps schedules subject-specific so an existing BSIT 1-1 load cannot block another eligible subject", async () => {
+  const subjects = [
+    { subjectCode: "IT 101", subjectTitle: "Introduction to Computing", yearLevel: 1, semester: "FIRST", units: 3 },
+    { subjectCode: "MATH 101", subjectTitle: "Mathematics in the Modern World", yearLevel: 1, semester: "FIRST", units: 3 },
+  ];
+  fetchCurriculums.mockResolvedValue({ data: [{ programCode: "BSIT", status: "PUBLISHED", subjects }] });
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    program: { code: "BSIT", name: "Bachelor of Science in Information Technology" },
+    subjects,
+    sections: [
+      { id: 2, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 1, section: "1-1" },
+      { id: 3, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 1, section: "1-2" },
+    ],
+    enrollmentPeriods: [
+      { academicSectionId: 2, schoolYear: "2026-2027", semester: "FIRST", yearLevel: 1, section: "1-1" },
+      { academicSectionId: 3, schoolYear: "2026-2027", semester: "FIRST", yearLevel: 1, section: "1-2" },
+    ],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "FIRST" },
+    assignments: [{
+      id: 3, facultyUserId: 1, facultyName: "Carlos Reyes", program: "Bachelor of Science in Information Technology",
+      sectionName: "BSIT 1-1", yearLevel: "1", subjectCode: "IT 101", academicSectionId: 2,
+      schoolYear: "2026-2027", semester: "FIRST", schedule: "Wednesday | 08:00-10:00",
+    }],
+  });
+  assignFacultyLoadToBackend.mockImplementation(async (assignment) => ({
+    status: "Success", assignment: { id: assignment.academicSectionId + 100, academicSectionId: assignment.academicSectionId },
+  }));
+
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await selectFaculty();
+  fireEvent.change(screen.getByLabelText("Year Level"), { target: { value: "1st Year" } });
+
+  fireEvent.click(screen.getByRole("radio", { name: "Select IT 101" }));
+  expect(screen.getByLabelText("Day for BSIT 1-1")).toHaveValue("Wednesday");
+
+  fireEvent.click(screen.getByRole("radio", { name: "Select MATH 101" }));
+  expect(screen.getByLabelText("Day for BSIT 1-1")).toHaveValue("");
+  expect(screen.getByLabelText("Day for BSIT 1-2")).toHaveValue("");
+
+  fireEvent.change(screen.getByLabelText("Section Filter"), { target: { value: "2" } });
+  fireEvent.click(screen.getByRole("button", { name: /Assign$/ }));
+  expect(screen.getByText("1 pending assignment")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Save Assignments" }));
+  await waitFor(() => expect(assignFacultyLoadToBackend).toHaveBeenCalledWith(
+    expect.objectContaining({ academicSectionId: 2, subjectCode: "MATH 101", schedule: "" })
+  ));
+
+  fireEvent.change(screen.getByLabelText("Section Filter"), { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: /Assign$/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Save Assignments" }));
+  await waitFor(() => expect(assignFacultyLoadToBackend).toHaveBeenCalledWith(
+    expect.objectContaining({ academicSectionId: 3, subjectCode: "MATH 101", schedule: "" })
+  ));
+});
+

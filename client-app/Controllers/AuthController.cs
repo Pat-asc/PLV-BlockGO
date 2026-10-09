@@ -1898,8 +1898,24 @@ namespace Client_app.Controllers
                 var admins = new List<object>();
 
                 using (var cmd = new NpgsqlCommand(@"
-                    SELECT u.id, ap.full_name, u.email, ap.department, u.role 
-                    FROM Users u JOIN AdminProfiles ap ON u.id = ap.user_id 
+                    SELECT u.id, ap.full_name, u.email, ap.department, u.role,
+                           program.program_code, program.program_name
+                    FROM Users u
+                    JOIN AdminProfiles ap ON u.id = ap.user_id
+                    LEFT JOIN LATERAL (
+                        SELECT p.program_code, p.program_name
+                        FROM academic_programs p
+                        WHERE p.is_active = TRUE
+                          AND (
+                            LOWER(BTRIM(COALESCE(u.organization, ''))) IN (LOWER(p.program_code), LOWER(p.program_name))
+                            OR LOWER(BTRIM(COALESCE(ap.department, ''))) IN (LOWER(p.program_code), LOWER(p.program_name))
+                          )
+                        ORDER BY CASE
+                            WHEN LOWER(BTRIM(COALESCE(u.organization, ''))) IN (LOWER(p.program_code), LOWER(p.program_name)) THEN 0
+                            ELSE 1
+                        END, p.program_id
+                        LIMIT 1
+                    ) program ON TRUE
                     WHERE LOWER(REPLACE(REPLACE(u.role, ' ', '_'), '-', '_')) IN ('department_admin', 'dept_admin', 'deptadmin', 'department', 'admin', 'chairperson')
                       AND u.status = 'APPROVED'", conn))
                 using (var reader = await cmd.ExecuteReaderAsync())
@@ -1911,7 +1927,9 @@ namespace Client_app.Controllers
                             fullname = reader.GetString(1),
                             email = reader.GetString(2),
                             department = reader.IsDBNull(3) ? "Unassigned" : reader.GetString(3),
-                            role = NormalizeSystemRole(reader.GetString(4))
+                            role = NormalizeSystemRole(reader.GetString(4)),
+                            programCode = reader.IsDBNull(5) ? null : reader.GetString(5),
+                            programName = reader.IsDBNull(6) ? null : reader.GetString(6)
                         });
                     }
                 }

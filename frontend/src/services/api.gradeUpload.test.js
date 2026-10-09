@@ -94,6 +94,47 @@ test('draft overwrite confirmation is explicit in multipart data', async () => {
   expect(options.body.get('confirmOverwrite')).toBe('true');
 });
 
+test('bulk grade upload preserves backend counts and row errors when every row fails', async () => {
+  const responseBody = {
+    status: 'Error',
+    message: 'No grades were saved.',
+    totalProcessed: 2,
+    successful: 0,
+    failed: 2,
+    errors: [
+      { rowNumber: 2, studentId: '26-0001', reason: 'Missing finals grade.' },
+      { rowNumber: 3, studentId: '26-9999', reason: 'Student is not ENROLLED.' },
+    ],
+  };
+  global.fetch.mockResolvedValueOnce({
+    ok: false,
+    status: 400,
+    json: async () => responseBody,
+  });
+
+  let uploadError;
+  try {
+    await batchUploadGrades(gradeWorkbook('failed-finals.xlsx'), {
+      facultySectionId: 77,
+      academicSectionId: 12,
+      subjectCode: 'IT 101',
+      section: 'BSIT 1-1',
+      schoolYear: '2026-2027',
+      semester: 'FIRST',
+      term: 'finals',
+    });
+  } catch (error) {
+    uploadError = error;
+  }
+
+  expect(uploadError).toBeInstanceOf(Error);
+  expect(uploadError.status).toBe(400);
+  expect(uploadError.data).toEqual(responseBody);
+  expect(uploadError.data.totalProcessed).toBe(
+    uploadError.data.successful + uploadError.data.failed
+  );
+});
+
 test('template download requests and names the XLSX grading workbook', async () => {
   const format = 'xlsx';
   global.fetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['template']) });
