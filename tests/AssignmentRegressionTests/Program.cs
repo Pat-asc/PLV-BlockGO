@@ -327,6 +327,16 @@ Check(testCurriculumSeed.Contains("ON CONFLICT (curriculum_code) DO NOTHING") &&
     "The QA curriculum seed can duplicate or overwrite an existing curriculum.");
 Pass(167, "QA curriculum seed is idempotent and does not overwrite production curricula");
 var enrollmentControllerSource = await File.ReadAllTextAsync(FindRepositoryFile("client-app", "Controllers", "AuthController.cs"));
+var ensureSectionStart = enrollmentControllerSource.IndexOf("EnsureEnrollmentSectionAsync", StringComparison.Ordinal);
+var ensureSectionEnd = enrollmentControllerSource.IndexOf("AllocateStudentNumberAsync", ensureSectionStart, StringComparison.Ordinal);
+var ensureSectionSource = enrollmentControllerSource[ensureSectionStart..ensureSectionEnd];
+Check(ensureSectionSource.Contains("INSERT INTO academicsections (department, year_level, section_num, is_active)", StringComparison.Ordinal) &&
+      ensureSectionSource.Contains("VALUES (@department, @yearLevel, @sectionNumber, TRUE)", StringComparison.Ordinal) &&
+      ensureSectionSource.Contains("ON CONFLICT (LOWER(department), year_level, section_num)", StringComparison.Ordinal) &&
+      ensureSectionSource.Contains("WHERE is_active = TRUE", StringComparison.Ordinal) &&
+      !ensureSectionSource.Contains("ON CONFLICT (department, year_level, section_num)", StringComparison.Ordinal),
+    "The enrollment section upsert does not match the active, case-insensitive production unique index.");
+Pass(207, "enrollment section upsert matches the production partial functional index");
 Check(enrollmentControllerSource.Contains("students/{id:int}/enroll-existing") &&
       enrollmentControllerSource.Contains("This student is already enrolled for") &&
       enrollmentControllerSource.Contains("academic_section_id,", StringComparison.Ordinal) &&
@@ -508,7 +518,7 @@ Check(curriculumRepairMigration.Contains("WHERE curriculum.status = 'PUBLISHED'"
 Pass(188, "program curriculum repair migration is idempotent and published-only");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=197;i++) Skip(i); Skip(206); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=197;i++) Skip(i); Skip(206); for (var i=208;i<=217;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -520,7 +530,7 @@ CREATE TEMP TABLE users(id INT PRIMARY KEY,username TEXT,email TEXT,role TEXT,st
 CREATE TEMP TABLE academic_programs(program_id INT PRIMARY KEY,program_code TEXT,program_name TEXT,is_active BOOLEAN);
 CREATE TEMP TABLE curriculums(curriculum_id INT PRIMARY KEY,program_id INT,status TEXT);
 CREATE TEMP TABLE curriculum_subjects(id SERIAL,curriculum_id INT,subject_code TEXT,prerequisite TEXT,year_level INT,semester TEXT);
-CREATE TEMP TABLE academicsections(id INT PRIMARY KEY,department TEXT,year_level INT,section_num INT,max_capacity INT DEFAULT 40,is_active BOOLEAN DEFAULT TRUE,archived_at TIMESTAMPTZ,archived_by TEXT);
+CREATE TEMP TABLE academicsections(id SERIAL PRIMARY KEY,department TEXT,year_level INT,section_num INT,max_capacity INT DEFAULT 40,is_active BOOLEAN DEFAULT TRUE,archived_at TIMESTAMPTZ,archived_by TEXT);
 CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_name TEXT,department TEXT,section TEXT,assignment_status TEXT,student_email TEXT,sex TEXT,curriculum_id BIGINT,batch_year INT,year_level TEXT);
 CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,enrollment_state TEXT DEFAULT 'PLANNING',updated_at TIMESTAMPTZ);
 CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_name TEXT,department TEXT);
@@ -563,6 +573,7 @@ INSERT INTO academic_periods(school_year,semester,term,status) VALUES('2026-2027
 INSERT INTO curriculum_subjects(curriculum_id,subject_code,prerequisite,year_level,semester) VALUES(1,'IT 101',NULL,1,'FIRST'),(1,'IT 102','IT 101',1,'FIRST'),(1,'IT 201','IT 102',2,'SECOND'),(2,'CS 101',NULL,1,'FIRST');
 INSERT INTO academicsections(id,department,year_level,section_num) VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2),(3,'BS Computer Science',1,1);
 INSERT INTO academicsections(id,department,year_level,section_num,is_active) VALUES(4,'BS Information Technology',1,3,FALSE);
+SELECT setval(pg_get_serial_sequence('academicsections','id'), (SELECT MAX(id) FROM academicsections));
 INSERT INTO users VALUES(1,'x','profx@plv.edu.ph','faculty','APPROVED',TRUE),(3,'y','profy@plv.edu.ph','faculty','APPROVED',TRUE),(9,'z','profz@plv.edu.ph','faculty','APPROVED',TRUE),(13,'chair','chair@plv.edu.ph','department_admin','APPROVED',TRUE),(16,'inactive','inactive@plv.edu.ph','faculty','APPROVED',FALSE),(17,'pending','pending@plv.edu.ph','faculty','PENDING',TRUE),(18,'cschair','cschair@plv.edu.ph','department_admin','APPROVED',TRUE),(19,'unknownchair','unknownchair@plv.edu.ph','department_admin','APPROVED',TRUE),(20,'legacy','legacy@plv.edu.ph','faculty','APPROVED',TRUE),(21,'unresolved','unresolved@plv.edu.ph','faculty','APPROVED',TRUE),(22,'archived','archived@plv.edu.ph','faculty','APPROVED',TRUE),(23,'profileonly','profileonly@plv.edu.ph','faculty','APPROVED',TRUE),(2,'a','a@plv.edu.ph','student','APPROVED',TRUE),(4,'b','b@plv.edu.ph','student','APPROVED',TRUE),(5,'c','c@plv.edu.ph','student','APPROVED',TRUE),(6,'stale','stale@plv.edu.ph','student','APPROVED',TRUE),(7,'old','old@plv.edu.ph','student','APPROVED',TRUE),(8,'second','second@plv.edu.ph','student','APPROVED',TRUE),(12,'csc','csc@plv.edu.ph','student','APPROVED',TRUE);
 INSERT INTO facultyprofiles VALUES(1,'FAC-1','Professor X','BS Information Technology'),(3,'FAC-3','Professor Y','BS Information Technology'),(9,'FAC-9','Professor Z','BS Information Technology'),(13,'CHAIR-1','Chairperson Account','BS Information Technology'),(23,'FAC-23','Profile Only','Bachelor of Science in Information Technology');
 INSERT INTO adminprofiles VALUES(13,'IT Chair','IT Department'),(18,'CS Chair','BS Computer Science'),(19,'Unknown Chair','CE Department');
@@ -882,10 +893,71 @@ try { await FacultyBulkAssignmentService.ResolveAcademicSectionAsync(db,"BS Info
 catch(ArgumentException ex) { ambiguousUploadSectionRejected=ex.Message.Contains("ambiguous"); }
 await Exec("DELETE FROM academicsections WHERE id=92");
 Check(ambiguousUploadSectionRejected,"An ambiguous Section label was guessed instead of rejected."); Pass(161,"bulk upload rejects ambiguous Section");
+await Exec("CREATE UNIQUE INDEX ux_test_academicsections_active_department_year_section ON academicsections(LOWER(department),year_level,section_num) WHERE is_active=TRUE");
+var ensureEnrollmentSection = typeof(Client_app.Controllers.AuthController).GetMethod(
+    "EnsureEnrollmentSectionAsync",
+    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+    ?? throw new Exception("EnsureEnrollmentSectionAsync was not found for regression testing.");
+async Task<int> EnsureActiveSection(string department, short yearLevel, string section)
+{
+    await using var transaction = await db.BeginTransactionAsync();
+    try
+    {
+        var invocation = ensureEnrollmentSection.Invoke(null, new object?[] {
+            db, transaction, department, yearLevel, section, CancellationToken.None
+        });
+        Check(invocation is Task<int?>, "EnsureEnrollmentSectionAsync returned an unexpected task type.");
+        var sectionId = await (Task<int?>)invocation!;
+        await transaction.CommitAsync();
+        return sectionId ?? throw new Exception("A valid section label did not resolve to an academic section ID.");
+    }
+    catch
+    {
+        await transaction.RollbackAsync();
+        throw;
+    }
+}
+var createdSectionId = await EnsureActiveSection("BS Information Technology", 1, "BSIT 1-4");
+Check(await Count($"SELECT COUNT(*) FROM academicsections WHERE id={createdSectionId} AND department='BS Information Technology' AND year_level=1 AND section_num=4 AND is_active=TRUE")==1,
+    "A new active academic section was not created with the requested identity."); Pass(208,"new active academic section creation");
+var resolvedSectionId = await EnsureActiveSection("BS Information Technology", 1, "BSIT 1-4");
+Check(resolvedSectionId==createdSectionId,"The existing active academic section was not resolved."); Pass(209,"existing active academic section resolution");
+var caseInsensitiveSectionId = await EnsureActiveSection("bs information technology", 1, "bsit 1-4");
+Check(caseInsensitiveSectionId==createdSectionId,"Department casing created a different active academic section."); Pass(210,"department casing resolves the same active section");
+Check(await Count("SELECT COUNT(*) FROM academicsections WHERE LOWER(department)=LOWER('BS Information Technology') AND year_level=1 AND section_num=4 AND is_active=TRUE")==1,
+    "Repeated resolution created duplicate active academic sections."); Pass(211,"active section identity remains unique");
+var replacementForInactiveId = await EnsureActiveSection("BS Information Technology", 1, "BSIT 1-3");
+Check(replacementForInactiveId!=4 &&
+      await Count("SELECT COUNT(*) FROM academicsections WHERE LOWER(department)=LOWER('BS Information Technology') AND year_level=1 AND section_num=3 AND is_active=TRUE")==1 &&
+      await Count("SELECT COUNT(*) FROM academicsections WHERE id=4 AND is_active=FALSE")==1,
+    "An inactive historical section blocked or was overwritten by active-section creation."); Pass(212,"inactive history does not block active section creation");
+Check(await EnsureActiveSection("BS Information Technology",1,"BSIT 1-1")==1,"BSIT 1-1 did not resolve to its existing active row."); Pass(214,"BSIT 1-1 section resolution");
+Check(await EnsureActiveSection("BS Information Technology",1,"BSIT 1-2")==2,"BSIT 1-2 did not resolve to its existing active row."); Pass(215,"BSIT 1-2 section resolution");
+Check(await EnsureActiveSection("BS Computer Science",1,"BSCS 1-1")==3,"A non-BSIT section did not resolve to its existing active row."); Pass(216,"non-BSIT section resolution");
 var wrongPeriodUploadSectionRejected=false;
 try { await FacultyBulkAssignmentService.ResolveAcademicSectionAsync(db,"BS Information Technology","BSIT 1-1","2025-2026","FIRST",null,AllowProgram); }
 catch(ArgumentException ex) { wrongPeriodUploadSectionRejected=ex.Message.Contains("does not match the active academic period"); }
 Check(wrongPeriodUploadSectionRejected,"A wrong-period Section context was accepted."); Pass(162,"bulk upload rejects wrong-period Section context");
+var resolvedSectionAssignment = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
+    ClientId="resolved-section", FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=createdSectionId,
+    SchoolYear="2026-2027", Semester="FIRST", Schedule="Wednesday | 09:00-10:00"
+}, AllowProgram);
+Check(resolvedSectionAssignment.AcademicSectionId==createdSectionId && !resolvedSectionAssignment.AlreadyAssigned,
+    "A valid Faculty assignment was not persisted after academic section resolution."); Pass(213,"Faculty assignment succeeds after section resolution");
+var resolvedSectionDuplicate = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
+    ClientId="resolved-section-duplicate", FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=createdSectionId,
+    SchoolYear="2026-2027", Semester="FIRST", Schedule="Thursday | 09:00-10:00"
+}, AllowProgram);
+var resolvedSectionScheduleConflictRejected=false;
+try { await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
+    ClientId="resolved-section-conflict", FacultyUserId=1, SubjectCode="IT 102", AcademicSectionId=2,
+    SchoolYear="2026-2027", Semester="FIRST", Schedule="Wednesday | 09:30-10:30"
+}, AllowProgram); }
+catch(ArgumentException ex) { resolvedSectionScheduleConflictRejected=ex.Message.Contains("Schedule conflict",StringComparison.OrdinalIgnoreCase); }
+Check(resolvedSectionDuplicate.AlreadyAssigned && resolvedSectionDuplicate.Id==resolvedSectionAssignment.Id &&
+      resolvedSectionDuplicate.Schedule=="Wednesday | 09:00-10:00" && resolvedSectionScheduleConflictRejected &&
+      await Count($"SELECT COUNT(*) FROM facultysections WHERE id={resolvedSectionAssignment.Id} AND is_active=TRUE")==1,
+    "Faculty assignment uniqueness or schedule-conflict protection regressed."); Pass(217,"Faculty assignment uniqueness and schedule-conflict protections remain intact");
 var bulkOne = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
     ClientId="one", FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=1, SchoolYear="2026-2027", Semester="FIRST", Schedule="Monday"
 }, AllowProgram);

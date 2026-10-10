@@ -518,9 +518,10 @@ namespace Client_app.Controllers
             var sectionNumber = SectionNumberFrom(section);
             if (!sectionNumber.HasValue) return null;
             await using var command = new NpgsqlCommand(@"
-                INSERT INTO academicsections (department, year_level, section_num)
-                VALUES (@department, @yearLevel, @sectionNumber)
-                ON CONFLICT (department, year_level, section_num)
+                INSERT INTO academicsections (department, year_level, section_num, is_active)
+                VALUES (@department, @yearLevel, @sectionNumber, TRUE)
+                ON CONFLICT (LOWER(department), year_level, section_num)
+                WHERE is_active = TRUE
                 DO UPDATE SET department = EXCLUDED.department
                 RETURNING id;", connection, transaction);
             command.Parameters.AddWithValue("department", programName);
