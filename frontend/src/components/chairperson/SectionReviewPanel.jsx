@@ -52,6 +52,7 @@ function SectionReviewPanel({
   onApprove,
   onSendToRegistrar,
   onViewIpfs,
+  onRetryArchive,
   onBack,
 }) {
   const [draftNotes, setDraftNotes] = useState({});
@@ -61,6 +62,7 @@ function SectionReviewPanel({
   const [handoffConfirmationOpen, setHandoffConfirmationOpen] = useState(false);
   const [isSendingToRegistrar, setIsSendingToRegistrar] = useState(false);
   const [handoffError, setHandoffError] = useState("");
+  const [isRetryingArchive, setIsRetryingArchive] = useState(false);
   const approveInFlightRef = useRef(false);
   const handoffInFlightRef = useRef(false);
   const note = selectedSection
@@ -76,6 +78,7 @@ function SectionReviewPanel({
     setHandoffError("");
     handoffInFlightRef.current = false;
     setIsSendingToRegistrar(false);
+    setIsRetryingArchive(false);
   }, [selectedSection?.reviewKey]);
 
   const confirmApprove = async () => {
@@ -225,21 +228,39 @@ function SectionReviewPanel({
             <p className="mt-1 text-sm text-blue-700">
               {selectedSection.ipfsCid
                 ? `Open the encrypted grading sheet attached for ${selectedSection.sectionName}.`
+                : ['PENDING', 'FAILED'].includes(selectedSection.ipfsArchiveStatus)
+                  ? 'The grades are finalized. Grading-sheet archival is pending and can be retried without re-finalizing Fabric.'
                 : `No IPFS attachment was found for ${selectedSection.sectionName} yet.`}
             </p>
           </div>
 
           <button
             type="button"
-            onClick={() => selectedSection.ipfsCid && onViewIpfs?.(selectedSection.ipfsCid)}
-            disabled={!selectedSection.ipfsCid}
+            onClick={async () => {
+              if (selectedSection.ipfsCid) {
+                onViewIpfs?.(selectedSection.ipfsCid);
+                return;
+              }
+              if (!onRetryArchive || isRetryingArchive) return;
+              setIsRetryingArchive(true);
+              try {
+                await onRetryArchive();
+              } finally {
+                setIsRetryingArchive(false);
+              }
+            }}
+            disabled={!selectedSection.ipfsCid && (!onRetryArchive || isRetryingArchive)}
             className={`rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition ${
-              selectedSection.ipfsCid
+              selectedSection.ipfsCid || onRetryArchive
                 ? "bg-blue-600 text-white hover:bg-blue-700"
                 : "bg-slate-300 text-slate-600"
             }`}
           >
-            {selectedSection.ipfsCid ? "Decrypt & View" : "Unavailable"}
+            {selectedSection.ipfsCid
+              ? "Decrypt & View"
+              : ['PENDING', 'FAILED'].includes(selectedSection.ipfsArchiveStatus)
+                ? isRetryingArchive ? "Retrying..." : "Retry Archive"
+                : "Not Available Yet"}
           </button>
         </div>
       </div>

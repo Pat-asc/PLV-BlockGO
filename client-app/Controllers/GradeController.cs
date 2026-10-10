@@ -42,6 +42,8 @@ namespace BlockGo.Controllers
         private readonly IEmailService _emailService;
         private readonly IHubContext<ChatHub> _chatHubContext;
         private readonly IAuditLogService _auditLog;
+        private readonly IIpfsVaultService _ipfsVaultService;
+        private readonly FinalizedGradeArchiveService _finalizedGradeArchiveService;
         private static readonly System.Threading.SemaphoreSlim PendingGradeSchemaLock = new(1, 1);
         private static bool _pendingGradeSchemaReady;
 
@@ -52,7 +54,9 @@ namespace BlockGo.Controllers
             IHttpClientFactory httpClientFactory,
             IEmailService emailService,
             IHubContext<ChatHub> chatHubContext,
-            IAuditLogService auditLog)
+            IAuditLogService auditLog,
+            IIpfsVaultService ipfsVaultService,
+            FinalizedGradeArchiveService finalizedGradeArchiveService)
         {
             _blockchainService = blockchainService;
             _connectionString = configuration.GetConnectionString("PostgresConnection") ?? configuration.GetConnectionString("MasterConnection") ?? throw new InvalidOperationException("PostgreSQL connection string not found.");
@@ -62,6 +66,8 @@ namespace BlockGo.Controllers
             _emailService = emailService;
             _chatHubContext = chatHubContext;
             _auditLog = auditLog;
+            _ipfsVaultService = ipfsVaultService;
+            _finalizedGradeArchiveService = finalizedGradeArchiveService;
         }
 
         private Task NotifyAcademicDataChangedAsync(string reason, string? department = null, string? actor = null)
@@ -99,6 +105,45 @@ namespace BlockGo.Controllers
 
         private static int FinalizedGradeVersion(AcademicRecord record) => record.GradeVersion > 0 ? record.GradeVersion : 1;
         private static string GradeReleaseKey(string recordId, int gradeVersion) => $"{recordId}|{gradeVersion}";
+
+        private static bool SameFinalizedWorkload(AcademicRecord left, AcademicRecord right) =>
+            string.Equals(left.AssignmentCycleId?.Trim(), right.AssignmentCycleId?.Trim(), StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(left.SubjectCode?.Trim(), right.SubjectCode?.Trim(), StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(left.SchoolYear?.Trim(), right.SchoolYear?.Trim(), StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(left.Semester?.Trim(), right.Semester?.Trim(), StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(GradeAcademicTerm.Normalize(left.Term, string.Empty), GradeAcademicTerm.Normalize(right.Term, string.Empty), StringComparison.OrdinalIgnoreCase);
+
+        private async Task<FinalizedGradeArchiveResult> TryArchiveFinalizedRecordsAsync(
+            NpgsqlConnection connection,
+            IReadOnlyCollection<AcademicRecord> finalizedRecords,
+            string actor,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await _finalizedGradeArchiveService.EnsureArchivedAsync(
+                    connection, finalizedRecords, actor, cancellationToken);
+            }
+            catch (FinalizedGradeArchiveException exception)
+            {
+                _logger.LogError(exception,
+                    "Finalized grades remain committed, but grading-sheet archival failed with {ArchiveCode} for assignment {AssignmentCycleId}, subject {Subject}, term {Term}",
+                    exception.Code,
+                    finalizedRecords.FirstOrDefault()?.AssignmentCycleId,
+                    finalizedRecords.FirstOrDefault()?.SubjectCode,
+                    finalizedRecords.FirstOrDefault()?.Term);
+                return new FinalizedGradeArchiveResult(
+                    "FAILED", null, string.Empty, string.Empty, exception.Code);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception,
+                    "Finalized grades remain committed, but grading-sheet archival metadata is pending for assignment {AssignmentCycleId}",
+                    finalizedRecords.FirstOrDefault()?.AssignmentCycleId);
+                return new FinalizedGradeArchiveResult(
+                    "FAILED", null, string.Empty, string.Empty, "IPFS_METADATA_PERSIST_FAILED");
+            }
+        }
 
         [HttpGet("release-candidates")]
         [Authorize(Roles = "registrar")]
@@ -502,6 +547,35 @@ namespace BlockGo.Controllers
                 reader.IsDBNull(2) ? "" : reader.GetString(2)
             };
             return MatchesProgramScope(record, aliases);
+        }
+
+        private async Task<(bool IsGeneratedArchive, bool Authorized)> CanAccessIpfsCidAsync(string cid)
+        {
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(HttpContext.RequestAborted);
+                await using var command = new NpgsqlCommand(@"
+                    SELECT record_ids
+                    FROM finalized_grade_archives
+                    WHERE cid = @cid AND status = 'AVAILABLE'
+                    ORDER BY archived_at DESC
+                    LIMIT 1;", connection);
+                command.Parameters.AddWithValue("cid", cid);
+                var value = await command.ExecuteScalarAsync(HttpContext.RequestAborted);
+                if (value is not string[] recordIds) return (false, true); // Preserve legacy/manual CID access.
+
+                var actor = AuthenticatedEmail();
+                var role = AuthenticatedRole();
+                foreach (var recordId in recordIds)
+                    if (!await CanAccessGradeRecordAsync(connection, recordId, actor, role))
+                        return (true, false);
+                return (true, true);
+            }
+            catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UndefinedTable)
+            {
+                return (false, true);
+            }
         }
 
         private static string InferGradeTerm(string? term, string? gradePayload)
@@ -1143,25 +1217,6 @@ namespace BlockGo.Controllers
                 _logger.LogError(ex, "Error submitting section {Section} for {FacultyId}", section, facultyId);
                 return StatusCode(500, new { status = "Error", message = ex.Message });
             }
-        }
-
-        private byte[] EncryptStream(Stream inputStream)
-        {
-            using var aes = Aes.Create();
-            var key = _configuration["IpfsEncryptionKey"] ?? "default-encryption-key-32chars!!!";
-            aes.Key = System.Text.Encoding.UTF8.GetBytes(key.PadRight(32).Substring(0, 32));
-            aes.GenerateIV();
-            var iv = aes.IV;
-
-            using var outputStream = new MemoryStream();
-            outputStream.Write(iv, 0, iv.Length);
-
-            using (var encryptor = aes.CreateEncryptor())
-            using (var cryptoStream = new CryptoStream(outputStream, encryptor, CryptoStreamMode.Write))
-            {
-                inputStream.CopyTo(cryptoStream);
-            }
-            return outputStream.ToArray();
         }
 
         private static string BuildUploadedGradePayload(string? rawGrade, string? rawMidterm, string? rawFinals, string? term) =>
@@ -2695,6 +2750,21 @@ namespace BlockGo.Controllers
                 allGrades = GradeRecordMergePolicy.PreferPending(
                     allGrades, pendingGradesById, GetAcademicRecordCompletenessScore);
 
+                var finalizedArchiveAssociations = new Dictionary<string, FinalizedGradeArchiveAssociation>(
+                    StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    finalizedArchiveAssociations = await FinalizedGradeArchiveService.LoadAssociationsAsync(
+                        conn,
+                        authoritativeLedgerGrades.Where(grade =>
+                            string.Equals(grade.Status, "Finalized", StringComparison.OrdinalIgnoreCase)).ToArray(),
+                        HttpContext.RequestAborted);
+                }
+                catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UndefinedTable)
+                {
+                    _logger.LogWarning("Finalized grading-sheet archive metadata is unavailable until migration 028 is applied");
+                }
+
                 var enrichedGrades = new List<Dictionary<string, object>>();
                 
                 using var cmdProfiles = new NpgsqlCommand("SELECT u.email, sp.department, sp.section, sp.student_no, sp.full_name FROM Users u JOIN StudentProfiles sp ON u.id = sp.user_id", conn);
@@ -2801,6 +2871,9 @@ namespace BlockGo.Controllers
 
                 foreach(var g in allGrades) 
                 {
+                    finalizedArchiveAssociations.TryGetValue(g.Id ?? string.Empty, out var archiveAssociation);
+                    if (archiveAssociation?.Status == "AVAILABLE" && !string.IsNullOrWhiteSpace(archiveAssociation.Cid))
+                        g.IpfsCid = archiveAssociation.Cid;
                     comparisonHistoryByRecordId.TryGetValue(g.Id ?? string.Empty, out var comparisonHistory);
                     var comparison = jwtRole == "department_admin" && pendingGradesById.ContainsKey(g.Id ?? string.Empty)
                         ? GradeComparisonService.Compare(g, authoritativeLedgerGrades, comparisonHistory)
@@ -2918,6 +2991,7 @@ namespace BlockGo.Controllers
                         { "transaction_hash", g.TransactionHash ?? g.TransactionId ?? "" },
                         { "date", g.Date ?? "" },
                         { "ipfs_cid", g.IpfsCid ?? "" },
+                        { "ipfs_archive_status", archiveAssociation?.Status ?? "NOT_ARCHIVED" },
                         { "status", g.Status ?? "" },
                         { "note", g.Note ?? "" },
                         { "university", g.University ?? "" },
@@ -3108,6 +3182,11 @@ namespace BlockGo.Controllers
         }
 
         public sealed class FinalizeGradesRequest
+        {
+            public List<string> RecordIds { get; set; } = new();
+        }
+
+        public sealed class EnsureFinalizedArchiveRequest
         {
             public List<string> RecordIds { get; set; } = new();
         }
@@ -3388,13 +3467,25 @@ namespace BlockGo.Controllers
                         .ToArray();
                     if (finalizedRequested.Length == recordIds.Length)
                     {
+                        if (finalizedRequested.Any(record => !SameFinalizedWorkload(finalizedRequested[0], record)))
+                            return Conflict(new { status = "Error", message = "The finalized records do not belong to one academic workload." });
+                        var finalizedWorkload = finalizedLedgerRecords
+                            .Where(record => SameFinalizedWorkload(finalizedRequested[0], record))
+                            .ToArray();
+                        var existingArchive = await TryArchiveFinalizedRecordsAsync(
+                            connection, finalizedWorkload, invokerId, HttpContext.RequestAborted);
                         return Ok(new
                         {
                             status = "Success",
-                            message = "The approved section was already finalized on the ledger.",
-                            finalizedCount = finalizedRequested.Length,
+                            message = existingArchive.Status == "AVAILABLE"
+                                ? "The approved section was already finalized on the ledger and its grading sheet is available in the IPFS Vault."
+                                : "The approved section was already finalized on the ledger; grading-sheet archival is pending and can be retried without re-finalizing Fabric.",
+                            finalizedCount = finalizedWorkload.Length,
                             idempotent = true,
-                            transactionIds = finalizedRequested
+                            ipfsArchiveStatus = existingArchive.Status,
+                            ipfsCid = existingArchive.Cid,
+                            archiveFailureCode = existingArchive.FailureCode,
+                            transactionIds = finalizedWorkload
                                 .Select(record => record.TransactionId)
                                 .Where(transactionId => !string.IsNullOrWhiteSpace(transactionId))
                                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -3454,6 +3545,11 @@ namespace BlockGo.Controllers
                 }
                 await cleanupTransaction.CommitAsync(HttpContext.RequestAborted);
 
+                // Archival is deliberately post-commit. Fabric is already authoritative,
+                // so an IPFS outage must never roll back or repeat ledger finalization.
+                var archive = await TryArchiveFinalizedRecordsAsync(
+                    connection, finalizedRecords, invokerId, HttpContext.RequestAborted);
+
                 try
                 {
                     await NotifyAcademicDataChangedAsync("grade_finalized", approvedRecords[0].Course, invokerId);
@@ -3466,8 +3562,13 @@ namespace BlockGo.Controllers
                 return Ok(new
                 {
                     status = "Success",
-                    message = "Approved section finalized and verified on the ledger.",
+                    message = archive.Status == "AVAILABLE"
+                        ? "Approved section finalized and verified on the ledger. The finalized grading sheet is available in the IPFS Vault."
+                        : "Approved section finalized and verified on the ledger. Grading-sheet archival is pending and can be retried without re-finalizing Fabric.",
                     finalizedCount = approvedRecords.Length,
+                    ipfsArchiveStatus = archive.Status,
+                    ipfsCid = archive.Cid,
+                    archiveFailureCode = archive.FailureCode,
                     transactionIds = finalizedRecords
                         .Select(record => record.TransactionId)
                         .Where(transactionId => !string.IsNullOrWhiteSpace(transactionId))
@@ -3484,6 +3585,77 @@ namespace BlockGo.Controllers
             {
                 _logger.LogError(ex, "Registrar batch finalization failed; approved staging was retained unless ledger verification completed");
                 return StatusCode(500, new { status = "Error", message = "The section could not be finalized. Its approved data was preserved; refresh before retrying." });
+            }
+        }
+
+        [HttpPost("finalized-archive/ensure")]
+        [Authorize(Roles = "registrar,department_admin")]
+        public async Task<IActionResult> EnsureFinalizedArchive(
+            [FromBody] EnsureFinalizedArchiveRequest request)
+        {
+            var actor = AuthenticatedEmail();
+            var role = AuthenticatedRole();
+            var recordIds = (request?.RecordIds ?? new List<string>())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (recordIds.Length == 0)
+                return BadRequest(new { status = "Error", code = "IPFS_ATTACHMENT_NOT_FOUND", message = "At least one finalized grade record is required." });
+
+            try
+            {
+                var ledgerRecords = await LoadFinalizedLedgerRecordsAsync(actor);
+                var requested = new HashSet<string>(recordIds, StringComparer.OrdinalIgnoreCase);
+                var selected = ledgerRecords.Where(record => requested.Contains(record.Id)).ToArray();
+                if (selected.Length != recordIds.Length)
+                    return NotFound(new { status = "Error", code = "IPFS_ATTACHMENT_NOT_FOUND", message = "One or more finalized ledger records were not found." });
+
+                if (selected.Any(record => !SameFinalizedWorkload(selected[0], record)))
+                    return BadRequest(new { status = "Error", code = "IPFS_ARCHIVE_GENERATION_FAILED", message = "The selected records do not belong to one finalized academic workload." });
+
+                var workload = ledgerRecords.Where(record => SameFinalizedWorkload(selected[0], record)).ToArray();
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(HttpContext.RequestAborted);
+                foreach (var record in workload)
+                    if (!await CanAccessGradeRecordAsync(connection, record.Id, actor, role))
+                        return Forbid();
+
+                var archive = await TryArchiveFinalizedRecordsAsync(
+                    connection, workload, actor, HttpContext.RequestAborted);
+                if (archive.Status != "AVAILABLE")
+                    return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                    {
+                        status = "Pending",
+                        finalized = true,
+                        code = archive.FailureCode ?? "IPFS_UPLOAD_FAILED",
+                        message = "The grades remain finalized on Fabric, but grading-sheet archival is pending. Retry this archival operation without finalizing again."
+                    });
+
+                return Ok(new
+                {
+                    status = "Success",
+                    finalized = true,
+                    cid = archive.Cid,
+                    fileName = archive.FileName,
+                    reused = archive.Reused,
+                    message = "The finalized grading sheet is available in the IPFS Vault."
+                });
+            }
+            catch (LedgerMiddlewareException exception)
+            {
+                return StatusCode((int)exception.StatusCode, new { status = "Error", code = exception.Code, message = exception.Message });
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "IPFS-only grading-sheet archival retry failed for actor {Actor}", actor);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    status = "Pending",
+                    finalized = true,
+                    code = "IPFS_METADATA_PERSIST_FAILED",
+                    message = "The grades remain finalized on Fabric, but the grading-sheet archive could not be completed."
+                });
             }
         }
 
@@ -4132,47 +4304,18 @@ namespace BlockGo.Controllers
 
             try
             {
-                using var client = _httpClientFactory.CreateClient();
-                using var content = new MultipartFormDataContent();
-                
-                // Encrypt before upload
-                byte[] encryptedData;
-                using (var stream = file.OpenReadStream())
-                {
-                    encryptedData = EncryptStream(stream);
-                }
-                
-                content.Add(new ByteArrayContent(encryptedData), "file", file.FileName + ".enc");
-                
-                var ipfsHost = Environment.GetEnvironmentVariable("IPFS_HOST") ?? "ipfs0";
-                var ipfsUrl = _configuration["IpfsApiUrl"] ?? $"http://{ipfsHost}:5001/api/v0/add?cid-version=1&wrap-with-directory=false";
-                var ipfsRes = await client.PostAsync(ipfsUrl, content);
-                
-                if (ipfsRes.IsSuccessStatusCode)
-                {
-                    var ipfsJson = await ipfsRes.Content.ReadAsStringAsync();
-                    var cid = "";
-                    
-                    // Robust multi-line JSON parsing
-                    var lines = ipfsJson.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                    foreach (var line in lines)
-                    {
-                        try {
-                            using var doc = JsonDocument.Parse(line);
-                            if (doc.RootElement.TryGetProperty("Hash", out var hashProp)) {
-                                cid = hashProp.GetString() ?? cid;
-                            }
-                        } catch { }
-                    }
-
-                    // A successful response guarantees durable pins at all three campuses.
-                    await DistributePinAsync(cid);
-
-                    return Ok(new { status = "Success", cid = cid, url = $"/ipfs/{cid}", message = "File encrypted and securely distributed to IPFS." });
-                }
-                return StatusCode((int)ipfsRes.StatusCode, new { status = "Error", message = "IPFS daemon rejected the file." });
+                await using var stream = file.OpenReadStream();
+                using var memory = new MemoryStream();
+                await stream.CopyToAsync(memory, HttpContext.RequestAborted);
+                var cid = await _ipfsVaultService.UploadEncryptedAsync(
+                    memory.ToArray(), file.FileName, HttpContext.RequestAborted);
+                return Ok(new { status = "Success", cid, url = $"/ipfs/{cid}", message = "File encrypted and securely distributed to IPFS." });
             }
-            catch (Exception ex) { return StatusCode(500, new { status = "Error", message = $"IPFS service unreachable: {ex.Message}" }); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Manual IPFS attachment upload failed for actor {Actor}", AuthenticatedEmail());
+                return StatusCode(500, new { status = "Error", code = "IPFS_UPLOAD_FAILED", message = "The IPFS service could not archive this attachment." });
+            }
         }
 
         [HttpGet("view-ipfs/{cid}")]
@@ -4180,6 +4323,9 @@ namespace BlockGo.Controllers
         [Authorize(Roles = "faculty,department_admin,registrar")]
         public async Task<IActionResult> ViewIpfsFile(string cid)
         {
+            var cidAccess = await CanAccessIpfsCidAsync(cid);
+            if (!cidAccess.Authorized) return Forbid();
+
             // Resilient parameter detection
             var vaultPassword = Request.Query["vaultPassword"].ToString();
             if (string.IsNullOrEmpty(vaultPassword)) vaultPassword = Request.Query["password"].ToString();
@@ -4207,6 +4353,9 @@ namespace BlockGo.Controllers
             if (string.IsNullOrEmpty(vaultPassword))
             {
                 _logger.LogWarning("ViewIpfsFile: vaultPassword missing. CID: {CID}. Providing HTML Challenge.", cid);
+                var rawEncryptedLink = cidAccess.IsGeneratedArchive
+                    ? string.Empty
+                    : $"<a href='/ipfs/{System.Net.WebUtility.HtmlEncode(cid)}' target='_blank'>View Raw Encrypted Block (via IPFS Gateway)</a>";
                 
                 // Return a simple HTML prompt if accessed via browser/direct link without password
                 var html = $@"
@@ -4245,7 +4394,7 @@ namespace BlockGo.Controllers
                         </form>
 
                         <div class='links'>
-                            <a href='/ipfs/{cid}' target='_blank'>View Raw Encrypted Block (via IPFS Gateway)</a>
+                            {rawEncryptedLink}
                         </div>
                     </div>
                     <script>
@@ -4272,7 +4421,8 @@ namespace BlockGo.Controllers
             try
             {
                 var ipfsHost = Environment.GetEnvironmentVariable("IPFS_HOST") ?? "ipfs0";
-                var ipfsUrl = $"http://{ipfsHost}:8080/ipfs/{cid}";
+                var ipfsGateway = _configuration["IpfsGatewayUrl"] ?? $"http://{ipfsHost}:8080";
+                var ipfsUrl = $"{ipfsGateway.TrimEnd('/')}/ipfs/{Uri.EscapeDataString(cid)}";
 
                 using var client = _httpClientFactory.CreateClient();
                 var response = await client.GetAsync(ipfsUrl);
@@ -4374,7 +4524,16 @@ namespace BlockGo.Controllers
 
                     if (jsonDocument.RootElement.ValueKind == JsonValueKind.Object)
                     {
-                        AddJsonObject(jsonDocument.RootElement);
+                        if (jsonDocument.RootElement.TryGetProperty("records", out var gradingSheetRecords) &&
+                            gradingSheetRecords.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var record in gradingSheetRecords.EnumerateArray())
+                                if (record.ValueKind == JsonValueKind.Object) AddJsonObject(record);
+                        }
+                        else
+                        {
+                            AddJsonObject(jsonDocument.RootElement);
+                        }
                     }
                     else if (jsonDocument.RootElement.ValueKind == JsonValueKind.Array)
                     {
@@ -4533,35 +4692,6 @@ namespace BlockGo.Controllers
                 _logger.LogError(ex, "Error retrieving or decrypting IPFS file");
                 return StatusCode(500, new { status = "Error", message = $"Decryption failed: {ex.Message}" });
             }
-        }
-
-        private async Task DistributePinAsync(string cid)
-        {
-            if (string.IsNullOrEmpty(cid)) return;
-
-            var configuredNodes = Environment.GetEnvironmentVariable("IPFS_PEER_NODES");
-            var nodes = (configuredNodes ?? Environment.GetEnvironmentVariable("IPFS_HOST") ?? "ipfs-api.plv-fabric.svc.cluster.local")
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            
-            var pinTasks = nodes.Select(async node =>
-            {
-                using var client = _httpClientFactory.CreateClient();
-                client.Timeout = TimeSpan.FromSeconds(120);
-
-                var pinUrl = $"http://{node}:5001/api/v0/pin/add?arg={Uri.EscapeDataString(cid)}&recursive=true";
-                using var response = await client.PostAsync(pinUrl, null);
-                if (!response.IsSuccessStatusCode)
-                {
-                    var body = await response.Content.ReadAsStringAsync();
-                    throw new HttpRequestException($"IPFS node {node} rejected pin {cid}: {(int)response.StatusCode} {body}");
-                }
-
-                _logger.LogInformation("Successfully distributed/pinned CID {CID} to node {Node}", cid, node);
-            });
-
-            await Task.WhenAll(pinTasks);
         }
 
         [HttpPost("export-pdf")]

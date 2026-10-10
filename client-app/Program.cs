@@ -452,6 +452,8 @@ try
     });
 
     builder.Services.AddHttpClient<IBlockchainService, BlockchainService>();
+    builder.Services.AddScoped<IIpfsVaultService, IpfsVaultService>();
+    builder.Services.AddScoped<FinalizedGradeArchiveService>();
     builder.Services.AddHttpClient("BackendKeepAlive", client =>
     {
         client.Timeout = TimeSpan.FromSeconds(10);

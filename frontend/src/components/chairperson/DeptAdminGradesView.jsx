@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { fetchAllGrades, approveGrade, sendGradesToRegistrar, returnGrade, batchUploadGrades, fetchDepartmentSections, batchEnrollStudentsToSection, dropStudent, fetchApprovedFaculties, unassignFacultySection, openDecryptedIpfsFile, getSystemSetting, issueGrade } from '../../services/api';
+import { fetchAllGrades, approveGrade, sendGradesToRegistrar, ensureFinalizedGradeArchive, returnGrade, batchUploadGrades, fetchDepartmentSections, batchEnrollStudentsToSection, dropStudent, fetchApprovedFaculties, unassignFacultySection, openDecryptedIpfsFile, getSystemSetting, issueGrade } from '../../services/api';
 import { useNotification } from '../../services/NotificationContext';
 import ChairpersonHeader from './ChairpersonHeader';
 import ChairpersonSidebar from './ChairpersonSidebar';
@@ -743,6 +743,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     students: [],
                     rawStudentEntries: [],
                     ipfsCid: g.ipfs_cid || g.IpfsCID || g.ipfsCid || null,
+                    ipfsArchiveStatus: g.ipfs_archive_status || g.ipfsArchiveStatus || 'NOT_ARCHIVED',
                     earliestEncodedAt: g.date || g.Date || null,
                     latestStatusTimestamp: 0,
                     latestStatusPriority: 0,
@@ -754,6 +755,11 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             // Ensure the CID is captured even if the first student's record lacked it
             if (!groups[key].ipfsCid && (g.ipfs_cid || g.IpfsCID || g.ipfsCid)) {
                 groups[key].ipfsCid = g.ipfs_cid || g.IpfsCID || g.ipfsCid;
+            }
+            if ((g.ipfs_archive_status || g.ipfsArchiveStatus) === 'FAILED') {
+                groups[key].ipfsArchiveStatus = 'FAILED';
+            } else if (groups[key].ipfsArchiveStatus === 'NOT_ARCHIVED' && (g.ipfs_archive_status || g.ipfsArchiveStatus)) {
+                groups[key].ipfsArchiveStatus = g.ipfs_archive_status || g.ipfsArchiveStatus;
             }
             const parsedGrade = parseStoredGrade(getRecordGrade(g));
             const gradeVal = parsedGrade.finalAverage;
@@ -1576,6 +1582,21 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
         setIpfsModalOpen(true);
     };
 
+    const handleRetryArchive = async () => {
+        const recordIds = Object.values(selectedReviewSection?.grades || {})
+            .map((grade) => grade?.recordId)
+            .filter(Boolean);
+        if (!recordIds.length) throw new Error('No finalized grade records were found for archival.');
+        try {
+            const result = await ensureFinalizedGradeArchive(recordIds);
+            await loadGrades();
+            addNotification(result?.message || 'The finalized grading sheet is available in the IPFS Vault.', 'success');
+        } catch (error) {
+            await loadGrades();
+            addNotification(error?.message || 'Grading-sheet archival is still pending.', 'error');
+        }
+    };
+
     const submitIpfsPassword = async () => {
         if (vaultPassword) {
             const viewerWindow = window.open('', "_blank");
@@ -1626,6 +1647,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                     onSendToRegistrar={handleSendToRegistrar}
                                     onSendBack={(notes) => handleBulkReturn(notes)} 
                                     onViewIpfs={handleViewIpfs}
+                                    onRetryArchive={['PENDING', 'FAILED'].includes(selectedReviewSection.ipfsArchiveStatus) ? handleRetryArchive : null}
                                     onBack={() => setSelectedReviewSection(null)}
                                 />
                             )}

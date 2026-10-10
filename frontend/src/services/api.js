@@ -323,6 +323,14 @@ export const finalizeApprovedGrades = async (recordIds) => {
     });
 };
 
+export const ensureFinalizedGradeArchive = async (recordIds) => {
+    const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
+    return await fetchWithAuth('/Grades/finalized-archive/ensure', {
+        method: 'POST',
+        body: JSON.stringify({ recordIds: ids })
+    });
+};
+
 export const returnGrade = async (id, note, invokerId = '') => {
     return await fetchWithAuth(`/Grades/return/${encodeURIComponent(id)}`, {
         method: 'POST',
