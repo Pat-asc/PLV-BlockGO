@@ -10,6 +10,11 @@ import FacultyCurriculumPanel from './FacultyCurriculumPanel';
 import { calculateFinalAverage, getGradeEquivalent } from '../../utils/gradingHelpers';
 import { validateGradeUpload } from '../../utils/csvUploadValidation';
 import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from '../../utils/studentAcademicHelpers';
+import {
+  facultyGradeRecordMatchesAssignment,
+  mergeFacultyStudentGradeRecords,
+  parseFacultyGradePayload,
+} from '../../utils/facultyGradeRecordMapper';
 import BackButton from '../shared/BackButton';
 import StatusBadge from '../shared/StatusBadge';
 import '../../assets/FacultyPortal.css';
@@ -158,16 +163,6 @@ const saveResetAwareLocalData = (storageKey, data) => {
     data,
   };
   localStorage.setItem(storageKey, JSON.stringify(payload));
-};
-
-const parseGradeValue = (value) => {
-  if (value === null || value === undefined) return "";
-
-  const normalized = String(value).trim();
-  if (!normalized) return "";
-
-  const numeric = Number(normalized);
-  return Number.isNaN(numeric) ? "" : normalized;
 };
 
 const hasEncodedGrade = (value) => {
@@ -373,69 +368,11 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       const newSections = {};
       const nextSectionStatuses = {};
 
-      const parseSavedGrade = (rawGrade) => {
-        if (!rawGrade) {
-          return {
-            midterm: "",
-            finals: "",
-            finalAverage: "",
-            standing: STUDENT_STATUS_ACTIVE,
-            flagged: false,
-          };
-        }
-        if (typeof rawGrade === 'number') {
-          return {
-            midterm: rawGrade,
-            finals: rawGrade,
-            finalAverage: rawGrade,
-            standing: STUDENT_STATUS_ACTIVE,
-            flagged: false,
-          };
-        }
-        if (typeof rawGrade === 'string' && rawGrade.trim().startsWith('{')) {
-          try {
-            const parsed = JSON.parse(rawGrade);
-            
-            let computedRaw = parsed.finalAverage || parsed.final || parsed.grade || '';
-            const mid = parseFloat(parsed.midterm);
-            const fin = parseFloat(parsed.finals);
-            if (!isNaN(mid) && !isNaN(fin)) {
-                computedRaw = ((mid + fin) / 2).toFixed(2);
-            } else if (!isNaN(mid)) {
-                computedRaw = mid.toFixed(2);
-            } else if (!isNaN(fin)) {
-                computedRaw = fin.toFixed(2);
-            }
-
-            return {
-              midterm: parseGradeValue(parsed.midterm),
-              finals: parseGradeValue(parsed.finals),
-              finalAverage: parseGradeValue(computedRaw),
-              standing: parsed.standing || STUDENT_STATUS_ACTIVE,
-              flagged: !!parsed.flagged,
-            };
-          } catch (e) {
-            return {
-              midterm: "",
-              finals: "",
-              finalAverage: "",
-              standing: STUDENT_STATUS_ACTIVE,
-              flagged: false,
-            };
-          }
-        }
-        const numericGrade = parseGradeValue(rawGrade);
-        return {
-          midterm: numericGrade,
-          finals: numericGrade,
-          finalAverage: numericGrade,
-          standing: STUDENT_STATUS_ACTIVE,
-          flagged: false,
-        };
-      };
-
       const recordHasEncodedValueForTerm = (record, term) => {
-        const parsedGrade = parseSavedGrade(record?.grade || record?.Grade);
+        const parsedGrade = parseFacultyGradePayload(
+          record?.grade || record?.Grade,
+          record?.term || record?.Term
+        );
         if (parsedGrade.standing && parsedGrade.standing !== STUDENT_STATUS_ACTIVE) return true;
         return term === "finals"
           ? hasEncodedGrade(parsedGrade.finals)
@@ -486,34 +423,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         };
       };
 
-      const getGradeStudentKey = (grade) => (
-        grade.student_no ||
-        grade.studentNo ||
-        grade.StudentNo ||
-        grade.student_hash ||
-        grade.studentHash ||
-        grade.StudentHash ||
-        grade.studentId ||
-        grade.StudentId ||
-        ''
-      );
-
-      const getGradeSubjectKey = (grade) => (
-        grade.subject_code ||
-        grade.subjectCode ||
-        grade.SubjectCode ||
-        grade.course ||
-        grade.Course ||
-        ''
-      );
-      const getGradeRecordSectionKey = (grade) => (
-        grade.record_section ||
-        grade.recordSection ||
-        grade.section ||
-        grade.Section ||
-        ''
-      );
-
       actualSections.forEach(sec => {
         const matchedAssignment = savedAssignmentsByFacultySectionId.get(String(getFacultySectionId(sec))) || null;
         // actualSections is the authoritative backend assignment list. Local
@@ -523,31 +432,15 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         const sectionKey = `${sec.department} ${sec.section}${sec.subject ? ` (${sec.subject})` : ''} [${authoritativeFacultySectionId}]`;
         const savedSectionSnapshot = savedGradeSnapshots[sectionKey] || {};
         const activeAssignmentCycleId = authoritativeFacultySectionId;
-        const sectionGrades = actualGrades.filter((grade) => {
-          const gradeSubjectKey = normalizeText(getGradeSubjectKey(grade));
-          const gradeRecordSectionKey = normalizeText(getGradeRecordSectionKey(grade));
-          const gradeDisplaySectionKey = normalizeText(grade.section || grade.Section || "");
-          const expectedSubjectCode = normalizeText(
-            matchedAssignment?.subjectCode || sec.subject
-          );
-          const expectedSectionKeys = [
-            sectionKey,
-            matchedAssignment?.sectionName,
-            sec.section,
-          ]
-            .map((value) => normalizeText(value))
-            .filter(Boolean);
-
-          const sectionMatches =
-            expectedSectionKeys.includes(gradeRecordSectionKey) ||
-            expectedSectionKeys.includes(gradeDisplaySectionKey);
-          const subjectMatches =
-            !expectedSubjectCode || gradeSubjectKey === expectedSubjectCode;
-          const gradeAssignmentCycleId = String(grade.assignment_cycle_id || grade.assignmentCycleId || grade.AssignmentCycleId || '');
-          const assignmentCycleMatches = !activeAssignmentCycleId || gradeAssignmentCycleId === activeAssignmentCycleId;
-
-          return sectionMatches && subjectMatches && assignmentCycleMatches;
-        });
+        const sectionGrades = actualGrades.filter((grade) =>
+          facultyGradeRecordMatchesAssignment(grade, {
+            assignmentCycleId: activeAssignmentCycleId,
+            facultySectionId: activeAssignmentCycleId,
+            subjectCode: matchedAssignment?.subjectCode || sec.subject,
+            canonicalSection: sec.canonicalSection || matchedAssignment?.sectionName || sec.section,
+            section: sec.section,
+          })
+        );
         const sectionReviewState = deriveSectionReviewState(
           sectionGrades,
           encodingTerm
@@ -576,25 +469,21 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             }
 
           const globalStudentMatch = studentRecord;
-          const savedGrade = [...sectionGrades].reverse().find(g => {
-            const gradeStudentKey = normalizeText(getGradeStudentKey(g));
-            const studentCandidates = [
-              studentRecord.email,
-              globalStudentMatch?.email,
-              getRosterStudentNumber(globalStudentMatch),
-              rosterStudentId,
-            ]
-              .map((value) => normalizeText(value))
-              .filter(Boolean);
-            const sameStudent = studentCandidates.includes(gradeStudentKey);
-            return sameStudent;
-          });
+          const mappedGrades = mergeFacultyStudentGradeRecords(
+            sectionGrades,
+            {
+              ...studentRecord,
+              studentNumber: resolvedStudentNo || rosterStudentId,
+              email: globalStudentMatch?.email || studentRecord.email || '',
+            },
+            encodingTerm
+          );
           const snapshotStudent = !activeAssignmentCycleId ? (
             savedSectionSnapshot?.students?.[normalizeText(globalStudentMatch?.email || studentRecord.email || resolvedStudentNo || rosterStudentId)] ||
             savedSectionSnapshot?.students?.[normalizeText(resolvedStudentNo || rosterStudentId)] ||
             null) : null;
-          const savedValues = savedGrade
-            ? parseSavedGrade(savedGrade?.grade || savedGrade?.Grade)
+          const savedValues = mappedGrades.matchedRecordCount > 0
+            ? mappedGrades
             : {
                 midterm: snapshotStudent?.midterm ?? "",
                 finals: snapshotStudent?.finals ?? "",

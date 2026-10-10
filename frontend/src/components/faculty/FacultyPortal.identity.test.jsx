@@ -425,6 +425,31 @@ test('Finals Bulk Upload awaits the backend reload and displays the persisted st
   expect(screen.getByRole('dialog', { name: 'Upload Successful' })).toHaveTextContent('1 of 1 grade rows were saved');
 });
 
+test('separate Midterm and Finals records render together regardless of backend order', async () => {
+  getSystemSetting.mockResolvedValue({ status: 'Success', value: {
+    startDate: '2020-01-01', endDate: '2099-12-31', semester: '1st Semester', term: 'finals',
+  } });
+  fetchAllGrades.mockResolvedValue({ data: [
+    {
+      id: 'finals-grade-1', assignment_cycle_id: 77, student_no: '26-0001',
+      record_section: 'BSIT 1-1', subject_code: 'IT 101', term: 'finals', status: 'Draft',
+      grade: JSON.stringify({ midterm: '88.50', finals: '91.50', standing: 'active' }), date: '2026-10-09',
+    },
+    {
+      id: 'midterm-grade-1', assignment_cycle_id: 77, student_no: '26-0001',
+      record_section: 'BSIT 1-1', subject_code: 'IT 101', term: 'midterm', status: 'DepartmentApproved',
+      grade: JSON.stringify({ midterm: '88.50', standing: 'active' }), date: '2026-09-09',
+    },
+  ] });
+
+  render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: /Encode Now|View Grades/ }));
+
+  expect(screen.getAllByPlaceholderText('60-100')[0]).toHaveValue(88.5);
+  expect(screen.getAllByPlaceholderText('60-100')[1]).toHaveValue(91.5);
+  expect(screen.getByText('90.00')).toBeInTheDocument();
+});
+
 test('Finals Bulk Upload reloads a persisted INC standing instead of showing a missing student grade', async () => {
   getSystemSetting.mockResolvedValue({ status: 'Success', value: {
     startDate: '2020-01-01', endDate: '2099-12-31', semester: '1st Semester', term: 'finals',
