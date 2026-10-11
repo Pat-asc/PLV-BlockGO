@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import TextSizeControl from './TextSizeControl';
+import ThemeControl from './ThemeControl';
 
 const SettingsMenu = ({ children, title = 'Settings', description = 'Adjust your portal display.', open: controlledOpen, onOpenChange }) => {
   const [internalOpen, setInternalOpen] = useState(false);
@@ -46,7 +47,10 @@ const SettingsMenu = ({ children, title = 'Settings', description = 'Adjust your
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M6 6l12 12M18 6 6 18" /></svg>
             </button>
           </div>
-          {typeof children === 'function' ? children({ close: () => setOpen(false) }) : children || <TextSizeControl />}
+          <div className="space-y-4">
+            <ThemeControl />
+            {typeof children === 'function' ? children({ close: () => setOpen(false) }) : children || <TextSizeControl />}
+          </div>
         </div>
       ) : null}
     </div>

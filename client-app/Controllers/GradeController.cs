@@ -4489,6 +4489,8 @@ namespace BlockGo.Controllers
                 // fragmented values in the viewer.
                 var jsonHeaders = new List<string>();
                 var jsonRows = new List<Dictionary<string, string>>();
+                var finalizedSheetMetadata = new List<KeyValuePair<string, string>>();
+                var isFinalizedGradeSheet = false;
                 try
                 {
                     using var jsonDocument = JsonDocument.Parse(textContent);
@@ -4524,6 +4526,30 @@ namespace BlockGo.Controllers
 
                     if (jsonDocument.RootElement.ValueKind == JsonValueKind.Object)
                     {
+                        isFinalizedGradeSheet =
+                            jsonDocument.RootElement.TryGetProperty("schema", out var schema) &&
+                            string.Equals(schema.GetString(), "plv.finalized-grading-sheet.v1", StringComparison.Ordinal);
+
+                        if (isFinalizedGradeSheet &&
+                            jsonDocument.RootElement.TryGetProperty("metadata", out var metadata) &&
+                            metadata.ValueKind == JsonValueKind.Object)
+                        {
+                            var visibleMetadata = new[]
+                            {
+                                "program", "section", "subject_code", "subject_title",
+                                "school_year", "semester", "term", "generated_at"
+                            };
+                            foreach (var name in visibleMetadata)
+                            {
+                                if (metadata.TryGetProperty(name, out var value))
+                                {
+                                    var displayValue = FormatJsonValue(value);
+                                    if (!string.IsNullOrWhiteSpace(displayValue))
+                                        finalizedSheetMetadata.Add(new KeyValuePair<string, string>(name, displayValue));
+                                }
+                            }
+                        }
+
                         if (jsonDocument.RootElement.TryGetProperty("records", out var gradingSheetRecords) &&
                             gradingSheetRecords.ValueKind == JsonValueKind.Array)
                         {
@@ -4600,6 +4626,13 @@ namespace BlockGo.Controllers
                         .header h1 {{ margin: 0; font-size: 1.1rem; font-weight: 800; letter-spacing: -0.025em; }}
                         .header .meta {{ font-size: 0.7rem; opacity: 0.8; font-family: monospace; }}
                         .content {{ flex: 1; overflow: auto; padding: 0; background: #fff; position: relative; }}
+                        .sheet-summary {{ padding: 1.25rem 1.5rem; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }}
+                        .sheet-summary h2 {{ margin: 0 0 1rem; color: #003366; font-size: 1rem; }}
+                        .metadata-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 0.75rem; }}
+                        .metadata-item {{ min-width: 0; border: 1px solid #e2e8f0; border-radius: 0.75rem; background: white; padding: 0.75rem; }}
+                        .metadata-label {{ display: block; margin-bottom: 0.25rem; color: #64748b; font-size: 0.65rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }}
+                        .metadata-value {{ display: block; overflow-wrap: anywhere; color: #1e293b; font-size: 0.85rem; font-weight: 700; }}
+                        .table-title {{ margin: 0; padding: 1rem 1.5rem 0.5rem; color: #003366; font-size: 0.95rem; }}
                         
                         /* Table Styling for CSVs */
                         table {{ width: 100%; border-collapse: collapse; font-size: 0.85rem; border: none; }}
@@ -4633,8 +4666,24 @@ namespace BlockGo.Controllers
                 }
                 else if (jsonRows.Count > 0)
                 {
+                    if (isFinalizedGradeSheet)
+                    {
+                        viewerHtml += "<section class='sheet-summary'><h2>Finalized Grading Sheet</h2><div class='metadata-grid'>";
+                        foreach (var item in finalizedSheetMetadata)
+                        {
+                            viewerHtml += $"<div class='metadata-item'><span class='metadata-label'>{System.Net.WebUtility.HtmlEncode(FormatJsonHeader(item.Key))}</span><span class='metadata-value'>{System.Net.WebUtility.HtmlEncode(item.Value)}</span></div>";
+                        }
+                        viewerHtml += "</div></section><h2 class='table-title'>Student Grades</h2>";
+                    }
+
+                    var displayHeaders = isFinalizedGradeSheet
+                        ? new[] { "student_no", "student_name", "midterm", "finals", "final_average", "standing", "status" }
+                            .Where(header => jsonHeaders.Contains(header, StringComparer.OrdinalIgnoreCase))
+                            .ToList()
+                        : jsonHeaders;
+
                     viewerHtml += "<table><thead><tr>";
-                    foreach (var header in jsonHeaders)
+                    foreach (var header in displayHeaders)
                     {
                         viewerHtml += $"<th>{System.Net.WebUtility.HtmlEncode(FormatJsonHeader(header))}</th>";
                     }
@@ -4643,7 +4692,7 @@ namespace BlockGo.Controllers
                     foreach (var row in jsonRows)
                     {
                         viewerHtml += "<tr>";
-                        foreach (var header in jsonHeaders)
+                        foreach (var header in displayHeaders)
                         {
                             row.TryGetValue(header, out var value);
                             viewerHtml += $"<td>{System.Net.WebUtility.HtmlEncode(value ?? string.Empty)}</td>";

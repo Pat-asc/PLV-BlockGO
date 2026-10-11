@@ -37,7 +37,7 @@ const Notification = ({ message, type, createdAt, onDismiss }) => {
     const meta = notificationMeta[type] || notificationMeta.notice;
 
     return (
-        <section role={type === 'error' ? 'alert' : 'status'} aria-live={type === 'error' ? 'assertive' : 'polite'} className={`${baseClasses} ${typeClasses[type] || typeClasses.success}`}>
+        <section data-system-theme-surface="notification" role={type === 'error' ? 'alert' : 'status'} aria-live={type === 'error' ? 'assertive' : 'polite'} className={`${baseClasses} ${typeClasses[type] || typeClasses.success}`}>
             <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-1 ${meta.accent}`} />
             <span aria-hidden="true" className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white ${meta.accent}`}>{meta.icon}</span>
             <span className="min-w-0 flex-1"><span className="block text-sm font-bold text-[#003366]">{meta.title}</span><span className="mt-0.5 block text-sm leading-5 text-slate-700">{message}</span><time className="mt-1.5 block text-xs text-slate-400" dateTime={new Date(createdAt).toISOString()}>Just now</time></span>

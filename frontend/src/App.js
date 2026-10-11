@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import "./assets/style.css"; 
 import "./assets/App.css";   
+import "./assets/systemTheme.css";
 import Login from "./components/shared/Login";
 import { fetchUserProfile } from './services/api';
 import StudentPortal from './components/student/StudentPortal';
@@ -26,6 +27,7 @@ import {
 import { BrowserRouter as Router, useLocation, useNavigate } from 'react-router-dom';
 import { NotificationProvider, useNotification } from './services/NotificationContext';
 import { requestSystemConfirmation, SystemDialogProvider } from './services/SystemDialogContext';
+import { applySystemTheme, readSystemTheme } from './services/themePreference';
 
 const normalizeAppRole = normalizeSessionRole;
 
@@ -40,6 +42,8 @@ function AppContent() {
   const location = useLocation();
   const navigate = useNavigate();
   const restorationStarted = useRef(false);
+
+  useEffect(() => { applySystemTheme(readSystemTheme()); }, []);
 
   const handleLoginSuccess = useCallback(async (token) => {
     try {
@@ -260,12 +264,13 @@ function AppContent() {
 
   return (
     <div className="main-app-wrapper">
-      {isRestoringSession ? (
-        <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-600">Restoring this tab's session...</div>
-      ) : !user ? (
-        <Login onLogin={handleLoginSuccess} />
-      ) : (
-        <>
+      <div className="system-theme-surface">
+        {isRestoringSession ? (
+          <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-600">Restoring this tab's session...</div>
+        ) : !user ? (
+          <Login onLogin={handleLoginSuccess} />
+        ) : (
+          <>
           {/* Floating Chat Button */}
           {canUseChat && !isChatOpen && (
             <div className="group fixed bottom-5 right-5 z-[1000]">
@@ -293,18 +298,6 @@ function AppContent() {
               )}
             </div>
           )}
-          {canUseChat && <Chat
-            userEmail={user.email}
-            userRole={currentUserRole}
-            isOpen={isChatOpen}
-            onClose={() => setIsChatOpen(false)}
-            onUnreadChange={handleUnreadChange}
-            onIncomingMessage={handleIncomingMessage}
-            onRegistrationRequest={handleRegistrationRequest}
-            onSupportNotice={handleSupportNotice}
-            autoOpenTarget={chatAutoOpenTarget}
-          />}
-
           {currentUserRole === "student" ? (
             <StudentPortal studentData={user} onLogout={handleLogout} />
           ) : currentUserRole === "faculty" ? (
@@ -338,8 +331,20 @@ function AppContent() {
               </div>
             </div>
           )}
-        </>
-      )}
+          </>
+        )}
+      </div>
+      {user && canUseChat && <Chat
+        userEmail={user.email}
+        userRole={currentUserRole}
+        isOpen={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        onUnreadChange={handleUnreadChange}
+        onIncomingMessage={handleIncomingMessage}
+        onRegistrationRequest={handleRegistrationRequest}
+        onSupportNotice={handleSupportNotice}
+        autoOpenTarget={chatAutoOpenTarget}
+      />}
     </div>
   );
 }

@@ -2,11 +2,25 @@ import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import SettingsMenu from './SettingsMenu';
 import { TEXT_SIZE_STORAGE_KEY } from '../../services/textSizePreference';
+import { THEME_STORAGE_KEY } from '../../services/themePreference';
 
 beforeEach(() => {
   localStorage.clear();
   document.documentElement.style.removeProperty('--blockgo-font-scale');
   delete document.documentElement.dataset.textSize;
+  delete document.documentElement.dataset.blockgoTheme;
+  document.documentElement.style.removeProperty('color-scheme');
+});
+
+test('applies a persistent system theme without using the chat preference', () => {
+  render(<SettingsMenu />);
+  fireEvent.click(screen.getByRole('button', { name: /Settings/i }));
+  const themeSwitch = screen.getByRole('switch', { name: /system dark mode/i });
+  expect(themeSwitch).toHaveAttribute('aria-checked', 'false');
+  fireEvent.click(themeSwitch);
+  expect(document.documentElement.dataset.blockgoTheme).toBe('dark');
+  expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('dark');
+  expect(Object.keys(localStorage).some((key) => key.startsWith('blockgo-chat-dark-mode:'))).toBe(false);
 });
 
 test('opens Text Size settings and applies a persistent preference immediately', () => {

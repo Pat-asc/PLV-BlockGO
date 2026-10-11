@@ -69,6 +69,7 @@ const Modal = ({ isOpen, onClose, title, children, description, closeOnBackdrop 
         >
             <div 
                 ref={dialogRef}
+                data-system-theme-surface="dialog"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby={titleId}

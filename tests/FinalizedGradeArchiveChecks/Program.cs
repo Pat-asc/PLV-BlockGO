@@ -116,6 +116,11 @@ var retryBody = controller[retryStart..retryEnd];
 Check(!retryBody.Contains("FinalizeApprovedGradesAsync", StringComparison.Ordinal) && !retryBody.Contains("FinalizeGradeAsync", StringComparison.Ordinal), "IPFS retry cannot repeat Fabric finalization");
 Check(controller.Contains("[Authorize(Roles = \"registrar,department_admin\")]", StringComparison.Ordinal), "historical archive endpoint is role protected");
 Check(controller.Contains("[HttpPost(\"upload-ipfs\")]", StringComparison.Ordinal), "manual attachment upload remains available");
+Check(controller.Contains("Finalized Grading Sheet", StringComparison.Ordinal) &&
+      controller.Contains("Student Grades", StringComparison.Ordinal),
+    "IPFS viewer presents finalized JSON as a readable grading sheet");
+Check(controller.Contains("\"student_no\", \"student_name\", \"midterm\", \"finals\", \"final_average\", \"standing\", \"status\"", StringComparison.Ordinal),
+    "IPFS viewer limits finalized grading sheets to user-facing columns");
 
 var connectionString = Environment.GetEnvironmentVariable("FINALIZED_ARCHIVE_TEST_CONNECTION");
 if (!string.IsNullOrWhiteSpace(connectionString))

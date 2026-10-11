@@ -1,0 +1,214 @@
+.blockgo-theme-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+}
+
+.blockgo-theme-control strong,
+.blockgo-theme-control small {
+  display: block;
+}
+
+.blockgo-theme-control strong {
+  color: #1e293b;
+  font-size: 0.875rem;
+}
+
+.blockgo-theme-control small {
+  margin-top: 0.2rem;
+  color: #64748b;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+
+.blockgo-theme-control button {
+  position: relative;
+  width: 3rem;
+  height: 1.75rem;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 9999px;
+  background: #cbd5e1;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.blockgo-theme-control button span {
+  position: absolute;
+  top: 0.25rem;
+  left: 0.25rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.35);
+  transition: transform 160ms ease;
+}
+
+.blockgo-theme-control button.is-active {
+  background: #2563eb;
+}
+
+.blockgo-theme-control button.is-active span {
+  transform: translateX(1.25rem);
+}
+
+.blockgo-theme-control button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+html[data-blockgo-theme='dark'] body {
+  background: #020617;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface,
+html[data-blockgo-theme='dark'] [data-system-theme-surface] {
+  color: #e2e8f0;
+  --plv-white: #0f172a;
+  --plv-black: #f1f5f9;
+  --plv-text-main: #e2e8f0;
+  --plv-text-sub: #94a3b8;
+  --bg-gray: #020617;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.bg-white, .bg-slate-50),
+html[data-blockgo-theme='dark'] [data-system-theme-surface] :is(.bg-white, .bg-slate-50) {
+  background-color: #0f172a !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.bg-slate-100, .bg-gray-100),
+html[data-blockgo-theme='dark'] [data-system-theme-surface] :is(.bg-slate-100, .bg-gray-100) {
+  background-color: #020617 !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.bg-slate-200, .bg-slate-300),
+html[data-blockgo-theme='dark'] [data-system-theme-surface] :is(.bg-slate-200, .bg-slate-300) {
+  background-color: #334155 !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.text-slate-900, .text-slate-800, .text-slate-700),
+html[data-blockgo-theme='dark'] [data-system-theme-surface] :is(.text-slate-900, .text-slate-800, .text-slate-700) {
+  color: #e2e8f0 !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.text-slate-600, .text-slate-500),
+html[data-blockgo-theme='dark'] [data-system-theme-surface] :is(.text-slate-600, .text-slate-500) {
+  color: #a8b5c7 !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.text-slate-400, .text-slate-300),
+html[data-blockgo-theme='dark'] [data-system-theme-surface] :is(.text-slate-400, .text-slate-300) {
+  color: #94a3b8 !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface .text-\[\#003366\]:not(.bg-yellow-400),
+html[data-blockgo-theme='dark'] [data-system-theme-surface] .text-\[\#003366\]:not(.bg-yellow-400) {
+  color: #93c5fd !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.border-slate-100, .border-slate-200, .border-slate-300, .border-gray-200, .border-gray-300),
+html[data-blockgo-theme='dark'] [data-system-theme-surface] :is(.border-slate-100, .border-slate-200, .border-slate-300, .border-gray-200, .border-gray-300) {
+  border-color: #334155 !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(input, select, textarea),
+html[data-blockgo-theme='dark'] [data-system-theme-surface] :is(input, select, textarea) {
+  border-color: #475569;
+  background-color: #0f172a;
+  color: #f8fafc;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(input, textarea)::placeholder,
+html[data-blockgo-theme='dark'] [data-system-theme-surface] :is(input, textarea)::placeholder {
+  color: #64748b;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.portal-container, .faculty-grade-encoding, .login-container),
+html[data-blockgo-theme='dark'] .system-theme-surface > :is(div, main) {
+  background-color: #020617 !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.table-container, .section-card, .filter-tab, .search-input, .table-header-custom, .table-footer, .row-save-btn, .back-btn, .remarks-select, .login-form-section),
+html[data-blockgo-theme='dark'] [data-system-theme-surface] {
+  border-color: #334155 !important;
+  background-color: #0f172a !important;
+  color: #e2e8f0 !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.plv-table td, .card-divider) {
+  border-color: #1e293b;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.plv-table tr:hover, .table-header-custom, .table-footer) {
+  background-color: #111c2f !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.subject-title, .year-title, .sub-title, .input-group label),
+html[data-blockgo-theme='dark'] [data-system-theme-surface] :is(h1, h2, h3, label) {
+  color: #e2e8f0;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.sub-code, .final-point, .section-name, .welcome-text) {
+  color: #93c5fd;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface .blockgo-text-size-control,
+html[data-blockgo-theme='dark'] .system-theme-surface .blockgo-theme-control {
+  border-color: #334155;
+  background: #111c2f;
+  color: #e2e8f0;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface .blockgo-text-size-control button,
+html[data-blockgo-theme='dark'] .system-theme-surface .blockgo-theme-control strong {
+  color: #e2e8f0;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface .blockgo-theme-control small {
+  color: #94a3b8;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.bg-blue-50, .bg-blue-100) {
+  background-color: #102a56 !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.bg-emerald-50, .bg-emerald-100, .bg-green-50, .bg-green-100) {
+  background-color: #052e2b !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.bg-amber-50, .bg-amber-100, .bg-yellow-50, .bg-yellow-100) {
+  background-color: #422006 !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.bg-red-50, .bg-red-100) {
+  background-color: #450a0a !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.text-blue-700, .text-blue-800, .text-blue-900) {
+  color: #93c5fd !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.text-emerald-700, .text-emerald-800, .text-emerald-900, .text-green-700, .text-green-800, .text-green-900) {
+  color: #6ee7b7 !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.text-amber-700, .text-amber-800, .text-amber-900) {
+  color: #fcd34d !important;
+}
+
+html[data-blockgo-theme='dark'] .system-theme-surface :is(.text-red-700, .text-red-800, .text-red-900) {
+  color: #fca5a5 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blockgo-theme-control button,
+  .blockgo-theme-control button span {
+    transition: none;
+  }
+}
