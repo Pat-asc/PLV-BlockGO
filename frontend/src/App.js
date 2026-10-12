@@ -315,6 +315,7 @@ function AppContent() {
           ) : currentUserRole === "system_admin" ? (
             <SystemAdminPortal
               adminData={user}
+              systemTheme={systemTheme}
               onLogout={handleLogout}
               chatUnreadCount={chatUnreadTotal}
               onOpenChat={() => setIsChatOpen(true)}

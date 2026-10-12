@@ -22,7 +22,7 @@ const navigationItems = [
   { id: 'observability', label: 'Grafana Observability' },
 ];
 
-function SystemAdminPortal({ adminData, onLogout }) {
+function SystemAdminPortal({ adminData, systemTheme, onLogout }) {
   const [activeView, setActiveView] = useState('overview');
   const [tickets, setTickets] = useState([]);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
@@ -136,7 +136,7 @@ function SystemAdminPortal({ adminData, onLogout }) {
             ) : activeView === 'tickets' ? (
               <SupportTicketManagement />
             ) : activeView === 'observability' ? (
-              <GrafanaObservability />
+              <GrafanaObservability systemTheme={systemTheme} />
             ) : activeView === 'transactions' ? (
               <SystemAdminTransactions />
             ) : activeView === 'data-browser' ? (
