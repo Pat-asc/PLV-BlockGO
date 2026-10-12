@@ -7,6 +7,13 @@ import { getChatHubUrl } from '../../services/api';
 import { getAuthToken } from '../../services/authSession';
 import { pullSharedClientState } from '../../utils/sharedClientState';
 import { createAcademicEventGuard } from '../../utils/academicEventGuard';
+import {
+  applyChatThemeForAccount,
+  chatThemeStorageKey,
+  readChatDarkMode,
+  SYSTEM_THEME_CHANGED_EVENT,
+  THEME_STORAGE_KEY,
+} from '../../services/themePreference';
 import BackButton from './BackButton';
 
 const acceptAcademicEvent = createAcademicEventGuard();
@@ -227,6 +234,7 @@ const TypingIndicator = ({ dark = false }) => (
 const Chat = ({
   userEmail,
   userRole,
+  systemTheme,
   onClose,
   isOpen = true,
   onUnreadChange,
@@ -259,13 +267,7 @@ const Chat = ({
   const [groupMemberSearch, setGroupMemberSearch] = useState('');
   const [selectedGroupInvitees, setSelectedGroupInvitees] = useState([]);
   const [groupActionBusy, setGroupActionBusy] = useState(false);
-  const [isChatDarkMode, setIsChatDarkMode] = useState(() => {
-    try {
-      return localStorage.getItem(`blockgo-chat-dark-mode:${userEmail || 'anonymous'}`) === 'true';
-    } catch {
-      return false;
-    }
-  });
+  const [isChatDarkMode, setIsChatDarkMode] = useState(() => systemTheme ? systemTheme === 'dark' : readChatDarkMode(userEmail));
 
   const [chatBoxWidth, setChatBoxWidth] = useState(400);
   const [chatBoxHeight, setChatBoxHeight] = useState(500);
@@ -296,11 +298,30 @@ const Chat = ({
 
   useEffect(() => {
     try {
-      localStorage.setItem(`blockgo-chat-dark-mode:${userEmail || 'anonymous'}`, String(isChatDarkMode));
+      localStorage.setItem(chatThemeStorageKey(userEmail), String(isChatDarkMode));
     } catch {
       // Chat remains usable when browser storage is unavailable.
     }
   }, [isChatDarkMode, userEmail]);
+
+  useEffect(() => {
+    const followSystemTheme = (theme) => setIsChatDarkMode(applyChatThemeForAccount(theme, userEmail));
+    const handleSystemThemeChange = (event) => followSystemTheme(event.detail?.theme);
+    const handleStorage = (event) => {
+      if (event.key === THEME_STORAGE_KEY && event.newValue) followSystemTheme(event.newValue);
+      if (event.key === chatThemeStorageKey(userEmail) && event.newValue !== null) setIsChatDarkMode(event.newValue === 'true');
+    };
+    window.addEventListener(SYSTEM_THEME_CHANGED_EVENT, handleSystemThemeChange);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(SYSTEM_THEME_CHANGED_EVENT, handleSystemThemeChange);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [userEmail]);
+
+  useEffect(() => {
+    if (systemTheme) setIsChatDarkMode(applyChatThemeForAccount(systemTheme, userEmail));
+  }, [systemTheme, userEmail]);
 
   const applyConversationState = useCallback((rawState) => {
     const state = normalizeConversationState(rawState);
@@ -1313,6 +1334,7 @@ const Chat = ({
   return (
     <>
     <div
+      data-testid="chat-panel"
       className={`fixed bottom-3 right-3 z-[1000] flex max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl border font-sans shadow-2xl transition-colors sm:bottom-5 sm:right-5 ${
         isChatDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'
       }`}

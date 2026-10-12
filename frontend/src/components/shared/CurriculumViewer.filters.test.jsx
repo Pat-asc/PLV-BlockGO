@@ -34,9 +34,30 @@ test('only semesters actually present in curriculum data are offered', () => {
 });
 
 test('catalog-only views use neutral rows instead of student progress styling', () => {
-  render(<CurriculumViewer curricula={[curriculum]} />);
+  const stripedCurriculum = {
+    ...curriculum,
+    subjects: curriculum.subjects.map((subject) => subject.subjectId === 2 ? { ...subject, semester: 'FIRST' } : subject),
+  };
+  render(<CurriculumViewer curricula={[stripedCurriculum]} />);
 
-  expect(screen.getByRole('row', { name: /Subject code IT101 Subject title First/ })).not.toHaveAttribute('data-progress-status');
+  const firstRow = screen.getByRole('row', { name: /Subject code IT101 Subject title First/ });
+  const secondRow = screen.getByRole('row', { name: /Subject code IT102 Subject title Second/ });
+  expect(firstRow).not.toHaveAttribute('data-progress-status');
+  expect(firstRow).toHaveClass('dark:bg-slate-900', 'dark:text-slate-200', 'dark:hover:bg-slate-800');
+  expect(secondRow).toHaveClass('dark:bg-slate-800/60', 'dark:text-slate-200');
+  expect(screen.getByTestId('curriculum-viewer')).toHaveClass('dark:border-slate-700', 'dark:bg-slate-900');
+});
+
+test('student progress rows use readable status-specific dark surfaces', () => {
+  render(<CurriculumViewer curricula={[curriculum]} progressBySubject={{
+    IT101: { status: 'Completed', grade: '1.25' },
+    IT102: { status: 'In Progress' },
+    IT201: { status: 'Not Yet Taken' },
+  }} />);
+
+  expect(screen.getByRole('row', { name: /Subject code IT101 Subject title First/ })).toHaveClass('dark:bg-emerald-950/40', 'dark:text-slate-100');
+  expect(screen.getByRole('row', { name: /Subject code IT102 Subject title Second/ })).toHaveClass('dark:bg-amber-950/40', 'dark:text-slate-100');
+  expect(screen.getByRole('row', { name: /Subject code IT201 Subject title Advanced/ })).toHaveClass('dark:bg-slate-800/60', 'dark:text-slate-200');
 });
 
 test('renders phone and tablet labels without duplicating curriculum rows', () => {

@@ -360,6 +360,17 @@ test('Select All affects only the current year and semester filter scope', async
   expect(screen.queryByRole('checkbox', { name: 'Select IT 201' })).not.toBeInTheDocument();
 });
 
+test('uses readable dark surfaces for the editable curriculum checklist rows', async () => {
+  fetchCurriculums.mockResolvedValue({ data: [curriculumWithSubjects()] });
+  render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);
+
+  await screen.findByRole('checkbox', { name: 'Select IT 101' });
+  const row = screen.getByRole('row', { name: /Select IT 101/ });
+  expect(screen.getByTestId('curriculum-builder-checklist')).toHaveClass('dark:border-slate-700', 'dark:bg-slate-900');
+  expect(row).toHaveClass('dark:odd:bg-slate-900', 'dark:even:bg-slate-800/60', 'dark:text-slate-100');
+  expect(within(row).getByText('IT 101')).toHaveClass('dark:text-sky-300');
+});
+
 test('moves the single inline editor directly below the selected row and cancels without saving', async () => {
   fetchCurriculums.mockResolvedValue({ data: [curriculumWithSubjects()] });
   render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);

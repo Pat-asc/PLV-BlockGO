@@ -27,7 +27,8 @@ import {
 import { BrowserRouter as Router, useLocation, useNavigate } from 'react-router-dom';
 import { NotificationProvider, useNotification } from './services/NotificationContext';
 import { requestSystemConfirmation, SystemDialogProvider } from './services/SystemDialogContext';
-import { applySystemTheme, readSystemTheme } from './services/themePreference';
+import { readSystemTheme, SYSTEM_THEME_CHANGED_EVENT, THEME_STORAGE_KEY } from './services/themePreference';
+import { applyTextSize, readTextSize } from './services/textSizePreference';
 
 const normalizeAppRole = normalizeSessionRole;
 
@@ -38,12 +39,32 @@ function AppContent() {
   const [chatUnreadTotal, setChatUnreadTotal] = useState(0);
   const [latestChatNotice, setLatestChatNotice] = useState(null);
   const [chatAutoOpenTarget, setChatAutoOpenTarget] = useState(null);
+  const [systemTheme, setSystemTheme] = useState(readSystemTheme);
   const { addNotification } = useNotification();
   const location = useLocation();
   const navigate = useNavigate();
   const restorationStarted = useRef(false);
 
-  useEffect(() => { applySystemTheme(readSystemTheme()); }, []);
+  useEffect(() => { applyTextSize(readTextSize()); }, []);
+
+  useEffect(() => {
+    const handleThemeChange = (event) => setSystemTheme(event.detail?.theme || readSystemTheme());
+    const handleStorage = (event) => {
+      if (event.key === THEME_STORAGE_KEY) setSystemTheme(readSystemTheme());
+    };
+    window.addEventListener(SYSTEM_THEME_CHANGED_EVENT, handleThemeChange);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(SYSTEM_THEME_CHANGED_EVENT, handleThemeChange);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (user) document.documentElement.dataset.blockgoPortalTheme = systemTheme;
+    else delete document.documentElement.dataset.blockgoPortalTheme;
+    return () => { delete document.documentElement.dataset.blockgoPortalTheme; };
+  }, [systemTheme, user]);
 
   const handleLoginSuccess = useCallback(async (token) => {
     try {
@@ -264,40 +285,14 @@ function AppContent() {
 
   return (
     <div className="main-app-wrapper">
-      <div className="system-theme-surface">
-        {isRestoringSession ? (
-          <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-600">Restoring this tab's session...</div>
-        ) : !user ? (
-          <Login onLogin={handleLoginSuccess} />
-        ) : (
-          <>
-          {/* Floating Chat Button */}
-          {canUseChat && !isChatOpen && (
-            <div className="group fixed bottom-5 right-5 z-[1000]">
-              <button
-                type="button"
-                aria-label="Open Chat"
-                title="Open Chat"
-                onClick={() => setIsChatOpen(true)}
-                className="flex h-11 w-11 items-center justify-start overflow-hidden rounded-full bg-[#003366] text-white shadow-lg transition-[width,background-color,box-shadow] duration-200 ease-out hover:w-32 hover:bg-[#004b8f] hover:shadow-xl focus-visible:w-32 focus-visible:bg-[#004b8f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-              >
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3 1.7-5.1A7 7 0 0 1 3 12V8a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" />
-                    <path d="M8 10h.01M12 10h.01M16 10h.01" />
-                  </svg>
-                </span>
-                <span className="whitespace-nowrap pr-4 text-sm font-bold opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-                  Open Chat
-                </span>
-              </button>
-              {chatUnreadTotal > 0 && (
-                <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white shadow">
-                  {chatUnreadTotal > 9 ? '9+' : chatUnreadTotal}
-                </span>
-              )}
-            </div>
-          )}
+      {isRestoringSession ? (
+        <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-600">Restoring this tab's session...</div>
+      ) : !user ? (
+        <Login onLogin={handleLoginSuccess} />
+      ) : (
+        <>
+          <div data-testid="authenticated-portal-theme" className={`system-theme-surface ${systemTheme === 'dark' ? 'dark' : ''}`} data-system-theme={systemTheme}>
+          <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
           {currentUserRole === "student" ? (
             <StudentPortal studentData={user} onLogout={handleLogout} />
           ) : currentUserRole === "faculty" ? (
@@ -331,12 +326,34 @@ function AppContent() {
               </div>
             </div>
           )}
-          </>
-        )}
-      </div>
+          </div>
+          </div>
+          {canUseChat && !isChatOpen && (
+            <div data-testid="chat-launcher-wrapper" className="group fixed bottom-5 right-5 z-[1000] border-0 bg-transparent shadow-none">
+              <button
+                type="button"
+                aria-label="Open Chat"
+                title="Open Chat"
+                onClick={() => setIsChatOpen(true)}
+                className="flex h-11 w-11 items-center justify-start overflow-hidden rounded-full bg-[#003366] text-white shadow-lg transition-[width,background-color,box-shadow] duration-200 ease-out hover:w-32 hover:bg-[#004b8f] hover:shadow-xl focus-visible:w-32 focus-visible:bg-[#004b8f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              >
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3 1.7-5.1A7 7 0 0 1 3 12V8a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" />
+                    <path d="M8 10h.01M12 10h.01M16 10h.01" />
+                  </svg>
+                </span>
+                <span className="whitespace-nowrap pr-4 text-sm font-bold opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">Open Chat</span>
+              </button>
+              {chatUnreadTotal > 0 && <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white shadow">{chatUnreadTotal > 9 ? '9+' : chatUnreadTotal}</span>}
+            </div>
+          )}
+        </>
+      )}
       {user && canUseChat && <Chat
         userEmail={user.email}
         userRole={currentUserRole}
+        systemTheme={systemTheme}
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
         onUnreadChange={handleUnreadChange}

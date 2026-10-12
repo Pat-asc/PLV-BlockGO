@@ -36,6 +36,9 @@ const tokenFor = (role, username) => {
 beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
+  delete document.documentElement.dataset.blockgoTheme;
+  delete document.documentElement.dataset.blockgoPortalTheme;
+  document.documentElement.style.removeProperty('color-scheme');
   window.history.replaceState({}, '', '/');
   jest.clearAllMocks();
 });
@@ -59,6 +62,8 @@ test('keeps the signed-in account in sessionStorage and shows its role URL', asy
   const chatButton = screen.getByRole('button', { name: /^open chat$/i });
   expect(chatButton).toHaveClass('h-11', 'w-11', 'rounded-full', 'hover:w-32');
   expect(screen.getByText(/^open chat$/i)).toHaveClass('opacity-0', 'group-hover:opacity-100');
+  expect(screen.getByTestId('chat-launcher-wrapper')).toHaveClass('border-0', 'bg-transparent', 'shadow-none');
+  expect(screen.getByTestId('authenticated-portal-theme')).not.toContainElement(screen.getByTestId('chat-launcher-wrapper'));
   expect(sessionStorage.getItem('blockgo.auth.token')).toBe(token);
   expect(localStorage.getItem('token')).toBeNull();
 });
@@ -81,12 +86,18 @@ test('redirects an unauthorized role away from the protected System Administrato
 });
 
 test('renders managed-account login at the stable login route without public registration', async () => {
+  localStorage.setItem('blockgo.system-theme', 'dark');
   render(<App />);
   expect(await screen.findByRole('button', { name: /sign in/i })).toBeInTheDocument();
   expect(window.location.pathname).toBe('/login');
   expect(screen.getByText(/forgot password/i)).toBeInTheDocument();
   expect(screen.queryByText(/each browser tab keeps an independent account session/i)).not.toBeInTheDocument();
   expect(screen.queryByText(/sign up|register|create account/i)).not.toBeInTheDocument();
+  expect(screen.queryByTestId('authenticated-portal-theme')).not.toBeInTheDocument();
+  expect(document.documentElement).not.toHaveClass('dark');
+  expect(document.documentElement.dataset.blockgoTheme).toBeUndefined();
+  expect(document.documentElement.dataset.blockgoPortalTheme).toBeUndefined();
+  expect(document.documentElement.style.colorScheme).toBe('');
 });
 
 test('requests a self-service email code and resets the password', async () => {
@@ -162,12 +173,16 @@ test('clears the shared account session once after system logout confirmation', 
     data: { id: 7, email: 'faculty@plv.edu.ph', fullName: 'Test Faculty', role: 'faculty', status: 'APPROVED' },
   });
   window.history.replaceState({}, '', '/login');
+  localStorage.setItem('blockgo.system-theme', 'dark');
 
   render(<App />);
   fireEvent.change(await screen.findByPlaceholderText(/example@plv.edu.ph/i), { target: { value: 'faculty@plv.edu.ph' } });
   fireEvent.change(screen.getByPlaceholderText(/^password$/i), { target: { value: 'Password1!' } });
   fireEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
   await screen.findByText(/faculty portal for faculty@plv.edu.ph/i);
+  expect(screen.getByTestId('authenticated-portal-theme')).toHaveClass('dark');
+  expect(screen.getByTestId('authenticated-portal-theme')).toHaveAttribute('data-system-theme', 'dark');
+  expect(document.documentElement.dataset.blockgoPortalTheme).toBe('dark');
 
   fireEvent.click(screen.getByRole('button', { name: /^logout$/i }));
   const confirmButton = await screen.findByRole('button', { name: /^log out$/i });
@@ -177,6 +192,9 @@ test('clears the shared account session once after system logout confirmation', 
   await waitFor(() => expect(window.location.pathname).toBe('/login'));
   expect(sessionStorage.getItem('blockgo.auth.token')).toBeNull();
   expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
+  expect(screen.queryByTestId('authenticated-portal-theme')).not.toBeInTheDocument();
+  expect(document.documentElement.dataset.blockgoPortalTheme).toBeUndefined();
+  expect(localStorage.getItem('blockgo.system-theme')).toBe('dark');
 });
 
 test('shows the student a real-time released-grade notification', async () => {

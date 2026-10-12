@@ -832,7 +832,7 @@ const RegistrarGradesView = ({
                     managementDefaultTab="grades"
                     managementMenuItems={managementMenuItems}
                 />
-                <main className="flex-1 overflow-y-auto pb-24 pr-2">
+                <main className="min-w-0 w-full flex-1 overflow-y-auto pb-24 pr-2">
                     {mainTab === 'dashboard' && <RegistrarDashboard grades={grades} />}
                     {mainTab === 'encoding' && <EncodingPeriod onResetEncodingSeason={handleResetEncodingSeason} />}
                     {mainTab === 'studentlist' && <StudentListImport />}

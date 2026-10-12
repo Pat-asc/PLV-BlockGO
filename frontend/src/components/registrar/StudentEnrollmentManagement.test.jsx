@@ -112,6 +112,7 @@ test('filters current enrollments by the dynamic Program / Course dropdown', asy
   ] });
   render(<StudentEnrollmentManagement programs={[program]} />);
   await screen.findByText('BSIT Student');
+  expect(screen.getByTestId('student-enrollment-list')).toHaveClass('w-full', 'min-w-0', '[&_table]:w-full');
   fireEvent.click(screen.getByRole('button', { name: 'Program / Course' }));
   fireEvent.click(screen.getByRole('option', { name: 'Bachelor of Science in Accountancy' }));
   expect(screen.getByText('BSA Student')).toBeInTheDocument();
