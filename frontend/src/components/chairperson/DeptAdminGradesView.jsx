@@ -538,6 +538,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     const [activeEncodingTerm, setActiveEncodingTerm] = useState("midterm");
     const academicEventGuardRef = useRef(createAcademicEventGuard());
     const approveInFlightRef = useRef(false);
+    const returnInFlightRef = useRef(false);
     const sendToRegistrarInFlightRef = useRef(false);
     const gradesRequestGenerationRef = useRef(0);
 
@@ -698,6 +699,12 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 subjectCode ||
                 matchedAssignment?.subjectCode ||
                 'Unknown Subject';
+            const subjectTitle =
+                g.subject_title ||
+                g.subjectTitle ||
+                g.SubjectTitle ||
+                matchedAssignment?.subjectTitle ||
+                '';
             const resolvedDepartmentName =
                 departmentName ||
                 matchedAssignment?.program ||
@@ -726,6 +733,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     department: resolvedDepartmentName,
                     sectionName,
                     subjectCode: resolvedSubjectCode,
+                    subjectTitle,
                     academicSectionId: g.academic_section_id || g.academicSectionId || matchedAssignment?.academicSectionId || null,
                     assignmentCycleId: g.assignment_cycle_id || g.assignmentCycleId || matchedAssignment?.id || '',
                     schoolYear,
@@ -755,6 +763,9 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             // Ensure the CID is captured even if the first student's record lacked it
             if (!groups[key].ipfsCid && (g.ipfs_cid || g.IpfsCID || g.ipfsCid)) {
                 groups[key].ipfsCid = g.ipfs_cid || g.IpfsCID || g.ipfsCid;
+            }
+            if (!groups[key].subjectTitle && subjectTitle) {
+                groups[key].subjectTitle = subjectTitle;
             }
             if ((g.ipfs_archive_status || g.ipfsArchiveStatus) === 'FAILED') {
                 groups[key].ipfsArchiveStatus = 'FAILED';
@@ -793,7 +804,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 finals: parsedGrade.finals || previousGrade.finals || '-',
                 finalAverage: gradeVal || previousGrade.finalAverage || '-',
                 standing: parsedGrade.standing || previousGrade.standing || g.remarks || g.Remarks || 'active',
-                flagged: parsedGrade.flagged || previousGrade.flagged || g.flagged || g.Flagged === true || String(g.flagged).toLowerCase() === "true"
+                flagged: parsedGrade.flagged || previousGrade.flagged || g.flagged || g.Flagged === true || String(g.flagged).toLowerCase() === "true",
+                integrityStatus: g.integrity_status || g.integrityStatus || g.IntegrityStatus || previousGrade.integrityStatus || '',
             };
 
             if (!groups[key].students.some((student) => String(student.studentId) === String(studentKey))) {
@@ -1359,7 +1371,9 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
     };
 
     const handleBulkReturn = async (notes) => {
-        if (!selectedReviewSection) return;
+        if (!selectedReviewSection) throw new Error('Select a reviewable section before returning grades.');
+        if (returnInFlightRef.current) return;
+        returnInFlightRef.current = true;
         try {
             const recordsToReturn = grades.filter(g => {
                 const facId = g.facultyId || g.faculty_id || g.FacultyId || 'Unknown';
@@ -1398,8 +1412,14 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             }
             addNotification("Section returned to faculty successfully!", "success");
             setSelectedReviewSection(null);
-            loadGrades();
-        } catch(e) { addNotification(`Error returning section: ${e.message}`, "error"); }
+            await loadGrades();
+        } catch(e) {
+            await loadGrades();
+            addNotification(`Error returning section: ${e.message}`, "error");
+            throw e;
+        } finally {
+            returnInFlightRef.current = false;
+        }
     };
 
     const handleBulkUpload = async () => {
@@ -1643,12 +1663,13 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                 <SectionReviewPanel 
                                     selectedSection={selectedReviewSection} 
                                     activeTerm={activeEncodingTerm}
+                                    sourceView={activeChairTab}
                                     onApprove={handleBulkApprove} 
                                     onSendToRegistrar={handleSendToRegistrar}
                                     onSendBack={(notes) => handleBulkReturn(notes)} 
                                     onViewIpfs={handleViewIpfs}
                                     onRetryArchive={['PENDING', 'FAILED'].includes(selectedReviewSection.ipfsArchiveStatus) ? handleRetryArchive : null}
-                                    onBack={() => setSelectedReviewSection(null)}
+                                    onClose={() => setSelectedReviewSection(null)}
                                 />
                             )}
                         </div>

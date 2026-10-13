@@ -18,14 +18,15 @@ const section = (overrides = {}) => ({
   ...overrides,
 });
 
-test('counts unique academic sections instead of duplicate subject rows', () => {
+test('renders one direct review action for each distinct workload without an expandable faculty control', () => {
   const rows = [
     section(),
     section({ reviewKey: 'faculty|section|other-subject', subjectCode: 'IT 102' }),
   ];
   render(<FacultyStatusTable rows={rows} allRows={rows} viewMode="forReview" />);
-  expect(screen.getByText('1/1 Section Encoded')).toBeInTheDocument();
-  expect(screen.queryByText('2/2 Section Encoded')).not.toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Review Grades' })).toHaveLength(2);
+  expect(screen.queryByRole('button', { name: 'Review Encoded' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Review Section' })).not.toBeInTheDocument();
 });
 
 test('shows finalized tracking metadata and opens the selected record', () => {
@@ -37,19 +38,18 @@ test('shows finalized tracking metadata and opens the selected record', () => {
   });
   render(<FacultyStatusTable rows={[finalized]} allRows={[finalized]} viewMode="forwarded" onSelectSection={onSelectSection} />);
   expect(screen.getByText('Finalized Grades')).toBeInTheDocument();
-  expect(screen.getByText('chair@plv.edu.ph')).toBeInTheDocument();
+  expect(screen.getByText(/chair@plv\.edu\.ph/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'View Details' }));
   expect(onSelectSection).toHaveBeenCalledWith(finalized);
 });
 
-test('labels approved sections as the Finalize Queue instead of finalized', () => {
+test('labels approved sections as ready for Registrar without implying Chairperson finalization', () => {
   const approved = section({ reviewStatus: 'approved' });
   render(<FacultyStatusTable rows={[approved]} allRows={[approved]} viewMode="approved" />);
-  expect(screen.getByText('Finalize Queue')).toBeInTheDocument();
-  expect(screen.getByText('Ready to Finalize')).toBeInTheDocument();
+  expect(screen.getByText('Approved Grades')).toBeInTheDocument();
+  expect(screen.getByText('Ready for Registrar')).toBeInTheDocument();
   expect(screen.queryByText('Finalized Grades')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Review Encoded' }));
-  expect(screen.getByText('IT 101 / 2026-2027 / FIRST / FINALS')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'View Review' })).toBeInTheDocument();
 });
 
 test('shows an empty current-season finalized state after reset filtering', () => {

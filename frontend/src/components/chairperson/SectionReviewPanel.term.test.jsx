@@ -80,13 +80,14 @@ test('section review details reports active Midterm outcomes and special standin
     onFinalize: jest.fn(), onViewIpfs: jest.fn(),
   }} />);
 
-  expect(screen.getByText('Passed').parentElement).toHaveTextContent('Passed1');
-  expect(screen.getByText('Failed').parentElement).toHaveTextContent('Failed1');
-  expect(screen.getByText('D').parentElement).toHaveTextContent('D1');
-  expect(screen.getByText('UD').parentElement).toHaveTextContent('UD1');
-  expect(screen.getByText('W').parentElement).toHaveTextContent('W1');
-  expect(screen.getByText('INC').parentElement).toHaveTextContent('INC1');
-  expect(screen.getByText('Flagged').parentElement).toHaveTextContent('Flagged1');
+  const summary = screen.getByLabelText('Review summary');
+  expect(summary).toHaveTextContent(/Passed\s+1/);
+  expect(summary).toHaveTextContent(/Failed\s+1/);
+  expect(summary).toHaveTextContent(/D\s+1/);
+  expect(summary).toHaveTextContent(/UD\s+1/);
+  expect(summary).toHaveTextContent(/W\s+1/);
+  expect(summary).toHaveTextContent(/INC\s+1/);
+  expect(summary).toHaveTextContent(/Flagged\s+1/);
 });
 
 test('section review details uses the combined grade for Finals outcomes', () => {
@@ -109,8 +110,9 @@ test('section review details uses the combined grade for Finals outcomes', () =>
     onFinalize: jest.fn(), onViewIpfs: jest.fn(),
   }} />);
 
-  expect(screen.getByText('Passed').parentElement).toHaveTextContent('Passed1');
-  expect(screen.getByText('Failed').parentElement).toHaveTextContent('Failed1');
+  const summary = screen.getByLabelText('Review summary');
+  expect(summary).toHaveTextContent(/Passed\s+1/);
+  expect(summary).toHaveTextContent(/Failed\s+1/);
 });
 
 test('staged grade IDs do not expose Fabric history before finalization', () => {
@@ -214,9 +216,9 @@ test('approval requires confirmation and cancel makes no request', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Approve Section' }));
   expect(screen.getByRole('dialog', { name: 'Approve Grades' })).toBeInTheDocument();
   expect(onApprove).not.toHaveBeenCalled();
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Approve Grades' })).getByRole('button', { name: 'Cancel' }));
   expect(onApprove).not.toHaveBeenCalled();
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: 'Approve Grades' })).not.toBeInTheDocument();
 });
 
 test('approval confirmation calls approval exactly once and disables repeat submission while busy', async () => {
@@ -228,14 +230,15 @@ test('approval confirmation calls approval exactly once and disables repeat subm
   }} />);
 
   fireEvent.click(screen.getByRole('button', { name: 'Approve Section' }));
-  const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve Grades' });
+  const confirmation = screen.getByRole('dialog', { name: 'Approve Grades' });
+  const confirm = within(confirmation).getByRole('button', { name: 'Approve Grades' });
   fireEvent.click(confirm);
   fireEvent.click(confirm);
   expect(onApprove).toHaveBeenCalledTimes(1);
-  expect(within(screen.getByRole('dialog')).getByRole('button', { name: /Approving/ })).toBeDisabled();
+  expect(within(confirmation).getByRole('button', { name: /Approving/ })).toBeDisabled();
 
   resolveApprove();
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Approve Grades' })).not.toBeInTheDocument());
 });
 
 test('failed approval remains retryable and shows a safe error', async () => {
@@ -246,9 +249,10 @@ test('failed approval remains retryable and shows a safe error', async () => {
   }} />);
 
   fireEvent.click(screen.getByRole('button', { name: 'Approve Section' }));
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve Grades' }));
+  const approvalDialog = screen.getByRole('dialog', { name: 'Approve Grades' });
+  fireEvent.click(within(approvalDialog).getByRole('button', { name: 'Approve Grades' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Approval state could not be verified.');
-  expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve Grades' })).toBeEnabled();
+  expect(within(approvalDialog).getByRole('button', { name: 'Approve Grades' })).toBeEnabled();
 });
 
 test('Registrar handoff keeps the exact label and cancel makes no request', () => {
@@ -263,7 +267,7 @@ test('Registrar handoff keeps the exact label and cancel makes no request', () =
   expect(onSendToRegistrar).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(onSendToRegistrar).not.toHaveBeenCalled();
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: 'Send to Registrar' })).not.toBeInTheDocument();
 });
 
 test('confirmation sends exactly once and disables repeat handoff while busy', async () => {
@@ -275,14 +279,15 @@ test('confirmation sends exactly once and disables repeat handoff while busy', a
   }} />);
 
   fireEvent.click(screen.getByRole('button', { name: 'Send to Registrar' }));
-  const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Send to Registrar' });
+  const handoffDialog = screen.getByRole('dialog', { name: 'Send to Registrar' });
+  const confirm = within(handoffDialog).getByRole('button', { name: 'Send to Registrar' });
   fireEvent.click(confirm);
   fireEvent.click(confirm);
   expect(onSendToRegistrar).toHaveBeenCalledTimes(1);
-  expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Send to Registrar' })).toBeDisabled();
+  expect(within(handoffDialog).getByRole('button', { name: /Sending/ })).toBeDisabled();
 
   resolveHandoff();
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Send to Registrar' })).not.toBeInTheDocument());
 });
 
 test('failed Registrar handoff remains retryable and shows a safe error', async () => {
@@ -293,9 +298,10 @@ test('failed Registrar handoff remains retryable and shows a safe error', async 
   }} />);
 
   fireEvent.click(screen.getByRole('button', { name: 'Send to Registrar' }));
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Send to Registrar' }));
+  const handoffDialog = screen.getByRole('dialog', { name: 'Send to Registrar' });
+  fireEvent.click(within(handoffDialog).getByRole('button', { name: 'Send to Registrar' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Handoff state could not be verified.');
-  expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Send to Registrar' })).toBeEnabled();
+  expect(within(handoffDialog).getByRole('button', { name: 'Send to Registrar' })).toBeEnabled();
 });
 
 test('sent Registrar handoff remains labeled Send to Registrar and is disabled', () => {

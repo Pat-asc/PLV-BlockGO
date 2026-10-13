@@ -9,7 +9,17 @@ const FOCUSABLE_SELECTOR = [
     '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
-const Modal = ({ isOpen, onClose, title, children, description, closeOnBackdrop = true, closeOnEscape = true }) => {
+const Modal = ({
+    isOpen,
+    onClose,
+    title,
+    children,
+    description,
+    closeOnBackdrop = true,
+    closeOnEscape = true,
+    panelClassName = '',
+    bodyClassName = '',
+}) => {
     const dialogRef = useRef(null);
     const previouslyFocusedRef = useRef(null);
     const titleId = useId();
@@ -24,6 +34,8 @@ const Modal = ({ isOpen, onClose, title, children, description, closeOnBackdrop 
         (focusable?.[0] || dialog)?.focus();
 
         const handleKeyDown = (event) => {
+            const openDialogs = Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]'));
+            if (openDialogs[openDialogs.length - 1] !== dialog) return;
             if (event.key === 'Escape' && closeOnEscape) {
                 event.preventDefault();
                 onClose?.();
@@ -75,21 +87,21 @@ const Modal = ({ isOpen, onClose, title, children, description, closeOnBackdrop 
                 aria-labelledby={titleId}
                 aria-describedby={description ? descriptionId : undefined}
                 tabIndex={-1}
-                className="relative mx-4 w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl outline-none focus-visible:ring-2 focus-visible:ring-[#f4c430]"
+                className={`relative mx-4 w-full rounded-xl bg-white p-6 text-slate-900 shadow-2xl outline-none focus-visible:ring-2 focus-visible:ring-[#f4c430] dark:bg-slate-900 dark:text-slate-100 ${panelClassName || 'max-w-lg'}`}
             >
-                <div className="flex items-center justify-between border-b border-slate-200 pb-4 mb-4">
-                    <h3 id={titleId} className="text-xl font-bold text-[#003366]">{title}</h3>
+                <div className="mb-4 flex shrink-0 items-center justify-between border-b border-slate-200 pb-4 dark:border-slate-700">
+                    <h3 id={titleId} className="text-xl font-bold text-[#003366] dark:text-sky-300">{title}</h3>
                     <button 
                         type="button"
                         onClick={onClose} 
                         aria-label={`Close ${title || 'dialog'}`}
-                        className="flex h-10 w-10 items-center justify-center rounded-md text-3xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366]"
+                        className="flex h-10 w-10 items-center justify-center rounded-md text-3xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] dark:hover:bg-slate-800 dark:hover:text-slate-200"
                     >
                         &times;
                     </button>
                 </div>
-                {description ? <p id={descriptionId} className="mb-5 whitespace-pre-line text-sm leading-6 text-slate-600">{description}</p> : null}
-                <div>{children}</div>
+                {description ? <p id={descriptionId} className="mb-5 whitespace-pre-line text-sm leading-6 text-slate-600 dark:text-slate-300">{description}</p> : null}
+                <div className={bodyClassName}>{children}</div>
             </div>
         </div>
     );
