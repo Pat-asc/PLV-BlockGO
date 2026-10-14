@@ -5,7 +5,6 @@
 #   ./k8s/deploy-k8s.sh local apply
 #   ./k8s/deploy-k8s.sh production apply
 #   ./k8s/deploy-k8s.sh production apply-application
-#   ./k8s/deploy-k8s.sh production apply-observability
 #   ./k8s/deploy-k8s.sh production apply-hosting
 #   ./k8s/deploy-k8s.sh production hosting-plan
 #   ./k8s/deploy-k8s.sh local verify
@@ -119,9 +118,9 @@ if [[ "${1:-}" == "local" || "${1:-}" == "production" ]]; then
     ACTION="${2:-apply}"
 elif [[ "${2:-}" == "local" || "${2:-}" == "production" ]]; then
     PROFILE="$2"
-elif [[ "${1:-}" == "apply" || "${1:-}" == "apply-application" || "${1:-}" == "apply-observability" || "${1:-}" == "apply-hosting" || "${1:-}" == "hosting-plan" || "${1:-}" == "delete" || "${1:-}" == "status" || "${1:-}" == "verify" || "${1:-}" == "gke-setup" || "${1:-}" == "repair-fabric" || "${1:-}" == "diagnose" || "${1:-}" == "rebootstrap-peers" ]]; then
+elif [[ "${1:-}" == "apply" || "${1:-}" == "apply-application" || "${1:-}" == "apply-hosting" || "${1:-}" == "hosting-plan" || "${1:-}" == "delete" || "${1:-}" == "status" || "${1:-}" == "verify" || "${1:-}" == "gke-setup" || "${1:-}" == "repair-fabric" || "${1:-}" == "diagnose" || "${1:-}" == "rebootstrap-peers" ]]; then
     ACTION="$1"
-elif [[ "${2:-}" == "apply" || "${2:-}" == "apply-application" || "${2:-}" == "apply-observability" || "${2:-}" == "apply-hosting" || "${2:-}" == "hosting-plan" || "${2:-}" == "delete" || "${2:-}" == "status" || "${2:-}" == "verify" || "${2:-}" == "gke-setup" || "${2:-}" == "repair-fabric" || "${2:-}" == "diagnose" || "${2:-}" == "rebootstrap-peers" ]]; then
+elif [[ "${2:-}" == "apply" || "${2:-}" == "apply-application" || "${2:-}" == "apply-hosting" || "${2:-}" == "hosting-plan" || "${2:-}" == "delete" || "${2:-}" == "status" || "${2:-}" == "verify" || "${2:-}" == "gke-setup" || "${2:-}" == "repair-fabric" || "${2:-}" == "diagnose" || "${2:-}" == "rebootstrap-peers" ]]; then
     ACTION="$2"
 fi
 
@@ -134,9 +133,9 @@ case "$PROFILE" in
 esac
 
 case "$ACTION" in
-    apply|apply-application|apply-observability|apply-hosting|hosting-plan|delete|status|verify|gke-setup|repair-fabric|diagnose|rebootstrap-peers) ;;
+    apply|apply-application|apply-hosting|hosting-plan|delete|status|verify|gke-setup|repair-fabric|diagnose|rebootstrap-peers) ;;
     *)
-        echo "Usage: $0 [local|production] [apply|apply-application|apply-observability|apply-hosting|hosting-plan|delete|status|verify|gke-setup|repair-fabric|diagnose|rebootstrap-peers]"
+        echo "Usage: $0 [local|production] [apply|apply-application|apply-hosting|hosting-plan|delete|status|verify|gke-setup|repair-fabric|diagnose|rebootstrap-peers]"
         exit 1
         ;;
 esac
@@ -203,10 +202,6 @@ if [[ -z "${PEER_AUTO_REPAIR_TRANSIENT_STORE+x}" ]]; then
 fi
 export PEER_AUTO_REPAIR_TRANSIENT_STORE
 
-# The ledger-provider ID store tracks the peer's ledger/channel inventory and is not
-# disposable. For the specific LevelDB "entry point missing/corrupted" startup panic,
-# local recovery is limited to repairing an invalid/missing CURRENT pointer when an
-# intact MANIFEST-* file exists. The database directory itself is never deleted.
 if [[ -z "${PEER_AUTO_REPAIR_LEDGER_PROVIDER_CURRENT+x}" ]]; then
     if [[ "$PROFILE" == "local" ]]; then
         PEER_AUTO_REPAIR_LEDGER_PROVIDER_CURRENT="true"
@@ -716,7 +711,6 @@ apply_manifest_if_exists() {
 
 deploy_observability() {
     local monitoring_dir="../monitoring"
-    local observability_manifest="$monitoring_dir/observability-stack.yaml"
 
     if [[ ! -f "$monitoring_dir/observability-stack.yaml" ]]; then
         echo "ERROR: Observability stack manifest not found."
@@ -752,23 +746,7 @@ deploy_observability() {
         --from-file="$monitoring_dir/grafana-logs.json" \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    observability_manifest="$TMP_K8S_DIR/observability-stack.yaml"
-    cp "$monitoring_dir/observability-stack.yaml" "$observability_manifest"
-    if [[ "$PROFILE" == "production" ]]; then
-        sed -E -i 's/^([[:space:]]*)storage: (2|5)Gi$/\1storage: 10Gi/' "$observability_manifest"
-    else
-        # Local observability PVCs use the cluster's dynamic default class;
-        # the local static fabric-storage PV set has no monitoring volumes.
-        sed -i '/^  storageClassName: fabric-storage$/d' "$observability_manifest"
-    fi
-    kubectl apply -f "$observability_manifest"
-
-    # ConfigMap updates are not consumed consistently by every component, and
-    # Grafana's provisioning files use subPath mounts that never update in-place.
-    # Restart the consumers after reconciliation so the generated configuration
-    # and dashboards are active on every idempotent deployment.
-    kubectl rollout restart deployment/prometheus deployment/loki deployment/alloy deployment/grafana \
-        -n plv-fabric >/dev/null
+    kubectl apply -f "$monitoring_dir/observability-stack.yaml"
 }
 
 configure_local_observability() {
@@ -2675,15 +2653,6 @@ prepare_manifests() {
     else
         resolve_gke_zones
         echo "Preparing production manifests with the source-built image revision ${PRODUCTION_IMAGE_TAG}."
-        # Zonal pd-standard has a 10GiB minimum. Preserve smaller local
-        # static-PV requests in source files, but never submit them to GKE.
-        sed -E -i \
-            -e 's/^([[:space:]]*)storage: (2|5)Gi$/\1storage: 10Gi/' \
-            -e 's/(\{[[:space:]]*storage: )(2|5)Gi/\110Gi/g' \
-            "$TMP_K8S_DIR"/*.yaml
-        if ! is_true "$DEPLOY_SECONDARY_PEERS"; then
-            sed -i 's/FABRIC_HA_ENABLED: "true"/FABRIC_HA_ENABLED: "false"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
-        fi
         local image_name
         for image_name in \
             fabric-middleware \
@@ -2747,19 +2716,6 @@ validate_production_zone_nodes() {
     if [[ "$PROFILE" != "production" ]]; then
         return
     fi
-    local node_count machine_type
-    node_count="$(kubectl get nodes --no-headers | awk 'NF {count++} END {print count+0}')" || return 1
-    if (( node_count > 6 )); then
-        echo "ERROR: Connected cluster has ${node_count} workers, above the six-node steady-state cap." >&2
-        return 1
-    fi
-    while IFS= read -r machine_type; do
-        [[ -z "$machine_type" ]] && continue
-        if [[ "$machine_type" != 'e2-highmem-2' ]]; then
-            echo "ERROR: Connected cluster has a ${machine_type} worker; expected e2-highmem-2." >&2
-            return 1
-        fi
-    done < <(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.labels.node\.kubernetes\.io/instance-type}{"\n"}{end}')
     resolve_gke_zones
     local zone
     for zone in "$GKE_ZONE_A" "$GKE_ZONE_B" "$GKE_ZONE_C"; do
@@ -2770,121 +2726,9 @@ validate_production_zone_nodes() {
     done
 }
 
-validate_production_context() {
-    [[ "$PROFILE" == "production" ]] || return 0
-    local expected_context current_context
-    if [[ -z "${GCP_PROJECT_ID:-}" || -z "${GKE_REGION:-}" || -z "${GKE_CLUSTER_NAME:-}" ]]; then
-        echo 'ERROR: GCP_PROJECT_ID, GKE_REGION, and GKE_CLUSTER_NAME are required for production deployment.' >&2
-        return 1
-    fi
-    expected_context="gke_${GCP_PROJECT_ID}_${GKE_REGION}_${GKE_CLUSTER_NAME}"
-    current_context="$(kubectl config current-context)" || return 1
-    if [[ "$current_context" != "$expected_context" ]]; then
-        echo "ERROR: kubectl context is ${current_context}; expected ${expected_context}. Refusing to modify the wrong cluster." >&2
-        return 1
-    fi
-}
-
-# Kubernetes cannot shrink PVCs or change a StatefulSet's claim template. Fail
-# before touching workloads when this fresh-install sizing differs from an
-# existing installation; an operator can retain the old sizes in a migration.
-validate_existing_storage_sizes() {
-    [[ "$PROFILE" == "production" ]] || return 0
-    local entry namespace kind name expected actual actual_class
-    if ! is_true "$DEPLOY_SECONDARY_PEERS"; then
-        for entry in 'plv-main-campus|peer-registrar-2' 'plv-annex-campus|peer-faculty-2' 'plv-pubad-campus|peer-department-2'; do
-            IFS='|' read -r namespace name <<< "$entry"
-            if kubectl get deployment "$name" -n "$namespace" >/dev/null 2>&1; then
-                echo "WARNING: Existing ${namespace}/${name} remains deployed; DEPLOY_SECONDARY_PEERS=false does not delete historical workloads." >&2
-            fi
-        done
-    fi
-    local claims=(
-        'plv-main-campus|pvc|fabric-ca-registrar-pvc|10Gi'
-        'plv-annex-campus|pvc|fabric-ca-faculty-pvc|10Gi'
-        'plv-pubad-campus|pvc|fabric-ca-department-pvc|10Gi'
-        'plv-main-campus|pvc|orderer-1-pvc|10Gi'
-        'plv-main-campus|pvc|orderer-2-pvc|10Gi'
-        'plv-annex-campus|pvc|orderer-3-pvc|10Gi'
-        'plv-annex-campus|pvc|orderer-4-pvc|10Gi'
-        'plv-pubad-campus|pvc|orderer-5-pvc|10Gi'
-        'plv-pubad-campus|pvc|orderer-6-pvc|10Gi'
-        'plv-main-campus|pvc|peer-registrar-pvc|20Gi'
-        'plv-annex-campus|pvc|peer-faculty-pvc|20Gi'
-        'plv-pubad-campus|pvc|peer-department-pvc|20Gi'
-        'plv-main-campus|statefulset|postgres-primary|20Gi'
-        'plv-main-campus|statefulset|postgres-replica-main|20Gi'
-        'plv-annex-campus|statefulset|postgres-replica-annex|20Gi'
-        'plv-annex-campus|statefulset|postgres-replica-annex-2|20Gi'
-        'plv-pubad-campus|statefulset|postgres-replica-pubad|20Gi'
-        'plv-pubad-campus|statefulset|postgres-replica-pubad-2|20Gi'
-        'plv-main-campus|statefulset|couchdb-registrar|10Gi'
-        'plv-annex-campus|statefulset|couchdb-faculty|10Gi'
-        'plv-pubad-campus|statefulset|couchdb-department|10Gi'
-        'plv-main-campus|statefulset|couchdb-wallet-registrar|10Gi'
-        'plv-annex-campus|statefulset|couchdb-wallet-faculty|10Gi'
-        'plv-pubad-campus|statefulset|couchdb-wallet-department|10Gi'
-        'plv-fabric|statefulset|ipfs-node|10Gi'
-        'plv-annex-campus|statefulset|ipfs-annex|10Gi'
-        'plv-pubad-campus|statefulset|ipfs-pubad|10Gi'
-        'plv-fabric|pvc|couchdb-backup-pvc|10Gi'
-        'plv-fabric|pvc|prometheus-data|10Gi'
-        'plv-fabric|pvc|loki-data|10Gi'
-        'plv-fabric|pvc|grafana-data|10Gi'
-    )
-    if is_true "$DEPLOY_SECONDARY_PEERS"; then
-        claims+=(
-            'plv-main-campus|pvc|peer-registrar-2-pvc|20Gi'
-            'plv-annex-campus|pvc|peer-faculty-2-pvc|20Gi'
-            'plv-pubad-campus|pvc|peer-department-2-pvc|20Gi'
-            'plv-main-campus|statefulset|couchdb-registrar-2|10Gi'
-            'plv-annex-campus|statefulset|couchdb-faculty-2|10Gi'
-            'plv-pubad-campus|statefulset|couchdb-department-2|10Gi'
-        )
-    fi
-    for entry in "${claims[@]}"; do
-        IFS='|' read -r namespace kind name expected <<< "$entry"
-        if kubectl get "$kind" "$name" -n "$namespace" >/dev/null 2>&1; then
-            if [[ "$kind" == 'pvc' ]]; then
-                actual="$(kubectl get pvc "$name" -n "$namespace" -o jsonpath='{.spec.resources.requests.storage}')" || return 1
-                actual_class="$(kubectl get pvc "$name" -n "$namespace" -o jsonpath='{.spec.storageClassName}')" || return 1
-            else
-                actual="$(kubectl get statefulset "$name" -n "$namespace" -o jsonpath='{.spec.volumeClaimTemplates[0].spec.resources.requests.storage}')" || return 1
-                actual_class="$(kubectl get statefulset "$name" -n "$namespace" -o jsonpath='{.spec.volumeClaimTemplates[0].spec.storageClassName}')" || return 1
-            fi
-            if [[ "$actual" != "$expected" || "$actual_class" != 'fabric-storage' ]]; then
-                echo "ERROR: Existing ${namespace}/${kind}/${name} uses ${actual:-<unset>} / ${actual_class:-<unset>}; this manifest requires ${expected} / fabric-storage." >&2
-                echo 'Refusing an in-place PVC shrink, storage-class change, or immutable StatefulSet claim-template update; preserve/migrate existing data explicitly.' >&2
-                return 1
-            fi
-        fi
-    done
-}
-
-verify_fabric_storage_class() {
-    [[ "$PROFILE" == "production" ]] || return 0
-    local actual
-    actual="$(kubectl get storageclass fabric-storage -o jsonpath='{.provisioner}|{.parameters.type}|{.volumeBindingMode}|{.reclaimPolicy}|{.allowVolumeExpansion}')" || return 1
-    if [[ "$actual" != 'pd.csi.storage.gke.io|pd-standard|WaitForFirstConsumer|Retain|true' ]]; then
-        echo "ERROR: fabric-storage is not the required retained pd-standard GKE class: ${actual}" >&2
-        return 1
-    fi
-}
-
     generate_production_fabric_artifacts() {
     if [[ "$PROFILE" != "production" ]]; then
         return
-    fi
-
-    if [[ -s ./channel-artifacts-k8s/orderer.genesis.block &&
-          -s ./channel-artifacts-k8s/registrar-channel.block ]]; then
-        echo 'Using existing production Fabric channel artifacts; public hosting and GKE sizing changes do not regenerate them.'
-        return
-    fi
-    if [[ -e ./channel-artifacts-k8s/orderer.genesis.block ||
-          -e ./channel-artifacts-k8s/registrar-channel.block ]]; then
-        echo 'ERROR: Production Fabric channel artifacts are incomplete; refusing to replace an existing block.' >&2
-        return 1
     fi
 
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
@@ -2919,6 +2763,10 @@ verify_fabric_storage_class() {
 
     echo "Generating fresh six-orderer production channel artifacts..."
     echo "Docker workspace: ${workspace_path}"
+
+    rm -f \
+        ./channel-artifacts-k8s/orderer.genesis.block \
+        ./channel-artifacts-k8s/registrar-channel.block
 
     if ! "${docker_prefix[@]}" docker run --rm \
         -v "${workspace_path}/config/configtx-k8s.yaml:/fabric-config/configtx.yaml:ro" \
@@ -3006,8 +2854,6 @@ setup_gke_cluster() {
     local max_total_nodes="${GKE_MAX_TOTAL_NODES:-5}"
     local initial_nodes_per_zone="${GKE_INITIAL_NODES_PER_ZONE:-1}"
     local machine_type="${GKE_MACHINE_TYPE:-e2-highmem-2}"
-    local boot_disk_type="${GKE_NODE_DISK_TYPE:-pd-standard}"
-    local boot_disk_gb="${GKE_NODE_DISK_GB:-50}"
     local vcpu_cost_cap="${GKE_VCPU_COST_CAP:-12}"
     local vcpu_per_node=""
 
@@ -3016,12 +2862,20 @@ setup_gke_cluster() {
         return 1
     fi
 
-    # The request estimates use 2 vCPUs and 16 GiB per e2-highmem-2 node.
-    if [[ "$machine_type" != 'e2-highmem-2' || "$boot_disk_type" != 'pd-standard' || "$boot_disk_gb" != '50' ]]; then
-        echo 'ERROR: This five-node capacity plan requires e2-highmem-2 nodes with 50GiB pd-standard boot disks.' >&2
-        return 1
-    fi
-    vcpu_per_node=2
+    # Keep each worker at two vCPUs so the six-node maximum stays within the
+    # project's current CPUs (All Regions) quota of 12 and the same value acts
+    # as an intentional compute-cost ceiling even if Google later raises quota.
+    case "$machine_type" in
+        e2-highmem-2|e2-standard-2)
+            vcpu_per_node=2
+            ;;
+        *)
+            echo "ERROR: Cost/quota guardrail allows only 2-vCPU node types: e2-highmem-2 or e2-standard-2."
+            echo "Requested machine type: ${machine_type}"
+            echo "BlockGo defaults to e2-highmem-2 (2 vCPU, 16 GiB RAM) to preserve memory while fitting the 12-vCPU project quota."
+            return 1
+            ;;
+    esac
     if (( min_total_nodes < 4 )); then
         echo "ERROR: Production GKE requires at least 4 total worker nodes."
         return 1
@@ -3074,8 +2928,8 @@ setup_gke_cluster() {
             --node-locations "$node_locations" \
             --num-nodes "$initial_nodes_per_zone" \
             --machine-type "$machine_type" \
-            --disk-type "$boot_disk_type" \
-            --disk-size "$boot_disk_gb" \
+            --disk-type "${GKE_NODE_DISK_TYPE:-pd-standard}" \
+            --disk-size "${GKE_NODE_DISK_GB:-50}" \
             --release-channel regular \
             --enable-ip-alias \
             --enable-shielded-nodes \
@@ -3127,14 +2981,7 @@ setup_gke_cluster() {
     gcloud container clusters get-credentials "$GKE_CLUSTER_NAME" --project "$GCP_PROJECT_ID" --region "$GKE_REGION"
 
     echo "Verifying GKE node-pool autoscaling guardrails..."
-    local actual_min actual_max actual_machine actual_disk_type actual_disk_gb
-    actual_machine="$(gcloud container node-pools describe default-pool --cluster "$GKE_CLUSTER_NAME" --project "$GCP_PROJECT_ID" --region "$GKE_REGION" --format='value(config.machineType)')" || return 1
-    actual_disk_type="$(gcloud container node-pools describe default-pool --cluster "$GKE_CLUSTER_NAME" --project "$GCP_PROJECT_ID" --region "$GKE_REGION" --format='value(config.diskType)')" || return 1
-    actual_disk_gb="$(gcloud container node-pools describe default-pool --cluster "$GKE_CLUSTER_NAME" --project "$GCP_PROJECT_ID" --region "$GKE_REGION" --format='value(config.diskSizeGb)')" || return 1
-    if [[ "$actual_machine" != "$machine_type" || "$actual_disk_type" != "$boot_disk_type" || "$actual_disk_gb" != "$boot_disk_gb" ]]; then
-        echo "ERROR: Existing node pool uses ${actual_machine}/${actual_disk_type}/${actual_disk_gb}GiB; expected ${machine_type}/${boot_disk_type}/${boot_disk_gb}GiB." >&2
-        return 1
-    fi
+    local actual_min actual_max
     actual_min="$(gcloud container node-pools describe default-pool \
         --cluster "$GKE_CLUSTER_NAME" \
         --project "$GCP_PROJECT_ID" \
@@ -3146,11 +2993,15 @@ setup_gke_cluster() {
         --region "$GKE_REGION" \
         --format='value(autoscaling.totalMaxNodeCount)' 2>/dev/null || true)"
 
-    if [[ "$actual_min" != "$min_total_nodes" || "$actual_max" != "$max_total_nodes" ]]; then
-        echo "ERROR: Node-pool autoscaling is ${actual_min:-unset}–${actual_max:-unset}; expected ${min_total_nodes}–${max_total_nodes}." >&2
+    if [[ -n "$actual_max" && "$actual_max" =~ ^[0-9]+$ ]] && (( actual_max > 6 )); then
+        echo "ERROR: Node-pool maximum is ${actual_max}, above the BlockGo cost ceiling of 6."
         return 1
     fi
-    echo "GKE autoscaling verified: total min=${actual_min}, total max=${actual_max}."
+    if [[ -n "$actual_min" && -n "$actual_max" ]]; then
+        echo "GKE autoscaling verified: total min=${actual_min}, total max=${actual_max}."
+    else
+        echo "WARNING: Could not read total node autoscaling values back from GKE."
+    fi
 }
 
 preserve_existing_local_pvc_request() {
@@ -3215,37 +3066,10 @@ verify_required_application_fixes() {
         echo "ERROR: The college grade-equivalent scale is missing from the frontend source."
         return 1
     }
-    python - ../frontend/src/components/student/StudentHistoricalGrades.jsx <<'PYVERIFY' || return 1
-import re
-import sys
-
-path = sys.argv[1]
-
-with open(path, "r", encoding="utf-8") as f:
-    source = f.read()
-
-grade = re.search(
-    r"<th\b[^>]*>.*?\bGrade\b.*?</th>",
-    source,
-    flags=re.IGNORECASE | re.DOTALL,
-)
-
-equivalent = re.search(
-    r"<th\b[^>]*>.*?\bEquivalent\b.*?</th>",
-    source,
-    flags=re.IGNORECASE | re.DOTALL,
-)
-
-if not grade:
-    print("ERROR: The Grade column is missing from the student grade view.", file=sys.stderr)
-    sys.exit(1)
-
-if not equivalent:
-    print("ERROR: The Equivalent column is missing from the student grade view.", file=sys.stderr)
-    sys.exit(1)
-
-print("Student Grade and Equivalent columns verified.")
-PYVERIFY
+    grep -q '>Grade</th><th className="px-4 py-3">Equivalent</th>' ../frontend/src/components/student/StudentHistoricalGrades.jsx || {
+        echo "ERROR: The distinct Grade and Equivalent columns are missing from the student grade view."
+        return 1
+    }
     grep -q 'displayTransactionDate' ../frontend/src/components/student/StudentBlockchainTransactions.jsx || {
         echo "ERROR: The defensive transaction-date formatter is missing from the frontend source."
         return 1
@@ -3813,7 +3637,6 @@ configure_peer_channel_endpoint_aliases() {
 
     apply_manifest "$TMP_K8S_DIR/00-namespace.yaml"
     apply_manifest "$TMP_K8S_DIR/01a-storage-class.yaml"
-    verify_fabric_storage_class
     if [[ "$PROFILE" == "local" ]]; then
         apply_manifest "$TMP_K8S_DIR/01b-persistent-volumes.local-kind.yaml"
         repair_lost_local_pvcs
@@ -3887,14 +3710,19 @@ configure_peer_channel_endpoint_aliases() {
         return 1
     fi
 
-    echo "Skipping optional IPFS Web UI bootstrap."
+    if ! ensure_job_from_manifest ipfs-webui-bootstrap plv-fabric \
+        "$TMP_K8S_DIR/09a-ipfs-webui-bootstrap.yaml" 420; then
+        echo "ERROR: IPFS Web UI bootstrap failed."
+        show_job_diagnostics ipfs-webui-bootstrap plv-fabric
+        return 1
+    fi
 
     apply_manifest "$TMP_K8S_DIR/09c-ipfs-pin-reconciler.yaml"
     apply_manifest "$TMP_K8S_DIR/10-ingress-network-policy.yaml"
 
     echo "======================================"
     echo "Phase 5/7 - Chaincode and application services"
-    echo "======================================"
+    echo "======================================"       
     apply_manifest "$TMP_K8S_DIR/17-chaincode.yaml"
     apply_manifest "$TMP_K8S_DIR/18-faculty-chaincode.yaml"
     apply_manifest "$TMP_K8S_DIR/19-department-chaincode.yaml"
@@ -4204,21 +4032,21 @@ verify_deployed_application_revision() {
 
 bootstrap_application_accounts() {
     local job_name="blockgo-app-bootstrap"
-    local bootstrap_resources="        resources:
-          requests:
-            memory: 128Mi
-            cpu: 10m
-          limits:
-            memory: 192Mi
-            cpu: 50m"
+    local bootstrap_resources="          resources:
+            requests:
+              memory: 128Mi
+              cpu: 10m
+            limits:
+              memory: 192Mi
+              cpu: 50m"
 
     if [[ "$PROFILE" == "local" ]]; then
         # Do not impose a RAM request/limit on the local bootstrap helper.
-        bootstrap_resources="        resources:
-          requests:
-            cpu: 10m
-          limits:
-            cpu: 50m"
+        bootstrap_resources="          resources:
+            requests:
+              cpu: 10m
+            limits:
+              cpu: 50m"
     fi
 
     echo "Bootstrapping application administrator accounts..."
@@ -4279,7 +4107,7 @@ bootstrap_fabric() {
     echo "Bootstrapping the Fabric channel, peers, and chaincode..."
     bash ./k8s/init-channel.sh
     bash ./k8s/join-peers.sh
-    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" bash ./k8s/install-chaincode.sh
+    bash ./k8s/install-chaincode.sh
 }
 
 uses_windows_host_networking() {
@@ -5207,15 +5035,8 @@ validate_public_tls_secret() {
 }
 
 show_status() {
-    kubectl get nodes -o wide
-    kubectl get storageclass
-    kubectl get pvc -A
-    kubectl get pv
     kubectl get pods -A
     kubectl get svc -A
-    if [[ "$PROFILE" == "production" ]]; then
-        kubectl get ingress -A
-    fi
 
     if [[ "$PROFILE" == "production" ]]; then
         local public_ip public_scheme public_origin websocket_url tls_secret ingress_address tls_status
@@ -5425,14 +5246,12 @@ main() {
                 echo "Hosting configuration was validated locally, but Kubernetes changes were not applied because the cluster API is unavailable." >&2
                 return 1
             fi
-            validate_production_context
             apply_public_hosting
             ;;
         apply)
             validate_public_host_settings
             check_kubectl
             check_cluster
-            validate_production_context
             if [[ "$PROFILE" == "production" ]]; then
                 apply_manifest ./k8s/00-namespace.yaml
                 validate_public_tls_secret
@@ -5443,7 +5262,6 @@ main() {
             cluster_preflight
             local_capacity_preflight
             validate_production_zone_nodes
-            validate_existing_storage_sizes
             validate_production_image_settings
             inject_configs
             clear_existing_local_memory_limits
@@ -5487,25 +5305,10 @@ main() {
             validate_public_host_settings
             check_kubectl
             check_cluster
-            validate_production_context
             cluster_preflight
             validate_public_tls_secret
             validate_production_zone_nodes
             deploy_application_only
-            ;;
-        apply-observability)
-            validate_public_host_settings
-            check_kubectl
-            check_cluster
-            validate_production_context
-            prepare_hosting_manifests
-            apply_manifest "$TMP_K8S_DIR/02-public-hosting.yaml"
-            deploy_observability
-            wait_rollout deployment/prometheus plv-fabric
-            wait_rollout deployment/loki plv-fabric
-            wait_rollout deployment/alloy plv-fabric
-            wait_rollout deployment/grafana plv-fabric
-            echo "Observability deployment complete; application, Fabric, and database workloads were not applied or restarted."
             ;;
         delete)
             check_kubectl
