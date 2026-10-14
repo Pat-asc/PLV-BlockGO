@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import SearchField from '../shared/SearchField';
 import BoundedSelect from '../shared/BoundedSelect';
+import CurriculumViewer from '../shared/CurriculumViewer';
+import Modal from '../../services/Modal';
 import {
   fetchApprovedStudents,
   fetchAcademicPeriodOptions,
+  fetchCurriculum,
   fetchCurriculums,
-  fetchEnrolledStudentSubjects,
   fetchNstpOptions,
   enrollExistingStudent,
   registrarBulkEnrollStudents,
@@ -41,9 +43,8 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   const [programFilter, setProgramFilter] = useState('');
   const [existingCandidates, setExistingCandidates] = useState([]);
   const [selectedExistingId, setSelectedExistingId] = useState('');
-  const [expandedStudentId, setExpandedStudentId] = useState(null);
-  const [subjectDetails, setSubjectDetails] = useState({});
-  const [subjectsLoading, setSubjectsLoading] = useState(null);
+  const [curriculumView, setCurriculumView] = useState(null);
+  const [curriculumLoading, setCurriculumLoading] = useState(false);
 
   const loadCandidates = useCallback(async (search = '') => {
     try {
@@ -204,21 +205,17 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
     }
   };
 
-  const toggleSubjects = async (student) => {
-    if (expandedStudentId === student.id) {
-      setExpandedStudentId(null);
-      return;
-    }
-    setExpandedStudentId(student.id);
-    if (subjectDetails[student.id]) return;
-    setSubjectsLoading(student.id);
+  const handleViewCurriculum = async (student) => {
+    if (!student.curriculumId) return;
+    setCurriculumView({ student, curriculum: null, error: '' });
+    setCurriculumLoading(true);
     try {
-      const response = await fetchEnrolledStudentSubjects(student.id, student.schoolYear, student.semester);
-      setSubjectDetails((current) => ({ ...current, [student.id]: response?.data || { subjects: [] } }));
+      const response = await fetchCurriculum(student.curriculumId);
+      setCurriculumView({ student, curriculum: response?.data || null, error: '' });
     } catch (error) {
-      setSubjectDetails((current) => ({ ...current, [student.id]: { subjects: [], error: error.message || 'Subjects could not be loaded.' } }));
+      setCurriculumView({ student, curriculum: null, error: error.message || 'Unable to load the assigned curriculum.' });
     } finally {
-      setSubjectsLoading(null);
+      setCurriculumLoading(false);
     }
   };
 
@@ -330,8 +327,19 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
 
       <section data-testid="student-enrollment-list" className="w-full min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 [&_table]:w-full">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between"><h4 className="text-sm font-bold text-[#003366]">Current Student Enrollments</h4><div className="flex flex-col gap-2 sm:flex-row"><BoundedSelect label="Program / Course" value={programFilter} onChange={setProgramFilter} options={[{ value: '', label: 'All Programs' }, ...availablePrograms.map((program) => ({ value: program, label: program }))]} searchable className="sm:w-64"/><SearchField value={enrollmentSearch} onChange={setEnrollmentSearch} label="Search student enrollments" placeholder="ID, name, email, program, or section" className="sm:w-72" inputClassName="h-9 text-xs"/><button type="button" onClick={load} className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700">Refresh</button></div></div>
-        <div className="overflow-x-auto"><table className="min-w-[980px] text-left text-xs"><thead><tr className="bg-slate-50 text-slate-600"><th className="px-4 py-3">Student</th><th className="px-4 py-3">Program / Year Level</th><th className="px-4 py-3">Section</th><th className="px-4 py-3">Academic Period</th><th className="px-4 py-3">Subjects</th><th className="px-4 py-3">Curriculum</th><th className="px-4 py-3">Status</th></tr></thead><tbody>{visibleStudents.map((student) => <React.Fragment key={student.id}><tr className="border-b"><td className="px-4 py-3"><span className="block font-semibold">{student.fullname}</span><span className="text-xs text-slate-500">{student.studentno}</span></td><td className="max-w-64 break-words px-4 py-3">{student.department || 'Unassigned'}<span className="block text-xs text-slate-500">Year {student.yearLevel || '—'}</span></td><td className="px-4 py-3">{student.section || 'Unassigned'}</td><td className="px-4 py-3">{student.schoolYear || '—'}<span className="block text-xs text-slate-500">{student.semester || '—'}</span></td><td className="px-4 py-3"><button type="button" onClick={() => toggleSubjects(student)} className="rounded-lg border border-blue-200 px-3 py-2 font-semibold text-blue-700">{expandedStudentId === student.id ? 'Hide Subjects' : 'View Subjects'}</button></td><td className="px-4 py-3">{student.curriculumVersion || 'Not assigned'}</td><td className="px-4 py-3">{student.enrollmentStatus || student.assignmentStatus || 'Unassigned'}</td></tr>{expandedStudentId === student.id ? <tr className="border-b bg-slate-50"><td colSpan="7" className="px-4 py-4"><div className="rounded-lg border border-slate-200 bg-white p-4"><h5 className="font-bold text-[#003366]">Assigned Subjects · {student.studentno}</h5>{subjectsLoading === student.id ? <p className="mt-2 text-slate-500">Loading subjects…</p> : subjectDetails[student.id]?.error ? <p className="mt-2 text-red-600">{subjectDetails[student.id].error}</p> : subjectDetails[student.id]?.subjects?.length ? <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{subjectDetails[student.id].subjects.map((subject) => <li key={subject.subjectCode} className="min-w-0 rounded-lg bg-slate-50 p-3"><span className="block font-bold text-[#003366]">{subject.subjectCode}</span><span className="block break-words text-slate-700">{subject.subjectTitle}</span><span className="text-slate-500">{subject.units} units</span></li>)}</ul> : <p className="mt-2 text-slate-500">No subjects assigned yet.</p>}</div></td></tr> : null}</React.Fragment>)}{!loading && visibleStudents.length === 0 ? <tr><td colSpan="7" className="px-4 py-8 text-center text-slate-500">{enrollmentSearch.trim() || programFilter ? 'No results found.' : 'No active student enrollment yet.'}</td></tr> : null}</tbody></table></div>
+        <div className="w-full overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead><tr className="bg-slate-50 text-slate-600 dark:bg-slate-800 dark:text-slate-300"><th className="px-4 py-3">Student</th><th className="px-4 py-3">Program / Year Level</th><th className="px-4 py-3">Section</th><th className="px-4 py-3">Academic Period</th><th className="px-4 py-3">Assigned Curriculum</th><th className="px-4 py-3">Status</th></tr></thead><tbody>{visibleStudents.map((student) => <tr key={student.id} className="border-b border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"><td className="px-4 py-3"><span className="block font-semibold text-slate-900 dark:text-slate-100">{student.fullname}</span><span className="text-xs text-slate-500 dark:text-slate-400">{student.studentno}</span></td><td className="max-w-64 break-words px-4 py-3">{student.department || 'Unassigned'}<span className="block text-xs text-slate-500 dark:text-slate-400">Year {student.yearLevel || '—'}</span></td><td className="px-4 py-3">{student.section || 'Unassigned'}</td><td className="px-4 py-3">{student.schoolYear || '—'}<span className="block text-xs text-slate-500 dark:text-slate-400">{student.semester || '—'}</span></td><td className="px-4 py-3">{student.curriculumId ? <div><p className="font-semibold text-slate-900 dark:text-slate-100">{student.curriculumName || 'Assigned curriculum'}</p><p className="text-xs text-slate-500 dark:text-slate-400">Version: {student.curriculumVersion || '—'}</p><button type="button" onClick={() => handleViewCurriculum(student)} className="mt-2 rounded-lg border border-[#003366] px-3 py-1.5 font-semibold text-[#003366] transition hover:bg-[#003366] hover:text-white dark:border-sky-300 dark:text-sky-300 dark:hover:bg-sky-300 dark:hover:text-slate-950">View Curriculum</button></div> : <span className="font-medium text-slate-500 dark:text-slate-400">Not assigned</span>}</td><td className="px-4 py-3">{student.enrollmentStatus || student.assignmentStatus || 'Unassigned'}</td></tr>)}{!loading && visibleStudents.length === 0 ? <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">{enrollmentSearch.trim() || programFilter ? 'No results found.' : 'No active student enrollment yet.'}</td></tr> : null}</tbody></table></div>
       </section>
+
+      <Modal
+        isOpen={Boolean(curriculumView)}
+        onClose={() => setCurriculumView(null)}
+        title="Assigned Curriculum"
+        description={curriculumView ? `${curriculumView.student.studentno || 'Student'} · ${curriculumView.student.fullname || ''} · ${curriculumView.student.schoolYear || 'Current enrollment'} ${curriculumView.student.semester || ''}` : ''}
+        panelClassName="flex max-h-[90vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6"
+        bodyClassName="min-h-0 flex-1 overflow-y-auto pr-1"
+      >
+        {curriculumView?.error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300">{curriculumView.error}</div> : <CurriculumViewer curricula={curriculumView?.curriculum ? [curriculumView.curriculum] : []} currentYear={Number.parseInt(curriculumView?.student?.yearLevel, 10) || 0} loading={curriculumLoading} emptyMessage="No curriculum assigned" showInternalMetadata />}
+      </Modal>
     </div>
   );
 };

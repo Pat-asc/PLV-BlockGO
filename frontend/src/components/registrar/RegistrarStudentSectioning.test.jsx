@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import RegistrarStudentSectioning, { buildCustomSectionTemplateDownload, buildSectionTemplateDownload } from './RegistrarStudentSectioning';
 import {
   deleteAcademicSection,
@@ -7,6 +7,7 @@ import {
   fetchNextStudentId,
   fetchSectionedEnrolledStudents,
   fetchUnassignedEnrolledStudents,
+  finalizeEnrollmentRoster,
   getSystemSetting,
 } from '../../services/api';
 import { syncSectioningBatchToBackend } from '../../utils/registrarSectioningBackendSync';
@@ -20,6 +21,7 @@ jest.mock('../../services/api', () => ({
   fetchNextStudentId: jest.fn(),
   fetchSectionedEnrolledStudents: jest.fn(),
   fetchUnassignedEnrolledStudents: jest.fn(),
+  finalizeEnrollmentRoster: jest.fn(),
   getSystemSetting: jest.fn(),
 }));
 jest.mock('../../utils/registrarSectioningBackendSync', () => ({ syncSectioningBatchToBackend: jest.fn() }));
@@ -39,6 +41,7 @@ beforeEach(() => {
   requestSystemConfirmation.mockResolvedValue(true);
   deleteAcademicSection.mockResolvedValue({ status: 'Success', mode: 'deleted' });
   fetchNextStudentId.mockResolvedValue({ highestSequence: 42 });
+  finalizeEnrollmentRoster.mockResolvedValue({ finalized: 1 });
   getSystemSetting.mockResolvedValue({ status: 'Success', value: { schoolYear: '2026-2027', semester: 'FIRST' } });
   fetchUnassignedEnrolledStudents.mockImplementation(async (period) => ({ data: [{ ...student, ...period }] }));
   fetchSectionedEnrolledStudents.mockResolvedValue({ data: [] });
@@ -70,10 +73,24 @@ test('uses the active encoding period without a manual semester control', async 
   await waitFor(() => expect(syncSectioningBatchToBackend).toHaveBeenCalledWith(expect.objectContaining({ semester: 'FIRST', schoolYear: '2026-2027' })));
 });
 
-test('uses the one-word Finalize action for roster finalization', async () => {
+test('aligns all four controls and keeps the original Registrar finalization workflow', async () => {
   render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
-  expect(await screen.findByRole('button', { name: 'Finalize' })).toBeInTheDocument();
+  const finalize = await screen.findByRole('button', { name: 'Finalize' });
+  expect(screen.getByTestId('section-generator-controls')).toHaveClass(
+    'xl:grid-cols-[135px_135px_135px_135px_auto_auto_auto_auto]',
+    'xl:items-end'
+  );
   expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled/ })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Generate Sections' }));
+  await waitFor(() => expect(syncSectioningBatchToBackend).toHaveBeenCalled());
+  await waitFor(() => expect(finalize).toBeEnabled());
+  fireEvent.click(finalize);
+  await waitFor(() => expect(finalizeEnrollmentRoster).toHaveBeenCalledWith({
+    program: 'BSIT',
+    schoolYear: '2026-2027',
+    semester: 'FIRST',
+  }));
 });
 
 test('Auto-Populate creates and assigns sections through the authoritative sync flow', async () => {
@@ -200,6 +217,42 @@ test('Section Creator removes the global template button and exposes one accessi
   expect(actions).toHaveLength(2);
   expect(screen.queryByRole('button', { name: 'Download Template' })).not.toBeInTheDocument();
   actions.forEach((action) => expect(action).toHaveClass('min-h-8'));
+});
+
+test('opens each exact section roster in a responsive shared modal and preserves section actions', async () => {
+  fetchUnassignedEnrolledStudents.mockResolvedValue({ data: [] });
+  fetchSectionedEnrolledStudents.mockResolvedValue({ data: [
+    { ...student, id: 41, studentNo: '26-0041', fullName: 'Only Section One', academicSectionId: 1, section: '1-1' },
+    { ...student, id: 42, studentNo: '26-0042', fullName: 'Only Section Two', academicSectionId: 2, section: '1-2' },
+  ] });
+
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+
+  const rosterButtons = await screen.findAllByRole('button', { name: 'View Roster' });
+  expect(rosterButtons).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: 'Export CSV' })).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: 'Upload CSV' })).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: 'Delete Section' })).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: /Download template for/i })).toHaveLength(2);
+
+  fireEvent.click(rosterButtons[0]);
+  let dialog = screen.getByRole('dialog', { name: /1-1.*Student Roster/i });
+  expect(within(dialog).getByText('Only Section One')).toBeInTheDocument();
+  expect(within(dialog).queryByText('Only Section Two')).not.toBeInTheDocument();
+  expect(dialog).toHaveClass('max-h-[90vh]', 'overflow-hidden', 'dark:bg-slate-900');
+  expect(screen.getByTestId('section-roster-scroll-area')).toHaveClass('overflow-y-auto');
+
+  const rosterSearch = within(dialog).getByPlaceholderText(/search by id or name/i);
+  fireEvent.change(rosterSearch, { target: { value: 'not present' } });
+  expect(within(dialog).getByText('No students found in this section.')).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole('button', { name: /Close .*Student Roster/i }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByText('Section Generator')).toBeInTheDocument();
+
+  fireEvent.click(rosterButtons[1]);
+  dialog = screen.getByRole('dialog', { name: /1-2.*Student Roster/i });
+  expect(within(dialog).getByText('Only Section Two')).toBeInTheDocument();
+  expect(within(dialog).queryByText('Only Section One')).not.toBeInTheDocument();
 });
 
 test('deleting a persisted section updates the API and reloads canonical section state', async () => {

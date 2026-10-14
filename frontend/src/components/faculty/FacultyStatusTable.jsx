@@ -78,6 +78,23 @@ function FacultyStatusTable({ rows, selectedReviewKey, onSelectSection, viewMode
     .sort((left, right) => right.priorityScore - left.priorityScore ||
       String(left.facultyName || "").localeCompare(String(right.facultyName || "")) ||
       String(left.sectionName || "").localeCompare(String(right.sectionName || ""))), [rows]);
+  const facultyGroups = useMemo(() => {
+    const groups = new Map();
+    workloadRows.forEach((section) => {
+      const facultyKey = String(
+        section.facultyId || section.facultyUserId || section.facultyEmail || section.email || `review:${section.reviewKey}`
+      );
+      if (!groups.has(facultyKey)) {
+        groups.set(facultyKey, {
+          facultyKey,
+          facultyName: section.facultyName || section.facultyEmail || "Assigned faculty",
+          sections: [],
+        });
+      }
+      groups.get(facultyKey).sections.push(section);
+    });
+    return [...groups.values()];
+  }, [workloadRows]);
 
   if (viewMode === "default") {
     return (
@@ -107,12 +124,12 @@ function FacultyStatusTable({ rows, selectedReviewKey, onSelectSection, viewMode
           <tbody>
             {loadError ? (
               <tr><td colSpan="8" role="alert" className="px-6 py-10 text-center text-sm font-medium text-red-700 dark:text-red-300">{loadError}</td></tr>
-            ) : workloadRows.length ? workloadRows.map((section) => {
+            ) : facultyGroups.length ? facultyGroups.flatMap((facultyGroup) => facultyGroup.sections.map((section, sectionIndex) => {
               const priorityLabel = buildPriorityLabel(section.prioritySummary);
               const selected = selectedReviewKey === section.reviewKey;
               return (
-                <tr key={section.reviewKey} className={`border-b border-slate-200 align-top transition dark:border-slate-700 ${selected ? 'bg-blue-50 dark:bg-sky-950/30' : section.priorityScore ? 'bg-red-50/60 dark:bg-red-950/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/70'}`}>
-                  <td className="px-4 py-4 text-sm font-semibold text-slate-900 dark:text-slate-100">{section.facultyName}</td>
+                <tr key={section.reviewKey} data-faculty-group={facultyGroup.facultyKey} className={`border-b border-slate-200 align-top transition dark:border-slate-700 ${selected ? 'bg-blue-50 dark:bg-sky-950/30' : section.priorityScore ? 'bg-red-50/60 dark:bg-red-950/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/70'}`}>
+                  {sectionIndex === 0 ? <td rowSpan={facultyGroup.sections.length} className="border-r border-slate-200 bg-slate-50 px-4 py-4 text-sm font-bold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"><span className="block">{facultyGroup.facultyName}</span><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">{facultyGroup.sections.length} encoded section{facultyGroup.sections.length === 1 ? '' : 's'}</span></td> : null}
                   <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300">{section.sectionName}</td>
                   <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300">
                     <span className="font-semibold">{section.subjectCode || 'Unknown subject'}</span>
@@ -133,7 +150,7 @@ function FacultyStatusTable({ rows, selectedReviewKey, onSelectSection, viewMode
                   </td>
                 </tr>
               );
-            }) : (
+            })) : (
               <tr><td colSpan="8" className="px-6 py-10 text-center text-sm text-slate-500 dark:text-slate-400">{copy.empty}</td></tr>
             )}
           </tbody>

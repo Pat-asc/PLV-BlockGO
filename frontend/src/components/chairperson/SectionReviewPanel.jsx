@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { computeGradeStatus, getReviewStatusLabel } from "../../utils/chairpersonHelpers";
 import { getGradeEquivalent } from "../../utils/gradingHelpers";
 import Modal from "../../services/Modal";
@@ -71,7 +71,6 @@ function SectionReviewPanel({
   const approveInFlightRef = useRef(false);
   const returnInFlightRef = useRef(false);
   const handoffInFlightRef = useRef(false);
-  const closePanel = onClose || onBack;
   const note = selectedSection
     ? draftNotes[selectedSection.reviewKey] ?? selectedSection.reviewNote ?? ""
     : "";
@@ -203,7 +202,9 @@ function SectionReviewPanel({
     }
   };
 
-  const requestClose = () => { if (!busy) closePanel?.(); };
+  const requestClose = useCallback(() => {
+    if (!busy) (onClose || onBack)?.();
+  }, [busy, onBack, onClose]);
 
   return (
     <>
@@ -280,8 +281,7 @@ function SectionReviewPanel({
                 <textarea value={note} onChange={(event) => setDraftNotes((previous) => ({ ...previous, [selectedSection.reviewKey]: event.target.value }))} rows={2} placeholder="Required when returning grades to Faculty" className="mt-1 w-full resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#003366] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100" />
               </label> : null}
               {actionError ? <p role="alert" className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{actionError}</p> : null}
-              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <button type="button" onClick={requestClose} disabled={busy} className="min-h-10 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">Close</button>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
                 <div className="flex flex-col gap-2 sm:flex-row">
                   {canReturn ? <button type="button" onClick={() => { setActionError(""); setReturnConfirmationOpen(true); }} disabled={note.trim().length < 3 || busy} className="min-h-10 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:bg-slate-400">Return for Correction</button> : null}
                   {canApprove ? <button type="button" onClick={() => { setActionError(""); setApproveConfirmationOpen(true); }} disabled={busy} className="min-h-10 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:bg-slate-400">Approve Section</button> : null}

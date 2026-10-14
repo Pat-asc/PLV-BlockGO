@@ -50,7 +50,7 @@ test('a workload action opens one centered modal instead of an inline collapsibl
   fireEvent.click(trigger);
 
   expect(screen.getByRole('dialog', { name: 'Review Encoded Grades' })).toHaveClass('max-w-6xl', 'max-h-[92vh]', 'dark:bg-slate-900');
-  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Close Review Encoded Grades' }));
   expect(screen.queryByRole('dialog', { name: 'Review Encoded Grades' })).not.toBeInTheDocument();
   expect(trigger).toHaveFocus();
 });
@@ -80,14 +80,19 @@ test('return remarks and confirmation stay inside the modal and duplicate submis
 
   const returnButton = screen.getByRole('button', { name: 'Return for Correction' });
   expect(returnButton).toBeDisabled();
-  fireEvent.change(screen.getByRole('textbox', { name: 'Correction remarks' }), { target: { value: 'Correct the encoded grade' } });
+  const remarks = screen.getByRole('textbox', { name: 'Correction remarks' });
+  remarks.focus();
+  fireEvent.change(remarks, { target: { value: 'Please correct the encoded midterm grade before resubmitting.' } });
+  expect(remarks).toHaveFocus();
+  expect(screen.getByRole('dialog', { name: 'Review Encoded Grades' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
   fireEvent.click(returnButton);
   const confirmation = screen.getByRole('dialog', { name: 'Return Grades to Faculty' });
   const confirm = within(confirmation).getByRole('button', { name: 'Confirm Return' });
   fireEvent.click(confirm);
   fireEvent.click(confirm);
   expect(onSendBack).toHaveBeenCalledTimes(1);
-  expect(onSendBack).toHaveBeenCalledWith('Correct the encoded grade');
+  expect(onSendBack).toHaveBeenCalledWith('Please correct the encoded midterm grade before resubmitting.');
   expect(within(confirmation).getByRole('button', { name: 'Returning...' })).toBeDisabled();
   resolveReturn();
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Return Grades to Faculty' })).not.toBeInTheDocument());
@@ -104,7 +109,8 @@ test('returned and finalized reviews are view-only and do not expose invalid wor
   expect(screen.queryByRole('button', { name: 'Return for Correction' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Approve Section' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Send to Registrar' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Close Review Encoded Grades' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
 });
 
 test('successful Registrar handoff updates the modal state and prevents another send', async () => {

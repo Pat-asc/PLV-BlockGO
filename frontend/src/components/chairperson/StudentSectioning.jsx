@@ -1,6 +1,6 @@
 import { showSystemNotification } from '../../services/NotificationContext';
 import { requestSystemConfirmation } from '../../services/SystemDialogContext';
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AVAILABLE_YEAR_LEVELS,
   STUDENT_BATCHES_KEY,
@@ -19,6 +19,7 @@ import {
 } from "../../services/api";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
 import CurriculumViewer from "../shared/CurriculumViewer";
+import Modal from "../../services/Modal";
 
 const buildStudentName = (student) => {
   const firstAndMiddle = [
@@ -313,7 +314,6 @@ function StudentSectioning({
   const isRegistrarMode = false;
   const canEditRoster = false;
   const isChairpersonMode = true;
-  const rosterRef = useRef(null);
   const [programs, setPrograms] = useState([]);
   const [selectedProgram, setSelectedProgram] = useState("");
   const [loadingProgram, setLoadingProgram] = useState(false);
@@ -357,6 +357,8 @@ function StudentSectioning({
   const [selectedYearLevel, setSelectedYearLevel] = useState("1st Year");
   const [manualSectionCount, setManualSectionCount] = useState("1");
   const [selectedSectionCode, setSelectedSectionCode] = useState("");
+  const [selectedRosterSectionId, setSelectedRosterSectionId] = useState("");
+  const [isRosterOpen, setIsRosterOpen] = useState(false);
   const [studentSearch, setStudentSearch] = useState("");
   const [pendingRemoval, setPendingRemoval] = useState(null);
   const [lateStudent, setLateStudent] = useState({
@@ -371,7 +373,13 @@ function StudentSectioning({
     let cancelled = false;
     fetchAcademicPrograms()
       .then((response) => {
-        if (!cancelled) setPrograms(Array.isArray(response?.data) ? response.data : []);
+        if (!cancelled) {
+          const authorizedPrograms = Array.isArray(response?.data) ? response.data : [];
+          setPrograms(authorizedPrograms);
+          setSelectedProgram((current) => current ||
+            authorizedPrograms.find((program) => program.programCode === "BSIT")?.programCode ||
+            authorizedPrograms[0]?.programCode || "");
+        }
       })
       .catch((error) => {
         if (!cancelled) setProgramError(error.message || "Unable to load authorized programs.");
@@ -385,6 +393,7 @@ function StudentSectioning({
     setSelectedSectionCode("");
     setStudentSearch("");
     setPendingRemoval(null);
+    setIsRosterOpen(false);
     setProgramError("");
   };
 
@@ -521,15 +530,18 @@ function StudentSectioning({
   const students = selectedBatch?.students || [];
   const removedStudents = selectedBatch?.removedStudents || [];
   const selectedSection =
+    yearSectionPlans.find(
+      (section) => String(section.academicSectionId || section.id || "") === selectedRosterSectionId
+    ) ||
     yearSectionPlans.find((section) => section.sectionCode === selectedSectionCode) ||
     yearSectionPlans[0] ||
     null;
 
-  const viewSectionRoster = (sectionCode) => {
-    setSelectedSectionCode(sectionCode);
-    window.requestAnimationFrame(() => {
-      rosterRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+  const viewSectionRoster = (section) => {
+    setSelectedSectionCode(section.sectionCode);
+    setSelectedRosterSectionId(String(section.academicSectionId || section.id || ""));
+    setStudentSearch("");
+    setIsRosterOpen(true);
   };
 
   const sectionSummaries = yearSectionPlans.map((section) => {
@@ -560,9 +572,15 @@ function StudentSectioning({
         .filter(
           (student) => {
             const sectionYearLevel = selectedSection.yearLevel || selectedYearLevel;
+            const selectedAcademicSectionId = Number(selectedSection.academicSectionId);
+            const studentAcademicSectionId = Number(student.academicSectionId);
+            const matchesSection = Number.isInteger(selectedAcademicSectionId) && selectedAcademicSectionId > 0 &&
+              Number.isInteger(studentAcademicSectionId) && studentAcademicSectionId > 0
+              ? studentAcademicSectionId === selectedAcademicSectionId
+              : student.sectionCode === selectedSection.sectionCode;
 
             return (
-              student.sectionCode === selectedSection.sectionCode &&
+              matchesSection &&
               (student.yearLevel || sectionYearLevel) === sectionYearLevel
             );
           }
@@ -2664,7 +2682,7 @@ function StudentSectioning({
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_170px_170px_170px_auto_auto] lg:items-end">
                 <div>
-                  <h3 className="text-xl font-bold text-[#003366]">
+                  <h3 className="text-xl font-bold text-[#003366] dark:text-sky-300">
                     Section Generator
                   </h3>
                 </div>
@@ -2727,7 +2745,7 @@ function StudentSectioning({
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h3 className="text-xl font-bold text-[#003366]">
+                  <h3 className="text-xl font-bold text-[#003366] dark:text-sky-300">
                     Sections Preview
                   </h3>
                 </div>
@@ -2793,7 +2811,7 @@ function StudentSectioning({
                       <div className="flex items-start justify-between gap-3">
                         <button
                           type="button"
-                          onClick={() => viewSectionRoster(section.sectionCode)}
+                          onClick={() => viewSectionRoster(section)}
                           className="text-left"
                         >
                           <p className="text-sm font-semibold text-slate-500">
@@ -2831,7 +2849,7 @@ function StudentSectioning({
                       <div className="mt-4 flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => viewSectionRoster(section.sectionCode)}
+                          onClick={() => viewSectionRoster(section)}
                           className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                         >
                           View Roster
@@ -2874,7 +2892,15 @@ function StudentSectioning({
               )}
             </section>
 
-            <section ref={rosterRef} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <Modal
+              isOpen={isRosterOpen}
+              onClose={() => { setIsRosterOpen(false); setStudentSearch(""); }}
+              title={`${selectedSection?.sectionName || (selectedSection ? getDefaultSectionName(selectedBatch?.program, selectedSection.sectionCode) : "Section")} — Student Roster`}
+              description={`${selectedBatch?.schoolYear || selectedBatch?.batchYear || "Current academic year"} · ${selectedBatch?.semester || "Current semester"} · ${visibleSectionStudents.length} Students`}
+              panelClassName="flex max-h-[90vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6"
+              bodyClassName="min-h-0 flex-1 overflow-y-auto"
+            >
+            <section data-testid="chairperson-roster-scroll-area" className="max-h-full overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900 sm:p-6">
               <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <h3 className="text-xl font-bold text-[#003366]">
@@ -2893,7 +2919,7 @@ function StudentSectioning({
                   value={studentSearch}
                   onChange={(event) => setStudentSearch(event.target.value)}
                   placeholder="Search this section..."
-                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-[#003366] lg:max-w-xs"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-[#003366] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 lg:max-w-xs"
                 />
               </div>
 
@@ -2975,8 +3001,8 @@ function StudentSectioning({
                   <tbody>
                     {visibleSectionStudents.length > 0 ? (
                       visibleSectionStudents.map((student) => (
-                        <tr key={student.studentId} className="border-b bg-white">
-                          <td className="px-4 py-3 font-semibold text-slate-800">
+                        <tr key={student.studentId} className="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                          <td className="px-4 py-3 font-semibold text-slate-800 dark:text-slate-100">
                             {student.studentId}
                             {student.isLateEnrollee ? (
                               <span className="ml-2 rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
@@ -2984,10 +3010,10 @@ function StudentSectioning({
                               </span>
                             ) : null}
                           </td>
-                          <td className="px-4 py-3 text-slate-700">
+                          <td className="px-4 py-3 text-slate-700 dark:text-slate-200">
                             {buildStudentName(student)}
                           </td>
-                          <td className="px-4 py-3 text-slate-600">
+                          <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
                             {student.sex || "--"}
                           </td>
                           <td className="px-4 py-3">
@@ -3013,13 +3039,13 @@ function StudentSectioning({
                                 ))}
                               </select>
                             ) : (
-                              <span className="text-sm text-slate-700">
+                              <span className="text-sm text-slate-700 dark:text-slate-200">
                                 {student.sectionName || selectedSection?.sectionName || "--"}
                               </span>
                             )}
                           </td>
-                          <td className="px-4 py-3 text-slate-700">
-                            {student.curriculumId ? <div><p className="font-semibold">{student.curriculumName || "Assigned curriculum"}</p><p className="text-xs text-slate-500">Version: {student.curriculumVersion || "—"}</p><button type="button" onClick={() => handleViewCurriculum(student)} className="mt-2 rounded-lg border border-[#003366] px-3 py-1.5 text-xs font-semibold text-[#003366] hover:bg-[#003366] hover:text-white">View Curriculum</button></div> : <span className="text-slate-500">No curriculum assigned</span>}
+                          <td className="px-4 py-3 text-slate-700 dark:text-slate-200">
+                            {student.curriculumId ? <div><p className="font-semibold">{student.curriculumName || "Assigned curriculum"}</p><p className="text-xs text-slate-500 dark:text-slate-400">Version: {student.curriculumVersion || "—"}</p><button type="button" onClick={() => handleViewCurriculum(student)} className="mt-2 rounded-lg border border-[#003366] px-3 py-1.5 text-xs font-semibold text-[#003366] hover:bg-[#003366] hover:text-white dark:border-sky-300 dark:text-sky-300">View Curriculum</button></div> : <span className="text-slate-500 dark:text-slate-400">No curriculum assigned</span>}
                           </td>
                           {canEditRoster ? (
                             <td className="px-4 py-3">
@@ -3050,6 +3076,7 @@ function StudentSectioning({
                 </table>
               </div>
             </section>
+            </Modal>
 
             {canEditRoster ? (
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -3188,7 +3215,9 @@ function StudentSectioning({
           </main>
       </div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">Select a Program to view created sections.</div>}
 
-      {curriculumView ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"><div className="max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-2xl bg-slate-50 shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white p-4"><div><h2 className="font-bold text-[#003366]">Assigned Curriculum</h2><p className="text-sm text-slate-500">{curriculumView.student.studentId} · {buildStudentName(curriculumView.student)} · {curriculumView.student.schoolYear || "Current enrollment"} {curriculumView.student.semester || ""}</p></div><button type="button" onClick={() => setCurriculumView(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold">Close</button></div><div className="p-4">{curriculumView.error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">{curriculumView.error}</div> : <CurriculumViewer curricula={curriculumView.curriculum ? [curriculumView.curriculum] : []} currentYear={Number.parseInt(curriculumView.student.yearLevel, 10) || 0} loading={curriculumLoading} emptyMessage="No curriculum assigned" showInternalMetadata />}</div></div></div> : null}
+      <Modal isOpen={Boolean(curriculumView)} onClose={() => setCurriculumView(null)} title="Assigned Curriculum" description={curriculumView ? `${curriculumView.student.studentId} · ${buildStudentName(curriculumView.student)} · ${curriculumView.student.schoolYear || "Current enrollment"} ${curriculumView.student.semester || ""}` : ""} panelClassName="flex max-h-[90vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6" bodyClassName="min-h-0 flex-1 overflow-y-auto">
+        {curriculumView?.error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{curriculumView.error}</div> : <CurriculumViewer curricula={curriculumView?.curriculum ? [curriculumView.curriculum] : []} currentYear={Number.parseInt(curriculumView?.student?.yearLevel, 10) || 0} loading={curriculumLoading} emptyMessage="No curriculum assigned" showInternalMetadata />}
+      </Modal>
     </div>
   );
 }

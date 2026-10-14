@@ -78,10 +78,8 @@ test("resolves Section automatically and marks a row saved only after backend co
   }));
 
   render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
-  await waitFor(() => {
-    expect(fetchFacultyAssignmentOptions).toHaveBeenCalled();
-    expect(fetchApprovedFaculties).toHaveBeenCalled();
-  });
+  await waitFor(() => expect(fetchFacultyAssignmentOptions).toHaveBeenCalled());
+  expect(fetchApprovedFaculties).toHaveBeenCalled();
   await uploadCsv(
     "Faculty Email,Subject Code,Section,School Year,Semester\n" +
     "a@plv.edu.ph,IT 101,BSIT 1-1,2026-2027,1st Semester"
@@ -103,6 +101,21 @@ test("resolves Section automatically and marks a row saved only after backend co
     facultyEmail: "a@plv.edu.ph",
   }));
   expect(screen.queryByRole("button", { name: "Save Assignments" })).not.toBeInTheDocument();
+});
+
+test("groups Faculty Loading Preview sections under one stable faculty identity", async () => {
+  render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
+  await waitFor(() => expect(fetchApprovedFaculties).toHaveBeenCalled());
+  await uploadCsv(
+    "Faculty ID,Subject Code,Section,School Year,Semester\n" +
+    "11,IT 101,BSIT 1-1,2026-2027,FIRST\n" +
+    "11,IT 102,BSIT 1-2,2026-2027,FIRST"
+  );
+
+  expect(screen.getByText("2 section assignments")).toBeInTheDocument();
+  expect(screen.getByText("BSIT 1-1")).toBeInTheDocument();
+  expect(screen.getByText("BSIT 1-2")).toBeInTheDocument();
+  expect(screen.getByText("Faculty Loading Preview")).toHaveClass("bg-[#003366]", "text-white");
 });
 
 test("partial success preserves the failed row and Clear Selection removes only pending rows", async () => {

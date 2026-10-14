@@ -154,6 +154,17 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
   });
 
   const selectedProgram = chairpersonDepartment;
+  const facultyLoadingGroups = useMemo(() => {
+    const groups = new Map();
+    facultyLoadingPreview.forEach((item) => {
+      const facultyKey = String(item.facultyUserId || item.facultyId || item.facultyEmail || item.id);
+      if (!groups.has(facultyKey)) {
+        groups.set(facultyKey, { facultyKey, facultyName: item.facultyName || item.facultyEmail || "Assigned faculty", rows: [] });
+      }
+      groups.get(facultyKey).rows.push(item);
+    });
+    return [...groups.values()];
+  }, [facultyLoadingPreview]);
 
   useEffect(() => {
     const loadApprovedFaculty = async () => {
@@ -844,10 +855,10 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
         </div>
 
         {(facultyLoadingPreview.length > 0 || facultyLoadingErrors.length > 0) ? (
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="mt-6 rounded-2xl border border-blue-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h4 className="text-lg font-bold text-[#003366]">
+                <h4 className="inline-flex rounded-lg bg-[#003366] px-3 py-2 text-lg font-bold text-white dark:bg-sky-900">
                   Faculty Loading Preview
                 </h4>
                 
@@ -916,10 +927,10 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
                   </tr>
                 </thead>
                 <tbody>
-                  {facultyLoadingPreview.length ? (
-                    facultyLoadingPreview.map((item) => (
-                      <tr key={item.id} className="border-b">
-                        <td className="px-4 py-3">{item.facultyName}</td>
+                  {facultyLoadingGroups.length ? (
+                    facultyLoadingGroups.flatMap((facultyGroup) => facultyGroup.rows.map((item, rowIndex) => (
+                      <tr key={item.id} data-faculty-group={facultyGroup.facultyKey} className="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                        {rowIndex === 0 ? <td rowSpan={facultyGroup.rows.length} className="border-r border-slate-200 bg-slate-50 px-4 py-3 align-top font-bold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"><span className="block">{facultyGroup.facultyName}</span><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">{facultyGroup.rows.length} section assignment{facultyGroup.rows.length === 1 ? "" : "s"}</span></td> : null}
                         <td className="px-4 py-3">
                           {item.subjectCode} - {item.subjectTitle}
                         </td>
@@ -937,7 +948,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
                           )}
                         </td>
                       </tr>
-                    ))
+                    )))
                   ) : (
                     <tr>
                       <td colSpan="7" className="py-6 text-center text-slate-500">

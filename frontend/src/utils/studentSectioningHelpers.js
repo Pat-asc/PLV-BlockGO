@@ -86,14 +86,18 @@ const PROGRAM_SECTION_PREFIXES = {
     "BSBA MM",
 };
 
-export const getProgramSectionPrefix = (program = "") =>
-  PROGRAM_SECTION_PREFIXES[program] ||
-  String(program)
+export const getProgramSectionPrefix = (program = "") => {
+  const normalizedProgram = String(program).trim();
+  if (/^[A-Z][A-Z0-9-]{1,19}$/.test(normalizedProgram)) return normalizedProgram;
+
+  return PROGRAM_SECTION_PREFIXES[normalizedProgram] ||
+  normalizedProgram
     .split(/\s+/)
     .filter((word) => /^[A-Z]/.test(word))
     .map((word) => word[0])
     .join("") ||
   "SECTION";
+};
 
 export const getDefaultSectionName = (program = "", sectionCode = "") =>
   `${getProgramSectionPrefix(program)} ${sectionCode}`.trim();

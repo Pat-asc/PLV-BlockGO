@@ -27,6 +27,24 @@ test('renders one direct review action for each distinct workload without an exp
   expect(screen.getAllByRole('button', { name: 'Review Grades' })).toHaveLength(2);
   expect(screen.queryByRole('button', { name: 'Review Encoded' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Review Section' })).not.toBeInTheDocument();
+  expect(screen.getByText('2 encoded sections')).toBeInTheDocument();
+  expect(screen.getAllByText('Faculty One')).toHaveLength(1);
+});
+
+test('groups by stable faculty identity and does not merge different faculty with the same name', () => {
+  const onSelectSection = jest.fn();
+  const rows = [
+    section({ reviewKey: 'faculty-1|section-1', facultyId: 'faculty-1', sectionName: 'BSIT 1-1' }),
+    section({ reviewKey: 'faculty-1|section-2', facultyId: 'faculty-1', sectionName: 'BSIT 1-2' }),
+    section({ reviewKey: 'faculty-2|section-3', facultyId: 'faculty-2', sectionName: 'BSIT 2-1' }),
+  ];
+  render(<FacultyStatusTable rows={rows} viewMode="forReview" onSelectSection={onSelectSection} />);
+  expect(screen.getAllByText('Faculty One')).toHaveLength(2);
+  expect(screen.getByText('2 encoded sections')).toBeInTheDocument();
+  expect(screen.getByText('1 encoded section')).toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Review Grades' })).toHaveLength(3);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Review Grades' })[1]);
+  expect(onSelectSection).toHaveBeenCalledWith(rows[1]);
 });
 
 test('shows finalized tracking metadata and opens the selected record', () => {
