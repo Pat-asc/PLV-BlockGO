@@ -9,5 +9,6 @@ namespace Client_app.Models
         public string? Subject { get; set; }
         public string SchoolYear { get; set; } = string.Empty;
         public string Semester { get; set; } = string.Empty;
+        public string Schedule { get; set; } = string.Empty;
     }
 }

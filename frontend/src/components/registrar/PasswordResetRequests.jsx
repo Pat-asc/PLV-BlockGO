@@ -42,25 +42,20 @@ const PasswordResetRequests = ({ onSelectRequest, refreshKey = 0 }) => {
           <p className="mt-0.5 text-[10px] text-slate-500">Pending requests remain visible until the Registrar resets the account password.</p>
         </div>
       </div>
-      <button type="button" onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 rounded-md border border-blue-200 px-3 py-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5"><path d="M20 6v5h-5M4 18v-5h5"/><path d="M6 9a7 7 0 0 1 12-2l2 2M4 15l2 2a7 7 0 0 0 12-2"/></svg>
-        Refresh
-      </button>
+      <button type="button" onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 rounded-md border border-blue-200 px-3 py-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50">Refresh</button>
     </div>
     {error && <div className="mb-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">{error}</div>}
     {loading ? (
-      <div className="rounded-md border border-slate-200 bg-slate-50 p-6 text-center text-xs text-slate-500">Loading reset requests…</div>
+      <div className="rounded-md border border-slate-200 bg-slate-50 p-6 text-center text-xs text-slate-500">Loading reset requests...</div>
     ) : requests.length === 0 ? (
-      <div className="rounded-md border border-slate-200 bg-slate-50/60 p-6 text-center">
-        <p className="text-[11px] font-semibold text-slate-600">No open or recent password reset requests.</p>
-      </div>
+      <div className="rounded-md border border-slate-200 bg-slate-50/60 p-6 text-center"><p className="text-[11px] font-semibold text-slate-600">No open or recent password reset requests.</p></div>
     ) : (
       <div className="space-y-2">
         {requests.map((request) => <article key={request.requestId} className="rounded-md border border-slate-200 p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <h3 className="text-xs font-bold text-slate-800">{request.fullName}</h3>
-              <p className="mt-0.5 text-[10px] text-slate-500">{request.email} · {roleLabel(request.role)}</p>
+              <p className="mt-0.5 text-[10px] text-slate-500">{request.email} - {roleLabel(request.role)}</p>
               <p className="mt-0.5 text-[10px] text-slate-500">Requested {new Date(request.createdAt).toLocaleString()}</p>
             </div>
             <span className={'rounded-full px-2 py-0.5 text-[10px] font-bold ' + (statusClass[request.status] || statusClass.CANCELLED)}>{request.status}</span>
@@ -68,9 +63,7 @@ const PasswordResetRequests = ({ onSelectRequest, refreshKey = 0 }) => {
           {request.reason && <p className="mt-2 rounded bg-slate-50 px-2 py-1.5 text-[10px] text-slate-600">{request.reason}</p>}
           {request.reviewNote && <p className="mt-2 text-[10px] text-slate-500">Registrar note: {request.reviewNote}</p>}
           {(request.status === 'PENDING' || request.status === 'APPROVED') && (
-            <button type="button" onClick={() => onSelectRequest?.(request)} className="mt-2 rounded-md bg-[#003366] px-3 py-1.5 text-[10px] font-bold text-white hover:bg-[#004b8f]">
-              Select account to reset
-            </button>
+            <button type="button" onClick={() => onSelectRequest?.(request)} className="mt-2 rounded-md bg-[#003366] px-3 py-1.5 text-[10px] font-bold text-white hover:bg-[#004b8f]">Select account to reset</button>
           )}
         </article>)}
       </div>

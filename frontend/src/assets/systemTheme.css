@@ -1,0 +1,69 @@
+/* Compatibility tokens for older portal components. New component work uses Tailwind dark: utilities. */
+:where(.system-theme-surface[data-system-theme='dark']) {
+  color: #e2e8f0;
+  --plv-white: #0f172a;
+  --plv-black: #f1f5f9;
+  --plv-text-main: #e2e8f0;
+  --plv-text-sub: #94a3b8;
+  --bg-gray: #020617;
+}
+
+:where(.system-theme-surface[data-system-theme='dark']) :is(.bg-white, .bg-slate-50) { background-color: #0f172a; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.bg-slate-100, .bg-gray-100) { background-color: #020617; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.bg-slate-200, .bg-slate-300) { background-color: #334155; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.text-slate-900, .text-slate-800, .text-slate-700) { color: #e2e8f0; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.text-slate-600, .text-slate-500) { color: #a8b5c7; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.text-slate-400, .text-slate-300) { color: #94a3b8; }
+:where(.system-theme-surface[data-system-theme='dark']) .text-\[\#003366\]:not(.bg-yellow-400) { color: #93c5fd; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.border-slate-100, .border-slate-200, .border-slate-300, .border-gray-200, .border-gray-300) { border-color: #334155; }
+
+:where(.system-theme-surface[data-system-theme='dark']) :is(input, select, textarea) {
+  border-color: #475569;
+  background-color: #0f172a;
+  color: #f8fafc;
+}
+
+:where(.system-theme-surface[data-system-theme='dark']) :is(input, textarea)::placeholder { color: #64748b; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.portal-container, .faculty-grade-encoding) { background-color: #020617; }
+
+:where(.system-theme-surface[data-system-theme='dark']) :is(.table-container, .section-card, .filter-tab, .search-input, .table-header-custom, .table-footer, .row-save-btn, .back-btn, .remarks-select) {
+  border-color: #334155;
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
+
+:where(.system-theme-surface[data-system-theme='dark']) :is(.plv-table td, .card-divider) { border-color: #1e293b; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.plv-table tr:hover, .table-header-custom, .table-footer) { background-color: #111c2f; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.subject-title, .year-title, .sub-title, .input-group label) { color: #e2e8f0; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.sub-code, .final-point, .section-name) { color: #93c5fd; }
+
+:where(.system-theme-surface[data-system-theme='dark']) .blockgo-text-size-control {
+  border-color: #334155;
+  background: #111c2f;
+  color: #e2e8f0;
+}
+
+:where(.system-theme-surface[data-system-theme='dark']) .blockgo-text-size-control button { color: #e2e8f0; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.bg-blue-50, .bg-blue-100) { background-color: #102a56; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.bg-emerald-50, .bg-emerald-100, .bg-green-50, .bg-green-100) { background-color: #052e2b; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.bg-amber-50, .bg-amber-100, .bg-yellow-50, .bg-yellow-100) { background-color: #422006; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.bg-red-50, .bg-red-100) { background-color: #450a0a; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.text-blue-700, .text-blue-800, .text-blue-900) { color: #93c5fd; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.text-emerald-700, .text-emerald-800, .text-emerald-900, .text-green-700, .text-green-800, .text-green-900) { color: #6ee7b7; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.text-amber-700, .text-amber-800, .text-amber-900) { color: #fcd34d; }
+:where(.system-theme-surface[data-system-theme='dark']) :is(.text-red-700, .text-red-800, .text-red-900) { color: #fca5a5; }
+
+/* Provider-level dialogs and notifications render beside AppContent, so they use
+   an authenticated-only marker instead of the portal's descendant dark class. */
+html[data-blockgo-portal-theme='dark'] [data-system-theme-surface] {
+  color-scheme: dark;
+  border-color: #334155;
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
+
+html[data-blockgo-portal-theme='dark'] [data-system-theme-surface] :is(.bg-white, .bg-slate-50, textarea) { background-color: #111827; }
+html[data-blockgo-portal-theme='dark'] [data-system-theme-surface] :is(.border-slate-200, .border-slate-300) { border-color: #334155; }
+html[data-blockgo-portal-theme='dark'] [data-system-theme-surface] :is(.text-slate-900, .text-slate-800, .text-slate-700, .text-slate-600) { color: #e2e8f0; }
+html[data-blockgo-portal-theme='dark'] [data-system-theme-surface] :is(.text-slate-500, .text-slate-400) { color: #94a3b8; }
+html[data-blockgo-portal-theme='dark'] [data-system-theme-surface] .text-\[\#003366\] { color: #93c5fd; }

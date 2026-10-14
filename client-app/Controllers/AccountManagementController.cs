@@ -24,13 +24,12 @@ namespace Client_app.Controllers
         [HttpPost("staff/bulk-upload")]
         [Authorize(Roles = "registrar")]
         [Consumes("multipart/form-data")]
-        [RequestSizeLimit(2 * 1024 * 1024)]
-        public async Task<IActionResult> BulkCreateFaculty([FromForm] IFormFile file, CancellationToken cancellationToken)
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
+        public async Task<IActionResult> BulkCreateStaff([FromForm] IFormFile file, CancellationToken cancellationToken)
         {
-            if (file is null || file.Length == 0)
-                return BadRequest(new { status = "Error", message = "A non-empty CSV faculty account file is required." });
-            if (!string.Equals(Path.GetExtension(file.FileName), ".csv", StringComparison.OrdinalIgnoreCase))
-                return BadRequest(new { status = "Error", message = "Faculty bulk upload currently accepts CSV files only." });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, cancellationToken);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
 
             try
             {
@@ -41,7 +40,7 @@ namespace Client_app.Controllers
 
                 var results = new List<BulkStaffAccountItemResult>(rows.Count);
                 var actor = RequiredActor();
-                var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+                var ipAddress = ClientIpResolver.Resolve(HttpContext);
                 foreach (var row in rows)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -84,7 +83,7 @@ namespace Client_app.Controllers
         {
             try
             {
-                var result = await _accounts.CreateStaffAsync(request, RequiredActor(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                var result = await _accounts.CreateStaffAsync(request, RequiredActor(), ClientIpResolver.Resolve(HttpContext), cancellationToken);
                 return CreatedAtAction(nameof(CreateStaff), new { id = result.Id }, new { status = "Success", data = result });
             }
             catch (ArgumentException ex) { return BadRequest(new { status = "Error", message = ex.Message }); }
@@ -104,7 +103,7 @@ namespace Client_app.Controllers
         {
             try
             {
-                var result = await _accounts.CreateRegistrarAsync(request, RequiredActor(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                var result = await _accounts.CreateRegistrarAsync(request, RequiredActor(), ClientIpResolver.Resolve(HttpContext), cancellationToken);
                 return CreatedAtAction(nameof(GetRegistrars), new { id = result.Id }, new { status = "Success", data = result });
             }
             catch (ArgumentException ex) { return BadRequest(new { status = "Error", message = ex.Message }); }
@@ -117,7 +116,7 @@ namespace Client_app.Controllers
         {
             try
             {
-                var result = await _accounts.UpdateRegistrarAsync(userId, request, RequiredActor(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                var result = await _accounts.UpdateRegistrarAsync(userId, request, RequiredActor(), ClientIpResolver.Resolve(HttpContext), cancellationToken);
                 return Ok(new { status = "Success", data = result });
             }
             catch (KeyNotFoundException ex) { return NotFound(new { status = "Error", message = ex.Message }); }
@@ -132,7 +131,7 @@ namespace Client_app.Controllers
             try
             {
                 var result = await _accounts.DeleteRegistrarAsync(
-                    userId, RequiredActor(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                    userId, RequiredActor(), ClientIpResolver.Resolve(HttpContext), cancellationToken);
                 return Ok(new
                 {
                     status = "Success",
@@ -155,7 +154,7 @@ namespace Client_app.Controllers
                     request.NewPassword,
                     RequiredActor(),
                     RequiredActorRole(),
-                    HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    ClientIpResolver.Resolve(HttpContext),
                     cancellationToken);
                 return Ok(new
                 {

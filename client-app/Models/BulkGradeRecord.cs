@@ -18,7 +18,9 @@ namespace Client_app.Models
 
     public class BulkUploadError
     {
+        public int? RowNumber { get; set; }
         public string StudentId { get; set; } = string.Empty;
+        public string? Code { get; set; }
         public string Reason { get; set; } = string.Empty;
     }
 

@@ -34,6 +34,9 @@ spec:
       initContainers:
       - name: volume-permissions
         image: busybox
+        resources:
+          requests: {cpu: 25m, memory: 32Mi}
+          limits: {cpu: 100m, memory: 128Mi}
         command: ["sh", "-c", "mkdir -p /bitnami/postgresql && chown -R 1001:1001 /bitnami/postgresql && chmod -R u+rwX,g+rwX /bitnami/postgresql"]
         securityContext:
           runAsUser: 0
@@ -43,6 +46,9 @@ spec:
       containers:
       - name: postgres
         image: bitnami/postgresql@sha256:bb51e14bc63942fe575e353b0844a2c8d2baa78bb04836e8798f1663952957e7
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {cpu: 500m, memory: 768Mi}
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5432
@@ -101,4 +107,4 @@ spec:
       accessModes: [ "ReadWriteOnce" ]
       resources:
         requests:
-          storage: 100Gi
+          storage: 20Gi

@@ -7,6 +7,8 @@ import StudentHistoricalGrades from './StudentHistoricalGrades';
 import StudentBlockchainTransactions from './StudentBlockchainTransactions';
 import StudentCurrentSubjects from './StudentCurrentSubjects';
 import CurriculumViewer from '../shared/CurriculumViewer';
+import BackButton from '../shared/BackButton';
+import TextSizeControl from '../shared/TextSizeControl';
 import { getGradeEquivalent } from '../../utils/gradingHelpers';
 import { curriculumProgress } from '../../utils/studentAcademicHelpers';
 
@@ -24,8 +26,6 @@ const StudentPortal = ({ studentData, onLogout }) => {
   const [curriculumError, setCurriculumError] = useState('');
   const [activeSemester, setActiveSemester] = useState('Semester Grades');
   const [activeView, setActiveView] = useState('grades');
-  const [showTransactions, setShowTransactions] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [profile, setProfile] = useState(() => ({ ...studentData }));
   const [profileForm, setProfileForm] = useState(() => ({ phone: studentData.phone || '', sex: studentData.sex || '', middleName: studentData.middleName || '' }));
   const [profileSaving, setProfileSaving] = useState(false);
@@ -46,7 +46,7 @@ const StudentPortal = ({ studentData, onLogout }) => {
       const records = Array.isArray(response?.data) ? response.data : [];
       setGrades(records);
       setGradeMessage(records.length === 0
-        ? (response?.message || 'There are currently no grade records available.')
+        ? (response?.message || 'No released grades are available for this term yet.')
         : '');
     } catch (error) {
       console.error('Unable to load finalized student grade history:', error);
@@ -69,7 +69,8 @@ const StudentPortal = ({ studentData, onLogout }) => {
           setCurriculumError('The published curriculum has no configured subjects yet.');
       }
     } catch (error) {
-      setCurricula([]); setCurriculumError(error.message || 'No published curriculum is assigned to your account.');
+      console.error('Unable to load the student curriculum checklist:', error);
+      setCurricula([]); setCurriculumError('No published curriculum checklist is assigned to your account.');
     } finally { setCurriculumLoading(false); }
   }, []);
 
@@ -132,8 +133,7 @@ const StudentPortal = ({ studentData, onLogout }) => {
   const progressBySubject = useMemo(() => curriculumProgress(curricula[0]?.subjects || [], currentSubjects, grades, currentEnrollment), [curricula, currentSubjects, grades, currentEnrollment]);
 
   const views = [
-    { id: 'grades', label: 'Current Subjects' },
-    { id: 'history', label: 'Grade History' },
+    { id: 'grades', label: 'Grades' },
     { id: 'curriculum', label: 'Curriculum Checklist' },
   ];
 
@@ -147,22 +147,53 @@ const StudentPortal = ({ studentData, onLogout }) => {
     finally { setProfileSaving(false); }
   };
 
+  const renderSettings = ({ close }) => (
+    <div className="space-y-5">
+      <form onSubmit={saveProfile}>
+        <div className="mb-3">
+          <h3 className="text-sm font-bold text-slate-800">Account</h3>
+          <p className="text-xs text-slate-500">Update the profile details you are allowed to manage.</p>
+        </div>
+        {profileNotice ? <p role="status" className="mb-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{profileNotice}</p> : null}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-semibold text-slate-700">Middle Name<input value={profileForm.middleName} onChange={(event) => setProfileForm((current) => ({ ...current, middleName: event.target.value }))} className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-[#003366] focus:ring-2 focus:ring-blue-100" /></label>
+          <label className="text-xs font-semibold text-slate-700">Phone<input value={profileForm.phone} onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))} className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-[#003366] focus:ring-2 focus:ring-blue-100" /></label>
+          <label className="text-xs font-semibold text-slate-700 sm:col-span-2">Sex<select value={profileForm.sex} onChange={(event) => setProfileForm((current) => ({ ...current, sex: event.target.value }))} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-[#003366]"><option value="">Prefer not to specify</option><option value="Female">Female</option><option value="Male">Male</option></select></label>
+        </div>
+        <button disabled={profileSaving} className="mt-3 h-10 w-full rounded-lg bg-[#003366] px-4 text-sm font-bold text-white transition hover:bg-[#00264d] disabled:opacity-50">{profileSaving ? 'Saving…' : 'Save Profile'}</button>
+      </form>
+
+      <section className="border-t border-slate-200 pt-4">
+        <div className="mb-3"><h3 className="text-sm font-bold text-slate-800">Preferences</h3><p className="text-xs text-slate-500">Choose a comfortable portal display.</p></div>
+        <TextSizeControl />
+      </section>
+
+      <section className="border-t border-slate-200 pt-4">
+        <div className="mb-3"><h3 className="text-sm font-bold text-slate-800">Other</h3><p className="text-xs text-slate-500">Open secondary academic and verification pages.</p></div>
+        <div className="grid gap-2">
+          <button type="button" onClick={() => { setActiveView('subjects'); close(); }} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm font-semibold text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-[#003366]"><span>Current Subjects</span><span aria-hidden="true">›</span></button>
+          <button type="button" onClick={() => { setActiveView('transactions'); close(); }} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm font-semibold text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-[#003366]"><span>Blockchain Transactions</span><span aria-hidden="true">›</span></button>
+        </div>
+      </section>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-slate-50 pb-10 font-sans">
-      <StudentNavbar onLogout={onLogout} onOpenSettings={() => setShowSettings(true)} />
+      <StudentNavbar studentData={profile} onLogout={onLogout} renderSettings={renderSettings} />
       <div className="mx-auto max-w-7xl">
         <StudentInfoCard studentData={{ firstName, lastName, middleName: storedMiddleName || 'Not provided', studentId: currentEnrollment?.studentNo || profile.studentNo || 'N/A', dateOfBirth: profile.dateOfBirth || 'Not provided', sex: profile.sex || 'Not provided', phone: profile.phone || 'Not provided', email: profile.studentEmail || profile.email, department: currentEnrollment?.department || profile.department, section: currentEnrollment?.section || profile.section, yearLevel: currentEnrollment?.yearLevel || profile.yearLevel, schoolYear: currentEnrollment?.schoolYear || profile.schoolYear, semester: currentEnrollment?.semester || profile.semester, enrollmentStatus: currentEnrollment ? 'Enrolled' : profile.enrollmentStatus, curriculumName: curricula[0]?.curriculumName || profile.curriculumName, curriculumVersion: curricula[0]?.curriculumVersion || profile.curriculumVersion, address: profile.address || 'Not provided' }} />
         <StudentSummary totalUnits={totalUnits} gwa={calculatedGWA} isDeansLister={isDeansLister} failedSubjectsCount={failedSubjectsCount} semesterLabel={activeSemester} />
 
-        <div className="mx-6 mt-6 flex flex-wrap gap-2">{views.map((view) => <button key={view.id} type="button" onClick={() => { setActiveView(view.id); setShowTransactions(false); }} className={`rounded-lg px-4 py-2 text-sm font-bold ${activeView === view.id && !showTransactions ? 'bg-[#003366] text-white' : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}>{view.label}</button>)}<button type="button" onClick={() => setShowTransactions((value) => !value)} className={`rounded-lg px-4 py-2 text-sm font-bold ${showTransactions ? 'bg-[#003366] text-white' : 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'}`}>{showTransactions ? 'Hide my blockchain transactions' : 'View my blockchain transactions'}</button></div>
-        <main className="mx-6 mt-4">
-          {showTransactions ? <StudentBlockchainTransactions /> : null}
-          {!showTransactions && activeView === 'grades' ? <StudentCurrentSubjects subjects={currentSubjects} schoolYear={currentEnrollment?.schoolYear || ''} semester={currentEnrollment?.semester || ''} loading={subjectLoading} error={subjectError} /> : null}
-          {!showTransactions && activeView === 'history' ? <StudentHistoricalGrades grades={grades} loading={loading} error={gradeError} emptyMessage={gradeMessage} /> : null}
-          {!showTransactions && activeView === 'curriculum' ? <>{curriculumError ? <div className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{curriculumError}</div> : null}{gradeError ? <div className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Grades are temporarily unavailable; curriculum subjects remain visible.</div> : null}<CurriculumViewer curricula={curricula} currentYear={currentEnrollment?.yearLevel || currentYear} loading={curriculumLoading} emptyMessage={curriculumError || 'No published curriculum is assigned to your account.'} progressBySubject={progressBySubject} /></> : null}
+        <nav className="mx-4 mt-5 rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm md:mx-6" aria-label="Student portal sections"><div className="grid grid-cols-2 gap-1.5 sm:flex">{views.map((view) => <button key={view.id} type="button" onClick={() => setActiveView(view.id)} className={`rounded-lg px-4 py-2.5 text-sm font-bold transition ${activeView === view.id ? 'bg-[#003366] text-white shadow-sm' : 'text-slate-700 hover:bg-slate-100'}`}>{view.label}</button>)}</div></nav>
+        <main className="mx-4 mt-4 md:mx-6">
+          {['subjects', 'transactions'].includes(activeView) ? <BackButton onClick={() => setActiveView('grades')} label="Back to Grades" className="mb-3" /> : null}
+          {activeView === 'transactions' ? <StudentBlockchainTransactions /> : null}
+          {activeView === 'subjects' ? <StudentCurrentSubjects subjects={currentSubjects} schoolYear={currentEnrollment?.schoolYear || ''} semester={currentEnrollment?.semester || ''} loading={subjectLoading} error={subjectError} /> : null}
+          {activeView === 'grades' ? <StudentHistoricalGrades grades={grades} loading={loading} error={gradeError} emptyMessage={gradeMessage} /> : null}
+          {activeView === 'curriculum' ? <>{curriculumError ? <div className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{curriculumError}</div> : null}{gradeError ? <div className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Grades are temporarily unavailable; curriculum subjects remain visible.</div> : null}<CurriculumViewer curricula={curricula} currentYear={currentEnrollment?.yearLevel || currentYear} loading={curriculumLoading} emptyMessage={curriculumError || 'No published curriculum is assigned to your account.'} progressBySubject={progressBySubject} showInternalMetadata={false} /></> : null}
         </main>
       </div>
-      {showSettings ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-label="Profile settings"><form onSubmit={saveProfile} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"><div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase text-slate-500">Student Profile</p><h2 className="text-xl font-bold text-[#003366]">Profile Settings</h2></div><button type="button" onClick={() => setShowSettings(false)} aria-label="Close profile settings" className="text-2xl text-slate-500">×</button></div>{profileNotice ? <p className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{profileNotice}</p> : null}<div className="mt-5 grid gap-4 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-700">Middle Name<input value={profileForm.middleName} onChange={(event) => setProfileForm((current) => ({ ...current, middleName: event.target.value }))} className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm" /></label><label className="text-xs font-semibold text-slate-700">Phone<input value={profileForm.phone} onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))} className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm" /></label><label className="text-xs font-semibold text-slate-700 sm:col-span-2">Sex<select value={profileForm.sex} onChange={(event) => setProfileForm((current) => ({ ...current, sex: event.target.value }))} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm"><option value="">Prefer not to specify</option><option value="Female">Female</option><option value="Male">Male</option></select></label></div><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={() => setShowSettings(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold">Cancel</button><button disabled={profileSaving} className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{profileSaving ? 'Saving…' : 'Save Settings'}</button></div></form></div> : null}
     </div>
   );
 };

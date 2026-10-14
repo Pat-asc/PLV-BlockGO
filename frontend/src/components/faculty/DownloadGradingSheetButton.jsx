@@ -1,3 +1,4 @@
+import { showSystemNotification } from '../../services/NotificationContext';
 import { downloadGradingSheet } from '../../services/api';
 import React, { useState } from 'react';
 import { downloadTemplateButtonClass } from '../shared/downloadButtonStyles';
@@ -11,7 +12,7 @@ const DownloadGradingSheetButton = ({ department, section }) => {
             // This leverages api.js to correctly route to port 5000 and attach the JWT
             await downloadGradingSheet(department, section);
         } catch (error) {
-            alert(`Download Error: ${error.message}`);
+            showSystemNotification(`Download Error: ${error.message}`);
         } finally {
             setIsDownloading(false);
         }

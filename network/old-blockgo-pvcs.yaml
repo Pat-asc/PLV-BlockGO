@@ -1,0 +1,1028 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-01422e4d-ydr6
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:42Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: couchdb-faculty
+    name: couchdb-storage-couchdb-faculty-0
+    namespace: plv-annex-campus
+    resourceVersion: "1791151783617311003"
+    uid: ad35c676-7170-49de-b9c6-e063aa602c00
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-ad35c676-7170-49de-b9c6-e063aa602c00
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-01422e4d-ydr6
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:43Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: couchdb-wallet-faculty
+    name: couchdb-wallet-storage-couchdb-wallet-faculty-0
+    namespace: plv-annex-campus
+    resourceVersion: "1791151784400015013"
+    uid: c7b4094c-4a1b-4bd1-b759-1dc483111b5d
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-c7b4094c-4a1b-4bd1-b759-1dc483111b5d
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"fabric-ca-faculty-pvc","namespace":"plv-annex-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-01422e4d-ydr6
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:45Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: fabric-ca-faculty-pvc
+    namespace: plv-annex-campus
+    resourceVersion: "1791151607174943000"
+    uid: 186e16e9-7940-4170-a8dc-da53d5c6c6fe
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-186e16e9-7940-4170-a8dc-da53d5c6c6fe
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-01422e4d-ydr6
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:50Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: ipfs-annex
+    name: ipfs-data-ipfs-annex-0
+    namespace: plv-annex-campus
+    resourceVersion: "1791151791457279010"
+    uid: 8f3521cf-9f4b-469d-acce-807c1dc39295
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-8f3521cf-9f4b-469d-acce-807c1dc39295
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"orderer-3-pvc","namespace":"plv-annex-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-0820761d-wh97
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:07:47Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: orderer-3-pvc
+    namespace: plv-annex-campus
+    resourceVersion: "1791151668635599021"
+    uid: 87ecb152-9fda-457c-9501-c93007c9df8a
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-87ecb152-9fda-457c-9501-c93007c9df8a
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"orderer-4-pvc","namespace":"plv-annex-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-f0af4c6e-vm01
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:08:21Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: orderer-4-pvc
+    namespace: plv-annex-campus
+    resourceVersion: "1791151702662447019"
+    uid: fc318c1a-44ca-4f55-b096-6ba05d29d0d3
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-fc318c1a-44ca-4f55-b096-6ba05d29d0d3
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"peer-faculty-pvc","namespace":"plv-annex-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"20Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-01422e4d-ydr6
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:42Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: peer-faculty-pvc
+    namespace: plv-annex-campus
+    resourceVersion: "1791151784130879009"
+    uid: 4c9420bf-53fa-4f98-ae25-65b254b2bcb5
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-4c9420bf-53fa-4f98-ae25-65b254b2bcb5
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-01422e4d-ydr6
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:34Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: postgres-replica-annex
+    name: postgres-storage-postgres-replica-annex-0
+    namespace: plv-annex-campus
+    resourceVersion: "1791151596338047003"
+    uid: 98be3a12-1bb0-4976-8260-339586fa0169
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-98be3a12-1bb0-4976-8260-339586fa0169
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-0820761d-wh97
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:36Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: postgres-replica-annex-2
+    name: postgres-storage-postgres-replica-annex-2-0
+    namespace: plv-annex-campus
+    resourceVersion: "1791151597721791004"
+    uid: 529a8ee2-0937-4ef6-b833-29a1eb53c8fc
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-529a8ee2-0937-4ef6-b833-29a1eb53c8fc
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"couchdb-backup-pvc","namespace":"plv-fabric"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-f0af4c6e-vm01
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-05T01:08:04Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: couchdb-backup-pvc
+    namespace: plv-fabric
+    resourceVersion: "1791165601185007001"
+    uid: 2bf45815-71a9-40cc-9461-8089ee9707a2
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-2bf45815-71a9-40cc-9461-8089ee9707a2
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"grafana-data","namespace":"plv-fabric"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-01422e4d-ydr6
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:44Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: grafana-data
+    namespace: plv-fabric
+    resourceVersion: "1791151605730031009"
+    uid: 2724968f-90b6-4851-b377-43cc1d08c96f
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-2724968f-90b6-4851-b377-43cc1d08c96f
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-f0af4c6e-vm01
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:48Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: ipfs-node
+    name: ipfs-data-ipfs-node-0
+    namespace: plv-fabric
+    resourceVersion: "1791151789621039011"
+    uid: ced2239c-9c19-474c-b0f5-879221a75d24
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-ced2239c-9c19-474c-b0f5-879221a75d24
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"loki-data","namespace":"plv-fabric"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-f0af4c6e-vm01
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:42Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: loki-data
+    namespace: plv-fabric
+    resourceVersion: "1791151604103551015"
+    uid: 59bdb3ae-2607-41a0-bbf0-e671bba26fde
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-59bdb3ae-2607-41a0-bbf0-e671bba26fde
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"prometheus-data","namespace":"plv-fabric"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-0820761d-wh97
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:40Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: prometheus-data
+    namespace: plv-fabric
+    resourceVersion: "1791151602093359006"
+    uid: a1f804d0-c200-4acb-979c-eb2fb92ead52
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-a1f804d0-c200-4acb-979c-eb2fb92ead52
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-f0af4c6e-vm01
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:41Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: couchdb-registrar
+    name: couchdb-storage-couchdb-registrar-0
+    namespace: plv-main-campus
+    resourceVersion: "1791151782297215011"
+    uid: 2397d246-8279-44b7-9728-86794d4e0dbf
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-2397d246-8279-44b7-9728-86794d4e0dbf
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-f0af4c6e-vm01
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:41Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: couchdb-wallet-registrar
+    name: couchdb-wallet-storage-couchdb-wallet-registrar-0
+    namespace: plv-main-campus
+    resourceVersion: "1791151782511871011"
+    uid: a47f8d69-5564-4aa0-9a6e-a945aea75a59
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-a47f8d69-5564-4aa0-9a6e-a945aea75a59
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"fabric-ca-registrar-pvc","namespace":"plv-main-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-f0af4c6e-vm01
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:45Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: fabric-ca-registrar-pvc
+    namespace: plv-main-campus
+    resourceVersion: "1791151606657551019"
+    uid: 4a7e60f6-fddc-4104-8cb2-504ab02e0d2d
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-4a7e60f6-fddc-4104-8cb2-504ab02e0d2d
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"orderer-1-pvc","namespace":"plv-main-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-f0af4c6e-vm01
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:49Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: orderer-1-pvc
+    namespace: plv-main-campus
+    resourceVersion: "1791151610642303000"
+    uid: 0bbf90d8-3b7d-45ea-8164-3cf579eee6e9
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-0bbf90d8-3b7d-45ea-8164-3cf579eee6e9
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"orderer-2-pvc","namespace":"plv-main-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-01422e4d-ydr6
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:07:14Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: orderer-2-pvc
+    namespace: plv-main-campus
+    resourceVersion: "1791151635768319012"
+    uid: 5b72720f-1e6b-4f06-a5bc-b82eb5fc6e27
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-5b72720f-1e6b-4f06-a5bc-b82eb5fc6e27
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"peer-registrar-pvc","namespace":"plv-main-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"20Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-f0af4c6e-vm01
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:40Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: peer-registrar-pvc
+    namespace: plv-main-campus
+    resourceVersion: "1791151781877311002"
+    uid: 8271d79e-9006-4e22-869b-1e575ad9879b
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-8271d79e-9006-4e22-869b-1e575ad9879b
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-f0af4c6e-vm01
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:05:22Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: postgres-primary
+    name: postgres-storage-postgres-primary-0
+    namespace: plv-main-campus
+    resourceVersion: "1791151524012383013"
+    uid: d21b5835-a9d9-446b-8b4a-1b597473ca16
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-d21b5835-a9d9-446b-8b4a-1b597473ca16
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-01422e4d-ydr6
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:36Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: postgres-replica-main
+    name: postgres-storage-postgres-replica-main-0
+    namespace: plv-main-campus
+    resourceVersion: "1791151597464943024"
+    uid: c18c7a7e-fbb4-4e21-aa57-6698e8f91134
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-c18c7a7e-fbb4-4e21-aa57-6698e8f91134
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-0820761d-wh97
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:44Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: couchdb-department
+    name: couchdb-storage-couchdb-department-0
+    namespace: plv-pubad-campus
+    resourceVersion: "1791151785768671002"
+    uid: f4fe6194-91e7-4cae-955e-3895eb775de4
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-f4fe6194-91e7-4cae-955e-3895eb775de4
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-0820761d-wh97
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:45Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: couchdb-wallet-department
+    name: couchdb-wallet-storage-couchdb-wallet-department-0
+    namespace: plv-pubad-campus
+    resourceVersion: "1791151786468511014"
+    uid: 77b19585-e5b5-4fbb-af3b-556c1225abf3
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-77b19585-e5b5-4fbb-af3b-556c1225abf3
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"fabric-ca-department-pvc","namespace":"plv-pubad-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-0820761d-wh97
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:46Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: fabric-ca-department-pvc
+    namespace: plv-pubad-campus
+    resourceVersion: "1791151607521855023"
+    uid: c8a85bb7-d09c-40d1-b1f1-d7b7e6855c0a
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-c8a85bb7-d09c-40d1-b1f1-d7b7e6855c0a
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-0820761d-wh97
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:50Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: ipfs-pubad
+    name: ipfs-data-ipfs-pubad-0
+    namespace: plv-pubad-campus
+    resourceVersion: "1791151791650447007"
+    uid: a7b379b7-39a1-4377-a5f3-b9232714381e
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-a7b379b7-39a1-4377-a5f3-b9232714381e
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"orderer-5-pvc","namespace":"plv-pubad-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-01422e4d-ydr6
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:08:47Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: orderer-5-pvc
+    namespace: plv-pubad-campus
+    resourceVersion: "1791151728831807013"
+    uid: c9478a92-96d9-4191-a230-73765da7331b
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-c9478a92-96d9-4191-a230-73765da7331b
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"orderer-6-pvc","namespace":"plv-pubad-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-0820761d-wh97
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:13Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: orderer-6-pvc
+    namespace: plv-pubad-campus
+    resourceVersion: "1791151755123039021"
+    uid: b6304e53-2436-4802-a35b-d22e01521ab5
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-b6304e53-2436-4802-a35b-d22e01521ab5
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 10Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"peer-department-pvc","namespace":"plv-pubad-campus"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"20Gi"}},"storageClassName":"fabric-storage"}}
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-0820761d-wh97
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:09:44Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    name: peer-department-pvc
+    namespace: plv-pubad-campus
+    resourceVersion: "1791151786035871018"
+    uid: bfb41e31-9fa6-43d5-9345-110d24115dfe
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-bfb41e31-9fa6-43d5-9345-110d24115dfe
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-0820761d-wh97
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:35Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: postgres-replica-pubad
+    name: postgres-storage-postgres-replica-pubad-0
+    namespace: plv-pubad-campus
+    resourceVersion: "1791151596655327022"
+    uid: 87081092-a4af-4495-ac1f-a923fadd5347
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-87081092-a4af-4495-ac1f-a923fadd5347
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      pv.kubernetes.io/bind-completed: "yes"
+      pv.kubernetes.io/bound-by-controller: "yes"
+      volume.beta.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+      volume.kubernetes.io/selected-node: gke-blockgo-prod-default-pool-f0af4c6e-vm01
+      volume.kubernetes.io/storage-provisioner: pd.csi.storage.gke.io
+    creationTimestamp: "2026-10-04T22:06:37Z"
+    finalizers:
+    - kubernetes.io/pvc-protection
+    labels:
+      app: postgres-replica-pubad-2
+    name: postgres-storage-postgres-replica-pubad-2-0
+    namespace: plv-pubad-campus
+    resourceVersion: "1791151598266991004"
+    uid: c6fb3ec3-e773-4eaa-91a3-f8d4d574203f
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+    storageClassName: fabric-storage
+    volumeMode: Filesystem
+    volumeName: pvc-c6fb3ec3-e773-4eaa-91a3-f8d4d574203f
+  status:
+    accessModes:
+    - ReadWriteOnce
+    capacity:
+      storage: 20Gi
+    phase: Bound
+kind: List
+metadata:
+  resourceVersion: ""

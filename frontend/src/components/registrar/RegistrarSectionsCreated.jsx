@@ -1,4 +1,7 @@
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useEffect, useMemo, useState } from "react";
+import BackButton from "../shared/BackButton";
 import {
   AVAILABLE_YEAR_LEVELS,
   STUDENT_BATCHES_KEY,
@@ -10,17 +13,13 @@ import {
   parseStudentIdSpreadsheet,
   syncSectionedStudentsToStorage,
 } from "../../utils/studentSectioningHelpers";
-import {
-  getNextAcademicSchoolYear,
-  persistPromotedBatchesToBackend,
-  syncSectioningBatchesToBackend,
-} from "../../utils/registrarSectioningBackendSync";
+import { syncSectioningBatchesToBackend } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
-import { fetchNextStudentId } from "../../services/api";
+import { deleteAcademicSection, fetchDepartmentSections, fetchNextStudentId } from "../../services/api";
 
 const GRADUATING_STUDENTS_KEY = "graduatingStudents";
 const IRREGULAR_SUBJECTS_KEY = "irregularSubjectAssignments";
-const TARGET_SEMESTER = "FIRST";
+const TARGET_SEMESTER = "1st Semester";
 const REMOVAL_REASONS = [
   "Duplicate student record",
   "Wrong program",
@@ -126,7 +125,6 @@ function RegistrarSectionsCreated() {
   const [studentIdLoading, setStudentIdLoading] = useState(false);
   const [studentIdError, setStudentIdError] = useState("");
   const [changedDepartments, setChangedDepartments] = useState(() => new Set());
-  const [promoting, setPromoting] = useState(false);
 
   const persistBatches = (nextBatches) => {
     setBatches(nextBatches);
@@ -184,9 +182,9 @@ function RegistrarSectionsCreated() {
         nextDepartments.delete(selectedDepartment);
         return nextDepartments;
       });
-      alert(`${selectedDepartment} section changes applied and synced.`);
+      showSystemNotification(`${selectedDepartment} section changes applied and synced.`);
     } catch (error) {
-      alert(
+      showSystemNotification(
         `Changes were saved locally, but backend sync failed: ${error.message || "Please try applying again."}`
       );
     }
@@ -351,17 +349,39 @@ function RegistrarSectionsCreated() {
     }));
   };
 
-  const handleDeleteSection = () => {
+  const handleDeleteSection = async () => {
     if (!selectedBatch || !selectedSection) return;
 
     const sectionName =
       selectedSection.sectionName ||
       getDefaultSectionName(selectedBatch.program, selectedSection.sectionCode);
-    const confirmed = window.confirm(
-      `Delete ${sectionName}? This will remove the section and all students assigned to it.`
+    const confirmed = await requestSystemConfirmation(
+      `Remove ${sectionName} from active sectioning? Planning assignments will be cleared; finalized academic history will be retained.`
     );
 
     if (!confirmed) return;
+
+    let canonicalId = selectedSection.academicSectionId || selectedSection.id;
+    if (!canonicalId && selectedBatch.program) {
+      try {
+        const response = await fetchDepartmentSections(selectedBatch.program);
+        const [yearLevel, sectionNum] = String(selectedSection.sectionCode).split("-");
+        canonicalId = (response.data || response.sections || []).find(
+          (candidate) => String(candidate.yearLevel) === yearLevel && String(candidate.sectionNum) === sectionNum
+        )?.id;
+      } catch (error) {
+        showSystemNotification(error.message || "The current section list could not be verified.");
+        return;
+      }
+    }
+    if (canonicalId) {
+      try {
+        await deleteAcademicSection(canonicalId);
+      } catch (error) {
+        showSystemNotification(error.message || "The section could not be deleted.");
+        return;
+      }
+    }
 
     updateSelectedBatch((batch) => ({
       ...batch,
@@ -389,7 +409,7 @@ function RegistrarSectionsCreated() {
       getDefaultSectionName(selectedBatch.program, selectedSection.sectionCode);
 
     if (!sectionStudents.length) {
-      alert("No students are assigned to this section yet.");
+      showSystemNotification("No students are assigned to this section yet.");
       return;
     }
 
@@ -411,18 +431,18 @@ function RegistrarSectionsCreated() {
       if (!file) return;
 
       if (!file.name.toLowerCase().endsWith(".csv")) {
-        alert("Please upload a CSV file.");
+        showSystemNotification("Please upload a CSV file.");
         return;
       }
 
       const reader = new FileReader();
 
-      reader.onload = (readerEvent) => {
+      reader.onload = async (readerEvent) => {
         const text = readerEvent.target?.result;
         const parsedStudents = parseStudentIdSpreadsheet(text || "");
 
         if (!parsedStudents.length) {
-          alert(
+          showSystemNotification(
             "The section CSV must contain Student ID, Sex, Last Name, First Name, and Middle Name columns with valid rows."
           );
           return;
@@ -439,7 +459,7 @@ function RegistrarSectionsCreated() {
         ).length;
         const confirmed =
           existingSectionCount === 0 ||
-          window.confirm(
+          await requestSystemConfirmation(
             `Replace ${existingSectionCount} existing student${existingSectionCount === 1 ? "" : "s"} in ${sectionName}?`
           );
 
@@ -472,7 +492,7 @@ function RegistrarSectionsCreated() {
           ],
           lastSectionedAt: new Date().toISOString(),
         }));
-        alert(
+        showSystemNotification(
           `${importedStudents.length} student${importedStudents.length === 1 ? "" : "s"} imported into ${sectionName}.`
         );
       };
@@ -485,7 +505,7 @@ function RegistrarSectionsCreated() {
 
   const handleConfirmRemoveStudent = () => {
     if (!pendingRemoval?.reason) {
-      alert("Please choose a removal reason.");
+      showSystemNotification("Please choose a removal reason.");
       return;
     }
 
@@ -570,7 +590,7 @@ function RegistrarSectionsCreated() {
       !studentForm.firstName.trim() ||
       !studentForm.middleName.trim()
     ) {
-      alert("Complete all student fields before adding.");
+      showSystemNotification("Complete all student fields before adding.");
       return;
     }
 
@@ -578,7 +598,7 @@ function RegistrarSectionsCreated() {
       (student) => student.studentId.toLowerCase() === studentId.toLowerCase()
     );
     if (duplicate) {
-      alert("This student ID already exists in the roster.");
+      showSystemNotification("This student ID already exists in the roster.");
       return;
     }
 
@@ -613,11 +633,11 @@ function RegistrarSectionsCreated() {
   const handlePromoteStudents = async () => {
     const rolloverBatches = getCurrentRolloverBatches(batches);
     if (!rolloverBatches.length) {
-      alert("No saved section lists are ready for promotion.");
+      showSystemNotification("No saved section lists are ready for promotion.");
       return;
     }
 
-    const confirmed = window.confirm(
+    const confirmed = await requestSystemConfirmation(
       "Advance all sections across departments to the next academic year?"
     );
     if (!confirmed) return;
@@ -627,16 +647,6 @@ function RegistrarSectionsCreated() {
     const targetBatches = [];
 
     rolloverBatches.forEach((sourceBatch) => {
-      const sourceSchoolYear = sourceBatch.schoolYear ||
-        (/^\d{4}$/.test(String(sourceBatch.batchYear || ""))
-          ? `${sourceBatch.batchYear}-${Number(sourceBatch.batchYear) + 1}`
-          : "");
-      let targetSchoolYear;
-      try {
-        targetSchoolYear = getNextAcademicSchoolYear(sourceSchoolYear);
-      } catch (error) {
-        throw new Error(`${sourceBatch.program}: ${error.message}`);
-      }
       const promotedStudents = [];
       const promotedSectionsByCode = new Map();
       const graduatingReviewList = [];
@@ -687,10 +697,6 @@ function RegistrarSectionsCreated() {
           semester: TARGET_SEMESTER,
           originBatchYear: sourceBatch.batchYear,
           promotedFromBatchKey: sourceBatch.key,
-          sourceSchoolYear,
-          sourceSemester: sourceBatch.semester,
-          sourceYearLevel: student.yearLevel,
-          originSectionCode: student.sectionCode || "",
           promotedAt: new Date().toISOString(),
         });
       });
@@ -702,10 +708,9 @@ function RegistrarSectionsCreated() {
       const createdAt = new Date().toISOString();
       targetBatches.push({
         id: Number(`${createdAt.replace(/\D/g, "").slice(0, 13)}${targetBatches.length}`),
-        key: [sourceBatch.program, targetSchoolYear, TARGET_SEMESTER, "promotion"].join("|"),
+        key: [sourceBatch.program, sourceBatch.batchYear, TARGET_SEMESTER, "promotion"].join("|"),
         program: sourceBatch.program,
         batchYear: sourceBatch.batchYear,
-        schoolYear: targetSchoolYear,
         semester: TARGET_SEMESTER,
         submittedTo: `${sourceBatch.program} Chairperson`,
         fileName: "Academic year promoted section list",
@@ -758,25 +763,12 @@ function RegistrarSectionsCreated() {
       };
     });
 
-    setPromoting(true);
-    try {
-      const result = await persistPromotedBatchesToBackend(targetBatches);
-      if (Number(result?.promotedCount) !== allPromotedStudents.length) {
-        throw new Error("The server did not confirm every promoted student.");
-      }
-    } catch (error) {
-      alert(`Promotion was not saved: ${error.message || "Please retry."}`);
-      setPromoting(false);
-      return;
-    }
-
     persistBatches(nextBatches);
     setGraduatingStudents(nextGraduatingStudents);
     setIrregularAssignments(nextIrregularAssignments);
     localStorage.setItem(GRADUATING_STUDENTS_KEY, JSON.stringify(nextGraduatingStudents));
     localStorage.setItem(IRREGULAR_SUBJECTS_KEY, JSON.stringify(nextIrregularAssignments));
-    setPromoting(false);
-    alert(`${allPromotedStudents.length} students promoted successfully.`);
+    showSystemNotification(`${allPromotedStudents.length} students promoted successfully.`);
   };
 
   return (
@@ -801,10 +793,9 @@ function RegistrarSectionsCreated() {
             <button
               type="button"
               onClick={handlePromoteStudents}
-              disabled={promoting}
               className="rounded-xl bg-[#003366] px-5 py-3 text-sm font-semibold text-white hover:bg-[#00264d]"
             >
-              {promoting ? "Promoting..." : "Promote Academic Year"}
+              Promote Academic Year
             </button>
           </div>
         </div>
@@ -925,7 +916,7 @@ function RegistrarSectionsCreated() {
             </aside>
 
             <div className="space-y-5">
-              <button type="button" onClick={() => setShowRoster(false)} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-[#003366] hover:bg-slate-50">← Back to Sections Created</button>
+              <BackButton onClick={() => setShowRoster(false)} label="Back to Sections Created" />
               <div className="hidden">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>

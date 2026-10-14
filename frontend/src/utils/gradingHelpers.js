@@ -34,16 +34,25 @@ export const getGradeEquivalent = (grade) => {
   return "-";
 };
 
+export const calculateFinalAverage = (student = {}) => {
+  const midterm = String(student.midterm ?? "").trim();
+  const finals = String(student.finals ?? "").trim();
+  if (!midterm || !finals) return null;
+
+  const midtermNumber = Number(midterm);
+  const finalsNumber = Number(finals);
+  if (!Number.isFinite(midtermNumber) || !Number.isFinite(finalsNumber) || midtermNumber <= 0 || finalsNumber <= 0) return null;
+
+  return (midtermNumber + finalsNumber) / 2;
+};
+
 export const computeFinal = (grades, studentId, activeTerm) => {
   const student = grades[studentId] || {};
-  const mid = Number(student.midterm);
-  const fin = Number(student.finals);
-
   if (activeTerm === "midterm") return "-";
 
   if (activeTerm === "finals") {
-    if (Number.isNaN(mid) || Number.isNaN(fin)) return "-";
-    return ((mid + fin) / 2).toFixed(2);
+    const finalAverage = calculateFinalAverage(student);
+    return finalAverage === null ? "-" : finalAverage.toFixed(2);
   }
 
   return "-";

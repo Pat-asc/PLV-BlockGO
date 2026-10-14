@@ -5,8 +5,10 @@ cd "$(dirname "$0")/.."
 PROFILE="${K8S_PROFILE:-local}"
 CHANNEL_NAME="${CHANNEL_NAME:-registrar-channel}"
 CC_NAME="${CHAINCODE_NAME:-registrar}"
-CC_LABEL="${CHAINCODE_LABEL:-registrar_1.0}"
-CC_VERSION="${CHAINCODE_VERSION:-1.0}"
+# Production currently has registrar 1.0 at sequence 1. This source changes
+# chaincode behavior, so the safe default is the next immutable definition.
+CC_LABEL="${CHAINCODE_LABEL:-registrar_1.1}"
+CC_VERSION="${CHAINCODE_VERSION:-1.1}"
 CC_SEQUENCE="${CHAINCODE_SEQUENCE:-1}"
 CLI_NAMESPACE="plv-main-campus"
 REMOTE_DIR="/tmp/blockgo-chaincode-bootstrap"
@@ -200,7 +202,7 @@ stage_cli_files() {
         kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- sh -c \
             "grep -Fq '${ORG_PEER_HOST[$org]}' /etc/hosts || printf '\n%s %s\n' '$service_ip' '${ORG_PEER_HOST[$org]}' >> /etc/hosts"
 
-        if [[ "$PROFILE" == "production" ]]; then
+        if [[ "$PROFILE" == "production" && "${DEPLOY_SECONDARY_PEERS:-false}" == "true" ]]; then
             service_ip="$(kubectl get service "${ORG_SECONDARY_PEER_SERVICE[$org]}" -n "$namespace" -o jsonpath='{.spec.clusterIP}')"
             [[ -n "$service_ip" ]] || {
                 echo "ERROR: Could not resolve secondary peer service for $org." >&2
@@ -215,7 +217,7 @@ stage_cli_files() {
 install_packages() {
     for org in "${ORGS[@]}"; do
         local peer_hosts=("${ORG_PEER_HOST[$org]}")
-        if [[ "$PROFILE" == "production" ]]; then
+        if [[ "$PROFILE" == "production" && "${DEPLOY_SECONDARY_PEERS:-false}" == "true" ]]; then
             peer_hosts+=("${ORG_SECONDARY_PEER_HOST[$org]}")
         fi
         local peer_host
@@ -296,7 +298,7 @@ approve_for_org() {
         --version "$CC_VERSION" \
         --package-id "${PACKAGE_IDS[$org]}" \
         --sequence "$CC_SEQUENCE" \
-        --waitForEvent
+        --waitForEvent --waitForEventTimeout 120s
 }
 
 chaincode_is_committed() {

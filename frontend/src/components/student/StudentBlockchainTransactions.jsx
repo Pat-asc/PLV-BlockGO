@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { fetchStudentBlockchainTransactions } from '../../services/api';
 import { getGradeEquivalent } from '../../utils/gradingHelpers';
+import StatusBadge from '../shared/StatusBadge';
 
 const TRANSACTIONS_PER_PAGE = 10;
 
@@ -74,12 +75,12 @@ const StudentBlockchainTransactions = () => {
   const firstVisibleTransaction = transactions.length === 0 ? 0 : pageStartIndex + 1;
   const lastVisibleTransaction = Math.min(pageStartIndex + TRANSACTIONS_PER_PAGE, transactions.length);
 
-  if (loading) return <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500">Loading your private blockchain transaction history…</div>;
+  if (loading) return <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">Loading blockchain transactions…</div>;
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-        <div><h2 className="text-xl font-bold text-[#003366]">Blockchain Transactions</h2></div>
+        <div><p className="text-xs font-bold uppercase tracking-wider text-blue-700">Verification History</p><h2 className="text-xl font-bold text-[#003366]">Blockchain Transactions</h2><p className="mt-1 text-sm text-slate-500">A read-only record of your released academic grade transactions.</p></div>
         <button type="button" onClick={load} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200">Refresh</button>
       </div>
       {error ? <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
@@ -99,7 +100,7 @@ const StudentBlockchainTransactions = () => {
                     <td className="px-4 py-3"><span className="font-bold text-[#003366]">{transaction.subjectCode}</span><span className="block text-xs text-slate-500">{transaction.subjectTitle}</span></td>
                     <td className="px-4 py-3">{transaction.professor || 'Not recorded'}</td><td className="whitespace-nowrap px-4 py-3"><span className="block">{transaction.semester || '—'}</span><span className="text-xs text-slate-500">{transaction.schoolYear || '—'}</span></td><td className="px-4 py-3 capitalize">{transaction.term || '—'}</td><td className="px-4 py-3 font-bold">{transaction.grade || '—'}</td><td className="px-4 py-3 font-bold text-[#003366]">{displayEquivalent(transaction.grade)}</td>
                     <td className="min-w-[240px] px-4 py-3"><code className="block break-all text-xs">{expandedHash === hash ? hash : shortenHash(hash)}</code><div className="mt-2 flex gap-2"><button type="button" onClick={() => setExpandedHash(expandedHash === hash ? '' : hash)} className="text-xs font-semibold text-blue-700 hover:underline">{expandedHash === hash ? 'Shorten' : 'View Full Hash'}</button><button type="button" onClick={() => copyHash(hash)} className="text-xs font-semibold text-blue-700 hover:underline">{copiedHash === hash ? 'Copied' : 'Copy Hash'}</button></div></td>
-                    <td className="px-4 py-3"><span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-800">{transaction.status}</span></td>
+                    <td className="px-4 py-3"><StatusBadge status={transaction.status} /></td>
                   </tr>
                 );
               })}

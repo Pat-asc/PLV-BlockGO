@@ -1,4 +1,6 @@
-import { getAuthToken } from './authSession';
+import { broadcastAuthInvalidation, expireAuthSession, getAuthToken } from './authSession';
+import { assertValidCsvUpload, assertValidGradeUpload } from '../utils/csvUploadValidation';
+import { serializeAssignmentSchedule } from '../utils/facultySchedule';
 
 const getBaseUrl = (endpoint) => {
     if (process.env.REACT_APP_API_BASE_URL) {
@@ -42,7 +44,13 @@ const fetchWithAuth = async (endpoint, options = {}) => {
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         const errorMessage = String(errorData.message || errorData.error || 'API Request Failed');
-        throw new Error(errorMessage);
+        const sessionRejected = response.status === 401 ||
+            (response.status === 403 && /invalid|expired|revoked|inactive|no longer authorized/i.test(errorMessage));
+        if (sessionRejected) expireAuthSession(response.status === 401 ? 'unauthorized' : 'revoked');
+        const apiError = new Error(errorMessage);
+        apiError.status = response.status;
+        apiError.data = errorData;
+        throw apiError;
     }
 
     return await response.json();
@@ -125,6 +133,22 @@ export const forgotPassword = (email) => {
     });
 };
 
+export const resetPassword = async ({ email, code, newPassword }) => {
+    const response = await fetchPublic('/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ email, code, newPassword })
+    });
+    broadcastAuthInvalidation(email, 'password_reset');
+    return response;
+};
+
+export const requestPasswordResetAssistance = (email) => {
+    return fetchPublic('/password-reset-assistance', {
+        method: 'POST',
+        body: JSON.stringify({ email })
+    });
+};
+
 export const fetchPasswordResetRequests = async () => fetchWithAuth('/password-reset-requests');
 
 export const hashPassword = async (password) => {
@@ -153,6 +177,15 @@ export const updateStudentProfile = async (profileData) => {
 export const fetchStudentHistoricalGrades = async () => fetchWithAuth('/Student/grades');
 export const fetchStudentCurrentSubjects = async () => fetchWithAuth('/Student/subjects');
 export const fetchStudentBlockchainTransactions = async () => fetchWithAuth('/Student/blockchain-transactions');
+export const fetchGradeReleaseCandidates = async () => fetchWithAuth('/Grades/release-candidates');
+export const releaseStudentGrades = async (payload) => fetchWithAuth('/Grades/release-student', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+});
+export const releaseProgramGrades = async (payload) => fetchWithAuth('/Grades/release-program', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+});
 
 // ==================== MANAGED ACCOUNTS ====================
 export const createStaffAccount = async (account) => fetchWithAuth('/AccountManagement/staff', {
@@ -171,26 +204,47 @@ export const updateRegistrarAccount = async (userId, changes) => fetchWithAuth(`
 export const deleteRegistrarAccount = async (userId) => fetchWithAuth(`/AccountManagement/registrars/${encodeURIComponent(userId)}`, {
     method: 'DELETE',
 });
-export const resetManagedAccountPassword = async (userId, newPassword) => fetchWithAuth(`/AccountManagement/users/${encodeURIComponent(userId)}/password`, {
-    method: 'PUT',
-    body: JSON.stringify({ newPassword }),
-});
+export const resetManagedAccountPassword = async (userId, newPassword) => {
+    const response = await fetchWithAuth(`/AccountManagement/users/${encodeURIComponent(userId)}/password`, {
+        method: 'PUT',
+        body: JSON.stringify({ newPassword }),
+    });
+    if (!response?.idempotent) {
+        broadcastAuthInvalidation(response?.data?.email, 'password_reset_by_admin');
+    }
+    return response;
+};
 
 // ==================== CURRICULUM CHECKLISTS ====================
 export const fetchAcademicPrograms = async () => fetchWithAuth('/Curriculums/programs');
+export const createAcademicProgram = async (programCode, programName) => fetchWithAuth('/Curriculums/programs', {
+    method: 'POST',
+    body: JSON.stringify({ programCode, programName }),
+});
 export const fetchCurriculums = async (status = '') => fetchWithAuth(`/Curriculums${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+export const fetchAssignedCurriculum = async (program, batchYear = null) => {
+    const query = new URLSearchParams({ program });
+    if (batchYear != null && batchYear !== '') query.set('batchYear', String(batchYear));
+    return fetchWithAuth(`/Curriculums/assigned?${query}`);
+};
 export const fetchCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}`);
 export const createCurriculum = async (curriculum) => fetchWithAuth('/Curriculums', { method: 'POST', body: JSON.stringify(curriculum) });
 export const updateCurriculum = async (id, curriculum) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(curriculum) });
 export const addCurriculumSubject = async (id, subject) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/subjects`, { method: 'POST', body: JSON.stringify(subject) });
+export const bulkImportCurriculumSubjects = async (id, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/subjects/bulk-import`, { method: 'POST', body: form });
+};
 export const updateCurriculumSubject = async (id, subjectId, subject) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/subjects/${encodeURIComponent(subjectId)}`, { method: 'PUT', body: JSON.stringify(subject) });
 export const removeCurriculumSubject = async (id, subjectId) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/subjects/${encodeURIComponent(subjectId)}`, { method: 'DELETE' });
+export const removeCurriculumSubjects = async (id, subjectIds) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/subjects/bulk`, { method: 'DELETE', body: JSON.stringify({ subjectIds }) });
 export const submitCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/submit`, { method: 'POST' });
 export const approveCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/approve`, { method: 'POST' });
 export const returnCurriculum = async (id, reason) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/return`, { method: 'POST', body: JSON.stringify({ reason }) });
 export const publishCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/publish`, { method: 'POST' });
 export const archiveCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/archive`, { method: 'POST' });
-export const assignProgramCurriculum = async (id) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/program-assignment`, { method: 'PUT' });
+export const assignProgramCurriculum = async (id, batchYear) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/program-assignment`, { method: 'PUT', body: JSON.stringify({ batchYear: Number(batchYear) }) });
 export const assignStudentCurriculum = async (id, studentEmail) => fetchWithAuth(`/Curriculums/${encodeURIComponent(id)}/students`, { method: 'PUT', body: JSON.stringify({ studentEmail }) });
 export const fetchStudentCurriculum = async () => fetchWithAuth('/Curriculums/student');
 export const fetchFacultyCurriculums = async () => fetchWithAuth('/Curriculums/faculty');
@@ -198,9 +252,28 @@ export const fetchFacultyCurriculums = async () => fetchWithAuth('/Curriculums/f
 // ==================== REGISTRAR SUPPORT TICKETS ====================
 export const fetchSupportTickets = async () => fetchWithAuth('/SupportTickets');
 export const fetchSupportSpecialists = async () => fetchWithAuth('/SupportTickets/specialists');
-export const createSupportTicket = async (ticket) => fetchWithAuth('/SupportTickets', { method: 'POST', body: JSON.stringify(ticket) });
+export const createSupportTicket = async (ticket, files = []) => {
+    if (!files.length) return fetchWithAuth('/SupportTickets', { method: 'POST', body: JSON.stringify(ticket) });
+    const form = new FormData();
+    Object.entries(ticket).forEach(([key, value]) => form.append(key, value ?? ''));
+    files.forEach((file) => form.append('Files', file));
+    return fetchWithAuth('/SupportTickets/with-attachments', { method: 'POST', body: form });
+};
 export const updateSupportTicket = async (id, update) => fetchWithAuth(`/SupportTickets/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(update) });
 export const broadcastSupportNotice = async (message) => fetchWithAuth('/SupportTickets/broadcast', { method: 'POST', body: JSON.stringify({ message }) });
+export const downloadSupportAttachment = async (attachmentId, fileName) => {
+    const token = getAuthToken();
+    const response = await fetch(`${getBaseUrl()}/SupportTickets/attachments/${encodeURIComponent(attachmentId)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) throw new Error('Unable to download the support attachment.');
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName || 'support-attachment';
+    link.click();
+    URL.revokeObjectURL(url);
+};
 export const resolveSecurityEvent = async (id) => fetchWithAuth(`/SystemMonitoring/security-events/${encodeURIComponent(id)}/resolve`, { method: 'POST' });
 
 // ==================== GRADES API - C# STAGING + BLOCKCHAIN LEDGER ====================
@@ -208,8 +281,8 @@ export const getAllGrades = async (invokerId = 'system') => {
     return await fetchWithAuth(`/Grades/all?invokerId=${encodeURIComponent(invokerId)}`);
 };
 
-export const fetchAllGrades = async (invokerId) => {
-    return await fetchWithAuth(`/Grades/all?invokerId=${encodeURIComponent(invokerId)}`);
+export const fetchAllGrades = async (invokerId, options = {}) => {
+    return await fetchWithAuth(`/Grades/all?invokerId=${encodeURIComponent(invokerId)}`, options);
 };
 
 export const issueGradeToBlockchain = async (gradeData) => {
@@ -236,15 +309,25 @@ export const approveGradeInBlockchain = async (id) => {
     });
 };
 
-export const finalizeGradeInBlockchain = async (id) => {
-    return await fetchWithAuth(`/finalize-grade/${encodeURIComponent(id)}`, {
+export const finalizeGrade = async (recordId, invokerId) => {
+    return await fetchWithAuth(`/Grades/finalize/${encodeURIComponent(recordId)}?invokerId=${encodeURIComponent(invokerId)}`, {
         method: 'POST'
     });
 };
 
-export const finalizeGrade = async (recordId, invokerId) => {
-    return await fetchWithAuth(`/Grades/finalize/${encodeURIComponent(recordId)}?invokerId=${encodeURIComponent(invokerId)}`, {
-        method: 'POST'
+export const finalizeApprovedGrades = async (recordIds) => {
+    const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
+    return await fetchWithAuth('/Grades/finalize', {
+        method: 'POST',
+        body: JSON.stringify({ recordIds: ids })
+    });
+};
+
+export const ensureFinalizedGradeArchive = async (recordIds) => {
+    const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
+    return await fetchWithAuth('/Grades/finalized-archive/ensure', {
+        method: 'POST',
+        body: JSON.stringify({ recordIds: ids })
     });
 };
 
@@ -287,6 +370,7 @@ export const fetchBlockchainGrades = async () => {
 };
 
 export const middlewareBatchUploadGrades = async (file) => {
+    await assertValidCsvUpload(file);
     const formData = new FormData();
     formData.append('excel', file);
 
@@ -297,6 +381,7 @@ export const middlewareBatchUploadGrades = async (file) => {
 };
 
 export const middlewareUploadGrades = async (file) => {
+    await assertValidCsvUpload(file);
     const formData = new FormData();
     formData.append('excel', file);
 
@@ -314,9 +399,10 @@ export const batchIssueGradeToBlockchain = async (grades = []) => {
 };
 
 export const batchUploadGrades = async (file, context = {}) => {
+    await assertValidGradeUpload(file);
     const {
         semester = '', schoolYear = '', course = '', facultyId = '', term = '', section = '',
-        facultySectionId, academicSectionId, subjectCode = '',
+        facultySectionId, academicSectionId, subjectCode = '', confirmOverwrite = false,
     } = context;
     if (!facultySectionId) {
         throw new Error('The exact Faculty assignment is missing. Refresh the assigned sections and try again.');
@@ -334,6 +420,7 @@ export const batchUploadGrades = async (file, context = {}) => {
     if (section) formData.append('section', section);
     if (academicSectionId) formData.append('academicSectionId', String(academicSectionId));
     if (subjectCode) formData.append('subjectCode', subjectCode);
+    formData.append('confirmOverwrite', String(Boolean(confirmOverwrite)));
 
     return await fetchWithAuth(`/Grades/bulk-upload`, {
         method: 'POST',
@@ -417,13 +504,45 @@ export const submitFacultySectionToChairperson = async ({ department, section, s
     return await submitSectionGrades(department, section, schoolYear, semester, facultySectionId);
 };
 
+export const fetchApplicationTransactions = async ({ action = '', limit = 500, signal } = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (action.trim()) params.set('action', action.trim());
+    return await fetchWithAuth(`/SystemMonitoring/live-transactions?${params}`, { method: 'GET', cache: 'no-store', signal });
+};
+
+export const fetchLedgerTransactions = async ({ search = '', source = '', limit = 500, signal } = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (search.trim()) params.set('search', search.trim());
+    if (source.trim()) params.set('source', source.trim());
+    return await fetchWithAuth(`/SystemMonitoring/finalized-ledger?${params}`, { method: 'GET', cache: 'no-store', signal });
+};
+
+export const fetchCouchDbDatabases = async (target, { signal } = {}) => (
+    fetchWithAuth(`/SystemMonitoring/couchdb/${encodeURIComponent(target)}/databases`, { method: 'GET', cache: 'no-store', signal })
+);
+
+export const fetchCouchDbDocuments = async (target, database, page = 1, { signal } = {}) => {
+    const params = new URLSearchParams({ database, page: String(page) });
+    return await fetchWithAuth(`/SystemMonitoring/couchdb/${encodeURIComponent(target)}/documents?${params}`, { method: 'GET', cache: 'no-store', signal });
+};
+
 export const fetchChairpersonGradeRecords = async (invokerId = 'chairperson') => {
     return await fetchAllGrades(invokerId);
 };
 
-export const approveGrade = async (recordId, invokerId) => {
-    return await fetchWithAuth(`/Grades/approve/${encodeURIComponent(recordId)}?invokerId=${encodeURIComponent(invokerId)}`, {
-        method: 'POST'
+export const approveGrade = async (recordIds, invokerId) => {
+    const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
+    return await fetchWithAuth(`/Grades/approve?invokerId=${encodeURIComponent(invokerId)}`, {
+        method: 'POST',
+        body: JSON.stringify({ recordIds: ids })
+    });
+};
+
+export const sendGradesToRegistrar = async (recordIds) => {
+    const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
+    return await fetchWithAuth('/Grades/send-to-registrar', {
+        method: 'POST',
+        body: JSON.stringify({ recordIds: ids })
     });
 };
 
@@ -467,8 +586,27 @@ export const fetchUserProfile = async (email, role) => {
     return await fetchWithAuth(`/Auth/user-profile?email=${encodeURIComponent(email)}&role=${encodeURIComponent(role)}`);
 };
 
-export const fetchApprovedStudents = async () => {
-    return await fetchWithAuth(`/Auth/students/approved`);
+export const fetchApprovedStudents = async (academicPeriod = null) => {
+    const query = academicPeriod?.schoolYear && academicPeriod?.semester
+        ? `?schoolYear=${encodeURIComponent(academicPeriod.schoolYear)}&semester=${encodeURIComponent(academicPeriod.semester)}`
+        : '';
+    return await fetchWithAuth(`/Auth/students/approved${query}`);
+};
+
+export const searchExistingStudentsForEnrollment = async (search = '') =>
+    fetchWithAuth(`/Auth/students/enrollment-candidates?search=${encodeURIComponent(search)}`);
+
+export const enrollExistingStudent = async (studentId, enrollment) =>
+    fetchWithAuth(`/Auth/students/${encodeURIComponent(studentId)}/enroll-existing`, {
+        method: 'POST',
+        body: JSON.stringify(enrollment),
+    });
+
+export const fetchEnrolledStudentSubjects = async (studentId, schoolYear, semester) =>
+    fetchWithAuth(`/Auth/students/${encodeURIComponent(studentId)}/assigned-subjects?schoolYear=${encodeURIComponent(schoolYear)}&semester=${encodeURIComponent(semester)}`);
+
+export const fetchStudentTranscript = async (studentUserId) => {
+    return await fetchWithAuth(`/Transcript/students/${encodeURIComponent(studentUserId)}`);
 };
 
 export const fetchNextStudentId = async (year) => {
@@ -531,22 +669,28 @@ export const assignFacultyLoadToBackend = async (assignmentData) => {
         Subject: assignmentData.subjectCode || assignmentData.subject || '',
         SchoolYear: assignmentData.schoolYear || '',
         Semester: assignmentData.semesterCode || assignmentData.semester || '',
+        Schedule: serializeAssignmentSchedule(assignmentData),
     });
 };
 
-export const bulkAssignFacultyLoads = async (assignments) => {
+export const buildBulkFacultyAssignmentRequest = (assignments, context = {}) => ({
+    selectedAcademicSectionId: Number(context.selectedAcademicSectionId) || null,
+    assignments: assignments.map((assignment) => ({
+        clientId: String(assignment.id || assignment.clientId || ''),
+        facultyUserId: Number(assignment.facultyUserId || assignment.facultyId),
+        subjectCode: assignment.subjectCode || assignment.subject || '',
+        program: assignment.program || '',
+        section: assignment.sectionName || assignment.section || '',
+        schoolYear: assignment.schoolYear || '',
+        semester: assignment.semesterCode || assignment.semester || '',
+        schedule: serializeAssignmentSchedule(assignment),
+    })),
+});
+
+export const bulkAssignFacultyLoads = async (assignments, context = {}) => {
     return await fetchWithAuth('/Auth/faculty/assignments/bulk', {
         method: 'POST',
-        body: JSON.stringify({
-            assignments: assignments.map((assignment) => ({
-                clientId: String(assignment.id || assignment.clientId || ''),
-                facultyUserId: Number(assignment.facultyUserId || assignment.facultyId),
-                subjectCode: assignment.subjectCode || assignment.subject || '',
-                academicSectionId: Number(assignment.academicSectionId),
-                schoolYear: assignment.schoolYear || '',
-                semester: assignment.semesterCode || assignment.semester || '',
-            })),
-        }),
+        body: JSON.stringify(buildBulkFacultyAssignmentRequest(assignments, context)),
     });
 };
 
@@ -612,17 +756,27 @@ export const fetchSectionedEnrolledStudents = async (filters = {}) => {
     return await fetchWithAuth(`/Auth/students/sectioned-enrolled?${query}`);
 };
 
+export const removeStudentFromSection = async (sectionId, studentId, period) => {
+    const query = new URLSearchParams({ schoolYear: period.schoolYear, semester: period.semester });
+    return await fetchWithAuth(`/Auth/sections/${encodeURIComponent(sectionId)}/students/${encodeURIComponent(studentId)}?${query}`, { method: 'DELETE' });
+};
+
+export const finalizeEnrollmentRoster = async (payload) => fetchWithAuth('/Auth/enrollments/finalize', {
+    method: 'POST', body: JSON.stringify(payload),
+});
+export const bulkCreateStaffAccounts = async (file) => {
+    await assertValidCsvUpload(file);
+    const formData = new FormData();
+    formData.append('file', file);
+    return fetchWithAuth('/AccountManagement/staff/bulk-upload', { method: 'POST', body: formData });
+};
+
+export const fetchNstpOptions = async () => fetchWithAuth('/Auth/nstp-options');
+
 export const assignStudentsToSection = async (sectionId, studentIds, period) => {
     return await fetchWithAuth(`/Auth/sections/${encodeURIComponent(sectionId)}/assign-students`, {
         method: 'POST',
         body: JSON.stringify({ studentIds, ...period }),
-    });
-};
-
-export const promoteStudentEnrollments = async (students) => {
-    return await fetchWithAuth('/Auth/students/promote', {
-        method: 'POST',
-        body: JSON.stringify({ students }),
     });
 };
 
@@ -639,6 +793,7 @@ export const deleteDepartmentAcademicSections = async (department) => {
 };
 
 export const batchEnrollStudentsToSection = async (file, sectionId) => {
+    await assertValidCsvUpload(file);
     const formData = new FormData();
     formData.append('file', file);
 
@@ -649,6 +804,7 @@ export const batchEnrollStudentsToSection = async (file, sectionId) => {
 };
 
 export const batchUploadStudents = async (file, defaultDepartment = '', mode = 'enroll', enrollment = {}) => {
+    await assertValidCsvUpload(file);
     const formData = new FormData();
     formData.append('file', file);
     if (defaultDepartment) formData.append('defaultDepartment', defaultDepartment);
@@ -658,6 +814,7 @@ export const batchUploadStudents = async (file, defaultDepartment = '', mode = '
     if (enrollment.semester) formData.append('semester', enrollment.semester);
     if (enrollment.yearLevel) formData.append('yearLevel', String(enrollment.yearLevel));
     if (enrollment.section) formData.append('section', enrollment.section);
+    if (enrollment.nstpOption) formData.append('nstpOption', enrollment.nstpOption);
 
     return await fetchWithAuth(`/Auth/students/bulk-upload`, {
         method: 'POST',
@@ -682,6 +839,7 @@ export const registrarBulkUpdateStudents = async (file, department = '', enrollm
 };
 
 export const bulkUploadMasterlist = async (file, department = '') => {
+    await assertValidCsvUpload(file);
     const formData = new FormData();
     formData.append('file', file);
     if (department) formData.append('department', department);
@@ -747,17 +905,19 @@ export const fetchGradeHistory = async (recordId) => {
     return await fetchWithAuth(`/Grades/history/${encodeURIComponent(recordId)}`);
 };
 
+export const correctFinalizedGrade = async (payload) => {
+    return await fetchWithAuth('/Grades/correct-finalized', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+    });
+};
+
 export const correctGrade = async (payload) => {
     return await fetchWithAuth('/Grades/correct', {
         method: 'POST',
         body: JSON.stringify(payload)
     });
 };
-
-export const correctFinalizedGradeAsRegistrar = async (recordId, payload) => fetchWithAuth(`/Grades/registrar-correct/${encodeURIComponent(recordId)}`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-});
 
 export const flagGrade = async (recordId, payload = {}) => {
     return await fetchWithAuth(`/Grades/flag/${encodeURIComponent(recordId)}`, {
@@ -796,6 +956,10 @@ export const getSystemSetting = async (key) => {
     return await fetchWithAuth(`/SystemSettings/${encodeURIComponent(key)}`);
 };
 
+export const fetchAcademicPeriodOptions = async () => {
+    return await fetchWithAuth('/SystemSettings/academic-period-options');
+};
+
 export const updateSystemSetting = async (key, value) => {
     return await fetchWithAuth(`/SystemSettings`, {
         method: 'POST',
@@ -803,9 +967,10 @@ export const updateSystemSetting = async (key, value) => {
     });
 };
 
-export const resetEncodingSeason = async () => {
+export const resetEncodingSeason = async (academicContext) => {
     return await fetchWithAuth(`/SystemSettings/reset-season`, {
-        method: 'POST'
+        method: 'POST',
+        body: JSON.stringify(academicContext)
     });
 };
 
@@ -813,9 +978,10 @@ export const fetchStagedGrades = async (status = '') => {
     return await fetchWithAuth(`/BulkUpload/staged?status=${encodeURIComponent(status)}`);
 };
 
-export const fetchRegistrarFinalizationQueue = async () => {
-    return await fetchWithAuth('/Grades/finalization-queue');
+export const fetchRegistrarFinalizationQueue = async ({ signal } = {}) => {
+    return await fetchWithAuth('/Grades/finalization-queue', { cache: 'no-store', signal });
 };
+
 
 export const approveStagedGrades = async (stagingIds) => {
     return await fetchWithAuth(`/BulkUpload/approve-grades`, {
@@ -859,10 +1025,14 @@ export const searchRegistrarRecords = async (params = {}) => {
     return await fetchWithAuth(`/registrar/Search${query ? `?${query}` : ''}`);
 };
 
-export const downloadGradingSheet = async (facultySectionId, suggestedName = 'Faculty_Grade_Template') => {
+export const downloadGradingSheet = async (facultySectionId, suggestedName = 'Faculty_Grade_Template', format = 'xlsx') => {
+    const normalizedFormat = String(format || '').toLowerCase();
+    if (normalizedFormat !== 'xlsx') {
+        throw new Error('Only XLSX grading templates are supported because CSV cannot preserve formulas or worksheets.');
+    }
     const baseUrl = getBaseUrl('/GradeTemplate');
     const token = getAuthToken();
-    const endpoint = `/GradeTemplate/faculty-section/${encodeURIComponent(facultySectionId)}/download`;
+    const endpoint = `/GradeTemplate/faculty-section/${encodeURIComponent(facultySectionId)}/download?format=${encodeURIComponent(normalizedFormat)}`;
     
     const response = await fetch(`${baseUrl}${endpoint}`, {
         method: 'GET',
@@ -880,7 +1050,7 @@ export const downloadGradingSheet = async (facultySectionId, suggestedName = 'Fa
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${suggestedName}.xlsx`;
+    a.download = `${suggestedName}.${normalizedFormat}`;
     document.body.appendChild(a);
     a.click();
     a.remove();

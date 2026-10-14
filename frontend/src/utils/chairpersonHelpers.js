@@ -108,7 +108,7 @@ export const getSectionReviewRecord = ({ reviewData = {}, reviewKey }) =>
 export const getReviewStatusLabel = (status = "pending") => {
   if (status === "returned") return "Returned to Faculty";
   if (status === "approved") return "Approved by Chairperson";
-  if (status === "forwarded") return "Forwarded to Registrar";
+  if (status === "forwarded") return "Finalized";
   if (status === "submitted") return "Submitted to Chairperson";
   return "Not Yet Submitted";
 };
@@ -164,7 +164,7 @@ export const getFacultyStatusClasses = (status) => {
 export const getChairActionLabel = (status = "pending") => {
   if (status === "returned") return "Returned for Correction";
   if (status === "approved") return "Approved";
-  if (status === "forwarded") return "Sent to Registrar";
+  if (status === "forwarded") return "Finalized on Ledger";
   if (status === "submitted") return "Needs Review";
   return "Waiting for Faculty";
 };

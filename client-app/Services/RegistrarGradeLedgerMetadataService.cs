@@ -31,9 +31,7 @@ public static class RegistrarGradeLedgerMetadataService
     public static bool IsBrowsableStatus(string? status)
     {
         var normalized = status?.Trim().ToLowerInvariant().Replace(" ", string.Empty).Replace("_", string.Empty);
-        return normalized is "submitted" or "submittedtochairperson" or "chairpersonapproved" or
-            "departmentapproved" or "approved" or "forwardedtoregistrar" or "issued" or
-            "finalized" or "corrected";
+        return normalized is "finalized";
     }
 
     public static async Task<Dictionary<string, AssignmentMetadata>> LoadAssignmentsAsync(

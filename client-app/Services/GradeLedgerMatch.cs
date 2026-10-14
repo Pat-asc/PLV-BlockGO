@@ -16,6 +16,6 @@ public static class GradeLedgerMatch
             && Same(staged.SubjectCode, ledger.SubjectCode)
             && Same(staged.SchoolYear, ledger.SchoolYear)
             && Same(staged.Semester, ledger.Semester)
-            && string.Equals(staged.Grade?.Trim(), ledger.Grade?.Trim(), StringComparison.Ordinal);
+            && string.Equals(staged.Grade, ledger.Grade, StringComparison.Ordinal);
     }
 }

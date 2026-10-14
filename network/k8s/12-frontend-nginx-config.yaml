@@ -1,0 +1,115 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-nginx-config
+  namespace: plv-fabric
+data:
+  default.conf: |-
+    upstream client_app {
+      server client-app-service.plv-fabric.svc.cluster.local:5000;
+      keepalive 16;
+    }
+
+    upstream middleware_api {
+      server middleware-api.plv-fabric.svc.cluster.local:4000;
+      keepalive 16;
+    }
+
+    upstream ipfs_gateway {
+      server ipfs-ha-gateway.plv-fabric.svc.cluster.local:8080;
+      keepalive 8;
+    }
+
+    upstream ipfs_api {
+      server ipfs-ha-api.plv-fabric.svc.cluster.local:5001;
+      keepalive 8;
+    }
+
+    server {
+      listen 80;
+      server_name _;
+      client_max_body_size 100m;
+
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_read_timeout 300s;
+
+      # The frontend image contains this neutral marker in public SEO assets.
+      # Nginx substitutes the configured origin at response time, so rotating
+      # the public hostname does not require rebuilding the frontend image.
+      sub_filter_types text/plain application/xml text/xml;
+      sub_filter_once off;
+      sub_filter '__BLOCKGO_RUNTIME_PUBLIC_ORIGIN__' '__BLOCKGO_PUBLIC_ORIGIN__';
+
+      location = /nginx-health {
+        access_log off;
+        add_header Cache-Control "no-store" always;
+        default_type text/plain;
+        return 200 "ok\n";
+      }
+
+      location /chatHub {
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_pass http://client_app;
+      }
+
+      location ^~ /api/chatHub {
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_pass http://client_app;
+      }
+
+      location /ipfs/ {
+        proxy_pass http://ipfs_gateway;
+      }
+
+      location /ipfs-webui/ {
+        proxy_set_header Host localhost:5001;
+        proxy_set_header Origin "";
+        rewrite ^/ipfs-webui/(.*) /webui/$1 break;
+        proxy_pass http://ipfs_api;
+      }
+
+      location /api/v0/ {
+        proxy_set_header Host localhost:5001;
+        proxy_set_header Origin "";
+        proxy_pass http://ipfs_api;
+      }
+
+      location ^~ /api/Grades { proxy_pass http://client_app; }
+      location ^~ /api/Student { proxy_pass http://client_app; }
+      location ^~ /api/student { proxy_pass http://client_app; }
+      location ^~ /api/GradeTemplate { proxy_pass http://client_app; }
+      location ^~ /api/SystemSettings { proxy_pass http://client_app; }
+      location ^~ /api/SystemMonitoring { proxy_pass http://client_app; }
+      location ^~ /api/BulkUpload { proxy_pass http://client_app; }
+      location ^~ /api/bulk-faculty-load { proxy_pass http://client_app; }
+      location ^~ /api/bulk-faculty-sections { proxy_pass http://client_app; }
+      location ^~ /api/assign-faculty-bulk { proxy_pass http://client_app; }
+      location ^~ /api/chairperson { proxy_pass http://client_app; }
+      location ^~ /api/RegistrarDashboard { proxy_pass http://client_app; }
+      location ^~ /api/Sectioning { proxy_pass http://client_app; }
+      location ^~ /api/AccountManagement { proxy_pass http://client_app; }
+      location ^~ /api/Curriculums { proxy_pass http://client_app; }
+      location ^~ /api/SupportTickets { proxy_pass http://client_app; }
+      location ^~ /api/Transcript { proxy_pass http://client_app; }
+      location ^~ /api/backend/health { proxy_pass http://client_app; }
+      location ^~ /api/password-reset-requests { proxy_pass http://client_app; }
+      location ^~ /api/Auth { proxy_pass http://client_app; }
+      location ^~ /api/registrar/ { proxy_pass http://client_app; }
+
+      location /api/ {
+        proxy_pass http://middleware_api;
+      }
+
+      location / {
+        root /usr/share/nginx/html;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+      }
+    }

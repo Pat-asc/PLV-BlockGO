@@ -1,5 +1,6 @@
 import React from "react";
 import plvlogo from "../../assets/plvlogo.png";
+import SettingsMenu from "../shared/SettingsMenu";
 
 function RegistrarHeader({ registrarData, onLogout }) {
   return (
@@ -38,6 +39,8 @@ function RegistrarHeader({ registrarData, onLogout }) {
               {registrarData?.semester || "2nd Semester"}
             </p>
           </div>
+
+          <SettingsMenu />
 
           <button
             onClick={onLogout}

@@ -1,4 +1,5 @@
 using Serilog;
+using Serilog.Events;
 using BlockGo.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Threading.RateLimiting;
@@ -13,11 +14,29 @@ using System.Security.Cryptography;
 using System.Text;
 using Npgsql;
 using Client_app.Microservices;
+using Microsoft.AspNetCore.HttpOverrides;
 
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
+static LogEventLevel HttpRequestLogLevel(HttpContext context, double _, Exception? exception)
+{
+    if (exception is not null || context.Response.StatusCode >= StatusCodes.Status500InternalServerError)
+        return LogEventLevel.Error;
+    if (context.Response.StatusCode >= StatusCodes.Status400BadRequest)
+        return LogEventLevel.Warning;
+
+    var path = context.Request.Path;
+    return path.StartsWithSegments("/health")
+        || path.StartsWithSegments("/api/ready")
+        || path.StartsWithSegments("/api/backend/health")
+        ? LogEventLevel.Debug
+        : LogEventLevel.Information;
+}
+
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("System.Net.Http.HttpClient", LogEventLevel.Warning)
     .WriteTo.Console()
     .WriteTo.File(
         "logs/app-.txt",
@@ -142,16 +161,27 @@ try
 
     builder.Configuration.AddInMemoryCollection(configOverrides);
 
+    var configuredCorsOrigins = builder.Configuration["CORS_ORIGINS"]?
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    var allowedCorsOrigins = configuredCorsOrigins is { Length: > 0 }
+        ? configuredCorsOrigins
+        : new[] { "http://localhost:8080", "http://localhost:8090", "http://localhost:8100", "http://localhost:3000" };
+
     builder.Services.AddCors(options =>
     {
         options.AddPolicy("AllowFrontend", policy =>
         {
-            policy.WithOrigins("http://localhost:8080", "http://localhost:8090", "http://localhost:8100", "http://localhost:3000") 
+            policy.WithOrigins(allowedCorsOrigins)
                   .WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                   .WithHeaders("Content-Type", "Authorization", "x-user-identity", "x-api-key")
                   .AllowCredentials();
         });
     });
+
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+        ForwardedHeadersConfiguration.Configure(options, builder.Configuration));
 
     if (dotnetServiceName == DotnetServiceTopology.Gateway)
     {
@@ -166,7 +196,8 @@ try
         builder.Services.AddProblemDetails();
 
         var gatewayApp = builder.Build();
-        gatewayApp.UseSerilogRequestLogging();
+        gatewayApp.UseForwardedHeaders();
+        gatewayApp.UseSerilogRequestLogging(options => options.GetLevel = HttpRequestLogLevel);
         gatewayApp.UseCors("AllowFrontend");
         gatewayApp.Use(async (context, next) =>
         {
@@ -262,6 +293,7 @@ try
     builder.Services.AddProblemDetails();
 
     var jwtSecret = Environment.GetEnvironmentVariable("JWT_SECRET") ?? throw new InvalidOperationException("JWT_SECRET environment variable is required.");
+    builder.Services.AddSingleton(_ => new GrafanaSessionTokenService(jwtSecret));
     // Keep token validation byte-for-byte compatible with the Node login service.
     var jwtKey = SHA256.HashData(Encoding.UTF8.GetBytes(jwtSecret.Trim()));
 
@@ -311,14 +343,21 @@ try
                     await using var connection = new NpgsqlConnection(validationConnection);
                     await connection.OpenAsync(context.HttpContext.RequestAborted);
                     await using var command = new NpgsqlCommand(@"
-                        SELECT role
+                        SELECT role, auth_version
                         FROM users
                         WHERE LOWER(email) = LOWER(@email)
                           AND is_active = TRUE
                           AND LOWER(status) = 'approved'
                         LIMIT 1;", connection);
                     command.Parameters.AddWithValue("email", email);
-                    var databaseRole = (await command.ExecuteScalarAsync(context.HttpContext.RequestAborted))?.ToString();
+                    await using var reader = await command.ExecuteReaderAsync(context.HttpContext.RequestAborted);
+                    string? databaseRole = null;
+                    var databaseAuthVersion = 0;
+                    if (await reader.ReadAsync(context.HttpContext.RequestAborted))
+                    {
+                        databaseRole = reader.GetString(0);
+                        databaseAuthVersion = reader.GetInt32(1);
+                    }
                     static string NormalizeRole(string value)
                     {
                         var normalized = value.Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
@@ -330,7 +369,10 @@ try
                             var role => role
                         };
                     }
-                    if (string.IsNullOrWhiteSpace(databaseRole) || NormalizeRole(databaseRole) != NormalizeRole(tokenRole))
+                    var tokenAuthVersionClaim = context.Principal?.Claims.FirstOrDefault(claim => claim.Type == "authVersion")?.Value;
+                    var tokenAuthVersion = int.TryParse(tokenAuthVersionClaim, out var parsedVersion) ? parsedVersion : 1;
+                    if (string.IsNullOrWhiteSpace(databaseRole) || NormalizeRole(databaseRole) != NormalizeRole(tokenRole) ||
+                        databaseAuthVersion != tokenAuthVersion)
                     {
                         Log.Warning(
                             "JWT rejected for {Email}. TokenRole={TokenRole}, DatabaseRole={DatabaseRole}",
@@ -391,7 +433,7 @@ try
     {
         options.AddPolicy("fixed", httpContext =>
             RateLimitPartition.GetFixedWindowLimiter(
-                partitionKey: httpContext.User.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+                partitionKey: httpContext.User.Identity?.Name ?? ClientIpResolver.Resolve(httpContext) ?? "anonymous",
                 factory: partition => new FixedWindowRateLimiterOptions
                 {
                     AutoReplenishment = true,
@@ -410,6 +452,8 @@ try
     });
 
     builder.Services.AddHttpClient<IBlockchainService, BlockchainService>();
+    builder.Services.AddScoped<IIpfsVaultService, IpfsVaultService>();
+    builder.Services.AddScoped<FinalizedGradeArchiveService>();
     builder.Services.AddHttpClient("BackendKeepAlive", client =>
     {
         client.Timeout = TimeSpan.FromSeconds(10);
@@ -418,6 +462,7 @@ try
     {
         builder.Services.AddHostedService<BackendKeepAliveService>();
     }
+    builder.Services.AddHostedService<SecurityEventBroadcastService>();
     builder.Services.AddScoped<IFabricCaAuthService, FabricCaAuthService>();
     builder.Services.AddScoped<IEmailService, EmailService>();
     builder.Services.AddScoped<IAuditLogService, AuditLogService>();
@@ -475,8 +520,13 @@ try
 
     var app = builder.Build();
 
+    app.UseForwardedHeaders();
+    app.UseWebSockets(new WebSocketOptions
+    {
+        KeepAliveInterval = TimeSpan.FromSeconds(30)
+    });
     app.UseExceptionHandler();
-    app.UseSerilogRequestLogging();
+    app.UseSerilogRequestLogging(options => options.GetLevel = HttpRequestLogLevel);
     app.UseSwagger();
     app.UseSwaggerUI();
     app.UseCors("AllowFrontend");

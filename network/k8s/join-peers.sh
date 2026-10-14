@@ -299,7 +299,7 @@ PEER_ROWS=(
     "peer-faculty|plv-annex-campus|faculty|FacultyMSP|0"
     "peer-department|plv-pubad-campus|department|DepartmentMSP|0"
 )
-if [[ "$PROFILE" == "production" ]]; then
+if [[ "$PROFILE" == "production" && "${DEPLOY_SECONDARY_PEERS:-false}" == "true" ]]; then
     PEER_ROWS+=(
         "peer-registrar-2|plv-main-campus|registrar|RegistrarMSP|1"
         "peer-faculty-2|plv-annex-campus|faculty|FacultyMSP|1"

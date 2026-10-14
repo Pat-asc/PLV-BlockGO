@@ -1,4 +1,7 @@
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import Modal from "../../services/Modal";
 import {
   AVAILABLE_YEAR_LEVELS,
   STUDENT_BATCHES_KEY,
@@ -13,10 +16,10 @@ import {
   parseStudentIdSpreadsheet,
   syncSectionedStudentsToStorage,
 } from "../../utils/studentSectioningHelpers";
-import { downloadTemplateButtonClass } from "../shared/downloadButtonStyles";
-import { fetchDepartmentSections, fetchNextStudentId, fetchSectionedEnrolledStudents, fetchUnassignedEnrolledStudents, getSystemSetting } from "../../services/api";
+import { deleteAcademicSection, fetchDepartmentSections, fetchNextStudentId, fetchSectionedEnrolledStudents, fetchUnassignedEnrolledStudents, finalizeEnrollmentRoster, getSystemSetting, removeStudentFromSection } from "../../services/api";
 import { syncSectioningBatchToBackend } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
+import { validateCsvUpload } from "../../utils/csvUploadValidation";
 
 const buildStudentName = (student) => {
   if (student.fullName) return student.fullName;
@@ -50,6 +53,44 @@ const compareStudentsByName = (left, right) => {
 
   return leftName.localeCompare(rightName);
 };
+
+export const buildSectionTemplateDownload = ({
+  sections = [],
+  students = [],
+  academicSectionId,
+  program = "student",
+  schoolYear = "",
+  semester = "",
+}) => {
+  const exactId = Number(academicSectionId);
+  const section = sections.find((item) => Number(item.academicSectionId || item.id) === exactId);
+  if (!Number.isInteger(exactId) || exactId <= 0 || !section) return null;
+
+  const exactStudents = students
+    .filter((student) => Number(student.academicSectionId) === exactId)
+    .sort(compareStudentsByName);
+  const safePart = (value, fallback) => String(value || fallback)
+    .trim()
+    .replace(/[^a-z0-9-]+/gi, "-")
+    .replace(/^-+|-+$/g, "");
+  const sectionLabel = section.sectionName || section.sectionCode || `section-${exactId}`;
+  const fileName = [program, sectionLabel, schoolYear, semester, "template"]
+    .map((value, index) => safePart(value, index === 0 ? "student" : "section"))
+    .join("-")
+    .toLowerCase() + ".csv";
+
+  return {
+    academicSectionId: exactId,
+    content: buildStudentCsvContent(exactStudents),
+    fileName,
+    students: exactStudents,
+  };
+};
+
+export const buildCustomSectionTemplateDownload = () => ({
+  content: buildStudentCsvContent([]),
+  fileName: "custom-section-template.csv",
+});
 
 const buildGeneratedSections = ({
   program,
@@ -177,9 +218,11 @@ function RegistrarStudentSectioning({
   const [activeTermLoaded, setActiveTermLoaded] = useState(false);
   const schoolYear = `${sectioningBatchYear}-${Number(sectioningBatchYear) + 1}`;
   const [enrolledCount, setEnrolledCount] = useState(0);
+  const [eligibleStudents, setEligibleStudents] = useState([]);
   const [enrolledLoading, setEnrolledLoading] = useState(true);
   const [enrolledError, setEnrolledError] = useState("");
   const [enrollmentRefresh, setEnrollmentRefresh] = useState(0);
+  const [sectionCapacity, setSectionCapacity] = useState("40");
   const [savingSections, setSavingSections] = useState(false);
   const [targetSemester] = useState("1st Semester");
   const [promotionSummary, setPromotionSummary] = useState(null);
@@ -212,9 +255,9 @@ function RegistrarStudentSectioning({
   const [batchYearPickerAnchor, setBatchYearPickerAnchor] =
     useState(CURRENT_YEAR);
   const batchYearPickerRef = useRef(null);
-  const rosterRef = useRef(null);
   const addStudentRef = useRef(null);
   const [selectedSectionCode, setSelectedSectionCode] = useState("");
+  const [selectedRosterSectionId, setSelectedRosterSectionId] = useState("");
   const [isRosterView, setIsRosterView] = useState(false);
   const [studentSearch, setStudentSearch] = useState("");
   const [pendingRemoval, setPendingRemoval] = useState(null);
@@ -248,10 +291,10 @@ function RegistrarStudentSectioning({
 
     try {
       await syncSectioningBatchToBackend(batch);
-      if (successMessage) alert(successMessage);
+      if (successMessage) showSystemNotification(successMessage);
       return true;
     } catch (error) {
-      alert(
+      showSystemNotification(
         `Saved locally, but backend sync failed: ${error.message || "Please try saving again."}`
       );
       return false;
@@ -322,16 +365,25 @@ function RegistrarStudentSectioning({
   const students = selectedBatch?.students || [];
   const removedStudents = selectedBatch?.removedStudents || [];
   const selectedSection =
+    yearSectionPlans.find(
+      (section) => String(section.academicSectionId || section.id || "") === selectedRosterSectionId
+    ) ||
     yearSectionPlans.find((section) => section.sectionCode === selectedSectionCode) ||
     yearSectionPlans[0] ||
     null;
 
-  const viewSectionRoster = (sectionCode) => {
-    setSelectedSectionCode(sectionCode);
+  const viewSectionRoster = (section) => {
+    setSelectedSectionCode(section.sectionCode);
+    setSelectedRosterSectionId(String(section.academicSectionId || section.id || ""));
+    setStudentSearch("");
+    setPendingRemoval(null);
     setIsRosterView(true);
-    window.requestAnimationFrame(() => {
-      rosterRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+  };
+
+  const closeRosterModal = () => {
+    setIsRosterView(false);
+    setStudentSearch("");
+    setPendingRemoval(null);
   };
 
   const sectionSummaries = yearSectionPlans.map((section) => {
@@ -369,9 +421,15 @@ function RegistrarStudentSectioning({
         .filter(
           (student) => {
             const sectionYearLevel = selectedSection.yearLevel || selectedYearLevel;
+            const selectedAcademicSectionId = Number(selectedSection.academicSectionId);
+            const studentAcademicSectionId = Number(student.academicSectionId);
+            const matchesSection = Number.isInteger(selectedAcademicSectionId) && selectedAcademicSectionId > 0 &&
+              Number.isInteger(studentAcademicSectionId) && studentAcademicSectionId > 0
+              ? studentAcademicSectionId === selectedAcademicSectionId
+              : student.sectionCode === selectedSection.sectionCode;
 
             return (
-              student.sectionCode === selectedSection.sectionCode &&
+              matchesSection &&
               (student.yearLevel || sectionYearLevel) === sectionYearLevel
             );
           }
@@ -591,6 +649,7 @@ function RegistrarStudentSectioning({
     setEnrolledLoading(true);
     setEnrolledError("");
     setEnrolledCount(0);
+    setEligibleStudents([]);
     setSelectedBatchKey("");
     if (!chairpersonDepartment || !/^\d{4}$/.test(sectioningBatchYear)) {
       setEnrolledLoading(false);
@@ -610,12 +669,13 @@ function RegistrarStudentSectioning({
         const backendSections = (sectionsResponse.data || sectionsResponse.sections || [])
           .filter((section) => String(section.yearLevel) === String(YEAR_LEVEL_PREFIXES[selectedYearLevel]));
         setEnrolledCount(unassigned.length);
+        setEligibleStudents(unassigned);
         const key = [chairpersonDepartment, schoolYear, sectioningSemester, "sectioning"].join("|");
         setBatches((current) => {
           const existing = current.find((batch) => batch.key === key);
           if (!existing && !unassigned.length && !sectioned.length && !backendSections.length) return current;
           const retained = (existing?.students || []).filter((student) => student.yearLevel !== selectedYearLevel);
-          const authoritativeStudents = [...sectioned, ...unassigned].map((student) => ({
+          const authoritativeStudents = sectioned.map((student) => ({
             ...student,
             studentId: student.studentNo,
             // Preserve the official full name; do not guess its component parts.
@@ -764,22 +824,22 @@ function RegistrarStudentSectioning({
     setIsBatchYearPickerOpen(false);
   };
 
-  const handleGenerateSections = async () => {
+  const handleGenerateSections = async (populateEligible = false) => {
     if (enrolledLoading || enrolledError || savingSections) return;
     if (!chairpersonDepartment) {
-      alert("Please choose a department first.");
+      showSystemNotification("Please choose a department first.");
       return;
     }
 
     if (!/^\d{4}$/.test(sectioningBatchYear)) {
-      alert("Enter a valid 4-digit batch year.");
+      showSystemNotification("Enter a valid 4-digit batch year.");
       return;
     }
 
     const requestedSectionCount = Number(manualSectionCount);
 
     if (!Number.isInteger(requestedSectionCount) || requestedSectionCount <= 0) {
-      alert("Enter how many sections to create.");
+      showSystemNotification("Enter how many sections to create.");
       return;
     }
 
@@ -787,7 +847,7 @@ function RegistrarStudentSectioning({
     const targetYearLevel = selectedYearLevel;
     const workspaceKey = selectedBatch
       ? activeBatchKey
-      : [chairpersonDepartment, resolvedBatchYear, "sectioning"].join("|");
+      : [chairpersonDepartment, schoolYear, sectioningSemester, "sectioning"].join("|");
     const createdAt = new Date().toISOString();
     const workspaceId = Number(createdAt.replace(/\D/g, "").slice(0, 13));
     const baseWorkspace =
@@ -811,23 +871,42 @@ function RegistrarStudentSectioning({
         sectionPlans: [],
         removedStudents: [],
       };
-    const existingStudents = baseWorkspace.students || [];
+    const mappedEligibleStudents = populateEligible ? eligibleStudents.map((student) => ({
+      ...student,
+      studentId: student.studentNo,
+      firstName: student.fullName,
+      lastName: "",
+      middleName: "",
+      yearLevel: AVAILABLE_YEAR_LEVELS[Number(student.yearLevel) - 1],
+      sectionCode: "",
+      sectionName: "",
+    })) : [];
+    const existingStudentIds = new Set((baseWorkspace.students || []).map((student) => String(student.studentId).toLowerCase()));
+    const existingStudents = [
+      ...(baseWorkspace.students || []),
+      ...mappedEligibleStudents.filter((student) => !existingStudentIds.has(String(student.studentId).toLowerCase())),
+    ];
     const workspace = {
       ...baseWorkspace,
       students: existingStudents,
     };
 
     if (!workspace.students.length && !isRegistrarMode) {
-      alert(
+      showSystemNotification(
         "No students were found for this batch year. Make sure the registrar has forwarded the student list first."
       );
+      return;
+    }
+    const capacity = Number(sectionCapacity);
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 500) {
+      showSystemNotification("Section capacity must be between 1 and 500.");
       return;
     }
     const generatedSections = buildGeneratedSections({
       program: workspace.program,
       yearLevel: targetYearLevel,
       sectionCount: requestedSectionCount,
-    });
+    }).map((section) => ({ ...section, maxCapacity: capacity }));
     const existingYearSections = (workspace.sectionPlans || []).filter((section) =>
       sectionMatchesYearLevel(section, targetYearLevel)
     );
@@ -889,24 +968,37 @@ function RegistrarStudentSectioning({
     try {
       await syncSectioningBatchToBackend(nextWorkspace);
     } catch (error) {
-      alert(`Section assignment failed: ${error.message}`);
+      showSystemNotification(`Section assignment failed: ${error.message}`);
       setSavingSections(false);
       return;
     }
     setSavingSections(false);
     persistBatches(nextBatches);
     setEnrollmentRefresh((current) => current + 1);
-    setEnrolledCount((count) => Math.max(0, count - studentsNeedingSection.length));
+    if (populateEligible) setEnrolledCount((count) => Math.max(0, count - studentsNeedingSection.length));
     setSelectedBatchKey(workspaceKey);
     setSectioningBatchYear(workspace.batchYear || sectioningBatchYear);
     setSelectedYearLevel(targetYearLevel);
     setSelectedSectionCode(mergedYearSections[0]?.sectionCode || "");
 
     if (!studentsForYear.length) {
-      alert(
+      showSystemNotification(
         `${missingSections.length || mergedYearSections.length} empty ${targetYearLevel} section${(missingSections.length || mergedYearSections.length) === 1 ? "" : "s"} created for ${workspace.program}.`
       );
     }
+  };
+
+  const handleAutoPopulate = async () => {
+    if (enrolledLoading || savingSections) return;
+    if (enrolledError) {
+      setEnrollmentRefresh((value) => value + 1);
+      return;
+    }
+    if (enrolledCount === 0) {
+      showSystemNotification(`No eligible unassigned students were found for ${chairpersonDepartment || "this program"}, ${selectedYearLevel}, ${schoolYear} ${sectioningSemester}.`);
+      return;
+    }
+    await handleGenerateSections(true);
   };
 
   const handleSectionNameChange = (sectionCode, sectionName) => {
@@ -927,17 +1019,40 @@ function RegistrarStudentSectioning({
     });
   };
 
-  const handleDeleteSection = (sectionCode) => {
+  const handleDeleteSection = async (sectionCode) => {
     const section = sectionPlans.find((plan) => plan.sectionCode === sectionCode);
     const sectionName =
       section?.sectionName ||
       getDefaultSectionName(selectedBatch?.program, sectionCode);
 
-    const confirmed = window.confirm(
-      `Delete ${sectionName}? This will remove the section and all students assigned to it.`
+    const confirmed = await requestSystemConfirmation(
+      `Remove ${sectionName} from active sectioning? Planning assignments will be cleared; finalized academic history will be retained.`
     );
 
     if (!confirmed) return;
+
+    let canonicalId = section?.academicSectionId || section?.id;
+    if (!canonicalId && selectedBatch?.program) {
+      try {
+        const response = await fetchDepartmentSections(selectedBatch.program);
+        const [yearLevel, sectionNum] = String(sectionCode).split("-");
+        canonicalId = (response.data || response.sections || []).find(
+          (candidate) => String(candidate.yearLevel) === yearLevel && String(candidate.sectionNum) === sectionNum
+        )?.id;
+      } catch (error) {
+        showSystemNotification(error.message || "The current section list could not be verified.");
+        return;
+      }
+    }
+    if (canonicalId) {
+      try {
+        await deleteAcademicSection(canonicalId);
+        setEnrollmentRefresh((current) => current + 1);
+      } catch (error) {
+        showSystemNotification(error.message || "The section could not be deleted.");
+        return;
+      }
+    }
 
     updateSelectedBatch((batch) => ({
       ...batch,
@@ -998,10 +1113,23 @@ function RegistrarStudentSectioning({
     setPendingRemoval(null);
   };
 
-  const handleConfirmRemoveStudent = () => {
+  const handleConfirmRemoveStudent = async () => {
     if (!pendingRemoval?.reason) {
-      alert("Please choose a removal reason before removing a student.");
+      showSystemNotification("Please choose a removal reason before removing a student.");
       return;
+    }
+
+    const studentToRemove = students.find((student) => student.studentId === pendingRemoval.studentId);
+    if (studentToRemove?.academicSectionId) {
+      try {
+        await removeStudentFromSection(studentToRemove.academicSectionId, studentToRemove.studentId, {
+          schoolYear: selectedBatch.schoolYear || schoolYear,
+          semester: selectedBatch.semester || sectioningSemester,
+        });
+      } catch (error) {
+        showSystemNotification(`Student removal failed: ${error.message}`);
+        return;
+      }
     }
 
     updateSelectedBatch((batch) => {
@@ -1032,6 +1160,7 @@ function RegistrarStudentSectioning({
     });
 
     setPendingRemoval(null);
+    setEnrollmentRefresh((current) => current + 1);
   };
 
   const handleRestoreStudent = (studentId) => {
@@ -1048,7 +1177,7 @@ function RegistrarStudentSectioning({
       );
 
       if (alreadyActive) {
-        alert("This student ID already exists in the active roster.");
+        showSystemNotification("This student ID already exists in the active roster.");
         return batch;
       }
 
@@ -1101,7 +1230,7 @@ function RegistrarStudentSectioning({
       !studentForm.firstName.trim() ||
       !studentForm.middleName.trim()
     ) {
-      alert("Complete all student fields before adding the student.");
+      showSystemNotification("Complete all student fields before adding the student.");
       return;
     }
 
@@ -1110,7 +1239,7 @@ function RegistrarStudentSectioning({
     );
 
     if (duplicateStudent) {
-      alert("This student ID is already in the roster.");
+      showSystemNotification("This student ID is already in the roster.");
       return;
     }
 
@@ -1153,7 +1282,7 @@ function RegistrarStudentSectioning({
       .sort(compareStudentsByName);
 
     if (!sectionStudents.length) {
-      alert("No students are assigned to this section yet.");
+      showSystemNotification("No students are assigned to this section yet.");
       return;
     }
 
@@ -1163,33 +1292,38 @@ function RegistrarStudentSectioning({
     );
   };
 
-  const handleDownloadSectionTemplate = () => {
-    const templateRows = [
-      {
-        studentId: "26-0001",
-        sex: "Male",
-        lastName: "Dela Cruz",
-        firstName: "Juan",
-        middleName: "Santos",
-        middleInitial: "Santos",
-        yearLevel: selectedYearLevel,
-      },
-    ];
-    const fileName = `${chairpersonDepartment || "student"}-${selectedYearLevel.replace(/\s+/g, "-").toLowerCase()}-section-template.csv`;
-
-    downloadCsvFile(buildStudentCsvContent(templateRows), fileName);
+  const handleDownloadSectionTemplate = (section) => {
+    const academicSectionId = section?.academicSectionId || section?.id;
+    if (!Number.isInteger(Number(academicSectionId)) || Number(academicSectionId) <= 0) {
+      const download = buildCustomSectionTemplateDownload();
+      downloadCsvFile(download.content, download.fileName);
+      return;
+    }
+    const download = buildSectionTemplateDownload({
+      sections: sectionPlans,
+      students,
+      academicSectionId,
+      program: selectedBatch?.program || chairpersonDepartment,
+      schoolYear: selectedBatch?.schoolYear || selectedBatch?.batchYear || schoolYear,
+      semester: selectedBatch?.semester || sectioningSemester,
+    });
+    if (!download) {
+      showSystemNotification("The selected academic section could not be resolved by its exact ID.");
+      return;
+    }
+    downloadCsvFile(download.content, download.fileName);
   };
 
   const handleImportSectionCsv = (sectionCode) => {
     if (!selectedBatch) {
-      alert("Please create or choose a section first.");
+      showSystemNotification("Please create or choose a section first.");
       return;
     }
 
     const section = sectionPlans.find((plan) => plan.sectionCode === sectionCode);
 
     if (!section) {
-      alert("Selected section was not found.");
+      showSystemNotification("Selected section was not found.");
       return;
     }
 
@@ -1197,24 +1331,25 @@ function RegistrarStudentSectioning({
     input.type = "file";
     input.accept = ".csv";
 
-    input.onchange = (event) => {
+    input.onchange = async (event) => {
       const file = event.target.files?.[0];
 
       if (!file) return;
 
-      if (!file.name.toLowerCase().endsWith(".csv")) {
-        alert("Please upload a CSV file.");
+      const validationError = await validateCsvUpload(file);
+      if (validationError) {
+        showSystemNotification(validationError);
         return;
       }
 
       const reader = new FileReader();
 
-      reader.onload = (readerEvent) => {
+      reader.onload = async (readerEvent) => {
         const text = readerEvent.target?.result;
         const parsedStudents = parseStudentIdSpreadsheet(text || "");
 
         if (!parsedStudents.length) {
-          alert(
+          showSystemNotification(
             "The section CSV must contain Student ID, Sex, Last Name, First Name, and Middle Name columns with valid rows."
           );
           return;
@@ -1234,7 +1369,7 @@ function RegistrarStudentSectioning({
         ).length;
         const confirmed =
           existingSectionCount === 0 ||
-          window.confirm(
+          await requestSystemConfirmation(
             `Replace ${existingSectionCount} existing student${existingSectionCount === 1 ? "" : "s"} in ${sectionName}?`
           );
 
@@ -1278,7 +1413,7 @@ function RegistrarStudentSectioning({
           if (synced) setEnrollmentRefresh((current) => current + 1);
         });
         setSelectedSectionCode(section.sectionCode);
-        alert(
+        showSystemNotification(
           `${importedStudents.length} student${importedStudents.length === 1 ? "" : "s"} imported into ${sectionName}.`
         );
       };
@@ -1307,13 +1442,34 @@ function RegistrarStudentSectioning({
     if (synced) {
       persistBatches(nextBatches);
       setEnrollmentRefresh((current) => current + 1);
-      alert("Sections saved and synced successfully.");
+      showSystemNotification("Sections saved and synced successfully.");
+    }
+  };
+
+  const handleFinalizeEnrollment = async () => {
+    if (!selectedBatch || savingSections) return;
+    if (!await requestSystemConfirmation(`Finalize and lock the reviewed ${selectedBatch.program} roster for ${selectedBatch.schoolYear || schoolYear} ${selectedBatch.semester || sectioningSemester}?`)) return;
+    setSavingSections(true);
+    try {
+      const synced = await syncBatchToBackend(selectedBatch);
+      if (!synced) return;
+      const response = await finalizeEnrollmentRoster({
+        program: selectedBatch.program,
+        schoolYear: selectedBatch.schoolYear || schoolYear,
+        semester: selectedBatch.semester || sectioningSemester,
+      });
+      showSystemNotification(`${response.finalized || 0} enrollment(s) finalized. The roster is now locked.`);
+      setEnrollmentRefresh((current) => current + 1);
+    } catch (error) {
+      showSystemNotification(`Enrollment finalization failed: ${error.message}`);
+    } finally {
+      setSavingSections(false);
     }
   };
 
   const handleShuffleSections = () => {
     if (!selectedBatch || yearSectionPlans.length < 2) {
-      alert("At least two saved sections are needed before shuffling students.");
+      showSystemNotification("At least two saved sections are needed before shuffling students.");
       return;
     }
 
@@ -1322,14 +1478,28 @@ function RegistrarStudentSectioning({
     );
 
     if (studentsForYear.length < 2) {
-      alert("At least two students are needed before shuffling.");
+      showSystemNotification("At least two students are needed before shuffling.");
       return;
     }
 
-    const shuffledStudents = [...studentsForYear].sort(() => Math.random() - 0.5);
+    const totalCapacity = yearSectionPlans.reduce((sum, section) => sum + Number(section.maxCapacity || 40), 0);
+    if (studentsForYear.length > totalCapacity) {
+      showSystemNotification(`The selected sections have ${totalCapacity} total slots for ${studentsForYear.length} students.`);
+      return;
+    }
+    const stableScore = (student) => String(student.studentId || '').split('').reduce((score, character) => ((score * 31) + character.charCodeAt(0)) >>> 0, 7);
+    const shuffledStudents = [...studentsForYear].sort((left, right) => stableScore(left) - stableScore(right) || String(left.studentId).localeCompare(String(right.studentId)));
+    const targetCounts = new Map(yearSectionPlans.map((section) => [section.sectionCode, 0]));
     const assignedStudentsById = new Map(
       shuffledStudents.map((student, index) => {
-        const targetSection = yearSectionPlans[index % yearSectionPlans.length];
+        const targetSection = [...yearSectionPlans]
+          .filter((section) => targetCounts.get(section.sectionCode) < Number(section.maxCapacity || 40))
+          .sort((left, right) => {
+            const leftRatio = targetCounts.get(left.sectionCode) / Number(left.maxCapacity || 40);
+            const rightRatio = targetCounts.get(right.sectionCode) / Number(right.maxCapacity || 40);
+            return leftRatio - rightRatio || String(left.sectionCode).localeCompare(String(right.sectionCode));
+          })[0];
+        targetCounts.set(targetSection.sectionCode, targetCounts.get(targetSection.sectionCode) + 1);
         const sectionName =
           targetSection.sectionName ||
           getDefaultSectionName(selectedBatch.program, targetSection.sectionCode);
@@ -1354,7 +1524,7 @@ function RegistrarStudentSectioning({
       lastSectionedAt: new Date().toISOString(),
     }));
 
-    alert(`${selectedYearLevel} students shuffled successfully.`);
+    showSystemNotification(`${selectedYearLevel} students shuffled successfully.`);
   };
 
   const persistSectioningData = (nextBatches, nextGraduatingStudents) => {
@@ -1383,9 +1553,9 @@ function RegistrarStudentSectioning({
     onSectioningSaved?.();
   };
 
-  const handlePromoteStudents = () => {
+  const handlePromoteStudents = async () => {
     if (!currentRolloverBatches.length) {
-      alert("No saved section lists are ready for promotion.");
+      showSystemNotification("No saved section lists are ready for promotion.");
       return;
     }
 
@@ -1393,7 +1563,7 @@ function RegistrarStudentSectioning({
       (total, batch) => total + (batch.students || []).length,
       0
     );
-    const confirmed = window.confirm(
+    const confirmed = await requestSystemConfirmation(
       `Promote ${studentsToPromote} student${studentsToPromote === 1 ? "" : "s"} across all available departments to the next academic year?`
     );
 
@@ -1594,7 +1764,7 @@ function RegistrarStudentSectioning({
       ).length,
       batches: currentRolloverBatches.length,
     });
-    alert(
+    showSystemNotification(
       `${allPromotedStudents.length} student${allPromotedStudents.length === 1 ? "" : "s"} promoted successfully across all available departments.`
     );
   };
@@ -1628,7 +1798,7 @@ function RegistrarStudentSectioning({
       ) || subjectAssignment;
 
     if (!batch || !student || !subjectAssignment || !assignedSection || !sectionSubjectAssignment) {
-      alert("Please choose the student, repeated subject, and assigned section.");
+      showSystemNotification("Please choose the student, repeated subject, and assigned section.");
       return;
     }
 
@@ -1713,7 +1883,7 @@ function RegistrarStudentSectioning({
     );
 
     if (!batch || !student || !transferSubjectForm.irregularSubjectId || !targetSection) {
-      alert("Please choose the student, repeated subject, and new section.");
+      showSystemNotification("Please choose the student, repeated subject, and new section.");
       return;
     }
 
@@ -1821,7 +1991,7 @@ function RegistrarStudentSectioning({
 
   const handleBulkGraduatingStatusChange = (status) => {
     if (!visibleGraduatingStudents.length) {
-      alert("No visible fourth-year students to update.");
+      showSystemNotification("No visible fourth-year students to update.");
       return;
     }
 
@@ -1858,8 +2028,8 @@ function RegistrarStudentSectioning({
     persistSectioningData(batches, nextGraduatingStudents);
   };
 
-  const handleDeleteGraduatingBatch = (batchGroup) => {
-    const confirmed = window.confirm(
+  const handleDeleteGraduatingBatch = async (batchGroup) => {
+    const confirmed = await requestSystemConfirmation(
       `Delete graduation review records for Batch ${batchGroup.batchYear}?`
     );
 
@@ -2547,8 +2717,7 @@ function RegistrarStudentSectioning({
 
       <div className="space-y-3">
         <main className="space-y-3">
-          {!isRosterView ? (
-            <>
+          <>
           {isRegistrarMode ? (
             <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
               <div>
@@ -2562,7 +2731,7 @@ function RegistrarStudentSectioning({
                   {sectioningSemester === "FIRST" ? "First Semester" : sectioningSemester === "SECOND" ? "Second Semester" : "Midyear"} (active term)
                 </span>
                 <button type="button" disabled={enrolledLoading || savingSections}
-                  onClick={() => setEnrollmentRefresh((value) => value + 1)}
+                  onClick={handleAutoPopulate}
                   className="rounded-md border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700 disabled:opacity-50">
                   {enrolledLoading ? "Loading enrolled students..." : `Auto-Populate Enrolled (${enrolledCount})`}
                 </button>
@@ -2570,7 +2739,7 @@ function RegistrarStudentSectioning({
               </div>
               {enrolledError ? <p role="alert" className="mt-2 text-sm text-red-700">{enrolledError}</p> : null}
 
-              <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3 xl:grid-cols-[135px_135px_135px_auto_auto_auto_auto] xl:items-end">
+              <div data-testid="section-generator-controls" className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-[135px_135px_135px_135px_auto_auto_auto_auto] xl:items-end">
                 <label className="block">
                   <span className="mb-1 block text-xs font-medium text-slate-700">
                     Year level
@@ -2699,9 +2868,16 @@ function RegistrarStudentSectioning({
                   />
                 </label>
 
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-slate-700">Maximum students</span>
+                  <input type="number" min="1" max="500" value={sectionCapacity}
+                    onChange={(event) => setSectionCapacity(event.target.value)}
+                    className="h-8 w-full rounded-md border border-slate-300 px-2 text-[11px] outline-none focus:border-[#003366]" />
+                </label>
+
                 <button
                   type="button"
-                  onClick={handleGenerateSections}
+                  onClick={() => handleGenerateSections(false)}
                   disabled={enrolledLoading || !!enrolledError || savingSections}
                   className="h-8 whitespace-nowrap rounded-md bg-[#003366] px-3 text-[11px] font-semibold text-white transition hover:bg-[#00264d]"
                 >
@@ -2717,20 +2893,21 @@ function RegistrarStudentSectioning({
                 </button>
                 <button
                   type="button"
-                  onClick={handleDownloadSectionTemplate}
-                  className={downloadTemplateButtonClass}
-                >
-                  Download Template
-                </button>
-                <button
-                  type="button"
                   onClick={handleSaveSectioning}
                   disabled={!selectedBatch || !sectionPlans.length || savingSections}
                   className="h-8 whitespace-nowrap rounded-md border border-[#003366] px-3 text-[11px] font-semibold text-[#003366] transition hover:bg-[#003366] hover:text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
                 >
                   Save Sections
                 </button>
+                <button type="button" onClick={handleFinalizeEnrollment}
+                  disabled={!selectedBatch || !sectionPlans.length || savingSections}
+                  className="h-8 whitespace-nowrap rounded-md bg-emerald-700 px-3 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
+                  Finalize
+                </button>
               </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Save Sections keeps the planning roster editable. Finalize verifies every enrolled student is assigned, then locks this program roster for the active academic period.
+              </p>
 
             </section>
           ) : null}
@@ -2802,7 +2979,7 @@ function RegistrarStudentSectioning({
                       <div className="flex items-start justify-between gap-3">
                         <button
                           type="button"
-                          onClick={() => viewSectionRoster(section.sectionCode)}
+                          onClick={() => viewSectionRoster(section)}
                           className="text-left"
                         >
                           <p className="text-sm font-bold text-[#003366]">
@@ -2837,7 +3014,7 @@ function RegistrarStudentSectioning({
                       <div className="mt-2 flex flex-wrap gap-1.5 border-t border-slate-100 pt-2">
                         <button
                           type="button"
-                          onClick={() => viewSectionRoster(section.sectionCode)}
+                          onClick={() => viewSectionRoster(section)}
                           className="rounded-md border border-blue-100 px-3 py-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-50"
                         >
                           View Roster
@@ -2848,6 +3025,14 @@ function RegistrarStudentSectioning({
                           className="rounded-md border border-blue-100 px-3 py-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-50"
                         >
                           Export CSV
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Download template for ${section.sectionName}`}
+                          onClick={() => handleDownloadSectionTemplate(section)}
+                          className="min-h-8 rounded-md border border-blue-200 px-3 py-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        >
+                          Download Template
                         </button>
                         <button
                           type="button"
@@ -2878,18 +3063,25 @@ function RegistrarStudentSectioning({
               )}
             </section>
             </>
-          ) : null}
 
-            {isRosterView ? (
-            <section ref={rosterRef} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <Modal
+              isOpen={isRosterView}
+              onClose={closeRosterModal}
+              title={`${selectedSection?.sectionName || (selectedSection ? getDefaultSectionName(selectedBatch?.program, selectedSection.sectionCode) : "Section")} — Student Roster`}
+              description={`${schoolYear} · ${sectioningSemester === "FIRST" ? "First Semester" : sectioningSemester === "SECOND" ? "Second Semester" : "Midyear"} · ${visibleSectionStudents.length} Students`}
+              panelClassName="flex max-h-[90vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6"
+              bodyClassName="min-h-0 flex-1 overflow-y-auto pr-1"
+            >
+            <div data-testid="section-roster-scroll-area" className="max-h-full space-y-5 overflow-y-auto text-slate-700 dark:text-slate-200">
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900 sm:p-6">
               <div className="mb-5 flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-start lg:justify-between">
                 <div className="flex items-center gap-4">
                   <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-700">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-7 w-7"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2"/><path d="M3 20v-2a6 6 0 0 1 12 0v2m0-5a4 4 0 0 1 6 3v2"/></svg>
                   </span>
                   <div>
-                    <button type="button" onClick={() => setIsRosterView(false)} className="mb-2 text-xs font-medium text-blue-700 hover:underline">Section Creator &nbsp;›</button>
-                    <h3 className="text-2xl font-bold text-[#003366]">
+                    <button type="button" onClick={closeRosterModal} className="mb-2 text-xs font-medium text-blue-700 hover:underline dark:text-sky-300">Section Management &nbsp;›</button>
+                    <h3 className="text-2xl font-bold text-[#003366] dark:text-sky-300">
                     {selectedSection
                       ? selectedSection.sectionName ||
                         getDefaultSectionName(
@@ -2902,9 +3094,7 @@ function RegistrarStudentSectioning({
                   </div>
                 </div>
 
-                <button type="button" onClick={() => setIsRosterView(false)} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold text-[#003366] hover:bg-slate-50">
-                  <span aria-hidden="true">←</span> Back to Section Creator
-                </button>
+                <button type="button" onClick={closeRosterModal} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Close</button>
               </div>
 
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -2913,7 +3103,7 @@ function RegistrarStudentSectioning({
                     value={studentSearch}
                     onChange={(event) => setStudentSearch(event.target.value)}
                     placeholder="Search by ID or name..."
-                    className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#003366] lg:max-w-sm"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-[#003366] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 lg:max-w-sm"
                   />
                 {isRegistrarMode ? (
                   <button
@@ -2929,7 +3119,7 @@ function RegistrarStudentSectioning({
               </div>
 
               {pendingRemoval ? (
-                <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4">
+                <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40">
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                     <div>
                       <p className="text-sm font-semibold text-red-700">
@@ -3003,14 +3193,14 @@ function RegistrarStudentSectioning({
                   <tbody>
                     {visibleSectionStudents.length > 0 ? (
                       visibleSectionStudents.map((student) => (
-                        <tr key={student.studentId} className="border-b bg-white">
-                          <td className="px-4 py-3 font-semibold text-slate-800">
+                        <tr key={student.studentId} className="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                          <td className="px-4 py-3 font-semibold text-slate-800 dark:text-slate-100">
                             {student.studentId}
                           </td>
-                          <td className="px-4 py-3 text-slate-700">
+                          <td className="px-4 py-3 text-slate-700 dark:text-slate-200">
                             {buildStudentName(student)}
                           </td>
-                          <td className="px-4 py-3 text-slate-600">
+                          <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
                             {student.sex || "--"}
                           </td>
                           <td className="px-4 py-3">
@@ -3025,7 +3215,7 @@ function RegistrarStudentSectioning({
                                   : undefined
                               }
                               disabled={!isRegistrarMode}
-                              className="w-full min-w-44 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#003366]"
+                              className="w-full min-w-44 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                             >
                               <option value="">Unassigned</option>
                               {sectionSummaries.map((section) => (
@@ -3066,11 +3256,10 @@ function RegistrarStudentSectioning({
                 </table>
               </div>
             </section>
-            ) : null}
 
             {isRegistrarMode && isRosterView ? (
-            <section ref={addStudentRef} className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="text-xl font-bold text-[#003366]">
+            <section ref={addStudentRef} className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+                <h3 className="text-xl font-bold text-[#003366] dark:text-sky-300">
                 Add Student
               </h3>
               <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
@@ -3138,9 +3327,9 @@ function RegistrarStudentSectioning({
             ) : null}
 
             {isRegistrarMode && isRosterView ? (
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
               <div className="mb-5">
-                <h3 className="text-xl font-bold text-[#003366]">
+              <h3 className="text-xl font-bold text-[#003366] dark:text-sky-300">
                   Removed Students
                 </h3>
               </div>
@@ -3160,11 +3349,11 @@ function RegistrarStudentSectioning({
                   <tbody>
                     {removedStudents.length > 0 ? (
                       removedStudents.map((student) => (
-                        <tr key={`${student.studentId}-${student.removedAt}`} className="border-b bg-white">
-                          <td className="px-4 py-3 font-semibold text-slate-800">
+                        <tr key={`${student.studentId}-${student.removedAt}`} className="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                          <td className="px-4 py-3 font-semibold text-slate-800 dark:text-slate-100">
                             {student.studentId}
                           </td>
-                          <td className="px-4 py-3 text-slate-700">
+                          <td className="px-4 py-3 text-slate-700 dark:text-slate-200">
                             {buildStudentName(student)}
                           </td>
                           <td className="px-4 py-3 text-slate-600">
@@ -3206,6 +3395,8 @@ function RegistrarStudentSectioning({
               </div>
             </section>
             ) : null}
+            </div>
+            </Modal>
           </main>
       </div>
     </div>

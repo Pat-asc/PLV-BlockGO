@@ -534,3 +534,22 @@
   display: flex;
   gap: 10px;
 }
+
+/* Consistent, restrained interaction feedback for Faculty grade actions. */
+.faculty-grade-encoding button:not(:disabled) {
+  transition-property: color, background-color, border-color, box-shadow, transform;
+  transition-duration: 150ms;
+}
+
+.faculty-grade-encoding button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.faculty-grade-encoding button:not(:disabled):active {
+  transform: translateY(0) scale(0.98);
+}
+
+.faculty-grade-encoding button:focus-visible {
+  outline: 3px solid rgba(0, 51, 102, 0.35);
+  outline-offset: 2px;
+}

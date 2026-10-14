@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const net = require('net');
 const tls = require('tls');
@@ -118,8 +119,8 @@ function fabricEndpointUrls() {
 
 function fabricDiscoveryEnabled() {
     const configured = process.env.FABRIC_DISCOVERY_ENABLED;
-    if (configured !== undefined) return ['1', 'true', 'yes', 'on'].includes(String(configured).trim().toLowerCase());
-    return Boolean(process.env.KUBERNETES_SERVICE_HOST);
+    return configured !== undefined &&
+        ['1', 'true', 'yes', 'on'].includes(String(configured).trim().toLowerCase());
 }
 
 function profileForIdentity(identity) {
@@ -173,6 +174,23 @@ function profileForIdentity(identity) {
     return profile;
 }
 
+function identityFingerprint(identity) {
+    const certificate = identity?.credentials?.certificate || '';
+    const mspId = identity?.mspId || '';
+
+    return crypto
+        .createHash('sha256')
+        .update(`${mspId}\n${certificate}`)
+        .digest('hex');
+}
+
+function isReusableCacheEntry(cached, identity, now = Date.now()) {
+    if (!cached || !identity) return false;
+    return cached.mspId === identity.mspId &&
+        cached.identityFingerprint === identityFingerprint(identity) &&
+        now - cached.lastAccessed <= idleTimeout;
+}
+
 function disconnect(username, reason = 'invalidated') {
     const cached = gatewayCache.get(username);
     if (!cached) return false;
@@ -209,12 +227,20 @@ async function contractForUser(username, roleHint) {
         logger.warn({ identity: username, role: roleHint, stage: 'wallet' }, 'Fabric wallet identity is missing');
         throw new Error(`Access Denied: Wallet identity for '${username}' not found. The Registrar must register this user first.`);
     }
+    const fingerprint = identityFingerprint(found.identity);
     const cached = gatewayCache.get(username);
-    if (cached && cached.mspId === found.identity.mspId && Date.now() - cached.lastAccessed <= idleTimeout) {
+
+    if (isReusableCacheEntry(cached, found.identity)) {
         cached.lastAccessed = Date.now();
         return cached.contract;
     }
-    disconnect(username, 'reconnect');
+
+    disconnect(
+        username,
+        cached && cached.identityFingerprint !== fingerprint
+            ? 'identity-changed'
+            : 'reconnect'
+    );
     while (gatewayCache.size >= maxUsers) {
         const oldest = [...gatewayCache.entries()].sort((a, b) => a[1].lastAccessed - b[1].lastAccessed)[0];
         if (!oldest) break;
@@ -243,7 +269,13 @@ async function contractForUser(username, roleHint) {
         throw error;
     }
     logger.info({ identity: username, mspId: found.identity.mspId, channel, chaincode }, 'Fabric contract resolved');
-    gatewayCache.set(username, { gateway, contract, mspId: found.identity.mspId, lastAccessed: Date.now() });
+    gatewayCache.set(username, {
+        gateway,
+        contract,
+        mspId: found.identity.mspId,
+        identityFingerprint: fingerprint,
+        lastAccessed: Date.now()
+    });
     return contract;
 }
 
@@ -332,4 +364,5 @@ async function closeGateways() {
     for (const username of [...gatewayCache.keys()]) disconnect(username, 'shutdown');
 }
 
-module.exports = { cacheStats, checkFabricEndpoints, checkSocket, closeGateways, contractForUser, disconnect, fabricEndpointUrls, profileForIdentity };
+module.exports = { cacheStats, checkFabricEndpoints, checkSocket, closeGateways, contractForUser, disconnect,
+    fabricEndpointUrls, identityFingerprint, isReusableCacheEntry, profileForIdentity };

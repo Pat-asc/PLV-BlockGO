@@ -1,5 +1,6 @@
+import { showSystemNotification } from '../../services/NotificationContext';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { fetchAllGrades, fetchRegistrarFinalizationQueue, finalizeGrade, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason } from '../../services/api';
+import { fetchAllGrades, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason, fetchAcademicPrograms } from '../../services/api';
 import RegistrarHeader from './RegistrarHeader';
 import RegistrarSidebar from './RegistrarSidebar';
 import RegistrarDashboard from './RegistrarDashboard';
@@ -10,15 +11,17 @@ import PdfReportViewer from '../shared/PdfReportViewer';
 import Modal from '../../services/Modal';
 import RegistrarStudentSectioning from './RegistrarStudentSectioning';
 import RegistrarSectionsCreated from './RegistrarSectionsCreated';
-import { isDepartmentApprovedGradeStatus } from '../../utils/gradeStatus';
 import StaffAccountCreation from './StaffAccountCreation';
 import CurriculumManagement from './CurriculumManagement';
-import { programOptions, programs } from '../../data/registrarData';
+import { programOptions as fallbackProgramOptions } from '../../data/registrarData';
 import RegistrarSupportTickets from './RegistrarSupportTickets';
 import StudentEnrollmentManagement from './StudentEnrollmentManagement';
 import PasswordManagement from './PasswordManagement';
 import RegistrarGradesLedger from './RegistrarGradesLedger';
 import { exportRegistrarGradesLedgerPdf } from '../../utils/registrarGradesLedgerPdf';
+import RegistrarTranscriptOfRecords from './RegistrarTranscriptOfRecords';
+import RegistrarGradeRelease from './RegistrarGradeRelease';
+import RegistrarGradeFinalization from './RegistrarGradeFinalization';
 
 const RegistrarGradesView = ({
     loggedInEmail = '',
@@ -29,12 +32,15 @@ const RegistrarGradesView = ({
     onLogout,
 }) => {
     const managementMenuItems = [
+        { id: 'gradeFinalization', label: 'Finalize Grades' },
+        { id: 'gradeRelease', label: 'Grade Release' },
         { id: 'grades', label: 'Grades Ledger' },
-        { id: 'assigning', label: 'Assigning' },
+        { id: 'transcript', label: 'Transcript of Records' },
+        { id: 'assigning', label: 'Account Assignments' },
         { id: 'bulkEnroll', label: 'Student Enrollment' },
         { id: 'createAccounts', label: 'Create Staff Accounts' },
         { id: 'curriculum', label: 'Curriculum Management' },
-        { id: 'tickets', label: 'Report System Error' },
+        { id: 'tickets', label: 'Support Tickets' },
         { id: 'passwordResets', label: 'Password Management' },
         { id: 'revokeAccounts', label: 'Account Revocation' },
     ];
@@ -51,17 +57,17 @@ const RegistrarGradesView = ({
     const [adminAssignments, setAdminAssignments] = useState({});
     const [approvedFaculties, setApprovedFaculties] = useState([]);
     const [facultyAssignments, setFacultyAssignments] = useState({});
+    const [academicPrograms, setAcademicPrograms] = useState(fallbackProgramOptions);
 
-    const [stagedGrades, setStagedGrades] = useState([]);
-    const [stagedLoading, setStagedLoading] = useState(false);
-    const [finalizingBatchKey, setFinalizingBatchKey] = useState('');
     const [activeSemester, setActiveSemester] = useState('2nd Semester');
-
     const [filterDept, setFilterDept] = useState('All');
     const [filterYear, setFilterYear] = useState('All');
     const [filterSection, setFilterSection] = useState('All');
 
-    const departments = programs;
+    const departments = useMemo(
+        () => academicPrograms.map((program) => program.name).filter(Boolean),
+        [academicPrograms]
+    );
     const [sectioningDepartment, setSectioningDepartment] = useState(departments[0]);
 
     const [ipfsModalOpen, setIpfsModalOpen] = useState(false);
@@ -250,29 +256,6 @@ const RegistrarGradesView = ({
         }
     }, [loggedInEmail]);
 
-    const loadStagedGrades = useCallback(async () => {
-        setStagedLoading(true);
-        try {
-            const response = await fetchRegistrarFinalizationQueue();
-            const allData = Array.isArray(response) ? response : (response.data || []);
-            const approvedGrades = allData.filter(g =>
-                isDepartmentApprovedGradeStatus(g.status || g.Status || g.normalized_status)
-            );
-            const formattedStaged = approvedGrades.map(g => ({
-                stagingId: g.id,
-                studentHash: g.student_hash || g.studentId,
-                subjectCode: g.subject_code,
-                grade: g.grade,
-                course: g.course,
-                yearLevel: g.year_level || g.yearLevel || "N/A",
-                section: g.section,
-                status: g.status
-            }));
-            setStagedGrades(formattedStaged);
-        } catch (error) { console.error('Error loading staged grades:', error); }
-        setStagedLoading(false);
-    }, []);
-
     const loadRequests = useCallback(async () => {
         try {
             const response = await fetchPendingRequests();
@@ -287,14 +270,36 @@ const RegistrarGradesView = ({
         } catch (error) { console.error('Error loading students:', error); }
     }, []);
 
+    const loadAcademicPrograms = useCallback(async () => {
+        try {
+            const response = await fetchAcademicPrograms();
+            const activePrograms = (response?.data || []).map((program) => ({
+                id: program.programId,
+                code: program.programCode,
+                name: program.programName,
+            })).filter((program) => program.code && program.name);
+            if (activePrograms.length) setAcademicPrograms(activePrograms);
+        } catch (error) {
+            console.error('Error loading active academic programs:', error);
+        }
+    }, []);
+
+    useEffect(() => { loadAcademicPrograms(); }, [loadAcademicPrograms]);
+
+    useEffect(() => {
+        if (departments.length && !departments.includes(sectioningDepartment)) {
+            setSectioningDepartment(departments[0]);
+        }
+    }, [departments, sectioningDepartment]);
+
     useEffect(() => {
         setStudentAssignments((current) => {
             const next = { ...current };
 
             approvedStudents.forEach((student) => {
-                const importedDepartment = programs.includes(student.department)
+                const importedDepartment = departments.includes(student.department)
                     ? student.department
-                    : programOptions.find((program) =>
+                    : academicPrograms.find((program) =>
                         String(program.code).toLowerCase() === String(student.programCode || student.department || '').toLowerCase()
                     )?.name || '';
                 const importedYear = String(student.yearLevel || '').match(/[1-4]/)?.[0] || '';
@@ -311,7 +316,7 @@ const RegistrarGradesView = ({
 
             return next;
         });
-    }, [approvedStudents]);
+    }, [academicPrograms, approvedStudents, departments]);
 
     const loadApprovedAdmins = useCallback(async () => {
         try {
@@ -327,15 +332,10 @@ const RegistrarGradesView = ({
         } catch (error) { console.error('Error loading faculties:', error); }
     }, []);
 
-    const handleResetEncodingSeason = useCallback(async () => {
+    const handleResetEncodingSeason = useCallback(async (academicContext) => {
         try {
-            await resetEncodingSeason();
-            const resetEncodingPeriod = JSON.stringify({
-                semester: '2nd Semester',
-                startDate: '',
-                endDate: '',
-                term: 'midterm',
-            });
+            const response = await resetEncodingSeason(academicContext);
+            const resetEncodingPeriod = response.encodingPeriod;
             localStorage.removeItem('registrarAssignments');
             localStorage.setItem('encodingPeriod', resetEncodingPeriod);
             localStorage.setItem('facultyLoadResetAt', new Date().toISOString());
@@ -354,8 +354,9 @@ const RegistrarGradesView = ({
             );
             await loadApprovedFaculties();
             await loadGrades();
+            return response;
         } catch (error) {
-            alert(error.message || 'Failed to reset encoding season.');
+            showSystemNotification(error.message || 'Failed to reset encoding season.');
             throw error;
         }
     }, [loadApprovedFaculties, loadGrades]);
@@ -366,10 +367,7 @@ const RegistrarGradesView = ({
         if (mainTab === 'Requests') {
             loadRequests();
         }
-        if (mainTab === 'finalization') {
-            loadStagedGrades();
-        }
-    }, [mainTab, loadRequests, loadStagedGrades]);
+    }, [mainTab, loadRequests]);
 
     useEffect(() => {
         const handleAcademicDataChanged = () => {
@@ -377,13 +375,13 @@ const RegistrarGradesView = ({
             loadApprovedStudents();
             loadApprovedAdmins();
             loadApprovedFaculties();
+            loadAcademicPrograms();
             if (mainTab === 'Requests') loadRequests();
-            if (mainTab === 'finalization') loadStagedGrades();
         };
 
         window.addEventListener('blockgo:academic-data-changed', handleAcademicDataChanged);
         return () => window.removeEventListener('blockgo:academic-data-changed', handleAcademicDataChanged);
-    }, [mainTab, loadGrades, loadRequests, loadStagedGrades, loadApprovedStudents, loadApprovedAdmins, loadApprovedFaculties]);
+    }, [mainTab, loadGrades, loadRequests, loadApprovedStudents, loadApprovedAdmins, loadApprovedFaculties, loadAcademicPrograms]);
 
     useEffect(() => {
         if (mainTab === 'assigning') {
@@ -401,91 +399,40 @@ const RegistrarGradesView = ({
             loadApprovedAdmins();
             loadApprovedFaculties();
         }
+        if (mainTab === 'transcript') {
+            loadApprovedStudents();
+        }
     }, [mainTab, loadApprovedStudents, loadApprovedAdmins, loadApprovedFaculties]);
 
     const submitStudentAssignment = async (id) => {
         const assignment = studentAssignments[id];
-        if (!assignment || !assignment.department || !assignment.yearLevel || !assignment.sectionNum) return alert("Please provide department, year, and section.");
+        if (!assignment || !assignment.department || !assignment.yearLevel || !assignment.sectionNum) return showSystemNotification("Please provide department, year, and section.");
         try {
             const combinedSection = `${assignment.yearLevel}-${assignment.sectionNum}`;
             await assignStudent(id, { Department: assignment.department, Section: combinedSection });
-            alert("Student assigned successfully!");
+            showSystemNotification("Student assigned successfully!");
             loadApprovedStudents();
-        } catch (error) { alert(`Failed to assign: ${error.message}`); }
+        } catch (error) { showSystemNotification(`Failed to assign: ${error.message}`); }
     };
 
     const submitAdminAssignment = async (id) => {
         const assignment = adminAssignments[id];
-        if (!assignment || !assignment.department) return alert("Please select a department.");
+        if (!assignment || !assignment.department) return showSystemNotification("Please select a department.");
         try {
             await assignDepartmentAdmin(id, { Department: assignment.department });
-            alert("Admin assigned successfully!");
+            showSystemNotification("Admin assigned successfully!");
             loadApprovedAdmins();
-        } catch (error) { alert(`Failed to assign: ${error.message}`); }
+        } catch (error) { showSystemNotification(`Failed to assign: ${error.message}`); }
     };
 
     const submitFacultyAssignment = async (id) => {
         const assignment = facultyAssignments[id];
-        if (!assignment || !assignment.department || !assignment.section || !assignment.yearLevel || !assignment.subject) return alert("Please provide department, section, year level, and subject.");
+        if (!assignment || !assignment.department || !assignment.section || !assignment.yearLevel || !assignment.subject) return showSystemNotification("Please provide department, section, year level, and subject.");
         try {
             await assignFaculty(id, { Department: assignment.department, Section: assignment.section, YearLevel: assignment.yearLevel, Subject: assignment.subject });
-            alert("Faculty assigned successfully!");
+            showSystemNotification("Faculty assigned successfully!");
             loadApprovedFaculties();
-        } catch (error) { alert(`Failed to assign: ${error.message}`); }
-    };
-
-    const groupedStagedGrades = useMemo(() => {
-        const groups = {};
-        stagedGrades.forEach(g => {
-            const key = `${g.course}-${g.yearLevel}-${g.section}-${g.subjectCode}`;
-            if (!groups[key]) {
-                groups[key] = {
-                    course: g.course,
-                    yearLevel: g.yearLevel,
-                    section: g.section,
-                    subjectCode: g.subjectCode,
-                    records: []
-                };
-            }
-            groups[key].records.push(g);
-        });
-        
-        return Object.values(groups).sort((a, b) => 
-            String(a.course).localeCompare(String(b.course)) || 
-            String(a.yearLevel).localeCompare(String(b.yearLevel)) || 
-            String(a.section).localeCompare(String(b.section)) ||
-            String(a.subjectCode).localeCompare(String(b.subjectCode))
-        );
-    }, [stagedGrades]);
-
-    const finalizeBatch = async (records) => {
-        const batchKey = records.map((record) => record.stagingId).sort().join('|');
-        setFinalizingBatchKey(batchKey);
-        try {
-            for (const g of records) {
-                await finalizeGrade(g.stagingId, loggedInEmail);
-            }
-            alert("Section grades officially committed to the ledger!");
-            await Promise.all([loadStagedGrades(), loadGrades()]);
-        } catch (err) {
-            alert(`Finalization failed: ${err.message}`);
-            await loadStagedGrades();
-        } finally {
-            setFinalizingBatchKey('');
-        }
-    };
-
-    const handleFinalizeBatch = (records) => {
-        setConfirmModal({
-            isOpen: true,
-            title: 'Confirm Ledger Finalization',
-            message: `Finalize ${records.length} approved grade${records.length === 1 ? '' : 's'} to the immutable blockchain ledger?`,
-            isDestructive: false,
-            onConfirm: async () => {
-                setConfirmModal((current) => ({ ...current, isOpen: false }));
-                await finalizeBatch(records);
-            },
-        });
+        } catch (error) { showSystemNotification(`Failed to assign: ${error.message}`); }
     };
 
     const handleViewIpfs = (cid) => {
@@ -503,10 +450,10 @@ const RegistrarGradesView = ({
                 setIpfsModalOpen(false);
             } catch (error) {
                 if (viewerWindow) viewerWindow.close();
-                alert(error.message);
+                showSystemNotification(error.message);
             }
         } else {
-            alert("Vault Password is required");
+            showSystemNotification("Vault Password is required");
         }
     };
 
@@ -518,9 +465,9 @@ const RegistrarGradesView = ({
             onConfirm: async () => {
                 try {
                     await approveRegistrationRequest(id, type);
-                    alert("Request approved successfully!");
+                    showSystemNotification("Request approved successfully!");
                     loadRequests(); 
-                } catch (error) { alert(`Failed to approve: ${error.message}`); }
+                } catch (error) { showSystemNotification(`Failed to approve: ${error.message}`); }
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
             }
         });
@@ -535,9 +482,9 @@ const RegistrarGradesView = ({
             onConfirm: async () => {
                 try {
                     await denyRegistrationRequest(id);
-                    alert("Request denied and removed.");
+                    showSystemNotification("Request denied and removed.");
                     loadRequests(); 
-                } catch (error) { alert(`Failed to deny: ${error.message}`); }
+                } catch (error) { showSystemNotification(`Failed to deny: ${error.message}`); }
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
             }
         });
@@ -552,10 +499,10 @@ const RegistrarGradesView = ({
             onConfirm: async () => {
                 try {
                     await dropStudent(id);
-                    alert(`${name} has been dropped and access revoked.`);
+                    showSystemNotification(`${name} has been dropped and access revoked.`);
                     loadApprovedStudents();
                 } catch (error) {
-                    alert(error.message);
+                    showSystemNotification(error.message);
                 }
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
             }
@@ -571,10 +518,10 @@ const RegistrarGradesView = ({
             onConfirm: async () => {
                 try {
                     await revokeFaculty(id);
-                    alert(`${name} has been revoked.`);
+                    showSystemNotification(`${name} has been revoked.`);
                     await loadApprovedFaculties();
                 } catch (error) {
-                    alert(error.message || 'Failed to revoke faculty account.');
+                    showSystemNotification(error.message || 'Failed to revoke faculty account.');
                 }
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
             }
@@ -591,10 +538,10 @@ const RegistrarGradesView = ({
                 try {
                     await revokeDepartmentAdmin(id);
                     setApprovedAdmins((current) => current.filter((admin) => admin.id !== id));
-                    alert(`${name} has been revoked.`);
+                    showSystemNotification(`${name} has been revoked.`);
                     await loadApprovedAdmins();
                 } catch (error) {
-                    alert(error.message || 'Failed to revoke chairperson account.');
+                    showSystemNotification(error.message || 'Failed to revoke chairperson account.');
                 }
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
             }
@@ -774,8 +721,8 @@ const RegistrarGradesView = ({
     const handleDownloadLedgerPDF = (ledgerRecords = filteredGrades, ledgerFilters = {}, scope = { type: 'all' }) => {
         try {
             const result = exportRegistrarGradesLedgerPdf({ records: ledgerRecords, filters: ledgerFilters, scope });
-            if (!result.exported) alert('No grade records available for this export.');
-        } catch (error) { alert("Failed to export PDF."); }
+            if (!result.exported) showSystemNotification('No grade records available for this export.');
+        } catch (error) { showSystemNotification("Failed to export PDF."); }
     };
 
     const handleExportFacultySummaryPDF = (facultyData) => {
@@ -868,7 +815,7 @@ const RegistrarGradesView = ({
             doc.save(`Faculty_Summary_${facultyData.facultyName.replace(/\s+/g, '_')}.pdf`);
         } catch (error) { 
             console.error(error);
-            alert("Failed to export PDF."); 
+            showSystemNotification("Failed to export PDF.");
         }
     };
 
@@ -885,14 +832,14 @@ const RegistrarGradesView = ({
                     managementDefaultTab="grades"
                     managementMenuItems={managementMenuItems}
                 />
-                <main className="flex-1 overflow-y-auto pb-24 pr-2">
+                <main className="min-w-0 w-full flex-1 overflow-y-auto pb-24 pr-2">
                     {mainTab === 'dashboard' && <RegistrarDashboard grades={grades} />}
                     {mainTab === 'encoding' && <EncodingPeriod onResetEncodingSeason={handleResetEncodingSeason} />}
                     {mainTab === 'studentlist' && <StudentListImport />}
                     {mainTab === 'sectioning' && (
                         <div className="space-y-3">
                             <div>
-                                <h2 className="text-xl font-bold text-slate-900">Section Creator</h2>
+                                <h2 className="text-xl font-bold text-slate-900">Section Management</h2>
                                 
                             </div>
                             <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm lg:grid-cols-[1fr_250px] lg:items-end">
@@ -944,6 +891,9 @@ const RegistrarGradesView = ({
                             onExport={handleDownloadLedgerPDF}
                         />
                     )}
+                    {mainTab === 'gradeFinalization' && <RegistrarGradeFinalization />}
+                    {mainTab === 'gradeRelease' && <RegistrarGradeRelease />}
+                    {mainTab === 'transcript' && <RegistrarTranscriptOfRecords students={approvedStudents} />}
                     {mainTab === 'legacy-grades-monitoring' && (
                         <>
                             <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -1137,75 +1087,6 @@ const RegistrarGradesView = ({
                                 </section>
                             </div>
                         </>
-                    )}
-                    {mainTab === 'finalization' && (
-                        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="mb-6 flex items-center justify-between">
-                                <h3 className="text-xl font-bold text-[#003366]">Grades Pending Ledger Entry</h3>
-                                <button onClick={loadStagedGrades} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-200">Refresh Staging</button>
-                            </div>
-                            {stagedLoading ? <p>Loading staged records...</p> : (
-                                <div className="space-y-6">
-                                    {groupedStagedGrades.length === 0 ? (
-                                        <div className="rounded-xl border border-dashed border-slate-300 p-10 text-center text-slate-500 bg-slate-50">
-                                            No grades approved by departments waiting for finalization.
-                                        </div>
-                                    ) : (
-                                                groupedStagedGrades.map((group, index) => {
-                                                    const batchKey = group.records.map((record) => record.stagingId).sort().join('|');
-                                                    const isFinalizing = finalizingBatchKey === batchKey;
-                                                    return (
-                                                    <div key={index} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-                                                <div className="flex flex-col md:flex-row md:items-center justify-between bg-slate-50 p-5 border-b border-slate-200">
-                                                    <div>
-                                                        <h4 className="font-bold text-[#003366] text-lg">
-                                                            {group.course} — {group.yearLevel} / {group.section}
-                                                        </h4>
-                                                        <p className="text-sm font-semibold text-slate-500 mt-1">
-                                                            Subject: <span className="text-blue-600">{group.subjectCode}</span> 
-                                                            <span className="mx-2">•</span> 
-                                                            {group.records.length} pending grade(s)
-                                                        </p>
-                                                    </div>
-                                                        <button
-                                                            onClick={() => handleFinalizeBatch(group.records)}
-                                                            disabled={!!finalizingBatchKey}
-                                                            className="mt-3 md:mt-0 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 shadow-sm disabled:cursor-not-allowed disabled:bg-slate-400"
-                                                        >
-                                                            {isFinalizing ? 'Finalizing...' : 'Finalize All to Ledger'}
-                                                        </button>
-                                                </div>
-                                                <div className="overflow-x-auto">
-                                                    <table className="w-full text-left text-sm">
-                                                        <thead>
-                                                            <tr className="bg-white text-slate-500 border-b border-slate-200">
-                                                                <th className="p-4 font-semibold">Student (Hashed)</th>
-                                                                <th className="p-4 font-semibold text-center">Grade</th>
-                                                                <th className="p-4 font-semibold text-center">Status</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                            {group.records.map((sg) => (
-                                                                <tr key={sg.stagingId} className="border-b border-slate-50 hover:bg-slate-50">
-                                                                    <td className="p-4 font-mono text-[11px] text-slate-600">{sg.studentHash}</td>
-                                                                    <td className="p-4 font-bold text-blue-700 text-center text-sm">{formatGradePayload(sg.grade)}</td>
-                                                                    <td className="p-4 text-center">
-                                                                        <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-bold uppercase text-emerald-700">
-                                                                            {sg.status}
-                                                                        </span>
-                                                                    </td>
-                                                                </tr>
-                                                            ))}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                                    </div>
-                                                    );
-                                                })
-                                    )}
-                                </div>
-                            )}
-                        </div>
                     )}
                     {mainTab === 'Requests' && (
                         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">

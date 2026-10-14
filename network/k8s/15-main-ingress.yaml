@@ -1,14 +1,4 @@
 ---
-apiVersion: networking.gke.io/v1
-kind: ManagedCertificate
-metadata:
-  name: blockgo-managed-cert
-  namespace: plv-fabric
-spec:
-  domains:
-    - plv-blockgo.com
-
----
 apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
 metadata:
@@ -18,6 +8,25 @@ spec:
   redirectToHttps:
     enabled: true
     responseCodeName: MOVED_PERMANENTLY_DEFAULT
+
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: blockgo-forwarded-headers
+  namespace: plv-fabric
+spec:
+  # The classic GCE load balancer applies this timeout to the full lifetime of
+  # upgraded WebSocket connections. Keep Grafana Live sessions stable while
+  # retaining a finite upper bound for all requests through the API gateway.
+  timeoutSec: 3600
+  customRequestHeaders:
+    headers:
+      # GCP derives this value from the transport connection and replaces any
+      # client-supplied X-Forwarded-For chain before the request reaches a pod.
+      - "X-Forwarded-For:{client_ip_address}"
+      # FrontendConfig redirects public HTTP before it reaches these backends.
+      - "X-Forwarded-Proto:https"
 
 ---
 apiVersion: networking.k8s.io/v1
@@ -31,15 +40,16 @@ metadata:
     # Permanent GCP production IP
     kubernetes.io/ingress.global-static-ip-name: "blockgo-prod-ip"
 
-    # Google-managed HTTPS certificate
-    networking.gke.io/managed-certificates: "blockgo-managed-cert"
-
     # Redirect HTTP -> HTTPS
     networking.gke.io/v1beta1.FrontendConfig: "blockgo-frontend-config"
 
 spec:
+  tls:
+  - hosts:
+    - __BLOCKGO_PUBLIC_HOST__
+    secretName: __BLOCKGO_PUBLIC_TLS_SECRET__
   rules:
-  - host: plv-blockgo.com
+  - host: __BLOCKGO_PUBLIC_HOST__
     http:
       paths:
 
@@ -181,6 +191,14 @@ spec:
               number: 5000
 
       - path: /api/SupportTickets
+        pathType: Prefix
+        backend:
+          service:
+            name: client-app-service
+            port:
+              number: 5000
+
+      - path: /api/Transcript
         pathType: Prefix
         backend:
           service:

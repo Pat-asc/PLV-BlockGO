@@ -7,7 +7,6 @@ import EncodingPeriod from "../components/registrar/EncodingPeriod";
 import StudentListImport, {
   StudentSubmissionLogs,
 } from "../components/registrar/StudentListImport";
-import GradeFinalization from "../components/registrar/GradeFinalization";
 import RegistrarStudentSectioning from "../components/registrar/RegistrarStudentSectioning";
 import RegistrarSectionsCreated from "../components/registrar/RegistrarSectionsCreated";
 import { programs } from "../data/registrarData";
@@ -70,8 +69,6 @@ function RegistrarPortal({ onLogout, onResetEncodingSeason, allGrades = {} }) {
         return "Sections Created";
       case "monitoring":
         return "Monitoring";
-      case "finalization":
-        return "Grade Finalization";
       case "reports":
         return "Reports & PDF";
       default:
@@ -137,9 +134,6 @@ function RegistrarPortal({ onLogout, onResetEncodingSeason, allGrades = {} }) {
     return <RegistrarSectionsCreated />;
   }
 
-  if (activeTab === "finalization") {
-    return <GradeFinalization allGrades={allGrades} />;
-  }
 
   return (
     <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">

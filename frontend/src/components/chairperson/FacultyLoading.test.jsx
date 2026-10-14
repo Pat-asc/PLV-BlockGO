@@ -29,6 +29,8 @@ const options = {
     { subjectCode: "IT 102", subjectTitle: "Programming 1", yearLevel: 1, semester: "FIRST", units: 3 },
   ],
   schoolYears: ["2026-2027"],
+  activeAcademicPeriod: { schoolYear: "2026-2027", semester: "FIRST" },
+  enrollmentPeriods: [],
 };
 
 const faculty = [
@@ -51,7 +53,7 @@ beforeEach(() => {
   bulkAssignFacultyLoads.mockReset();
 });
 
-test("sends exact bulk identities and marks a row saved only after backend confirmation", async () => {
+test("resolves Section automatically and marks a row saved only after backend confirmation", async () => {
   bulkAssignFacultyLoads.mockImplementation(async (rows) => ({
     status: "Success",
     results: rows.map((row) => ({
@@ -77,9 +79,10 @@ test("sends exact bulk identities and marks a row saved only after backend confi
 
   render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
   await waitFor(() => expect(fetchFacultyAssignmentOptions).toHaveBeenCalled());
+  expect(fetchApprovedFaculties).toHaveBeenCalled();
   await uploadCsv(
-    "Faculty Email,Subject Code,Academic Section ID,Section,School Year,Semester\n" +
-    "a@plv.edu.ph,IT 101,42,BSIT 1-1,2026-2027,1st Semester"
+    "Faculty Email,Subject Code,Section,School Year,Semester\n" +
+    "a@plv.edu.ph,IT 101,BSIT 1-1,2026-2027,1st Semester"
   );
 
   fireEvent.click(screen.getByRole("button", { name: "Save Assignments" }));
@@ -98,6 +101,21 @@ test("sends exact bulk identities and marks a row saved only after backend confi
     facultyEmail: "a@plv.edu.ph",
   }));
   expect(screen.queryByRole("button", { name: "Save Assignments" })).not.toBeInTheDocument();
+});
+
+test("groups Faculty Loading Preview sections under one stable faculty identity", async () => {
+  render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
+  await waitFor(() => expect(fetchApprovedFaculties).toHaveBeenCalled());
+  await uploadCsv(
+    "Faculty ID,Subject Code,Section,School Year,Semester\n" +
+    "11,IT 101,BSIT 1-1,2026-2027,FIRST\n" +
+    "11,IT 102,BSIT 1-2,2026-2027,FIRST"
+  );
+
+  expect(screen.getByText("2 section assignments")).toBeInTheDocument();
+  expect(screen.getByText("BSIT 1-1")).toBeInTheDocument();
+  expect(screen.getByText("BSIT 1-2")).toBeInTheDocument();
+  expect(screen.getByText("Faculty Loading Preview")).toHaveClass("bg-[#003366]", "text-white");
 });
 
 test("partial success preserves the failed row and Clear Selection removes only pending rows", async () => {
@@ -122,9 +140,9 @@ test("partial success preserves the failed row and Clear Selection removes only 
   render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
   await waitFor(() => expect(fetchApprovedFaculties).toHaveBeenCalled());
   await uploadCsv(
-    "Faculty ID,Subject Code,Academic Section ID,Section,School Year,Semester\n" +
-    "11,IT 101,42,BSIT 1-1,2026-2027,FIRST\n" +
-    "12,IT 102,43,BSIT 1-2,2026-2027,FIRST"
+    "Faculty ID,Subject Code,Section,School Year,Semester\n" +
+    "11,IT 101,BSIT 1-1,2026-2027,FIRST\n" +
+    "12,IT 102,BSIT 1-2,2026-2027,FIRST"
   );
   fireEvent.click(screen.getByRole("button", { name: "Save Assignments" }));
 
@@ -136,39 +154,55 @@ test("partial success preserves the failed row and Clear Selection removes only 
   expect(screen.getAllByText("Professor A").length).toBeGreaterThan(0);
 });
 
-test("download template requires Academic Section ID and keeps Section display-only", () => {
+test("download template contains Section and no internal Section ID", () => {
   const [header] = FACULTY_LOADING_CSV_TEMPLATE.split("\n");
-  expect(header).toContain("Academic Section ID");
+  expect(header).not.toMatch(/section id/i);
   expect(header).toContain("Section");
 });
 
-test("rejects a CSV that omits Academic Section ID", async () => {
+test("rejects a CSV that omits the human-readable Section", async () => {
+  render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
+  await waitFor(() => expect(fetchFacultyAssignmentOptions).toHaveBeenCalled());
+  await uploadCsv(
+    "Faculty Email,Subject Code,School Year,Semester\n" +
+    "a@plv.edu.ph,IT 101,2026-2027,FIRST"
+  );
+
+  expect(screen.getByText(/Missing required CSV headers.*Section/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save Assignments" })).toBeDisabled();
+  expect(bulkAssignFacultyLoads).not.toHaveBeenCalled();
+});
+
+test("rejects an unknown human-readable Section", async () => {
+  render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
+  await waitFor(() => expect(fetchFacultyAssignmentOptions).toHaveBeenCalled());
+  await uploadCsv(
+    "Faculty Email,Subject Code,Section,School Year,Semester\n" +
+    "a@plv.edu.ph,IT 101,BSIT 9-9,2026-2027,FIRST"
+  );
+
+  expect(screen.getByText(/Section "BSIT 9-9" does not exist/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save Assignments" })).toBeDisabled();
+  expect(bulkAssignFacultyLoads).not.toHaveBeenCalled();
+});
+
+test("shows the enrolled period and blocks a mismatched bulk assignment", async () => {
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    ...options,
+    enrollmentPeriods: [{ academicSectionId: 42, schoolYear: "2025-2026", semester: "FIRST" }],
+  });
   render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
   await waitFor(() => expect(fetchFacultyAssignmentOptions).toHaveBeenCalled());
   await uploadCsv(
     "Faculty Email,Subject Code,Section,School Year,Semester\n" +
     "a@plv.edu.ph,IT 101,BSIT 1-1,2026-2027,FIRST"
   );
-
-  expect(screen.getByText(/Missing required CSV headers.*Academic Section ID/)).toBeInTheDocument();
+  expect(screen.getByText(/section enrollment belongs to 2025-2026 FIRST/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save Assignments" })).toBeDisabled();
   expect(bulkAssignFacultyLoads).not.toHaveBeenCalled();
 });
 
-test("rejects an unknown numeric Academic Section ID", async () => {
-  render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
-  await waitFor(() => expect(fetchFacultyAssignmentOptions).toHaveBeenCalled());
-  await uploadCsv(
-    "Faculty Email,Subject Code,Academic Section ID,Section,School Year,Semester\n" +
-    "a@plv.edu.ph,IT 101,999,BSIT 1-1,2026-2027,FIRST"
-  );
-
-  expect(screen.getByText(/academic section ID "999" does not exist/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Save Assignments" })).toBeDisabled();
-  expect(bulkAssignFacultyLoads).not.toHaveBeenCalled();
-});
-
-test("duplicate section labels cannot override the numeric Academic Section ID", async () => {
+test("a wrong-department Section is rejected", async () => {
   fetchFacultyAssignmentOptions.mockResolvedValue({
     ...options,
     sections: [
@@ -176,24 +210,37 @@ test("duplicate section labels cannot override the numeric Academic Section ID",
       { id: 99, programCode: "BSCS", department: "BS Computer Science", yearLevel: 1, section: "1-1" },
     ],
   });
+  render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
+  await waitFor(() => expect(fetchFacultyAssignmentOptions).toHaveBeenCalled());
+  await uploadCsv(
+    "Faculty Email,Subject Code,Section,School Year,Semester\n" +
+    "a@plv.edu.ph,IT 101,BSCS 1-1,2026-2027,FIRST"
+  );
+
+  expect(screen.getByText(/Section "BSCS 1-1" does not exist in the selected program/)).toBeInTheDocument();
+  expect(bulkAssignFacultyLoads).not.toHaveBeenCalled();
+});
+
+test("spreadsheet Section ID cannot override the selected authoritative section", async () => {
   bulkAssignFacultyLoads.mockImplementation(async (rows) => ({
     status: "Success",
     results: rows.map((row) => ({ clientId: row.id, success: true, assignment: {
       id: 700, assignmentCycleId: "700", facultyUserId: 11, facultyEmail: "a@plv.edu.ph",
       facultyName: "Professor A", program: "BS Information Technology", programCode: "BSIT",
       section: "BSIT 1-1", yearLevel: 1, subjectCode: "IT 101",
-      academicSectionId: row.academicSectionId, schoolYear: "2026-2027", semester: "FIRST",
+      academicSectionId: 42, schoolYear: "2026-2027", semester: "FIRST",
     } })),
   }));
 
-  render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
+  render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" selectedAcademicSectionId={42} />);
   await waitFor(() => expect(fetchFacultyAssignmentOptions).toHaveBeenCalled());
   await uploadCsv(
-    "Faculty Email,Subject Code,Academic Section ID,Section,School Year,Semester\n" +
-    "a@plv.edu.ph,IT 101,42,BSCS 1-1,2026-2027,FIRST"
+    "Faculty Email,Subject Code,Section ID,Section,School Year,Semester\n" +
+    "a@plv.edu.ph,IT 101,999,BSIT 1-1,2026-2027,FIRST"
   );
   fireEvent.click(screen.getByRole("button", { name: "Save Assignments" }));
 
   await waitFor(() => expect(bulkAssignFacultyLoads).toHaveBeenCalledTimes(1));
   expect(bulkAssignFacultyLoads.mock.calls[0][0][0].academicSectionId).toBe(42);
+  expect(bulkAssignFacultyLoads.mock.calls[0][1]).toEqual({ selectedAcademicSectionId: 42 });
 });

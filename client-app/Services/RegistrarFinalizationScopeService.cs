@@ -7,6 +7,8 @@ public static class RegistrarFinalizationScopeService
 {
     public static async Task<List<AcademicRecord>> GetCurrentApprovedAsync(
         NpgsqlConnection connection,
+        string activeTerm,
+        string activeSemester,
         CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(@"
@@ -14,17 +16,25 @@ public static class RegistrarFinalizationScopeService
                    COALESCE(pgr.student_name, ''), pgr.section, pgr.course,
                    pgr.subject_code, pgr.grade, pgr.semester, pgr.school_year,
                    pgr.faculty_id, pgr.date, COALESCE(pgr.ipfs_cid, ''),
-                   pgr.status, COALESCE(pgr.term, ''), pgr.assignment_cycle_id
+                   pgr.status, COALESCE(pgr.term, ''), pgr.assignment_cycle_id,
+                   COALESCE(pgr.note, ''), COALESCE(pgr.subject_title, ''),
+                   COALESCE(pgr.professor_name, ''), COALESCE(pgr.program, ''),
+                   COALESCE(pgr.units, 0), COALESCE(pgr.submitted_by, ''),
+                   pgr.recorded_at, COALESCE(pgr.transaction_id, ''),
+                   COALESCE(pgr.transaction_hash, '')
             FROM pending_grade_records pgr
             JOIN facultysections fs
               ON fs.id::text = pgr.assignment_cycle_id
-             AND fs.is_active = TRUE
              AND LOWER(TRIM(fs.school_year)) = LOWER(TRIM(pgr.school_year))
              AND LOWER(TRIM(fs.semester)) = LOWER(TRIM(pgr.semester))
              AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(pgr.subject_code))
             WHERE LOWER(TRIM(pgr.status)) = 'departmentapproved'
+              AND LOWER(TRIM(pgr.semester)) = LOWER(TRIM(@semester))
+              AND LOWER(TRIM(pgr.term)) = LOWER(TRIM(@term))
             ORDER BY pgr.school_year, pgr.semester, pgr.course, pgr.section,
                      pgr.subject_code, pgr.student_no, pgr.id;", connection);
+        command.Parameters.AddWithValue("semester", activeSemester);
+        command.Parameters.AddWithValue("term", activeTerm);
 
         var records = new List<AcademicRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -39,7 +49,6 @@ public static class RegistrarFinalizationScopeService
                 StudentName = reader.GetString(3),
                 Section = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
                 Course = reader.IsDBNull(5) ? string.Empty : reader.GetString(5),
-                Program = reader.IsDBNull(5) ? string.Empty : reader.GetString(5),
                 SubjectCode = reader.IsDBNull(6) ? string.Empty : reader.GetString(6),
                 Grade = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
                 Semester = reader.IsDBNull(8) ? string.Empty : reader.GetString(8),
@@ -50,6 +59,19 @@ public static class RegistrarFinalizationScopeService
                 Status = reader.IsDBNull(13) ? string.Empty : reader.GetString(13),
                 Term = reader.GetString(14),
                 AssignmentCycleId = reader.IsDBNull(15) ? string.Empty : reader.GetString(15),
+                Note = reader.GetString(16),
+                SubjectTitle = reader.GetString(17),
+                ProfessorName = reader.GetString(18),
+                Program = string.IsNullOrWhiteSpace(reader.GetString(19))
+                    ? (reader.IsDBNull(5) ? string.Empty : reader.GetString(5))
+                    : reader.GetString(19),
+                Units = reader.GetDecimal(20),
+                SubmittedBy = reader.GetString(21),
+                Timestamp = reader.IsDBNull(22)
+                    ? string.Empty
+                    : reader.GetFieldValue<DateTimeOffset>(22).ToString("O"),
+                TransactionId = reader.GetString(23),
+                TransactionHash = reader.GetString(24),
                 University = "PLV",
                 Version = 1
             });

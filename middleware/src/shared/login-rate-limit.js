@@ -1,4 +1,5 @@
 const { ipKeyGenerator } = require('express-rate-limit');
+const { clientIp } = require('./client-ip');
 
 function normalizedLoginIdentity(req) {
     return String(req.body?.username || '').trim().toLowerCase() || '<missing-account>';
@@ -7,7 +8,7 @@ function normalizedLoginIdentity(req) {
 function loginSource(req) {
     // req.ip has already been resolved by Express's explicit trust-proxy policy.
     // Reading X-Forwarded-For or CF-Connecting-IP directly here would be spoofable.
-    return ipKeyGenerator(req.ip || req.socket?.remoteAddress || 'unknown');
+    return ipKeyGenerator(clientIp(req) || 'unknown');
 }
 
 function loginAttemptKey(req) {

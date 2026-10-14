@@ -74,6 +74,10 @@ test('only genuine ReadGrade absence is NOT_FOUND; wallet, channel, and issue er
         'WALLET_IDENTITY_MISSING');
     assert.equal(classifyLedgerError(new Error('DiscoveryService registrar-channel access denied'), 'ReadGrade').code,
         'CHANNEL_ACCESS_DENIED');
+    assert.deepEqual(
+        classifyLedgerError(new Error('DiscoveryService: registrar error: failed constructing descriptor for chaincodes:<name:"registrar">'), 'IssueGrade'),
+        { code: 'FABRIC_DISCOVERY_FAILED', status: 503, reason: 'Fabric could not construct a reachable endorsement plan.' }
+    );
     assert.equal(classifyLedgerError(new Error('Endorsement failed'), 'IssueGrade').code, 'FABRIC_COMMIT_FAILED');
     assert.notEqual(classifyLedgerError(new Error('Record not found'), 'IssueGrade').code, 'GRADE_NOT_FOUND');
     assert.ok(!safeFabricReason(new Error('password=secret123')).includes('secret123'));

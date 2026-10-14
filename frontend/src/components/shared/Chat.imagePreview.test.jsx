@@ -1,6 +1,8 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import Chat from './Chat';
+import { pullSharedClientState } from '../../utils/sharedClientState';
+import { SYSTEM_THEME_CHANGED_EVENT, chatThemeStorageKey } from '../../services/themePreference';
 
 const mockHandlers = {};
 const mockConnection = {
@@ -23,13 +25,59 @@ jest.mock('../../services/authSession', () => ({ getAuthToken: () => 'test-token
 jest.mock('../../utils/sharedClientState', () => ({ pullSharedClientState: jest.fn(() => Promise.resolve()) }));
 
 beforeEach(() => {
+  localStorage.clear();
   jest.clearAllMocks();
   mockConnection.on.mockImplementation((event, handler) => { mockHandlers[event] = handler; });
   mockConnection.start.mockResolvedValue();
   mockConnection.stop.mockResolvedValue();
   mockConnection.invoke.mockResolvedValue([]);
+  pullSharedClientState.mockResolvedValue();
   window.HTMLElement.prototype.scrollIntoView = jest.fn();
   Object.keys(mockHandlers).forEach((event) => delete mockHandlers[event]);
+});
+
+test('follows system dark and light changes immediately and persists them per account', async () => {
+  render(<Chat userEmail="faculty@plv.edu.ph" userRole="faculty" isOpen />);
+  await waitFor(() => expect(mockConnection.start).toHaveBeenCalled());
+  expect(screen.getByTestId('chat-panel')).toHaveClass('bg-white', 'text-slate-900');
+
+  fireEvent(window, new CustomEvent(SYSTEM_THEME_CHANGED_EVENT, { detail: { theme: 'dark' } }));
+  await waitFor(() => expect(screen.getByTestId('chat-panel')).toHaveClass('bg-slate-900', 'text-slate-100'));
+  expect(localStorage.getItem(chatThemeStorageKey('faculty@plv.edu.ph'))).toBe('true');
+
+  fireEvent(window, new CustomEvent(SYSTEM_THEME_CHANGED_EVENT, { detail: { theme: 'light' } }));
+  await waitFor(() => expect(screen.getByTestId('chat-panel')).toHaveClass('bg-white', 'text-slate-900'));
+  expect(localStorage.getItem(chatThemeStorageKey('faculty@plv.edu.ph'))).toBe('false');
+});
+
+test('uses the saved system theme when an account has no Chat preference yet', async () => {
+  localStorage.setItem('blockgo.system-theme', 'dark');
+  render(<Chat userEmail="student@plv.edu.ph" userRole="student" isOpen />);
+  await waitFor(() => expect(mockConnection.start).toHaveBeenCalled());
+
+  expect(screen.getByTestId('chat-panel')).toHaveClass('bg-slate-900', 'text-slate-100');
+  expect(localStorage.getItem(chatThemeStorageKey('student@plv.edu.ph'))).toBe('true');
+});
+
+test('synchronizes the current account on login without changing another account key', async () => {
+  localStorage.setItem(chatThemeStorageKey('faculty-a@plv.edu.ph'), 'false');
+  localStorage.setItem(chatThemeStorageKey('faculty-b@plv.edu.ph'), 'false');
+  render(<Chat userEmail="faculty-b@plv.edu.ph" userRole="faculty" systemTheme="dark" isOpen />);
+  await waitFor(() => expect(mockConnection.start).toHaveBeenCalled());
+
+  expect(screen.getByTestId('chat-panel')).toHaveClass('bg-slate-900', 'text-slate-100');
+  expect(localStorage.getItem(chatThemeStorageKey('faculty-b@plv.edu.ph'))).toBe('true');
+  expect(localStorage.getItem(chatThemeStorageKey('faculty-a@plv.edu.ph'))).toBe('false');
+});
+
+test('keeps the existing Chat close behavior', async () => {
+  const onClose = jest.fn();
+  render(<Chat userEmail="registrar@plv.edu.ph" userRole="registrar" isOpen onClose={onClose} />);
+  await waitFor(() => expect(mockConnection.start).toHaveBeenCalled());
+
+  fireEvent.click(screen.getByTitle('Close chat'));
+
+  expect(onClose).toHaveBeenCalledTimes(1);
 });
 
 test('image preview is centered in a viewport overlay outside the clipped chat window', async () => {
@@ -46,4 +94,25 @@ test('image preview is centered in a viewport overlay outside the clipped chat w
   expect(screen.getAllByAltText('Screenshot.png')[1]).toHaveClass('mx-auto', 'object-contain');
   fireEvent.click(close);
   expect(screen.queryByTitle('Close image preview')).not.toBeInTheDocument();
+});
+
+test('twenty identical academic events cause one pull and one local event', async () => {
+  const listener = jest.fn();
+  window.addEventListener('blockgo:academic-data-changed', listener);
+  const view = render(<Chat userEmail="chair@plv.edu.ph" userRole="department_admin" isOpen />);
+  await waitFor(() => expect(mockHandlers.AcademicDataChanged).toBeDefined());
+  await waitFor(() => expect(mockConnection.start).toHaveBeenCalled());
+  pullSharedClientState.mockClear();
+  const payload = { reason: 'section_created', department: 'BSIT', actor: 'registrar@plv.edu.ph', changedAt: '2026-09-29T01:00:00Z' };
+
+  await act(async () => {
+    for (let index = 0; index < 20; index += 1) mockHandlers.AcademicDataChanged(payload);
+    await Promise.resolve();
+  });
+
+  expect(pullSharedClientState).toHaveBeenCalledTimes(1);
+  expect(listener).toHaveBeenCalledTimes(1);
+  view.unmount();
+  window.removeEventListener('blockgo:academic-data-changed', listener);
+  expect(mockConnection.stop).toHaveBeenCalledTimes(1);
 });

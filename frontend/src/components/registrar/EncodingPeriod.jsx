@@ -1,8 +1,23 @@
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useEffect, useState } from "react";
-import { getSystemSetting, updateSystemSetting } from "../../services/api";
+import { fetchAcademicPeriodOptions, getSystemSetting, updateSystemSetting } from "../../services/api";
+import StatusBadge from "../shared/StatusBadge";
+
+const toSemesterDisplay = (value) => {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "FIRST" || normalized === "1ST SEMESTER") return "1st Semester";
+  if (normalized === "SECOND" || normalized === "2ND SEMESTER") return "2nd Semester";
+  if (["MIDYEAR", "SUMMER", "SUMMER / MIDYEAR"].includes(normalized)) return "Summer";
+  return "";
+};
 
 function EncodingPeriod({ onResetEncodingSeason }) {
+  const today = new Date();
+  const currentYear = today.getMonth() >= 5 ? today.getFullYear() : today.getFullYear() - 1;
+  const fallbackSchoolYear = `${currentYear}-${currentYear + 1}`;
   const [period, setPeriod] = useState({
+    schoolYear: fallbackSchoolYear,
     semester: "2nd Semester",
     startDate: "",
     endDate: "",
@@ -10,38 +25,107 @@ function EncodingPeriod({ onResetEncodingSeason }) {
   });
   const [statusMessage, setStatusMessage] = useState("");
   const [isResettingSeason, setIsResettingSeason] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [schoolYears, setSchoolYears] = useState([fallbackSchoolYear]);
   const [savedPeriod, setSavedPeriod] = useState(null);
+  const [activeAcademicPeriod, setActiveAcademicPeriod] = useState(null);
 
   const isSuccessStatusMessage =
     statusMessage === "Encoding period saved successfully." ||
-    statusMessage ===
-      "Encoding season reset successfully. Faculty assigned sections were cleared, saved sections were kept, and the encoding period was closed.";
+    statusMessage === "Encoding season reset successfully.";
 
   useEffect(() => {
+    let active = true;
+
     const loadSavedPeriod = async () => {
       try {
-        const res = await getSystemSetting("encoding_period");
-        if (res.status === "Success" && res.value) {
-          const savedPeriod = JSON.parse(res.value);
-          setPeriod({
-            semester: savedPeriod?.semester || "2nd Semester",
-            startDate: savedPeriod?.startDate || "",
-            endDate: savedPeriod?.endDate || "",
-            term: savedPeriod?.term || "midterm",
-          });
-          setSavedPeriod(savedPeriod);
+        const [settingResult, optionsResult] = await Promise.allSettled([
+          getSystemSetting("encoding_period"),
+          fetchAcademicPeriodOptions(),
+        ]);
+        if (!active) return;
+        const options = optionsResult.status === "fulfilled" ? optionsResult.value : null;
+        const res = settingResult.status === "fulfilled" ? settingResult.value : null;
+        const activeAcademicPeriod = options?.activeAcademicPeriod || null;
+        let selectedSchoolYear =
+          activeAcademicPeriod?.schoolYear ||
+          options?.currentSchoolYear ||
+          fallbackSchoolYear;
+
+        let parsedSavedPeriod = null;
+
+        if (res?.status === "Success" && res.value) {
+          parsedSavedPeriod = JSON.parse(res.value);
+
+          const authoritativeSemester =
+            toSemesterDisplay(activeAcademicPeriod?.semester) ||
+            parsedSavedPeriod?.semester ||
+            "2nd Semester";
+
+          const resolvedPeriod = {
+            schoolYear:
+              activeAcademicPeriod?.schoolYear ||
+              parsedSavedPeriod?.schoolYear ||
+              selectedSchoolYear,
+            semester: authoritativeSemester,
+            startDate: parsedSavedPeriod?.startDate || "",
+            endDate: parsedSavedPeriod?.endDate || "",
+            term: parsedSavedPeriod?.term || "midterm",
+          };
+
+          selectedSchoolYear = resolvedPeriod.schoolYear;
+
+          setPeriod(resolvedPeriod);
+          setSavedPeriod(resolvedPeriod);
+          localStorage.setItem("encodingPeriod", JSON.stringify(resolvedPeriod));
         } else {
+          setPeriod((current) => ({
+            ...current,
+            schoolYear: selectedSchoolYear,
+            semester:
+              toSemesterDisplay(activeAcademicPeriod?.semester) ||
+              current.semester,
+          }));
+
           setStatusMessage("No saved encoding period yet.");
+          localStorage.removeItem("encodingPeriod");
+        }
+        setActiveAcademicPeriod(activeAcademicPeriod);
+        setSchoolYears([...new Set([
+          selectedSchoolYear,
+          ...(options?.schoolYears || []),
+          parsedSavedPeriod?.schoolYear,
+          fallbackSchoolYear,
+        ].filter(Boolean))]);
+        if (optionsResult.status === "rejected") {
+          setLoadError("Available school years could not be refreshed. The current year remains available.");
         }
       } catch (error) {
-        setStatusMessage("No saved encoding period yet.");
+        if (!active) return;
+        setLoadError("The encoding period could not be loaded. Please refresh and try again.");
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    };
+
+    const handleSystemSettingChanged = (event) => {
+      const key = event.detail?.key || event.detail?.Key;
+      if (key === "encoding_period" && event.detail?.source !== "encoding-period-save") {
+        loadSavedPeriod();
       }
     };
 
     loadSavedPeriod();
-  }, []);
+    window.addEventListener("blockgo:system-setting-changed", handleSystemSettingChanged);
+    return () => {
+      active = false;
+      window.removeEventListener("blockgo:system-setting-changed", handleSystemSettingChanged);
+    };
+  }, [fallbackSchoolYear]);
 
-  const { semester, startDate, endDate, term } = period;
+  const { startDate, endDate, term } = period;
 
   const updatePeriod = (field, value) => {
     setPeriod((current) => ({ ...current, [field]: value }));
@@ -69,50 +153,74 @@ function EncodingPeriod({ onResetEncodingSeason }) {
   };
 
   const handleSave = async () => {
-    const encodingData = {
-      ...period,
-    };
-
     try {
-      await updateSystemSetting("encoding_period", JSON.stringify(encodingData));
-      localStorage.setItem("encodingPeriod", JSON.stringify(encodingData));
+      setIsSaving(true);
+      const encodingData = { ...period };
+      const response = await updateSystemSetting("encoding_period", JSON.stringify(encodingData));
+      if (response?.status !== "Success" || typeof response.value !== "string") {
+        throw new Error("The saved encoding period could not be confirmed. Refresh and try again.");
+      }
+      const savedData = JSON.parse(response.value);
+      setPeriod(savedData);
+      setActiveAcademicPeriod({ schoolYear: savedData.schoolYear, semester: savedData.semester });
+      setSchoolYears((current) => [...new Set([savedData.schoolYear, ...current])]);
+      localStorage.setItem("encodingPeriod", response.value);
       window.dispatchEvent(
         new CustomEvent("blockgo:system-setting-changed", {
           detail: {
             key: "encoding_period",
-            value: JSON.stringify(encodingData),
+            value: response.value,
+            source: "encoding-period-save",
           },
         })
       );
+      window.dispatchEvent(new CustomEvent("blockgo:academic-data-changed", {
+        detail: { reason: "encoding_period_changed", source: "encoding-period-save" },
+      }));
       setStatusMessage("Encoding period saved successfully.");
-      setSavedPeriod(encodingData);
+      setSavedPeriod(savedData);
     } catch (error) {
       setStatusMessage(error.message || "Failed to save encoding period.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleResetSeason = async () => {
-    const shouldReset = window.confirm(
-      "Reset this encoding season? This will clear assigned faculty sections for the current encoding cycle, but will keep the saved student sections."
+    const requestedPeriod = { ...period };
+    const shouldReset = await requestSystemConfirmation(
+      `Open ${requestedPeriod.schoolYear} ${requestedPeriod.semester} ${term} as a new encoding context? Current faculty assignments will be deactivated, while historical grades and saved sections remain intact.`
     );
 
     if (!shouldReset) return;
 
     try {
       setIsResettingSeason(true);
-      await onResetEncodingSeason?.();
-      setPeriod({
-        semester: "2nd Semester",
-        startDate: "",
-        endDate: "",
-        term: "midterm",
-      });
-      setSavedPeriod(null);
-      setStatusMessage(
-        "Encoding season reset successfully. Faculty assigned sections were cleared, saved sections were kept, and the encoding period was closed."
-      );
-      alert(
-        "Encoding season has been reset. Faculty assigned sections are now cleared, saved sections were kept, and the encoding period is now closed."
+      if (typeof onResetEncodingSeason !== "function") {
+        throw new Error("Encoding season reset is unavailable. Please refresh the page and try again.");
+      }
+
+      const response = await onResetEncodingSeason(requestedPeriod);
+      const context = response?.academicContext;
+      const openedSemester = toSemesterDisplay(context?.semester);
+      if (!context?.academicPeriodId || !context?.schoolYear || !openedSemester || !context?.term) {
+        throw new Error("The opened academic period could not be confirmed. Refresh the page before making further changes.");
+      }
+      const openedPeriod = {
+        schoolYear: context.schoolYear,
+        semester: openedSemester,
+        term: context.term,
+        startDate: context.startDate || "",
+        endDate: context.endDate || "",
+      };
+      setPeriod(openedPeriod);
+      setSavedPeriod(openedPeriod);
+      setActiveAcademicPeriod(context);
+      setSchoolYears((current) => [...new Set([openedPeriod.schoolYear, ...current])]);
+      localStorage.setItem("encodingPeriod", JSON.stringify(openedPeriod));
+      setStatusMessage("Encoding season reset successfully.");
+      showSystemNotification(
+        "Encoding season has been reset. Current faculty assignments were deactivated and the selected academic period is now active."
       );
     } catch (error) {
       setStatusMessage(
@@ -147,18 +255,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
         <div className="flex items-center justify-between gap-4">
           <h3 className="text-base font-bold text-slate-900">Encoding Period Control</h3>
 
-          <span
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold ${
-              getBannerStatus() === "Open"
-                ? "border-green-200 bg-green-50 text-green-700"
-                : getBannerStatus() === "Urgent"
-                ? "border-amber-200 bg-amber-50 text-amber-700"
-                : "border-red-200 bg-red-50 text-red-600"
-            }`}
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-current" />
-            {getBannerStatus()}
-          </span>
+          <StatusBadge status={getBannerStatus()} />
         </div>
 
         {(statusMessage || !savedPeriod) && (
@@ -173,12 +270,30 @@ function EncodingPeriod({ onResetEncodingSeason }) {
             <span>{statusMessage || "No saved encoding period yet."}</span>
           </div>
         )}
+        {loadError && <div role="alert" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{loadError}</div>}
 
-        <div className="mt-3 grid grid-cols-1 items-end gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_auto_1fr]">
+        <p className="mt-3 text-xs font-semibold text-slate-700">Current Active Academic Period: {activeAcademicPeriod ? `${activeAcademicPeriod.schoolYear} · ${toSemesterDisplay(activeAcademicPeriod.semester)}` : "None"}</p>
+        <p className="mt-2 text-xs font-semibold text-slate-700">Academic Period for Encoding</p>
+        <p className="mt-1 text-xs text-slate-600">Select the School Year, Semester, and Encoding Term to use for grade encoding.</p>
+
+        <div className="mt-3 grid grid-cols-1 items-end gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto_1fr]">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-700">School Year</label>
+            <select
+              aria-label="School Year"
+              value={period.schoolYear}
+              onChange={(event) => updatePeriod("schoolYear", event.target.value)}
+              disabled={isLoading}
+              className="h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
+            >
+              {isLoading ? <option value={period.schoolYear}>Loading school years…</option> : schoolYears.map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
+          </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700">Semester</label>
             <select
-              value={semester}
+              aria-label="Semester"
+              value={period.semester}
               onChange={(e) => updatePeriod("semester", e.target.value)}
               className="h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
             >
@@ -191,6 +306,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700">Encoding Term</label>
             <select
+              aria-label="Encoding Term"
               value={term}
               onChange={(e) => updatePeriod("term", e.target.value)}
               className="h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
@@ -203,6 +319,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700">Start Date</label>
             <input
+              aria-label="Start Date"
               type="date"
               value={startDate}
               onChange={(e) => updatePeriod("startDate", e.target.value)}
@@ -216,6 +333,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700">End Date</label>
             <input
+              aria-label="End Date"
               type="date"
               value={endDate}
               onChange={(e) => updatePeriod("endDate", e.target.value)}
@@ -229,16 +347,17 @@ function EncodingPeriod({ onResetEncodingSeason }) {
           <button
             type="button"
             onClick={handleSave}
+            disabled={isLoading || isSaving}
             className="inline-flex items-center gap-1.5 rounded-md bg-[#0b3478] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#08285e]"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4"><path d="M5 3h12l2 2v16H5z"/><path d="M8 3v6h8V3M8 21v-7h8v7"/></svg>
-            Save Schedule
+            {isSaving ? "Saving…" : "Save Schedule"}
           </button>
 
           <button
             type="button"
             onClick={handleResetSeason}
-            disabled={isResettingSeason}
+            disabled={isLoading || isResettingSeason}
             className="inline-flex items-center gap-1.5 rounded-md border border-red-400 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M20 7v5h-5"/><path d="M19 12a7 7 0 1 1-2-5"/></svg>
@@ -250,7 +369,11 @@ function EncodingPeriod({ onResetEncodingSeason }) {
       <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm md:p-4">
         <h3 className="text-base font-bold text-slate-900">Current Schedule</h3>
 
-        <div className="mt-3 grid grid-cols-1 overflow-hidden rounded-md border border-blue-100 bg-blue-50/30 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="mt-3 grid grid-cols-1 overflow-hidden rounded-md border border-blue-100 bg-blue-50/30 sm:grid-cols-2 xl:grid-cols-6">
+          <div className="p-3 xl:border-r xl:border-slate-200">
+            <p className="text-[10px] text-slate-500">School Year</p>
+            <p className="mt-1.5 text-xs font-semibold text-slate-900">{savedPeriod?.schoolYear || "Not set"}</p>
+          </div>
           <div className="p-3 xl:border-r xl:border-slate-200">
             <p className="text-[10px] text-slate-500">Semester</p>
             <p className="mt-1.5 text-xs font-semibold text-slate-900">{savedPeriod?.semester || "Not set"}</p>
@@ -277,9 +400,7 @@ function EncodingPeriod({ onResetEncodingSeason }) {
 
           <div className="p-3">
             <p className="text-[10px] text-slate-500">Faculty Banner Status</p>
-            <span className={`mt-1.5 inline-flex rounded-full px-2 py-1 text-[10px] font-semibold ${getBannerStatus(savedPeriod || {}) === "Open" ? "bg-green-100 text-green-700" : getBannerStatus(savedPeriod || {}) === "Urgent" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-600"}`}>
-              {getBannerStatus(savedPeriod || {})}
-            </span>
+            <div className="mt-1.5"><StatusBadge status={getBannerStatus(savedPeriod || {})} /></div>
           </div>
         </div>
       </section>

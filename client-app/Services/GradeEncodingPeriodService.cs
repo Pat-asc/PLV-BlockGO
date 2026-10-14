@@ -29,7 +29,25 @@ public static class GradeEncodingPeriodService
         return ParseOpen(rawValue, today ?? InstitutionToday());
     }
 
+    public static async Task<ActiveGradeEncodingPeriod> GetConfiguredAsync(
+        NpgsqlConnection connection,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT value FROM SystemSettings WHERE key = 'encoding_period' LIMIT 1;", connection);
+        var rawValue = (await command.ExecuteScalarAsync(cancellationToken))?.ToString();
+        return ParseConfigured(rawValue);
+    }
+
     public static ActiveGradeEncodingPeriod ParseOpen(string? rawValue, DateOnly today)
+    {
+        var configured = ParseConfigured(rawValue);
+        if (today < configured.StartDate || today > configured.EndDate)
+            throw new GradeEncodingPeriodException("The encoding period is currently closed.");
+        return configured;
+    }
+
+    public static ActiveGradeEncodingPeriod ParseConfigured(string? rawValue)
     {
         if (string.IsNullOrWhiteSpace(rawValue))
             throw new GradeEncodingPeriodException("No active encoding period is configured.");
@@ -52,9 +70,6 @@ public static class GradeEncodingPeriodService
 
             if (endDate < startDate)
                 throw new GradeEncodingPeriodException("The encoding period has an invalid date range.");
-            if (today < startDate || today > endDate)
-                throw new GradeEncodingPeriodException("The encoding period is currently closed.");
-
             return new(term, semester, startDate, endDate);
         }
         catch (GradeEncodingPeriodException)

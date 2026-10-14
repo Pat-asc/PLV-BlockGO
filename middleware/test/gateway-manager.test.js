@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const net = require('node:net');
 
-const { checkSocket, fabricEndpointUrls } = require('../src/fabric/gateway-manager');
+const { checkSocket, fabricEndpointUrls, identityFingerprint, isReusableCacheEntry } = require('../src/fabric/gateway-manager');
 
 function withEnvironment(values, action) {
     const original = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
@@ -19,6 +19,26 @@ function withEnvironment(values, action) {
         }
     }
 }
+
+test('gateway cache reuses only the same current certificate and MSP', () => {
+    const now = Date.now();
+    const original = { mspId: 'FacultyMSP', credentials: { certificate: 'certificate-a' } };
+    const cached = {
+        mspId: original.mspId,
+        identityFingerprint: identityFingerprint(original),
+        lastAccessed: now,
+    };
+
+    assert.equal(isReusableCacheEntry(cached, original, now), true, 'same certificate should reuse the gateway');
+    assert.equal(isReusableCacheEntry(cached, {
+        ...original, credentials: { certificate: 'certificate-b' },
+    }, now), false, 'a reenrolled certificate must reconnect under the same MSP');
+    assert.equal(isReusableCacheEntry(cached, {
+        ...original, mspId: 'DepartmentMSP',
+    }, now), false, 'an MSP change must reconnect');
+    assert.equal(isReusableCacheEntry(cached, original, now + (6 * 60 * 1000)), false,
+        'an entry beyond the default five-minute idle timeout must reconnect');
+});
 
 test('selected HA orderer client endpoints can be disabled without removing the primary', () => {
     withEnvironment({

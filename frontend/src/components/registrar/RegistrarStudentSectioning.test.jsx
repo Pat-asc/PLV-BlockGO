@@ -1,25 +1,36 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import RegistrarStudentSectioning from './RegistrarStudentSectioning';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import RegistrarStudentSectioning, { buildCustomSectionTemplateDownload, buildSectionTemplateDownload } from './RegistrarStudentSectioning';
 import {
+  deleteAcademicSection,
   fetchDepartmentSections,
   fetchNextStudentId,
   fetchSectionedEnrolledStudents,
   fetchUnassignedEnrolledStudents,
+  finalizeEnrollmentRoster,
   getSystemSetting,
 } from '../../services/api';
 import { syncSectioningBatchToBackend } from '../../utils/registrarSectioningBackendSync';
 import { STUDENT_BATCHES_KEY } from '../../utils/studentSectioningHelpers';
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 
 jest.mock('../../services/api', () => ({
+  deleteAcademicSection: jest.fn(),
   fetchDepartmentSections: jest.fn(),
   fetchNextStudentId: jest.fn(),
   fetchSectionedEnrolledStudents: jest.fn(),
   fetchUnassignedEnrolledStudents: jest.fn(),
+  finalizeEnrollmentRoster: jest.fn(),
   getSystemSetting: jest.fn(),
 }));
 jest.mock('../../utils/registrarSectioningBackendSync', () => ({ syncSectioningBatchToBackend: jest.fn() }));
 jest.mock('../../utils/sharedClientState', () => ({ pushSectioningSharedState: jest.fn() }));
+jest.mock('../../services/NotificationContext', () => ({
+  ...jest.requireActual('../../services/NotificationContext'),
+  showSystemNotification: jest.fn(),
+}));
+jest.mock('../../services/SystemDialogContext', () => ({ requestSystemConfirmation: jest.fn() }));
 
 const student = { id: 42, enrollmentId: 73, studentNo: '26-0042', fullName: 'Test Student',
   department: 'BSIT', yearLevel: '1', enrollmentStatus: 'ENROLLED', schoolYear: '2026-2027', semester: 'FIRST' };
@@ -27,8 +38,10 @@ const student = { id: 42, enrollmentId: 73, studentNo: '26-0042', fullName: 'Tes
 beforeEach(() => {
   jest.clearAllMocks();
   localStorage.clear();
-  window.alert = jest.fn();
+  requestSystemConfirmation.mockResolvedValue(true);
+  deleteAcademicSection.mockResolvedValue({ status: 'Success', mode: 'deleted' });
   fetchNextStudentId.mockResolvedValue({ highestSequence: 42 });
+  finalizeEnrollmentRoster.mockResolvedValue({ finalized: 1 });
   getSystemSetting.mockResolvedValue({ status: 'Success', value: { schoolYear: '2026-2027', semester: 'FIRST' } });
   fetchUnassignedEnrolledStudents.mockImplementation(async (period) => ({ data: [{ ...student, ...period }] }));
   fetchSectionedEnrolledStudents.mockResolvedValue({ data: [] });
@@ -39,15 +52,15 @@ beforeEach(() => {
   syncSectioningBatchToBackend.mockResolvedValue({ sectionsSynced: 1, studentsSynced: 1 });
 });
 
-test('loads enrollments automatically and generates sections using the saved student identity', async () => {
+test('Generate Sections creates empty section structures without assigning eligible students', async () => {
   render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
   await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled/ })).toBeEnabled());
-  await waitFor(() => expect(JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0]?.students[0]?.studentId).toBe('26-0042'));
+  await waitFor(() => expect(JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0]?.students).toEqual([]));
   fireEvent.click(screen.getByRole('button', { name: 'Generate Sections' }));
   await waitFor(() => expect(syncSectioningBatchToBackend).toHaveBeenCalled());
   expect(syncSectioningBatchToBackend.mock.calls[0][0]).toEqual(expect.objectContaining({
     schoolYear: expect.stringMatching(/^\d{4}-\d{4}$/), semester: expect.any(String),
-    students: [expect.objectContaining({ id: 42, enrollmentId: 73, studentId: '26-0042', sectionCode: '1-1' })],
+    students: [],
   }));
 });
 
@@ -58,6 +71,48 @@ test('uses the active encoding period without a manual semester control', async 
   await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled \(1\)/ })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Generate Sections' }));
   await waitFor(() => expect(syncSectioningBatchToBackend).toHaveBeenCalledWith(expect.objectContaining({ semester: 'FIRST', schoolYear: '2026-2027' })));
+});
+
+test('aligns all four controls and keeps the original Registrar finalization workflow', async () => {
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  const finalize = await screen.findByRole('button', { name: 'Finalize' });
+  expect(screen.getByTestId('section-generator-controls')).toHaveClass(
+    'xl:grid-cols-[135px_135px_135px_135px_auto_auto_auto_auto]',
+    'xl:items-end'
+  );
+  expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled/ })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Generate Sections' }));
+  await waitFor(() => expect(syncSectioningBatchToBackend).toHaveBeenCalled());
+  await waitFor(() => expect(finalize).toBeEnabled());
+  fireEvent.click(finalize);
+  await waitFor(() => expect(finalizeEnrollmentRoster).toHaveBeenCalledWith({
+    program: 'BSIT',
+    schoolYear: '2026-2027',
+    semester: 'FIRST',
+  }));
+});
+
+test('Auto-Populate creates and assigns sections through the authoritative sync flow', async () => {
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  const autoPopulate = await screen.findByRole('button', { name: /Auto-Populate Enrolled \(1\)/ });
+  fireEvent.click(autoPopulate);
+  await waitFor(() => expect(syncSectioningBatchToBackend).toHaveBeenCalledWith(expect.objectContaining({
+    program: 'BSIT', schoolYear: '2026-2027', semester: 'FIRST',
+    students: [expect.objectContaining({ studentId: '26-0042', sectionCode: '1-1' })],
+  })));
+  await waitFor(() => expect(fetchSectionedEnrolledStudents).toHaveBeenCalledTimes(2));
+});
+
+test('Auto-Populate reports when no eligible enrollment data exists', async () => {
+  fetchUnassignedEnrolledStudents.mockResolvedValue({ data: [] });
+  fetchSectionedEnrolledStudents.mockResolvedValue({ data: [] });
+  fetchDepartmentSections.mockResolvedValue({ data: [] });
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  const autoPopulate = await screen.findByRole('button', { name: /Auto-Populate Enrolled \(0\)/ });
+  fireEvent.click(autoPopulate);
+  expect(showSystemNotification).toHaveBeenCalledWith(expect.stringContaining('No eligible unassigned students'));
+  expect(syncSectioningBatchToBackend).not.toHaveBeenCalled();
 });
 
 test('shows fetch failures and allows refresh even with zero students', async () => {
@@ -83,11 +138,17 @@ test('ignores a stale response after the department changes', async () => {
 });
 
 test('refreshing the enrolled roster does not duplicate students', async () => {
+  fetchUnassignedEnrolledStudents
+    .mockResolvedValueOnce({ data: [student] })
+    .mockResolvedValue({ data: [] });
+  fetchSectionedEnrolledStudents
+    .mockResolvedValueOnce({ data: [] })
+    .mockResolvedValue({ data: [{ ...student, academicSectionId: 1, section: '1-1' }] });
   render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
   await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled \(1\)/ })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: /Auto-Populate Enrolled/ }));
   await waitFor(() => expect(fetchUnassignedEnrolledStudents).toHaveBeenCalledTimes(2));
-  await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled \(1\)/ })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled \(0\)/ })).toBeEnabled());
   expect(JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0].students).toHaveLength(1);
 });
 
@@ -97,10 +158,10 @@ test('failed assignment does not publish a sectioned roster', async () => {
   await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled/ })).toBeEnabled());
   const sectionPlansBeforeAttempt = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0].sectionPlans;
   fireEvent.click(screen.getByRole('button', { name: 'Generate Sections' }));
-  await waitFor(() => expect(window.alert).toHaveBeenCalledWith('Section assignment failed: Student already assigned'));
+  await waitFor(() => expect(showSystemNotification).toHaveBeenCalledWith('Section assignment failed: Student already assigned'));
   const workspace = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0];
   expect(workspace.sectionPlans).toEqual(sectionPlansBeforeAttempt);
-  expect(workspace.students[0].sectionCode).toBe('');
+  expect(workspace.students).toEqual([]);
   expect(JSON.parse(localStorage.getItem('studentSections'))
     .every((section) => section.students.length === 0)).toBe(true);
 });
@@ -138,7 +199,7 @@ test('refetches authoritative enrollment membership immediately after assignment
 
   render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
   await waitFor(() => expect(screen.getByRole('button', { name: /Auto-Populate Enrolled \(1\)/ })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Generate Sections' }));
+  fireEvent.click(screen.getByRole('button', { name: /Auto-Populate Enrolled/ }));
 
   await waitFor(() => expect(fetchSectionedEnrolledStudents).toHaveBeenCalledTimes(2));
   await waitFor(() => {
@@ -147,4 +208,104 @@ test('refetches authoritative enrollment membership immediately after assignment
       expect.objectContaining({ studentId: '26-0042', academicSectionId: 1, sectionCode: '1-1' }),
     ]);
   });
+});
+
+test('Section Creator removes the global template button and exposes one accessible action per exact section', async () => {
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+
+  const actions = await screen.findAllByRole('button', { name: /Download template for .*1-/i });
+  expect(actions).toHaveLength(2);
+  expect(screen.queryByRole('button', { name: 'Download Template' })).not.toBeInTheDocument();
+  actions.forEach((action) => expect(action).toHaveClass('min-h-8'));
+});
+
+test('opens each exact section roster in a responsive shared modal and preserves section actions', async () => {
+  fetchUnassignedEnrolledStudents.mockResolvedValue({ data: [] });
+  fetchSectionedEnrolledStudents.mockResolvedValue({ data: [
+    { ...student, id: 41, studentNo: '26-0041', fullName: 'Only Section One', academicSectionId: 1, section: '1-1' },
+    { ...student, id: 42, studentNo: '26-0042', fullName: 'Only Section Two', academicSectionId: 2, section: '1-2' },
+  ] });
+
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+
+  const rosterButtons = await screen.findAllByRole('button', { name: 'View Roster' });
+  expect(rosterButtons).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: 'Export CSV' })).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: 'Upload CSV' })).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: 'Delete Section' })).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: /Download template for/i })).toHaveLength(2);
+
+  fireEvent.click(rosterButtons[0]);
+  let dialog = screen.getByRole('dialog', { name: /1-1.*Student Roster/i });
+  expect(within(dialog).getByText('Only Section One')).toBeInTheDocument();
+  expect(within(dialog).queryByText('Only Section Two')).not.toBeInTheDocument();
+  expect(dialog).toHaveClass('max-h-[90vh]', 'overflow-hidden', 'dark:bg-slate-900');
+  expect(screen.getByTestId('section-roster-scroll-area')).toHaveClass('overflow-y-auto');
+
+  const rosterSearch = within(dialog).getByPlaceholderText(/search by id or name/i);
+  fireEvent.change(rosterSearch, { target: { value: 'not present' } });
+  expect(within(dialog).getByText('No students found in this section.')).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole('button', { name: /Close .*Student Roster/i }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByText('Section Generator')).toBeInTheDocument();
+
+  fireEvent.click(rosterButtons[1]);
+  dialog = screen.getByRole('dialog', { name: /1-2.*Student Roster/i });
+  expect(within(dialog).getByText('Only Section Two')).toBeInTheDocument();
+  expect(within(dialog).queryByText('Only Section One')).not.toBeInTheDocument();
+});
+
+test('deleting a persisted section updates the API and reloads canonical section state', async () => {
+  fetchDepartmentSections
+    .mockResolvedValueOnce({ data: [
+      { id: 1, department: 'BS Information Technology', yearLevel: 1, sectionNum: 1 },
+      { id: 2, department: 'BS Information Technology', yearLevel: 1, sectionNum: 2 },
+    ] })
+    .mockResolvedValue({ data: [
+      { id: 2, department: 'BS Information Technology', yearLevel: 1, sectionNum: 2 },
+    ] });
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  const deleteButtons = await screen.findAllByRole('button', { name: 'Delete Section' });
+  fireEvent.click(deleteButtons[0]);
+  await waitFor(() => expect(deleteAcademicSection).toHaveBeenCalledWith(1));
+  await waitFor(() => expect(fetchDepartmentSections).toHaveBeenCalledTimes(2));
+});
+
+test('section template uses exact academic_section_id when display labels are duplicated', () => {
+  const sections = [
+    { academicSectionId: 11, sectionCode: '1-1', sectionName: '1-1', program: 'BSIT' },
+    { academicSectionId: 22, sectionCode: '1-1', sectionName: '1-1', program: 'BSCS' },
+  ];
+  const students = [
+    { studentId: '26-0011', firstName: 'Information', lastName: 'Student', middleName: 'A', sex: 'F', yearLevel: '1st Year', academicSectionId: 11 },
+    { studentId: '26-0022', firstName: 'Computer', lastName: 'Student', middleName: 'B', sex: 'M', yearLevel: '1st Year', academicSectionId: 22 },
+  ];
+
+  const download = buildSectionTemplateDownload({
+    sections, students, academicSectionId: 22, program: 'BSCS', schoolYear: '2026-2027', semester: 'FIRST',
+  });
+
+  expect(download.academicSectionId).toBe(22);
+  expect(download.students.map((item) => item.studentId)).toEqual(['26-0022']);
+  expect(download.content).toContain('26-0022');
+  expect(download.content).not.toContain('26-0011');
+  expect(download.content.split('\n')[0]).toBe('Student ID,Sex,Last Name,First Name,Middle Name,Year Level');
+  expect(download.fileName).toContain('bscs-1-1-2026-2027-first-template.csv');
+});
+
+test('section template fails closed when an exact academic section ID is absent', () => {
+  expect(buildSectionTemplateDownload({
+    sections: [{ academicSectionId: 11, sectionCode: '1-1' }],
+    students: [],
+    academicSectionId: 99,
+    program: 'BSIT',
+    schoolYear: '2026-2027',
+    semester: 'FIRST',
+  })).toBeNull();
+});
+
+test('custom section template round-trips the exact uploader headers', () => {
+  const download = buildCustomSectionTemplateDownload();
+  expect(download.fileName).toBe('custom-section-template.csv');
+  expect(download.content).toBe('Student ID,Sex,Last Name,First Name,Middle Name,Year Level');
 });

@@ -1,8 +1,10 @@
+import { requestSystemConfirmation, requestSystemPrompt } from '../../services/SystemDialogContext';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   approveCurriculum,
   archiveCurriculum,
   assignProgramCurriculum,
+  createAcademicProgram,
   fetchCurriculums,
   publishCurriculum,
   returnCurriculum,
@@ -25,6 +27,8 @@ const CurriculumManagement = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [batchYear, setBatchYear] = useState(String(new Date().getFullYear()));
+  const [programForm, setProgramForm] = useState({ code: '', name: '' });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -58,14 +62,19 @@ const CurriculumManagement = () => {
     setNotice(null);
 
     let confirmation;
-    if (name === 'approve') confirmation = window.confirm('Approve this curriculum proposal?');
+    if (name === 'approve') confirmation = await requestSystemConfirmation('Approve this curriculum proposal?');
     if (name === 'return') {
-      const reason = window.prompt('Reason for returning this curriculum:');
+      const reason = await requestSystemPrompt({
+        title: 'Return Curriculum',
+        message: 'Explain why this curriculum is being returned to the Chairperson.',
+        inputLabel: 'Return reason',
+        confirmLabel: 'Return Curriculum',
+      });
       if (!reason?.trim()) return;
       confirmation = reason.trim();
     }
-    if (name === 'publish') confirmation = window.confirm('Publish this approved curriculum? Any previous published version for this program will be archived.');
-    if (name === 'archive') confirmation = window.confirm('Archive this published curriculum? It will remain in version history.');
+    if (name === 'publish') confirmation = await requestSystemConfirmation('Publish this approved curriculum? Any previous published version for this program will be archived.');
+    if (name === 'archive') confirmation = await requestSystemConfirmation('Archive this published curriculum? It will remain in version history.');
     if (!confirmation) return;
 
     setSaving(true);
@@ -85,16 +94,20 @@ const CurriculumManagement = () => {
 
   const assign = async () => {
     if (!selected) return;
-    if (!window.confirm(`This version will become the active curriculum for every ${selected.programCode} student. Continue?`)) return;
+    if (!/^\d{4}$/.test(batchYear) || Number(batchYear) < 2000) {
+      setNotice({ type: 'error', message: 'Enter a valid four-digit student batch year.' });
+      return;
+    }
+    if (!await requestSystemConfirmation(`Assign this curriculum to ${selected.programCode} batch ${batchYear} only?`)) return;
 
     setSaving(true);
     setNotice(null);
     try {
-      const response = await assignProgramCurriculum(selected.curriculumId);
+      const response = await assignProgramCurriculum(selected.curriculumId, batchYear);
       const affectedStudents = Number(response?.affectedStudents ?? 0);
       setNotice({
         type: 'success',
-        message: `Curriculum assigned to ${selected.programCode}. ${affectedStudents} student${affectedStudents === 1 ? '' : 's'} synchronized.`,
+        message: `Curriculum assigned to ${selected.programCode} batch ${batchYear}. ${affectedStudents} student${affectedStudents === 1 ? '' : 's'} synchronized.`,
       });
       await load();
     } catch (error) {
@@ -105,6 +118,24 @@ const CurriculumManagement = () => {
   };
 
   const showAssignmentActions = selected?.status === 'PUBLISHED';
+
+  const createProgram = async (event) => {
+    event.preventDefault();
+    const code = programForm.code.trim().toUpperCase().replace(/\s+/g, '');
+    const name = programForm.name.trim().replace(/\s+/g, ' ');
+    if (!/^[A-Z0-9][A-Z0-9-]{1,19}$/.test(code) || name.length < 3) {
+      setNotice({ type: 'error', message: 'Enter a 2-20 character Program Code and a complete Program Name.' });
+      return;
+    }
+    setSaving(true); setNotice(null);
+    try {
+      const response = await createAcademicProgram(code, name);
+      setNotice({ type: 'success', message: response.message || `Academic program ${code} created without a curriculum.` });
+      setProgramForm({ code: '', name: '' });
+      window.dispatchEvent(new CustomEvent('blockgo:academic-data-changed', { detail: { reason: 'academic_program_created', programCode: code } }));
+    } catch (error) { setNotice({ type: 'error', message: error.message }); }
+    finally { setSaving(false); }
+  };
 
   return (
     <div className="space-y-5">
@@ -118,6 +149,13 @@ const CurriculumManagement = () => {
           {notice.message}
         </div>
       ) : null}
+
+      <form onSubmit={createProgram} className="grid gap-3 rounded-xl border border-blue-200 bg-blue-50/40 p-4 md:grid-cols-[180px_minmax(240px,1fr)_auto] md:items-end" aria-label="Create academic program">
+        <label className="text-xs font-semibold text-slate-700">Program Code<input aria-label="Program Code" required maxLength="20" value={programForm.code} onChange={(event) => setProgramForm((current) => ({ ...current, code: event.target.value.replace(/[^a-zA-Z0-9-]/g, '') }))} placeholder="BSIS" className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm uppercase" /></label>
+        <label className="text-xs font-semibold text-slate-700">Program Name<input aria-label="Program Name" required maxLength="160" value={programForm.name} onChange={(event) => setProgramForm((current) => ({ ...current, name: event.target.value }))} placeholder="Bachelor of Science in Information Systems" className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm" /></label>
+        <button disabled={saving} className="h-10 rounded-lg bg-[#003366] px-4 text-sm font-bold text-white disabled:opacity-60">Create Program</button>
+        <p className="text-xs text-slate-600 md:col-span-3">Creates an active program master record only. Curriculum subjects must be created and published separately.</p>
+      </form>
 
       <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Curriculum status filters">
         {tabs.map((tab) => (
@@ -181,8 +219,11 @@ const CurriculumManagement = () => {
 
               {showAssignmentActions ? (
                 <section aria-label="Curriculum actions" className="mt-4 flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <label className="text-sm font-semibold text-slate-700">Student batch year
+                    <input aria-label="Student batch year" value={batchYear} onChange={(event) => setBatchYear(event.target.value)} className="ml-2 w-28 rounded-lg border border-slate-300 px-3 py-2 font-normal" />
+                  </label>
                   <button disabled={saving} type="button" onClick={assign} className="rounded-lg bg-[#003366] px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">
-                    Assign to Program
+                    Assign to Batch
                   </button>
                   <button disabled={saving} type="button" onClick={() => action('archive')} className="rounded-lg bg-slate-700 px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">Archive</button>
                 </section>

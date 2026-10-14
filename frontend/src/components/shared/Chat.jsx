@@ -1,9 +1,22 @@
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as signalR from '@microsoft/signalr';
 import { getChatHubUrl } from '../../services/api';
 import { getAuthToken } from '../../services/authSession';
 import { pullSharedClientState } from '../../utils/sharedClientState';
+import { createAcademicEventGuard } from '../../utils/academicEventGuard';
+import {
+  applyChatThemeForAccount,
+  chatThemeStorageKey,
+  readChatDarkMode,
+  SYSTEM_THEME_CHANGED_EVENT,
+  THEME_STORAGE_KEY,
+} from '../../services/themePreference';
+import BackButton from './BackButton';
+
+const acceptAcademicEvent = createAcademicEventGuard();
 
 const roleKeyFromRoleString = (role) => {
   const r = (role || '').toLowerCase();
@@ -221,6 +234,7 @@ const TypingIndicator = ({ dark = false }) => (
 const Chat = ({
   userEmail,
   userRole,
+  systemTheme,
   onClose,
   isOpen = true,
   onUnreadChange,
@@ -253,13 +267,7 @@ const Chat = ({
   const [groupMemberSearch, setGroupMemberSearch] = useState('');
   const [selectedGroupInvitees, setSelectedGroupInvitees] = useState([]);
   const [groupActionBusy, setGroupActionBusy] = useState(false);
-  const [isChatDarkMode, setIsChatDarkMode] = useState(() => {
-    try {
-      return localStorage.getItem(`blockgo-chat-dark-mode:${userEmail || 'anonymous'}`) === 'true';
-    } catch {
-      return false;
-    }
-  });
+  const [isChatDarkMode, setIsChatDarkMode] = useState(() => systemTheme ? systemTheme === 'dark' : readChatDarkMode(userEmail));
 
   const [chatBoxWidth, setChatBoxWidth] = useState(400);
   const [chatBoxHeight, setChatBoxHeight] = useState(500);
@@ -290,11 +298,30 @@ const Chat = ({
 
   useEffect(() => {
     try {
-      localStorage.setItem(`blockgo-chat-dark-mode:${userEmail || 'anonymous'}`, String(isChatDarkMode));
+      localStorage.setItem(chatThemeStorageKey(userEmail), String(isChatDarkMode));
     } catch {
       // Chat remains usable when browser storage is unavailable.
     }
   }, [isChatDarkMode, userEmail]);
+
+  useEffect(() => {
+    const followSystemTheme = (theme) => setIsChatDarkMode(applyChatThemeForAccount(theme, userEmail));
+    const handleSystemThemeChange = (event) => followSystemTheme(event.detail?.theme);
+    const handleStorage = (event) => {
+      if (event.key === THEME_STORAGE_KEY && event.newValue) followSystemTheme(event.newValue);
+      if (event.key === chatThemeStorageKey(userEmail) && event.newValue !== null) setIsChatDarkMode(event.newValue === 'true');
+    };
+    window.addEventListener(SYSTEM_THEME_CHANGED_EVENT, handleSystemThemeChange);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(SYSTEM_THEME_CHANGED_EVENT, handleSystemThemeChange);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [userEmail]);
+
+  useEffect(() => {
+    if (systemTheme) setIsChatDarkMode(applyChatThemeForAccount(systemTheme, userEmail));
+  }, [systemTheme, userEmail]);
 
   const applyConversationState = useCallback((rawState) => {
     const state = normalizeConversationState(rawState);
@@ -549,12 +576,40 @@ const Chat = ({
     });
 
     conn.on('AcademicDataChanged', (payload) => {
+      if (!acceptAcademicEvent(payload)) return;
       console.log('[Chat] AcademicDataChanged:', payload);
       pullSharedClientState()
         .catch((error) => console.warn('[Chat] Shared state pull failed:', error))
         .finally(() => {
           window.dispatchEvent(new CustomEvent('blockgo:academic-data-changed', { detail: payload }));
         });
+    });
+
+    conn.on('GradeFinalized', (payload) => {
+      console.log('[Chat] GradeFinalized:', payload);
+      window.dispatchEvent(new CustomEvent('blockgo:grade-finalized', { detail: payload }));
+    });
+
+    conn.on('GradeReleased', (payload) => {
+      console.log('[Chat] GradeReleased:', payload);
+      window.dispatchEvent(new CustomEvent('blockgo:grade-released', { detail: payload }));
+    });
+
+    conn.on('GradeReturned', (payload) => {
+      console.log('[Chat] GradeReturned:', payload);
+      window.dispatchEvent(new CustomEvent('blockgo:grade-returned', { detail: payload }));
+    });
+
+    conn.on('TransactionRecorded', (payload) => {
+      window.dispatchEvent(new CustomEvent('blockgo:transaction-recorded', { detail: payload }));
+    });
+
+    conn.on('SecurityAlert', (payload) => {
+      let alert = payload;
+      if (typeof payload === 'string') {
+        try { alert = JSON.parse(payload); } catch { alert = { summary: payload }; }
+      }
+      window.dispatchEvent(new CustomEvent('blockgo:security-alert', { detail: alert }));
     });
 
     conn.on('ChatContacts', (contacts) => {
@@ -899,7 +954,7 @@ const Chat = ({
       connection.invoke('SendGroupMessage', Number(selectedGroupId), text)
         .catch((error) => {
           console.error('[Chat] SendGroupMessage failed:', error);
-          alert(error?.message || 'The group message could not be sent.');
+          showSystemNotification(error?.message || 'The group message could not be sent.');
         });
       return;
     }
@@ -917,7 +972,7 @@ const Chat = ({
 
     const maxBytes = 5 * 1024 * 1024;
     if (file.size > maxBytes) {
-      alert('File too large (max 5MB)');
+      showSystemNotification('File too large (max 5MB)');
       return;
     }
 
@@ -944,7 +999,7 @@ const Chat = ({
       );
     } catch (err) {
       console.error('[Chat] SendFile failed:', err);
-      alert(err?.message || 'File could not be sent.');
+      showSystemNotification(err?.message || 'File could not be sent.');
     }
   };
 
@@ -967,7 +1022,7 @@ const Chat = ({
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error('[Chat] Failed to download attachment:', err);
-      alert('Attachment could not be downloaded.');
+      showSystemNotification('Attachment could not be downloaded.');
     }
   };
 
@@ -1121,7 +1176,7 @@ const Chat = ({
       return true;
     } catch (error) {
       console.error(`[Chat] ${method} failed:`, error);
-      alert(error?.message || 'The conversation could not be updated.');
+      showSystemNotification(error?.message || 'The conversation could not be updated.');
       return false;
     }
   }, [connection, applyConversationState]);
@@ -1131,7 +1186,7 @@ const Chat = ({
   };
 
   const deleteConversation = async (email) => {
-    if (!window.confirm('Permanently delete every message in this conversation? Messages cannot be recovered. The user will remain available to message.')) return;
+    if (!await requestSystemConfirmation('Permanently delete every message in this conversation? Messages cannot be recovered. The user will remain available to message.')) return;
     if (await updateConversationState('DeleteConversation', email)) closeConversationLocally(email);
   };
 
@@ -1185,7 +1240,7 @@ const Chat = ({
       if (accept) selectGroupChat(groupId);
     } catch (error) {
       console.error('[Chat] RespondToGroupInvitation failed:', error);
-      alert(error?.message || 'The group invitation could not be updated.');
+      showSystemNotification(error?.message || 'The group invitation could not be updated.');
     } finally {
       setGroupActionBusy(false);
     }
@@ -1195,7 +1250,7 @@ const Chat = ({
     setSelectedGroupInvitees((prev) => {
       if (prev.includes(email)) return prev.filter((item) => item !== email);
       if (prev.length >= 49) {
-        alert('A group can contain at most 50 people including you.');
+        showSystemNotification('A group can contain at most 50 people including you.');
         return prev;
       }
       return [...prev, email];
@@ -1205,11 +1260,11 @@ const Chat = ({
   const createGroupChat = async () => {
     if (!connection || groupActionBusy) return;
     if (chatGroups.length >= 10) {
-      alert('You can create or accept no more than 10 active group chats.');
+      showSystemNotification('You can create or accept no more than 10 active group chats.');
       return;
     }
     if (groupName.trim().length < 2) {
-      alert('Enter a group name with at least 2 characters.');
+      showSystemNotification('Enter a group name with at least 2 characters.');
       return;
     }
     setGroupActionBusy(true);
@@ -1223,7 +1278,7 @@ const Chat = ({
       selectGroupChat(created.id);
     } catch (error) {
       console.error('[Chat] CreateGroupChat failed:', error);
-      alert(error?.message || 'The group chat could not be created.');
+      showSystemNotification(error?.message || 'The group chat could not be created.');
     } finally {
       setGroupActionBusy(false);
     }
@@ -1279,22 +1334,21 @@ const Chat = ({
   return (
     <>
     <div
-      className={`fixed bottom-5 right-5 z-[1000] flex flex-col overflow-hidden rounded-2xl font-sans shadow-2xl transition-colors ${
-        isChatDarkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-900'
+      data-testid="chat-panel"
+      className={`fixed bottom-3 right-3 z-[1000] flex max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl border font-sans shadow-2xl transition-colors sm:bottom-5 sm:right-5 ${
+        isChatDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'
       }`}
       style={{ width: chatBoxWidth, height: chatBoxHeight }}
     >
       <div className={`relative flex items-center justify-between border-b p-5 ${isChatDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
         <div className="flex min-w-0 items-center gap-2">
           {(isAnyConversationSelected || isCreatingGroup) && !isSettingsOpen && (
-            <button
-              type="button"
+            <BackButton
               onClick={backToConversationList}
-              className={`flex h-9 shrink-0 items-center rounded-full px-3 text-sm font-bold transition ${isChatDarkMode ? 'bg-slate-800 text-slate-200 hover:bg-slate-700' : 'bg-slate-100 text-[#0866ff] hover:bg-blue-50'}`}
+              label="Back"
+              className={isChatDarkMode ? 'text-slate-200 hover:bg-slate-800 hover:text-white' : ''}
               title="Back to conversations"
-            >
-              Back
-            </button>
+            />
           )}
           <div className="min-w-0">
           <h3 className={`m-0 text-lg font-bold ${isChatDarkMode ? 'text-white' : 'text-[#003366]'}`}>
@@ -1766,13 +1820,13 @@ const Chat = ({
           }}
           onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
           placeholder={selectedGroupId ? `Message ${selectedGroup?.name || 'group'}...` : 'Type a message...'}
-          className={`flex-1 rounded-full border px-4 py-2 text-sm outline-none focus:border-[#0866ff] focus:ring-1 focus:ring-[#0866ff]/20 ${isChatDarkMode ? 'border-slate-600 bg-slate-800 text-white placeholder:text-slate-500' : 'border-slate-300 bg-slate-50'}`}
+          className={`min-w-0 flex-1 rounded-xl border px-4 py-2.5 text-sm outline-none focus:border-[#003366] focus:ring-2 focus:ring-blue-100 ${isChatDarkMode ? 'border-slate-600 bg-slate-800 text-white placeholder:text-slate-500' : 'border-slate-300 bg-slate-50'}`}
         />
 
         <button
           onClick={sendMessage}
           disabled={!newMessage.trim() || !isAnyConversationSelected}
-          className="shrink-0 rounded-full bg-[#0866ff] px-5 py-2 text-sm font-bold text-white transition hover:bg-[#0758db] disabled:cursor-not-allowed disabled:opacity-50"
+          className="shrink-0 rounded-xl bg-[#003366] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#00264d] disabled:cursor-not-allowed disabled:opacity-50"
         >
           Send
         </button>

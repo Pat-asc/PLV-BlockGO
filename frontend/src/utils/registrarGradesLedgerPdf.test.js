@@ -25,7 +25,7 @@ const record = (overrides = {}) => ({
   student_no: '2026-0001',
   student_name: 'Student One',
   grade: JSON.stringify({ midterm: '88' }),
-  status: 'SubmittedToChairperson',
+  status: 'Finalized',
   date: '2026-09-01T00:00:00Z',
   ...overrides,
 });
@@ -95,7 +95,7 @@ test('scoped exports with missing exact identities are blocked instead of broade
 
 test('empty export does not create or save a PDF', () => {
   const result = exportRegistrarGradesLedgerPdf({ records: [], jsPDF: MockJsPdf });
-  expect(result).toEqual({ exported: false, reason: 'empty' });
+  expect(result).toEqual({ exported: false, reason: 'no-finalized-records' });
   expect(createdDocuments).toHaveLength(0);
 });
 

@@ -118,8 +118,14 @@ namespace Client_app.Controllers
         }
 
         [HttpGet("faculty-section/{facultySectionId:int}/download")]
-        public async Task<IActionResult> DownloadGradingSheet(int facultySectionId)
+        public async Task<IActionResult> DownloadGradingSheet(
+            int facultySectionId,
+            [FromQuery] string format = "xlsx")
         {
+            var normalizedFormat = (format ?? string.Empty).Trim().ToLowerInvariant();
+            if (normalizedFormat != "xlsx")
+                return BadRequest(new { status = "Error", message = "Only XLSX grading templates are supported because CSV cannot preserve formulas or worksheets." });
+
             try
             {
                 using var conn = new NpgsqlConnection(_readConnectionString);
@@ -140,10 +146,10 @@ namespace Client_app.Controllers
                 var students = await FacultyAssignmentRosterService.GetRosterAsync(
                     conn, assignment, HttpContext.RequestAborted);
 
-                var content = FacultyGradeWorkbookService.Build(assignment, students);
                 string safeSection = string.Join("_", assignment.CanonicalSection.Split(Path.GetInvalidFileNameChars()));
-                return File(content, FacultyGradeWorkbookService.ContentType,
-                    $"{assignment.Subject}_{safeSection}_{assignment.SchoolYear}_{assignment.Semester}.xlsx");
+                var fileStem = $"{assignment.Subject}_{safeSection}_{assignment.SchoolYear}_{assignment.Semester}";
+                var workbook = FacultyGradeWorkbookService.Build(assignment, students);
+                return File(workbook, FacultyGradeWorkbookService.ContentType, $"{fileStem}.xlsx");
             }
             catch (FacultyAssignmentRosterService.RosterDataIntegrityException ex)
             {
@@ -154,9 +160,9 @@ namespace Client_app.Controllers
                     internalStudentId = ex.StudentUserId
                 });
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode(500, new { status = "Error", message = $"Excel generation failed: {ex.Message}" });
+                return StatusCode(500, new { status = "Error", message = "The grading template could not be generated." });
             }
         }
     }

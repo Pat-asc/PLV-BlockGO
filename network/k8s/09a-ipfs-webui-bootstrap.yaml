@@ -23,6 +23,7 @@ spec:
             cpu: 5m
             memory: 8Mi
           limits:
+            cpu: 100m
             memory: 64Mi
         env:
         - name: WEBUI_CID
@@ -53,9 +54,14 @@ spec:
           fi
 
           echo "Downloading the Kubo 0.41 Web UI CAR from the official IPFS gateway..."
-          curl -fsSL --retry 4 --retry-all-errors --connect-timeout 15 --max-time 300 \
-            "https://dweb.link/ipfs/${WEBUI_CID}?format=car" \
-            -o /tmp/ipfs-webui.car
+          if ! curl -fsSL -H "Accept: application/vnd.ipld.car" --retry 1 --retry-all-errors --connect-timeout 10 --max-time 60 \
+            "https://ipfs.io/ipfs/${WEBUI_CID}?format=car" \
+            -o /tmp/ipfs-webui.car; then
+            echo "WARNING: IPFS Web UI CAR could not be downloaded from the public gateway."
+            echo "WARNING: Continuing production deployment without the optional IPFS Web UI preload."
+            echo "WARNING: Core IPFS APIs and application /ipfs/<cid> access are unaffected."
+            exit 0
+          fi
 
           for IPFS_API in ${IPFS_APIS}; do
             if curl -fsS -X POST "${IPFS_API}/api/v0/pin/ls?arg=${WEBUI_CID}&type=recursive" >/dev/null 2>&1; then

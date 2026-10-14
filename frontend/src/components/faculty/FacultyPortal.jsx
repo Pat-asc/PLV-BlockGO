@@ -1,3 +1,5 @@
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { fetchFacultySections, fetchFacultyStudents, fetchAllGrades, batchUploadGrades, downloadGradingSheet, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
 import Modal from '../../services/Modal';
@@ -5,8 +7,17 @@ import FacultyHeader from './FacultyHeader';
 import YearTabs from './YearTabs';
 import ProgramCard from './ProgramCard';
 import FacultyCurriculumPanel from './FacultyCurriculumPanel';
-import { getGradeEquivalent } from '../../utils/gradingHelpers';
+import { calculateFinalAverage, getGradeEquivalent } from '../../utils/gradingHelpers';
+import { validateGradeUpload } from '../../utils/csvUploadValidation';
 import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from '../../utils/studentAcademicHelpers';
+import {
+  facultyGradeRecordMatchesAssignment,
+  mergeFacultyStudentGradeRecords,
+  parseFacultyGradePayload,
+} from '../../utils/facultyGradeRecordMapper';
+import BackButton from '../shared/BackButton';
+import StatusBadge from '../shared/StatusBadge';
+import '../../assets/FacultyPortal.css';
 
 const normalizeYearLabel = (value) => {
   const raw = String(value || '').trim();
@@ -39,24 +50,23 @@ const getOptionalAssignmentValue = (value) => {
   const normalizedValue = String(value || "").trim();
   return normalizedValue || "Not Available";
 };
+const getAssignmentUnits = (...values) => {
+  for (const value of values) {
+    if (value === null || value === undefined || String(value).trim() === "") continue;
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue) && numericValue >= 0) return numericValue;
+  }
+  return null;
+};
+const getAssignmentTitle = (...values) => {
+  const value = values.find((candidate) => String(candidate || "").trim());
+  return value ? String(value).trim() : "Not available";
+};
 const parseTimestamp = (value) => {
   if (!value) return 0;
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 };
-const buildFacultyAssignmentLookupKey = ({
-  program = "",
-  sectionName = "",
-  subjectCode = "",
-  yearLevel = "",
-} = {}) =>
-  [
-    normalizeText(program),
-    normalizeText(sectionName),
-    normalizeText(subjectCode),
-    normalizeText(yearLevel),
-  ].join("|");
-
 const STUDENT_STATUS_ACTIVE = "active";
 const RETURNED_SECTION_STATUSES = ["returned", "rejected"];
 const LOCKED_SECTION_STATUSES = ["submitted", "approved", "forwarded", "finalized"];
@@ -155,16 +165,6 @@ const saveResetAwareLocalData = (storageKey, data) => {
   localStorage.setItem(storageKey, JSON.stringify(payload));
 };
 
-const parseGradeValue = (value) => {
-  if (value === null || value === undefined) return "";
-
-  const normalized = String(value).trim();
-  if (!normalized) return "";
-
-  const numeric = Number(normalized);
-  return Number.isNaN(numeric) ? "" : numeric;
-};
-
 const hasEncodedGrade = (value) => {
   if (value === null || value === undefined || value === "") return false;
   const numeric = Number(value);
@@ -176,21 +176,8 @@ const hasEncodedGradeForTerm = (student = {}, term = "midterm") =>
     ? hasEncodedGrade(student.finals)
     : hasEncodedGrade(student.midterm);
 
-const computeFinalAverage = (student = {}) => {
-  if (!hasEncodedGrade(student.midterm) || !hasEncodedGrade(student.finals)) {
-    return null;
-  }
-
-  const mid = Number(student.midterm);
-  const fin = Number(student.finals);
-
-  if (Number.isNaN(mid) || Number.isNaN(fin)) return null;
-
-  return (mid + fin) / 2;
-};
-
 const getAcademicStatus = (student = {}) => {
-  const finalAverage = computeFinalAverage(student);
+  const finalAverage = calculateFinalAverage(student);
   if (finalAverage === null) return "-";
   return finalAverage >= 75 ? "Passed" : "Failed";
 };
@@ -198,7 +185,7 @@ const getAcademicStatus = (student = {}) => {
 const FacultyPortal = ({ facultyData, onLogout }) => {
   const [portalView, setPortalView] = useState('grades');
   const [activeSection, setActiveSection] = useState(null);
-  const [activeTab, setActiveTab] = useState("All Sections");
+  const [activeTab, setActiveTab] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [rowSaveState, setRowSaveState] = useState({});
   const [sectionStatus, setSectionStatus] = useState({});
@@ -371,14 +358,9 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           return {};
         }
       })();
-      const savedAssignmentsBySection = new Map(
+      const savedAssignmentsByFacultySectionId = new Map(
         savedAssignments.map((assignment) => [
-          buildFacultyAssignmentLookupKey({
-            program: assignment.program,
-            sectionName: assignment.sectionName,
-            subjectCode: assignment.subjectCode,
-            yearLevel: assignment.yearLevel,
-          }),
+          String(getFacultySectionId(assignment)),
           assignment,
         ])
       );
@@ -386,69 +368,12 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       const newSections = {};
       const nextSectionStatuses = {};
 
-      const parseSavedGrade = (rawGrade) => {
-        if (!rawGrade) {
-          return {
-            midterm: "",
-            finals: "",
-            finalAverage: "",
-            standing: STUDENT_STATUS_ACTIVE,
-            flagged: false,
-          };
-        }
-        if (typeof rawGrade === 'number') {
-          return {
-            midterm: rawGrade,
-            finals: rawGrade,
-            finalAverage: rawGrade,
-            standing: STUDENT_STATUS_ACTIVE,
-            flagged: false,
-          };
-        }
-        if (typeof rawGrade === 'string' && rawGrade.trim().startsWith('{')) {
-          try {
-            const parsed = JSON.parse(rawGrade);
-            
-            let computedRaw = parsed.finalAverage || parsed.final || parsed.grade || '';
-            const mid = parseFloat(parsed.midterm);
-            const fin = parseFloat(parsed.finals);
-            if (!isNaN(mid) && !isNaN(fin)) {
-                computedRaw = ((mid + fin) / 2).toFixed(2);
-            } else if (!isNaN(mid)) {
-                computedRaw = mid.toFixed(2);
-            } else if (!isNaN(fin)) {
-                computedRaw = fin.toFixed(2);
-            }
-
-            return {
-              midterm: parseGradeValue(parsed.midterm),
-              finals: parseGradeValue(parsed.finals),
-              finalAverage: parseGradeValue(computedRaw),
-              standing: parsed.standing || STUDENT_STATUS_ACTIVE,
-              flagged: !!parsed.flagged,
-            };
-          } catch (e) {
-            return {
-              midterm: "",
-              finals: "",
-              finalAverage: "",
-              standing: STUDENT_STATUS_ACTIVE,
-              flagged: false,
-            };
-          }
-        }
-        const numericGrade = parseGradeValue(rawGrade);
-        return {
-          midterm: numericGrade,
-          finals: numericGrade,
-          finalAverage: numericGrade,
-          standing: STUDENT_STATUS_ACTIVE,
-          flagged: false,
-        };
-      };
-
       const recordHasEncodedValueForTerm = (record, term) => {
-        const parsedGrade = parseSavedGrade(record?.grade || record?.Grade);
+        const parsedGrade = parseFacultyGradePayload(
+          record?.grade || record?.Grade,
+          record?.term || record?.Term
+        );
+        if (parsedGrade.standing && parsedGrade.standing !== STUDENT_STATUS_ACTIVE) return true;
         return term === "finals"
           ? hasEncodedGrade(parsedGrade.finals)
           : hasEncodedGrade(parsedGrade.midterm);
@@ -498,50 +423,8 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         };
       };
 
-      const getGradeStudentKey = (grade) => (
-        grade.student_no ||
-        grade.studentNo ||
-        grade.StudentNo ||
-        grade.student_hash ||
-        grade.studentHash ||
-        grade.StudentHash ||
-        grade.studentId ||
-        grade.StudentId ||
-        ''
-      );
-
-      const getGradeSubjectKey = (grade) => (
-        grade.subject_code ||
-        grade.subjectCode ||
-        grade.SubjectCode ||
-        grade.course ||
-        grade.Course ||
-        ''
-      );
-      const getGradeRecordSectionKey = (grade) => (
-        grade.record_section ||
-        grade.recordSection ||
-        grade.section ||
-        grade.Section ||
-        ''
-      );
-
       actualSections.forEach(sec => {
-        const matchedAssignment =
-          savedAssignmentsBySection.get(
-            buildFacultyAssignmentLookupKey({
-              program: sec.department,
-              sectionName: sec.section,
-              subjectCode: sec.subject,
-              yearLevel: sec.yearLevel,
-            })
-          ) ||
-          savedAssignments.find((assignment) =>
-            normalizeText(assignment.program) === normalizeText(sec.department) &&
-            normalizeText(assignment.sectionName) === normalizeText(sec.section) &&
-            normalizeText(assignment.subjectCode) === normalizeText(sec.subject)
-          ) ||
-          null;
+        const matchedAssignment = savedAssignmentsByFacultySectionId.get(String(getFacultySectionId(sec))) || null;
         // actualSections is the authoritative backend assignment list. Local
         // timestamps only enrich display data and must never hide a newly
         // recreated server-side assignment after a reset.
@@ -549,31 +432,15 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         const sectionKey = `${sec.department} ${sec.section}${sec.subject ? ` (${sec.subject})` : ''} [${authoritativeFacultySectionId}]`;
         const savedSectionSnapshot = savedGradeSnapshots[sectionKey] || {};
         const activeAssignmentCycleId = authoritativeFacultySectionId;
-        const sectionGrades = actualGrades.filter((grade) => {
-          const gradeSubjectKey = normalizeText(getGradeSubjectKey(grade));
-          const gradeRecordSectionKey = normalizeText(getGradeRecordSectionKey(grade));
-          const gradeDisplaySectionKey = normalizeText(grade.section || grade.Section || "");
-          const expectedSubjectCode = normalizeText(
-            matchedAssignment?.subjectCode || sec.subject
-          );
-          const expectedSectionKeys = [
-            sectionKey,
-            matchedAssignment?.sectionName,
-            sec.section,
-          ]
-            .map((value) => normalizeText(value))
-            .filter(Boolean);
-
-          const sectionMatches =
-            expectedSectionKeys.includes(gradeRecordSectionKey) ||
-            expectedSectionKeys.includes(gradeDisplaySectionKey);
-          const subjectMatches =
-            !expectedSubjectCode || gradeSubjectKey === expectedSubjectCode;
-          const gradeAssignmentCycleId = String(grade.assignment_cycle_id || grade.assignmentCycleId || grade.AssignmentCycleId || '');
-          const assignmentCycleMatches = !activeAssignmentCycleId || gradeAssignmentCycleId === activeAssignmentCycleId;
-
-          return sectionMatches && subjectMatches && assignmentCycleMatches;
-        });
+        const sectionGrades = actualGrades.filter((grade) =>
+          facultyGradeRecordMatchesAssignment(grade, {
+            assignmentCycleId: activeAssignmentCycleId,
+            facultySectionId: activeAssignmentCycleId,
+            subjectCode: matchedAssignment?.subjectCode || sec.subject,
+            canonicalSection: sec.canonicalSection || matchedAssignment?.sectionName || sec.section,
+            section: sec.section,
+          })
+        );
         const sectionReviewState = deriveSectionReviewState(
           sectionGrades,
           encodingTerm
@@ -602,25 +469,21 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             }
 
           const globalStudentMatch = studentRecord;
-          const savedGrade = [...sectionGrades].reverse().find(g => {
-            const gradeStudentKey = normalizeText(getGradeStudentKey(g));
-            const studentCandidates = [
-              studentRecord.email,
-              globalStudentMatch?.email,
-              getRosterStudentNumber(globalStudentMatch),
-              rosterStudentId,
-            ]
-              .map((value) => normalizeText(value))
-              .filter(Boolean);
-            const sameStudent = studentCandidates.includes(gradeStudentKey);
-            return sameStudent;
-          });
+          const mappedGrades = mergeFacultyStudentGradeRecords(
+            sectionGrades,
+            {
+              ...studentRecord,
+              studentNumber: resolvedStudentNo || rosterStudentId,
+              email: globalStudentMatch?.email || studentRecord.email || '',
+            },
+            encodingTerm
+          );
           const snapshotStudent = !activeAssignmentCycleId ? (
             savedSectionSnapshot?.students?.[normalizeText(globalStudentMatch?.email || studentRecord.email || resolvedStudentNo || rosterStudentId)] ||
             savedSectionSnapshot?.students?.[normalizeText(resolvedStudentNo || rosterStudentId)] ||
             null) : null;
-          const savedValues = savedGrade
-            ? parseSavedGrade(savedGrade?.grade || savedGrade?.Grade)
+          const savedValues = mappedGrades.matchedRecordCount > 0
+            ? mappedGrades
             : {
                 midterm: snapshotStudent?.midterm ?? "",
                 finals: snapshotStudent?.finals ?? "",
@@ -646,14 +509,14 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         });
 
         newSections[sectionKey] = {
-          year: normalizeYearLabel(matchedAssignment?.yearLevel || sec.yearLevel),
-          subjectCode: matchedAssignment?.subjectCode || sec.subject || `${sec.department}-${sec.section}`, 
-          subjectTitle: matchedAssignment?.subjectTitle || sec.subject || `Assigned Subject (${sec.department})`, 
+          year: normalizeYearLabel(sec.yearLevel || matchedAssignment?.yearLevel),
+          subjectCode: sec.subject || matchedAssignment?.subjectCode || `${sec.department}-${sec.section}`,
+          subjectTitle: getAssignmentTitle(sec.subjectTitle, matchedAssignment?.subjectTitle),
           sectionCourse: sec.department,
           canonicalSection: sec.canonicalSection || matchedAssignment?.sectionName || sec.section || sectionKey,
           academicSectionId: sec.academicSectionId || null,
-          units: matchedAssignment?.units || "Not Available",
-          schedule: getOptionalAssignmentValue(matchedAssignment?.schedule),
+          units: getAssignmentUnits(sec.units, matchedAssignment?.units),
+          schedule: getOptionalAssignmentValue(sec.schedule || matchedAssignment?.schedule),
           day: getOptionalAssignmentValue(matchedAssignment?.day),
           date: getOptionalAssignmentValue(matchedAssignment?.date),
           schoolYear: sec.schoolYear || "Not Available",
@@ -820,18 +683,6 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
   const formatDate = (date) =>
     date ? date.toLocaleDateString('en-US', { month: 'long', day: '2-digit', year: 'numeric' }) : 'not set';
 
-  const calculateFinalAverage = (stu) => {
-    if (!hasEncodedGrade(stu.midterm) || !hasEncodedGrade(stu.finals)) {
-      return null;
-    }
-
-    const mid = Number(stu.midterm);
-    const fin = Number(stu.finals);
-
-    if (Number.isNaN(mid) || Number.isNaN(fin)) return null;
-    return (mid + fin) / 2;
-  };
-
   const validateGrade = (value) => {
     const num = parseFloat(value);
     if (value === '') return '';
@@ -887,7 +738,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     const sectionData = sections[sectionName];
     if (!sectionData || !sectionData.students) return;
     if (!isLockedSectionStatus(getSectionTermStatus(sectionName))) {
-      alert("Export PDF is available only after the grades for this section have been submitted to the Chairperson.");
+      showSystemNotification("Export PDF is available only after the grades for this section have been submitted to the Chairperson.");
       return;
     }
     
@@ -960,15 +811,19 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         
         doc.save(`${sectionName.replace(/[^a-zA-Z0-9-]/g, "_")}_GradingSheet.pdf`);
     } catch (err) {
-        alert("Could not generate PDF. Make sure jsPDF is available.");
+        showSystemNotification("Could not generate PDF. Make sure jsPDF is available.");
     }
   };
 
-  const handleDownloadTemporaryGradingSheet = async (sectionName) => {
+  const handleDownloadTemporaryGradingSheet = async (sectionName, format) => {
     const sectionData = sections[sectionName];
     if (!sectionData?.facultySectionId) return;
     const safeSectionName = String(sectionName || "section").replace(/[^a-zA-Z0-9-]/g, "_");
-    await downloadGradingSheet(sectionData.facultySectionId, `${safeSectionName}_grading_sheet`);
+    try {
+      await downloadGradingSheet(sectionData.facultySectionId, `${safeSectionName}_grading_sheet`, format);
+    } catch (error) {
+      showSystemNotification(error.message || 'The grading template could not be downloaded.');
+    }
   };
 
   const handleFileUpload = async (sectionName, e) => {
@@ -980,17 +835,29 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     const schoolYear = canonicalAcademicSchoolYear(sectionData.schoolYear);
     if (!sectionData.academicSectionId || !['FIRST', 'SECOND', 'MIDYEAR'].includes(semester) ||
         !/^\d{4}-\d{4}$/.test(schoolYear)) {
-      alert('The assigned subject has no active enrolled academic period. Ask the Registrar to verify the section before uploading grades.');
+      showSystemNotification('The assigned subject has no active enrolled academic period. Ask the Registrar to verify the section before uploading grades.');
       e.target.value = null;
       return;
     }
     const course = sectionData.sectionCourse || '';
     const canonicalSection = sectionData.canonicalSection || sectionName;
 
+    const validationError = await validateGradeUpload(file);
+    if (validationError) {
+      setUploadResult({
+        type: 'error',
+        title: 'Batch Upload Failed',
+        message: validationError,
+        context: { section: canonicalSection, subjectCode: sectionData.subjectCode, term: encodingTerm, schoolYear, semester },
+      });
+      e.target.value = null;
+      return;
+    }
+
     setUploadingSection(sectionName);
 
     try {
-      const res = await batchUploadGrades(file, {
+      const uploadContext = {
         semester,
         schoolYear,
         course,
@@ -1000,24 +867,63 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         facultySectionId: sectionData.facultySectionId,
         academicSectionId: sectionData.academicSectionId,
         subjectCode: sectionData.subjectCode,
-      });
+      };
+      let res;
+      try {
+        res = await batchUploadGrades(file, uploadContext);
+      } catch (uploadError) {
+        if (!String(uploadError.message).includes('Conflict preview') ||
+            !await requestSystemConfirmation(`${uploadError.message}\n\nOverwrite the existing Draft/Returned grade rows?`)) throw uploadError;
+        res = await batchUploadGrades(file, { ...uploadContext, confirmOverwrite: true });
+      }
       if (res.status === 'Success' || res.status === 'Partial Success') {
         setUploadResult({ 
           type: 'success', 
-          title: 'Upload Successful', 
-          message: `Processed: ${res.totalProcessed}, Success: ${res.successful}`, 
+          title: res.status === 'Partial Success' ? 'Upload Partially Completed' : 'Upload Successful',
+          message: `${res.successful} of ${res.totalProcessed} grade rows were saved as Draft.`,
+          context: {
+            section: canonicalSection,
+            subjectCode: sectionData.subjectCode,
+            term: encodingTerm,
+            schoolYear,
+            semester,
+          },
+          counts: {
+            processed: res.totalProcessed,
+            successful: res.successful,
+            failed: res.failed || 0,
+          },
           details: Array.isArray(res.errors) && res.errors.length > 0
             ? res.errors
             : 'All records processed successfully.'
         });
         updateSectionTermStatus(sectionName, encodingTerm, 'draft');
-        loadFacultyData();
+        await loadFacultyData();
       } else {
-        setUploadResult({ type: 'error', title: 'Upload Failed', message: res.message });
+        setUploadResult({
+          type: 'error',
+          title: 'Upload Failed',
+          message: res.message,
+          context: { section: canonicalSection, subjectCode: sectionData.subjectCode, term: encodingTerm, schoolYear, semester },
+        });
       }
     } catch (err) {
       console.error(err);
-      setUploadResult({ type: 'error', title: 'Batch Upload Failed', message: err.message });
+      const errorData = err?.data || {};
+      setUploadResult({
+        type: 'error',
+        title: 'Batch Upload Failed',
+        message: err.message,
+        context: { section: canonicalSection, subjectCode: sectionData.subjectCode, term: encodingTerm, schoolYear, semester },
+        counts: Number.isFinite(errorData.totalProcessed) ? {
+          processed: errorData.totalProcessed,
+          successful: errorData.successful || 0,
+          failed: errorData.failed || 0,
+        } : null,
+        details: Array.isArray(errorData.errors) && errorData.errors.length > 0
+          ? errorData.errors
+          : null,
+      });
     } finally {
       setUploadingSection(null);
       e.target.value = null; 
@@ -1058,7 +964,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
               professor_name: facultyData.name || facultyData.email,
               program: facultyData.department || sectionData.sectionCourse || '',
               term: encodingTerm,
-              units: Number(sectionData.units) || 3,
+              units: getAssignmentUnits(sectionData.units) ?? 0,
               year_level: sectionData.year || "",
               grade: JSON.stringify({
                 midterm: student.midterm,
@@ -1085,7 +991,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       updateSectionTermStatus(sectionName, encodingTerm, 'draft');
     } catch (error) {
       console.error(error);
-      alert(`Failed to save all grades: ${error.message}`);
+      showSystemNotification(`Failed to save all grades: ${error.message}`);
       const idle = {};
       students.forEach((_, i) => { idle[i] = 'idle'; });
       setRowSaveState(prev => ({ ...prev, [sectionName]: idle }));
@@ -1105,7 +1011,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     );
     
     if (hasIncomplete) {
-      alert(`Submission Blocked: All students in the section must have ${encodingTerm === 'midterm' ? 'Midterm' : 'Finals'} grades encoded before submitting to the Chairperson.`);
+      showSystemNotification(`Submission Blocked: All students in the section must have ${encodingTerm === 'midterm' ? 'Midterm' : 'Finals'} grades encoded before submitting to the Chairperson.`);
       return;
     }
 
@@ -1126,7 +1032,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       );
       updateSectionTermStatus(sectionName, encodingTerm, 'submitted');
       setSubmitConfirmSection(null);
-    } catch (e) { alert("Error submitting section: " + e.message); }
+    } catch (e) { showSystemNotification("Error submitting section: " + e.message); }
   };
 
   const hasValidationErrors = (sectionName) => {
@@ -1148,14 +1054,12 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           totalSections={totalSections}
           onLogout={onLogout}
         />
-        <main className="w-full px-4 py-5 md:px-6">
-          <button
-            type="button"
+        <main className="mx-auto w-full max-w-[1440px] px-4 py-5 md:px-6 lg:py-7">
+          <BackButton
             onClick={() => setPortalView('grades')}
-            className="mb-5 rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white"
-          >
-            Back to Grade Encoding
-          </button>
+            className="mb-5"
+            label="Back to Grade Encoding"
+          />
           <FacultyCurriculumPanel />
         </main>
       </div>
@@ -1163,7 +1067,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-10 font-sans">
+    <div className="faculty-grade-encoding min-h-screen bg-slate-50 pb-10 font-sans">
       <FacultyHeader
         facultyData={{ ...facultyData, semester: encodingSemester }}
         totalSections={totalSections}
@@ -1228,7 +1132,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
       {!activeSection ? (
         <div className="py-4">
-          <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_440px] xl:items-center">
+          <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-center">
             <YearTabs
               activeTab={activeTab}
               setActiveTab={setActiveTab}
@@ -1237,20 +1141,24 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             />
 
             <div className="relative w-full xl:justify-self-end">
-              <input type="text" placeholder="Search for a section..." className="w-full rounded-xl border border-slate-300 py-3 pl-10 pr-4 outline-none focus:border-[#003366] focus:ring-2 focus:ring-[#003366]/20" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+              <label htmlFor="faculty-section-search" className="sr-only">Search assigned sections</label>
+              <input id="faculty-section-search" type="search" placeholder="Search section or subject…" className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-4 text-sm outline-none focus:border-[#003366] focus:ring-2 focus:ring-[#003366]/20" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {isLoadingData ? (
-              <div className="col-span-full py-10 text-center text-slate-500">Loading assigned sections and enrolled students...</div>
+              <div className="col-span-full rounded-xl border border-slate-200 bg-white py-10 text-center text-slate-500 shadow-sm" role="status"><div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-[#003366]" /><p className="mt-3 text-sm font-medium">Loading assigned sections and enrolled students…</p></div>
             ) : Object.keys(sections).length === 0 ? (
-              <div className="col-span-full py-10 text-center text-slate-500">No sections are currently assigned to you.</div>
+              <div className="col-span-full rounded-xl border border-dashed border-slate-300 bg-white py-10 text-center text-slate-500">No active sections are currently assigned to your account.</div>
             ) : (
               Object.entries(sections)
               .filter(([name, data]) => {
-                const matchesTab = activeTab === "All Sections" || data.year === activeTab;
-                const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase());
+                const matchesTab = data.year === activeTab;
+                const searchValue = searchQuery.trim().toLowerCase();
+                const matchesSearch = !searchValue || [name, data.subjectCode, data.subjectTitle, data.sectionCourse]
+                  .some((value) => String(value || '').toLowerCase().includes(searchValue));
                 return matchesTab && matchesSearch;
               })
               .map(([sectionName, sectionData]) => {
@@ -1292,37 +1200,20 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         </div>
       ) : (
         <div className="animate-in fade-in duration-300 py-6">
-          <button
-            className="mb-6 inline-flex items-center rounded-xl bg-yellow-400 px-5 py-3 text-sm font-bold text-[#003366] shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-yellow-500 hover:shadow-md"
+          <BackButton
+            className="mb-6"
             onClick={() => setActiveSection(null)}
             aria-label="Back to section"
             title="Back to section"
-          >
-            Back to Sections
-          </button>
+            label="Back to Sections"
+          />
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-col items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 p-6 md:flex-row md:items-center">
-              <div>
-                <h3 className="inline text-xl font-bold text-[#003366]">Section: {activeSection}</h3>
+            <div className="flex flex-col items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 p-4 sm:p-5 lg:flex-row lg:items-center">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-xl font-bold text-[#003366]">Section: {activeSection}</h3>
                 {currentStatus && (
-                  <span className={`ml-3 rounded-full px-3 py-1 text-xs font-bold ${
-                    currentStatus === 'draft' ? 'bg-yellow-100 text-yellow-800' :
-                    currentStatus === 'returned' ? 'bg-red-100 text-red-700' :
-                    currentStatus === 'submitted' ? 'bg-blue-100 text-blue-800' :
-                    currentStatus === 'approved' ? 'bg-emerald-100 text-emerald-800' :
-                    'bg-green-100 text-green-800'
-                  }`}>
-                    {currentStatus === 'draft'
-                      ? 'Draft Saved'
-                      : currentStatus === 'returned'
-                      ? 'Returned'
-                      : currentStatus === 'submitted'
-                      ? 'Submitted'
-                      : currentStatus === 'approved'
-                      ? 'Approved'
-                      : 'Finalized'}
-                  </span>
+                  <StatusBadge status={currentStatus} label={currentStatus === 'draft' ? 'Draft Saved' : currentStatus === 'forwarded' ? 'Finalized' : undefined} />
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -1332,7 +1223,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                       <input
                         type="file"
                         aria-label="Bulk upload grades workbook"
-                        accept=".xlsx"
+                        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                         onChange={(e) => handleFileUpload(activeSection, e)}
                         disabled={uploadingSection === activeSection || isClosed}
@@ -1342,13 +1233,15 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                       </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleDownloadTemporaryGradingSheet(activeSection)}
-                      className="rounded-lg border border-[#003366] bg-white px-4 py-2.5 text-sm font-bold text-[#003366] transition hover:bg-slate-50"
-                    >
-                      Grading Sheet Template
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2" aria-label="Grading sheet templates">
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadTemporaryGradingSheet(activeSection, 'xlsx')}
+                        className="rounded-lg border border-[#003366] bg-white px-3 py-2.5 text-sm font-bold text-[#003366] transition hover:bg-slate-50"
+                      >
+                        Excel Template
+                      </button>
+                    </div>
                   </>
                 )}
                 {isSubmittedToChairperson && (
@@ -1551,25 +1444,49 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       </Modal>
 
       {uploadResult && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div role="dialog" aria-modal="true" aria-labelledby="bulk-upload-result-title" className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl bg-white p-6 shadow-2xl">
-            <h2 className={`mb-2 text-2xl font-bold ${uploadResult.type === 'error' ? 'text-red-600' : 'text-green-600'}`}>
+            <h2 id="bulk-upload-result-title" className={`mb-2 text-2xl font-bold ${uploadResult.type === 'error' ? 'text-red-600' : 'text-green-600'}`}>
               {uploadResult.title}
             </h2>
-            <p className="mb-4 font-semibold text-slate-700">{uploadResult.message}</p>
+            {uploadResult.context && (
+              <dl className="mb-4 grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl bg-slate-50 p-4 text-sm">
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Section</dt><dd className="font-semibold text-slate-800">{uploadResult.context.section}</dd></div>
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Subject</dt><dd className="font-semibold text-slate-800">{uploadResult.context.subjectCode}</dd></div>
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Term</dt><dd className="font-semibold capitalize text-slate-800">{uploadResult.context.term}</dd></div>
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Academic period</dt><dd className="font-semibold text-slate-800">{uploadResult.context.schoolYear} / {uploadResult.context.semester}</dd></div>
+              </dl>
+            )}
+            <p className="mb-3 font-semibold text-slate-700">{uploadResult.message}</p>
+            {uploadResult.type === 'success' ? (
+              <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                <p className="font-bold">Status: Draft - grades remain editable.</p>
+                <p className="mt-1">Nothing was submitted to the Chairperson or finalized. No IPFS upload or Fabric write occurs during Draft import; ledger processing happens only after Chairperson approval and Registrar finalization.</p>
+                {uploadResult.counts && <p className="mt-2 text-xs">Processed: {uploadResult.counts.processed} | Saved: {uploadResult.counts.successful} | Failed: {uploadResult.counts.failed}</p>}
+              </div>
+            ) : (
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                <p>Nothing was submitted or finalized. Existing on-screen grades were preserved.</p>
+                {uploadResult.counts && <p className="mt-2 text-xs">Processed: {uploadResult.counts.processed} | Saved: {uploadResult.counts.successful} | Failed: {uploadResult.counts.failed}</p>}
+              </div>
+            )}
             {Array.isArray(uploadResult.details) ? (
               <div className="mb-5 flex-grow overflow-x-auto rounded-xl border border-slate-200">
                 <table className="w-full border-collapse text-left text-sm">
                   <thead className="bg-slate-100 text-slate-700">
                     <tr>
+                      <th className="px-4 py-3 font-bold">Row</th>
                       <th className="px-4 py-3 font-bold">Student ID</th>
+                      <th className="px-4 py-3 font-bold">Code</th>
                       <th className="px-4 py-3 font-bold">Reason</th>
                     </tr>
                   </thead>
                   <tbody>
                     {uploadResult.details.map((error, index) => (
                       <tr key={`${error.studentId || 'row'}-${index}`} className="border-t border-slate-200">
+                        <td className="px-4 py-3 font-semibold text-slate-700">{error.rowNumber || '—'}</td>
                         <td className="px-4 py-3 font-semibold text-slate-700">{error.studentId || 'Unknown'}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-slate-600">{error.code || '—'}</td>
                         <td className="px-4 py-3 text-slate-600">{error.reason || 'No reason provided'}</td>
                       </tr>
                     ))}

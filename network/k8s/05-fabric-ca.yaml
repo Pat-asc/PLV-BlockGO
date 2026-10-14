@@ -34,6 +34,9 @@ spec:
       initContainers:
       - name: init-ca
         image: alpine:latest
+        resources:
+          requests: {cpu: 25m, memory: 32Mi}
+          limits: {cpu: 100m, memory: 128Mi}
         imagePullPolicy: IfNotPresent
         command: ["sh", "-c", "mkdir -p /data/msp/keystore && (cp -L /raw/ca-cert.pem /data/ca-cert.pem 2>/dev/null || true) && (cp -L /raw/tls-cert.pem /data/tls-cert.pem 2>/dev/null || true) && (cp -L /raw/ca-key.pem /data/msp/keystore/key_sk 2>/dev/null || true) && (cp -L /raw/tls-key.pem /data/msp/keystore/tls_key_sk 2>/dev/null || true) && chmod -R 700 /data"]
         volumeMounts:
@@ -44,6 +47,9 @@ spec:
       containers:
       - name: fabric-ca
         image: hyperledger/fabric-ca:1.5.7
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {cpu: 250m, memory: 256Mi}
         command: ["sh", "-c", "fabric-ca-server start -b admin:${BOOTSTRAP_PASS} --ca.certfile /etc/hyperledger/fabric-ca-server/ca-cert.pem --ca.keyfile /etc/hyperledger/fabric-ca-server/msp/keystore/key_sk --tls.certfile /etc/hyperledger/fabric-ca-server/tls-cert.pem --tls.keyfile /etc/hyperledger/fabric-ca-server/msp/keystore/tls_key_sk -d"]
         ports:
         - containerPort: 7054
@@ -118,6 +124,9 @@ spec:
       initContainers:
       - name: init-ca
         image: alpine:latest
+        resources:
+          requests: {cpu: 25m, memory: 32Mi}
+          limits: {cpu: 100m, memory: 128Mi}
         imagePullPolicy: IfNotPresent
         command: ["sh", "-c", "mkdir -p /data/msp/keystore && (cp -L /raw/ca-cert.pem /data/ca-cert.pem 2>/dev/null || true) && (cp -L /raw/tls-cert.pem /data/tls-cert.pem 2>/dev/null || true) && (cp -L /raw/ca-key.pem /data/msp/keystore/key_sk 2>/dev/null || true) && (cp -L /raw/tls-key.pem /data/msp/keystore/tls_key_sk 2>/dev/null || true) && chmod -R 700 /data"]
         volumeMounts:
@@ -128,6 +137,9 @@ spec:
       containers:
       - name: fabric-ca
         image: hyperledger/fabric-ca:1.5.7
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {cpu: 250m, memory: 256Mi}
         command: ["sh", "-c", "fabric-ca-server start -b admin:${BOOTSTRAP_PASS} --ca.certfile /etc/hyperledger/fabric-ca-server/ca-cert.pem --ca.keyfile /etc/hyperledger/fabric-ca-server/msp/keystore/key_sk --tls.certfile /etc/hyperledger/fabric-ca-server/tls-cert.pem --tls.keyfile /etc/hyperledger/fabric-ca-server/msp/keystore/tls_key_sk -d"]
         ports:
         - containerPort: 7054
@@ -201,6 +213,9 @@ spec:
       initContainers:
       - name: init-ca
         image: alpine:latest
+        resources:
+          requests: {cpu: 25m, memory: 32Mi}
+          limits: {cpu: 100m, memory: 128Mi}
         imagePullPolicy: IfNotPresent
         command: ["sh", "-c", "mkdir -p /data/msp/keystore && (cp -L /raw/ca-cert.pem /data/ca-cert.pem 2>/dev/null || true) && (cp -L /raw/tls-cert.pem /data/tls-cert.pem 2>/dev/null || true) && (cp -L /raw/ca-key.pem /data/msp/keystore/key_sk 2>/dev/null || true) && (cp -L /raw/tls-key.pem /data/msp/keystore/tls_key_sk 2>/dev/null || true) && chmod -R 700 /data"]
         volumeMounts:
@@ -211,6 +226,9 @@ spec:
       containers:
       - name: fabric-ca
         image: hyperledger/fabric-ca:1.5.7
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {cpu: 250m, memory: 256Mi}
         command: ["sh", "-c", "fabric-ca-server start -b admin:${BOOTSTRAP_PASS} --ca.certfile /etc/hyperledger/fabric-ca-server/ca-cert.pem --ca.keyfile /etc/hyperledger/fabric-ca-server/msp/keystore/key_sk --tls.certfile /etc/hyperledger/fabric-ca-server/tls-cert.pem --tls.keyfile /etc/hyperledger/fabric-ca-server/msp/keystore/tls_key_sk -d"]
         ports:
         - containerPort: 7054

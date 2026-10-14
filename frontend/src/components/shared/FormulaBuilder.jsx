@@ -1,3 +1,4 @@
+import { showSystemNotification } from '../../services/NotificationContext';
 import React, { useState } from 'react';
 import { createGradeTemplate } from '../../services/api';
 
@@ -53,7 +54,7 @@ const FormulaBuilder = () => {
 
   const handleSave = async () => {
     if (!templateName) {
-      alert("Please provide a template name.");
+      showSystemNotification("Please provide a template name.");
       return;
     }
 
@@ -66,11 +67,11 @@ const FormulaBuilder = () => {
       };
 
       const result = await createGradeTemplate(payload);
-      alert(result.message || "Template submitted for approval successfully!");
+      showSystemNotification(result.message || "Template submitted for approval successfully!");
       setTemplateName('');
     } catch (error) {
       console.error("Error saving template:", error);
-      alert(error.message || "Failed to save the template.");
+      showSystemNotification(error.message || "Failed to save the template.");
     } finally {
       setIsSubmitting(false);
     }

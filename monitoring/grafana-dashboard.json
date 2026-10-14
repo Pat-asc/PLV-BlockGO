@@ -40,13 +40,13 @@
       "id": 1,
       "targets": [
         {
-          "expr": "process_resident_memory_bytes{job=\"middleware-api\"}",
-          "legendFormat": "{{pod}} rss",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"plv-fabric\",pod=~\"middleware-api-.*\",container=\"api-gateway\"})",
+          "legendFormat": "{{pod}} working set",
           "refId": "A"
         },
         {
-          "expr": "nodejs_heap_size_used_bytes{job=\"middleware-api\"}",
-          "legendFormat": "{{pod}} heap used",
+          "expr": "sum by (pod) (container_memory_rss{namespace=\"plv-fabric\",pod=~\"middleware-api-.*\",container=\"api-gateway\"})",
+          "legendFormat": "{{pod}} rss",
           "refId": "B"
         }
       ],
@@ -73,12 +73,12 @@
       "id": 2,
       "targets": [
         {
-          "expr": "rate(process_resident_memory_bytes{job=\"middleware-api\"}[5m])",
-          "legendFormat": "{{pod}} rss growth",
+          "expr": "sum by (pod) (deriv(container_memory_working_set_bytes{namespace=\"plv-fabric\",pod=~\"middleware-api-.*\",container=\"api-gateway\"}[15m]))",
+          "legendFormat": "{{pod}} working-set trend",
           "refId": "A"
         }
       ],
-      "title": "Memory Growth Rate",
+      "title": "Memory Growth Trend (15m)",
       "type": "timeseries"
     },
     {
@@ -256,7 +256,7 @@
       "id": 8,
       "targets": [
         {
-          "expr": "kube_deployment_status_replicas_available{namespace=\"plv-fabric\",deployment=~\"frontend|client-app|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service\"}",
+          "expr": "kube_deployment_status_replicas_available{namespace=\"plv-fabric\",deployment=~\"frontend|dotnet-.*|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service\"}",
           "legendFormat": "{{deployment}} available",
           "refId": "A"
         }
@@ -284,7 +284,7 @@
       "id": 9,
       "targets": [
         {
-          "expr": "kube_pod_container_status_restarts_total{namespace=\"plv-fabric\",pod=~\"(frontend|client-app|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service).*\",container=~\"frontend-nginx|client-app|api-gateway|auth-service|identity-service|ledger-service|upload-service|settings-service\"}",
+          "expr": "kube_pod_container_status_restarts_total{namespace=\"plv-fabric\",pod=~\"(frontend|dotnet-.*|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service)-.*\",container=~\"frontend-nginx|dotnet-.*|api-gateway|auth-service|identity-service|ledger-service|upload-service|settings-service\"}",
           "legendFormat": "{{pod}} {{container}}",
           "refId": "A"
         }
@@ -312,7 +312,7 @@
       "id": 10,
       "targets": [
         {
-          "expr": "container_memory_working_set_bytes{namespace=\"plv-fabric\",pod=~\"(frontend|client-app|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service).*\",container=~\"frontend-nginx|client-app|api-gateway|auth-service|identity-service|ledger-service|upload-service|settings-service\"} / container_spec_memory_limit_bytes{namespace=\"plv-fabric\",pod=~\"(frontend|client-app|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service).*\",container=~\"frontend-nginx|client-app|api-gateway|auth-service|identity-service|ledger-service|upload-service|settings-service\"}",
+          "expr": "container_memory_working_set_bytes{namespace=\"plv-fabric\",pod=~\"(frontend|dotnet-.*|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service)-.*\",container=~\"frontend-nginx|dotnet-.*|api-gateway|auth-service|identity-service|ledger-service|upload-service|settings-service\"} / container_spec_memory_limit_bytes{namespace=\"plv-fabric\",pod=~\"(frontend|dotnet-.*|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service)-.*\",container=~\"frontend-nginx|dotnet-.*|api-gateway|auth-service|identity-service|ledger-service|upload-service|settings-service\"}",
           "legendFormat": "{{pod}} {{container}}",
           "refId": "A"
         }
@@ -340,7 +340,7 @@
       "id": 11,
       "targets": [
         {
-          "expr": "sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace=\"plv-fabric\",pod=~\"(frontend|client-app|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service).*\",container=~\"frontend-nginx|client-app|api-gateway|auth-service|identity-service|ledger-service|upload-service|settings-service\"}[5m]))",
+          "expr": "sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace=\"plv-fabric\",pod=~\"(frontend|dotnet-.*|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service)-.*\",container=~\"frontend-nginx|dotnet-.*|api-gateway|auth-service|identity-service|ledger-service|upload-service|settings-service\"}[5m]))",
           "legendFormat": "{{pod}} {{container}}",
           "refId": "A"
         }
@@ -368,12 +368,12 @@
       "id": 12,
       "targets": [
         {
-          "expr": "kube_deployment_spec_replicas{namespace=\"plv-fabric\",deployment=~\"frontend|client-app|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service\"}",
+          "expr": "kube_deployment_spec_replicas{namespace=\"plv-fabric\",deployment=~\"frontend|dotnet-.*|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service\"}",
           "legendFormat": "{{deployment}} desired",
           "refId": "A"
         },
         {
-          "expr": "kube_deployment_status_replicas_available{namespace=\"plv-fabric\",deployment=~\"frontend|client-app|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service\"}",
+          "expr": "kube_deployment_status_replicas_available{namespace=\"plv-fabric\",deployment=~\"frontend|dotnet-.*|middleware-api|auth-service|fabric-identity-service|ledger-service|grade-upload-service|settings-service\"}",
           "legendFormat": "{{deployment}} available",
           "refId": "B"
         }
@@ -410,12 +410,12 @@
     ]
   },
   "time": {
-    "from": "now-6h",
+    "from": "now-1h",
     "to": "now"
   },
   "timezone": "browser",
   "title": "BlockGO Platform Operations",
   "uid": "blockgo-platform-ops",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

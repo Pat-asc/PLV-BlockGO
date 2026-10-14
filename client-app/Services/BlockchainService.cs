@@ -46,7 +46,7 @@ namespace BlockGo.Services
             _httpClient.DefaultRequestHeaders.Add("x-api-key", apiKey);
             // Fabric commits regularly take longer than a normal read request because the
             // transaction must be endorsed, ordered, and committed before middleware replies.
-            // Two seconds caused valid registrar finalizations to be cancelled mid-commit.
+            // Two seconds caused valid Chairperson finalizations to be cancelled mid-commit.
             var requestTimeoutSeconds = configuration.GetValue<int?>("Middleware:RequestTimeoutSeconds") ?? 120;
             _httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(10, requestTimeoutSeconds));
         }
@@ -284,6 +284,47 @@ namespace BlockGo.Services
                 throw error;
             }
             
+            return await response.Content.ReadAsStringAsync();
+        }
+
+        public async Task<string> FinalizeApprovedGradesAsync(IEnumerable<AcademicRecord> records, string invokerUsername)
+        {
+            var approvedRecords = records.ToArray();
+            _logger?.LogInformation("Finalizing approved grade batch ({Count} records) as {User}", approvedRecords.Length, invokerUsername);
+
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{_middlewareBaseUrl}/api/finalize-approved-grades")
+            {
+                Content = JsonContent.Create(approvedRecords)
+            };
+            request.Headers.Add("x-user-identity", invokerUsername);
+
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await MiddlewareErrorAsync(response, "FinalizeApprovedGrades");
+                _logger?.LogError(error, "Fabric approved-grade batch finalization failed as {Invoker}", invokerUsername);
+                throw error;
+            }
+
+            return await response.Content.ReadAsStringAsync();
+        }
+
+        public async Task<string> CorrectFinalizedGradeAsync(FinalizedGradeCorrectionRequest correction, string invokerUsername)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{_middlewareBaseUrl}/api/correct-finalized-grade")
+            {
+                Content = JsonContent.Create(new
+                {
+                    record_id = correction.RecordId,
+                    new_grade = correction.NewGrade,
+                    reason = correction.Reason,
+                    expected_grade_version = correction.ExpectedGradeVersion
+                })
+            };
+            request.Headers.Add("x-user-identity", invokerUsername);
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+                throw await MiddlewareErrorAsync(response, "CorrectFinalizedGrade", correction.RecordId);
             return await response.Content.ReadAsStringAsync();
         }
     }

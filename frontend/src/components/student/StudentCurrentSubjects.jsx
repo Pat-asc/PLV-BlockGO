@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { getGradeEquivalent } from '../../utils/gradingHelpers';
+import StatusBadge from '../shared/StatusBadge';
 
 const gradeDisplay = (subject) => {
   if (subject.gradeAvailability === 'LedgerUnavailable') return { primary: 'Temporarily Unavailable', secondary: '' };
@@ -48,7 +49,7 @@ function StudentCurrentSubjects({ subjects: enrolledSubjects = [], schoolYear = 
             {expanded ? <div className="grid gap-3 bg-slate-50 px-5 py-4 text-sm sm:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-lg border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">Finalized Grade</p><p className="mt-1 font-bold text-[#003366]">{grade.primary} {grade.secondary ? <span className="text-xs font-normal text-slate-500">{grade.secondary}</span> : null}</p></div>
               <div className="rounded-lg border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">Professor</p><p className="mt-1 font-semibold">{subject.professor || subject.facultyName || 'To be assigned'}</p></div>
-              <div className="rounded-lg border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">Status</p><p className="mt-1 font-semibold">{subject.gradeStatus || 'In Progress'}</p></div>
+              <div className="rounded-lg border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">Status</p><div className="mt-1"><StatusBadge status={subject.gradeStatus || 'In Progress'} /></div></div>
               <div className="rounded-lg border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">Blockchain transaction</p><p className="mt-1 break-all font-mono text-xs">{transactionDisplay}</p></div>
             </div> : null}
           </article>;

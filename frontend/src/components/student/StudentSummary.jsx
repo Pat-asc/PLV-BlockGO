@@ -1,6 +1,6 @@
 const StudentSummary = ({ totalUnits, gwa, isDeansLister, failedSubjectsCount, semesterLabel = "Semester Grades" }) => {
   return (
-    <div className="mx-4 mt-5 md:mx-6">
+    <div className="mx-4 mt-4 md:mx-6">
       {failedSubjectsCount === 2 && (
         <div className="mb-4 rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-yellow-800 shadow-sm">
           <p className="font-semibold">Warning: Academic Standing Alert</p>
@@ -19,9 +19,10 @@ const StudentSummary = ({ totalUnits, gwa, isDeansLister, failedSubjectsCount, s
         </div>
       )}
 
-      <div className="flex flex-col gap-4 rounded-xl bg-[#003366] p-4 text-white md:flex-row md:items-center md:justify-between md:p-6">
+      <div className="flex flex-col gap-3 rounded-xl bg-[#003366] p-4 text-white sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-base font-bold md:text-lg">{semesterLabel}</h2>
+          <p className="text-xs font-semibold uppercase tracking-wide text-white/70">Academic Summary</p>
+          <h2 className="text-base font-bold">{semesterLabel}</h2>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 md:gap-4">

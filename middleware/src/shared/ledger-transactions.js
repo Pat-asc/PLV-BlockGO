@@ -30,6 +30,9 @@ function projectLedgerTransaction(record) {
         semester: record.semester || '',
         schoolYear: record.school_year || record.schoolYear || '',
         status: record.status || record.Status || '',
+        gradeVersion: record.grade_version || record.gradeVersion || 1,
+        previousTransactionId: record.previous_transaction_id || record.previousTransactionId || '',
+        term: record.term || '',
         occurredAt: record.timestamp || record.recorded_at || record.recordedAt || record.date || ''
     };
 }

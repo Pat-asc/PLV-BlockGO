@@ -122,6 +122,22 @@ test('Kubernetes service-discovery URLs in application ConfigMaps resolve to dec
     }
 });
 
+test('ledger gateway uses static cross-namespace peer endpoints in Kubernetes', () => {
+    const middlewareConfig = byKey.get('plv-fabric/ConfigMap/middleware-service-config');
+    const gatewaySource = fs.readFileSync(path.join(repoRoot, 'middleware', 'src', 'fabric', 'gateway-manager.js'), 'utf8');
+
+    assert.equal(middlewareConfig?.data?.FABRIC_DISCOVERY_ENABLED, 'false');
+    assert.match(gatewaySource, /configured !== undefined &&[\s\S]*\['1', 'true', 'yes', 'on'\]/);
+    assert.doesNotMatch(gatewaySource, /return Boolean\(process\.env\.KUBERNETES_SERVICE_HOST\)/);
+    for (const endpoint of [
+        'peer-registrar.plv-main-campus.svc.cluster.local',
+        'peer-faculty.plv-annex-campus.svc.cluster.local',
+        'peer-department.plv-pubad-campus.svc.cluster.local'
+    ]) {
+        assert.match(gatewaySource, new RegExp(endpoint.replaceAll('.', '\\.')));
+    }
+});
+
 test('GKE Ingress sends every frontend API family to its owning gateway', () => {
     const ingress = byKey.get('plv-fabric/Ingress/main-ingress');
     assert.ok(ingress, 'main-ingress is missing');
@@ -132,7 +148,7 @@ test('GKE Ingress sends every frontend API family to its owning gateway', () => 
 
     const dotnetFamilies = new Set([
         'Auth', 'password-reset-requests', 'student', 'Student', 'AccountManagement',
-        'Curriculums', 'SupportTickets', 'SystemMonitoring', 'Grades', 'GradeTemplate',
+        'Curriculums', 'SupportTickets', 'Transcript', 'SystemMonitoring', 'Grades', 'GradeTemplate',
         'SystemSettings', 'BulkUpload', 'RegistrarDashboard', 'registrar'
     ]);
     const source = fs.readFileSync(path.join(repoRoot, 'frontend', 'src', 'services', 'api.js'), 'utf8');
@@ -144,6 +160,29 @@ test('GKE Ingress sends every frontend API family to its owning gateway', () => 
         assert.equal(backendFor(`/api${relativePath}`), expectedBackend,
             `frontend endpoint ${relativePath} is routed to the wrong GKE backend`);
     }
+});
+
+test('GKE public API backends replace spoofable forwarding headers with the verified client IP', () => {
+    const backend = byKey.get('plv-fabric/BackendConfig/blockgo-forwarded-headers');
+    assert.ok(backend, 'trusted forwarding BackendConfig is missing');
+    assert.deepEqual(backend.spec.customRequestHeaders?.headers, [
+        'X-Forwarded-For:{client_ip_address}',
+        'X-Forwarded-Proto:https'
+    ]);
+
+    for (const serviceName of ['client-app-service', 'middleware-api']) {
+        const service = byKey.get(`plv-fabric/Service/${serviceName}`);
+        assert.equal(service?.metadata?.annotations?.['cloud.google.com/backend-config'],
+            '{"default":"blockgo-forwarded-headers"}', `${serviceName} must use trusted forwarding headers`);
+    }
+});
+
+test('application gateways trust the Kubernetes service proxy range for verified forwarding', () => {
+    const middlewareConfig = byKey.get('plv-fabric/ConfigMap/middleware-service-config');
+    const dotnetConfig = byKey.get('plv-fabric/ConfigMap/dotnet-service-config');
+
+    assert.ok(String(middlewareConfig?.data?.TRUST_PROXY_CIDRS || '').split(',').includes('10.96.0.0/16'));
+    assert.ok(Object.values(dotnetConfig?.data || {}).includes('10.96.0.0/16'));
 });
 
 test('all ASP.NET API aliases are represented by YARP and GKE Ingress routes', () => {
@@ -200,6 +239,20 @@ test('production PostgreSQL policy permits every ASP.NET workload', () => {
         'dotnet-grade-service', 'dotnet-operations-service', 'dotnet-realtime-service'
     ]) {
         assert.ok(permitted.has(app), `${app} cannot reach production PostgreSQL`);
+    }
+});
+
+test('Fabric identity service receives the production PostgreSQL credentials', () => {
+    const deployment = byKey.get('plv-fabric/Deployment/fabric-identity-service');
+    assert.ok(deployment, 'fabric-identity-service deployment is missing');
+    const container = deployment.spec.template.spec.containers.find((item) => item.name === 'identity-service');
+    assert.ok(container, 'fabric-identity-service identity-service container is missing');
+    const environment = new Map((container.env || []).map((item) => [item.name, item]));
+    for (const name of ['POSTGRES_USER', 'POSTGRES_PASS']) {
+        const reference = environment.get(name)?.valueFrom?.secretKeyRef;
+        assert.equal(reference?.name, 'blockgo-secrets', `${name} must come from blockgo-secrets`);
+        assert.equal(reference?.key, name, `${name} must use the matching secret key`);
+        assert.notEqual(reference?.optional, true, `${name} must be required`);
     }
 });
 

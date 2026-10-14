@@ -194,7 +194,8 @@ namespace Client_app.Controllers
             }
 
             var eligibleUsers = new List<ChatUserStatus>();
-            if (CanCreateGroupChat(ResolveRole()))
+            var creatorRole = ResolveRole();
+            if (CanCreateGroupChat(creatorRole))
             {
                 using var contactsCmd = new NpgsqlCommand(@"
                     SELECT u.email, u.role,
@@ -211,10 +212,12 @@ namespace Client_app.Controllers
                 using var reader = await contactsCmd.ExecuteReaderAsync();
                 while (await reader.ReadAsync())
                 {
+                    var targetRole = reader.GetString(1);
+                    if (!IsAllowedChatTarget(creatorRole, targetRole)) continue;
                     eligibleUsers.Add(new ChatUserStatus
                     {
                         Email = reader.GetString(0),
-                        Role = reader.GetString(1),
+                        Role = targetRole,
                         FullName = reader.IsDBNull(2) ? reader.GetString(0) : reader.GetString(2)
                     });
                 }
@@ -227,7 +230,8 @@ namespace Client_app.Controllers
         {
             var creatorEmail = Context.User?.Identity?.Name;
             if (string.IsNullOrWhiteSpace(creatorEmail)) throw new HubException("Authentication is required.");
-            if (!CanCreateGroupChat(ResolveRole())) throw new HubException("Only Registrar, Department Head, and Faculty accounts can create group chats.");
+            var creatorRole = ResolveRole();
+            if (!CanCreateGroupChat(creatorRole)) throw new HubException("Only Registrar, Department Head, and Faculty accounts can create group chats.");
 
             var normalizedName = (name ?? string.Empty).Trim();
             if (normalizedName.Length < 2 || normalizedName.Length > 100) throw new HubException("Group name must be between 2 and 100 characters.");
@@ -250,14 +254,22 @@ namespace Client_app.Controllers
             if (invitees.Length > 0)
             {
                 using var validateCmd = new NpgsqlCommand(@"
-                    SELECT COUNT(*)
+                    SELECT email, role
                     FROM users
                     WHERE LOWER(email) = ANY(@emails)
                       AND LOWER(status) = 'approved'
                       AND is_active = TRUE;", conn, transaction);
                 validateCmd.Parameters.AddWithValue("emails", NpgsqlDbType.Array | NpgsqlDbType.Text, invitees);
-                var validCount = Convert.ToInt32(await validateCmd.ExecuteScalarAsync());
-                if (validCount != invitees.Length) throw new HubException("One or more invited users are unavailable.");
+                var validEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                await using var inviteeReader = await validateCmd.ExecuteReaderAsync();
+                while (await inviteeReader.ReadAsync())
+                {
+                    var inviteeEmail = inviteeReader.GetString(0);
+                    if (!IsAllowedChatTarget(creatorRole, inviteeReader.GetString(1)))
+                        throw new HubException($"{inviteeEmail} is outside your permitted communication scope.");
+                    validEmails.Add(inviteeEmail);
+                }
+                if (validEmails.Count != invitees.Length) throw new HubException("One or more invited users are unavailable.");
             }
 
             long groupId;

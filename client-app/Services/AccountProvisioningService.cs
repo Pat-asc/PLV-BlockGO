@@ -9,7 +9,7 @@ namespace Client_app.Services
 {
     public sealed class AccountProvisioningService : IAccountProvisioningService
     {
-        private const int MaximumRegistrarAccounts = 2;
+        private const int MaximumRegistrarAccounts = 5;
         private const long RegistrarCapacityLockId = 2026082802;
         private readonly string _connectionString;
         private readonly string _middlewareBaseUrl;
@@ -45,6 +45,7 @@ namespace Client_app.Services
             string? ipAddress,
             CancellationToken cancellationToken)
         {
+            PasswordPolicy.EnsureValid(request.Password);
             var role = NormalizeStaffRole(request.Role);
             var email = request.Email.Trim().ToLowerInvariant();
             var staffId = request.StaffId.Trim();
@@ -141,6 +142,7 @@ namespace Client_app.Services
             string? ipAddress,
             CancellationToken cancellationToken)
         {
+            PasswordPolicy.EnsureValid(request.Password);
             var email = request.Email.Trim().ToLowerInvariant();
             var accountId = request.RegistrarId.Trim();
             await using var connection = new NpgsqlConnection(_connectionString);
@@ -192,6 +194,10 @@ namespace Client_app.Services
             {
                 throw new ArgumentException("At least one Registrar account field must be supplied.");
             }
+            if (request.Password is not null)
+            {
+                PasswordPolicy.EnsureValid(request.Password);
+            }
 
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
@@ -236,15 +242,18 @@ namespace Client_app.Services
                 UPDATE users
                 SET email = @email,
                     password_hash = CASE WHEN @password IS NULL THEN password_hash ELSE crypt(@password, gen_salt('bf')) END,
+                    auth_version = CASE WHEN @password IS NULL THEN auth_version ELSE auth_version + 1 END,
                     is_active = COALESCE(@isActive, is_active),
                     status = CASE WHEN COALESCE(@isActive, is_active) THEN 'APPROVED' ELSE 'DEACTIVATED' END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = @userId AND LOWER(role) = 'registrar';", connection, transaction))
             {
-                command.Parameters.AddWithValue("email", newEmail);
-                command.Parameters.AddWithValue("password", (object?)request.Password ?? DBNull.Value);
-                command.Parameters.AddWithValue("isActive", (object?)request.IsActive ?? DBNull.Value);
-                command.Parameters.AddWithValue("userId", userId);
+                command.Parameters.Add("email", NpgsqlTypes.NpgsqlDbType.Text).Value = newEmail;
+                command.Parameters.Add("password", NpgsqlTypes.NpgsqlDbType.Text).Value =
+                    (object?)request.Password ?? DBNull.Value;
+                command.Parameters.Add("isActive", NpgsqlTypes.NpgsqlDbType.Boolean).Value =
+                    (object?)request.IsActive ?? DBNull.Value;
+                command.Parameters.Add("userId", NpgsqlTypes.NpgsqlDbType.Integer).Value = userId;
                 await command.ExecuteNonQueryAsync(cancellationToken);
             }
 
@@ -340,10 +349,7 @@ namespace Client_app.Services
             string? ipAddress,
             CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 8 || newPassword.Length > 128)
-            {
-                throw new ArgumentException("The new password must be between 8 and 128 characters.");
-            }
+            PasswordPolicy.EnsureValid(newPassword);
 
             var normalizedActorRole = NormalizeAccountRole(actorRole);
             await using var connection = new NpgsqlConnection(_connectionString);
@@ -398,6 +404,7 @@ namespace Client_app.Services
                 await using var update = new NpgsqlCommand(@"
                     UPDATE users
                     SET password_hash = crypt(@password, gen_salt('bf')),
+                        auth_version = auth_version + 1,
                         password_reset_token = NULL,
                         password_reset_expires = NULL,
                         updated_at = CURRENT_TIMESTAMP
@@ -649,7 +656,7 @@ namespace Client_app.Services
             var count = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
             if (count >= MaximumRegistrarAccounts)
             {
-                throw new InvalidOperationException($"Only {MaximumRegistrarAccounts} Registrar accounts are allowed. Delete an existing Registrar before creating another one.");
+                throw new InvalidOperationException($"Maximum of {MaximumRegistrarAccounts} Registrar accounts has been reached. Delete an existing Registrar before creating another one.");
             }
         }
 

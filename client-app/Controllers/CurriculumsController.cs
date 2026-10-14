@@ -36,19 +36,152 @@ namespace Client_app.Controllers
         }
 
         [HttpGet("programs")]
+        [Authorize(Roles = "department_admin,registrar")]
         public async Task<IActionResult> GetPrograms(CancellationToken cancellationToken)
         {
             var programs = new List<object>();
             await using var connection = await OpenConnectionAsync(cancellationToken);
-            await using var command = new NpgsqlCommand(@"
-                SELECT program_id, program_code, program_name
-                FROM academic_programs WHERE is_active = TRUE ORDER BY program_name;", connection);
+            var role = ActorRole();
+            var authorizedProgramIds = role == "registrar"
+                ? Array.Empty<int>()
+                : (await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedProgramIdsAsync(
+                    connection, ActorEmail(), cancellationToken: cancellationToken)).ToArray();
+            var sql = role == "registrar"
+                ? @"SELECT program_id, program_code, program_name
+                    FROM academic_programs WHERE is_active = TRUE ORDER BY program_name;"
+                : @"SELECT program.program_id, program.program_code, program.program_name
+                    FROM academic_programs program
+                    WHERE program.is_active = TRUE
+                      AND program.program_id = ANY(@programIds)
+                    ORDER BY program.program_name;";
+            await using var command = new NpgsqlCommand(sql, connection);
+            if (role != "registrar") command.Parameters.AddWithValue("programIds", authorizedProgramIds);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
                 programs.Add(new { programId = reader.GetInt32(0), programCode = reader.GetString(1), programName = reader.GetString(2) });
             }
             return Ok(new { status = "Success", data = programs });
+        }
+
+        [HttpGet("assigned")]
+        [Authorize(Roles = "department_admin,registrar")]
+        public async Task<IActionResult> GetLatestAssigned(
+            [FromQuery] string program,
+            [FromQuery] int? batchYear,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(program))
+                return BadRequest(new { status = "Error", message = "Program is required." });
+
+            await using var connection = await OpenConnectionAsync(cancellationToken);
+            var role = ActorRole();
+            var requestedProgramId = await FacultyCurriculumAuthorizationService.ResolveUniqueProgramIdAsync(
+                connection, program, cancellationToken: cancellationToken);
+            if (!requestedProgramId.HasValue)
+                return Ok(new { status = "Success", data = (object?)null });
+            if (role != "registrar")
+            {
+                var authorizedProgramIds = await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedProgramIdsAsync(
+                    connection, ActorEmail(), cancellationToken: cancellationToken);
+                if (!authorizedProgramIds.Contains(requestedProgramId.Value)) return Forbid();
+            }
+
+            long? curriculumId = null;
+            int? resolvedBatchYear = null;
+            DateTimeOffset? assignedAt = null;
+            await using (var command = new NpgsqlCommand(@"
+                SELECT curriculum.curriculum_id, cohort.batch_year, assignment.assigned_at
+                FROM program_curriculum_assignments assignment
+                JOIN curriculums curriculum
+                  ON curriculum.curriculum_id = assignment.curriculum_id
+                 AND curriculum.program_id = assignment.program_id
+                 AND curriculum.status = 'PUBLISHED'
+                LEFT JOIN LATERAL (
+                    SELECT batch.batch_year
+                    FROM curriculum_batch_assignments batch
+                    WHERE batch.program_id = assignment.program_id
+                      AND batch.curriculum_id = assignment.curriculum_id
+                      AND (@batchYear IS NULL OR batch.batch_year = @batchYear)
+                    ORDER BY batch.updated_at DESC
+                    LIMIT 1
+                ) cohort ON TRUE
+                WHERE assignment.program_id = @programId
+                  AND (@batchYear IS NULL OR cohort.batch_year IS NOT NULL);", connection))
+            {
+                command.Parameters.AddWithValue("programId", requestedProgramId.Value);
+                command.Parameters.Add("batchYear", NpgsqlDbType.Integer).Value =
+                    (object?)batchYear ?? DBNull.Value;
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                if (await reader.ReadAsync(cancellationToken))
+                {
+                    curriculumId = reader.GetInt64(0);
+                    resolvedBatchYear = reader.IsDBNull(1) ? null : reader.GetInt32(1);
+                    assignedAt = reader.GetFieldValue<DateTimeOffset>(2);
+                }
+            }
+
+            if (!curriculumId.HasValue)
+                return Ok(new { status = "Success", data = (object?)null });
+
+            return Ok(new
+            {
+                status = "Success",
+                data = new
+                {
+                    curriculum = await LoadCurriculumAsync(connection, curriculumId.Value, cancellationToken),
+                    batchYear = resolvedBatchYear,
+                    assignedAt
+                }
+            });
+        }
+
+        [HttpPost("programs")]
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> CreateProgram(
+            [FromBody] CreateAcademicProgramRequest request,
+            CancellationToken cancellationToken)
+        {
+            var code = Regex.Replace((request.ProgramCode ?? string.Empty).Trim().ToUpperInvariant(), @"\s+", string.Empty);
+            var name = Regex.Replace((request.ProgramName ?? string.Empty).Trim(), @"\s+", " ");
+            if (!Regex.IsMatch(code, @"^[A-Z0-9][A-Z0-9-]{1,19}$"))
+                return BadRequest(new { status = "Error", message = "Program Code must contain 2-20 letters, numbers, or hyphens." });
+            if (name.Length is < 3 or > 160)
+                return BadRequest(new { status = "Error", message = "Program Name must contain 3-160 characters." });
+
+            try
+            {
+                await using var connection = await OpenConnectionAsync(cancellationToken);
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                await using var command = new NpgsqlCommand(@"
+                    INSERT INTO academic_programs (program_code, program_name, is_active)
+                    VALUES (@code, @name, TRUE)
+                    RETURNING program_id;", connection, transaction);
+                command.Parameters.AddWithValue("code", code);
+                command.Parameters.AddWithValue("name", name);
+                var programId = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+                await _auditLog.LogAsync(ActorEmail(), ActorRole(), "ACADEMIC_PROGRAM_CREATED", "academic_program",
+                    programId.ToString(), null, new { programId, programCode = code, programName = name, isActive = true },
+                    "Registrar created an academic program without generating a curriculum.",
+                    ClientIpResolver.Resolve(HttpContext), connection, transaction, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return StatusCode(StatusCodes.Status201Created, new
+                {
+                    status = "Success",
+                    message = $"Academic program {code} created.",
+                    data = new { programId, programCode = code, programName = name, isActive = true }
+                });
+            }
+            catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UniqueViolation)
+            {
+                return Conflict(new { status = "Error", message = "Program Code or Program Name already exists." });
+            }
+        }
+
+        public sealed class CreateAcademicProgramRequest
+        {
+            public string ProgramCode { get; set; } = string.Empty;
+            public string ProgramName { get; set; } = string.Empty;
         }
 
         [HttpGet]
@@ -58,22 +191,23 @@ namespace Client_app.Controllers
             var role = ActorRole();
             var actor = ActorEmail();
             await using var connection = await OpenConnectionAsync(cancellationToken);
+            var authorizedProgramIds = role == "registrar"
+                ? Array.Empty<int>()
+                : (await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedProgramIdsAsync(
+                    connection, actor, cancellationToken: cancellationToken)).ToArray();
             var ids = new List<long>();
             var sql = role == "registrar"
                 ? @"SELECT c.curriculum_id FROM curriculums c WHERE (@status IS NULL OR c.status = @status) ORDER BY c.updated_at DESC"
                 : @"SELECT c.curriculum_id
                     FROM curriculums c
-                    JOIN academic_programs p ON p.program_id = c.program_id
-                    JOIN users u ON LOWER(u.email) = LOWER(@actor)
-                    JOIN adminprofiles ap ON ap.user_id = u.id
-                    WHERE (LOWER(ap.department) = LOWER(p.program_name) OR LOWER(ap.department) = LOWER(p.program_code))
+                    WHERE c.program_id = ANY(@programIds)
                       AND (@status IS NULL OR c.status = @status)
                     ORDER BY c.updated_at DESC";
             await using (var command = new NpgsqlCommand(sql, connection))
             {
                 var statusParameter = command.Parameters.Add("status", NpgsqlTypes.NpgsqlDbType.Varchar);
                 statusParameter.Value = (object?)NormalizeOptionalStatus(status) ?? DBNull.Value;
-                if (role != "registrar") command.Parameters.AddWithValue("actor", actor);
+                if (role != "registrar") command.Parameters.AddWithValue("programIds", authorizedProgramIds);
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken);
                 while (await reader.ReadAsync(cancellationToken)) ids.Add(reader.GetInt64(0));
             }
@@ -101,7 +235,7 @@ namespace Client_app.Controllers
             await using var connection = await OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             var actor = await GetActorAsync(connection, transaction, cancellationToken);
-            var program = await ResolveOwnedProgramAsync(connection, transaction, actor.Id, request.ProgramCode, cancellationToken);
+            var program = await ResolveOwnedProgramAsync(connection, transaction, actor.Email, request.ProgramCode, cancellationToken);
 
             long curriculumId;
             try
@@ -133,17 +267,17 @@ namespace Client_app.Controllers
 
         [HttpPost("bulk-import")]
         [Authorize(Roles = "department_admin")]
-        [RequestSizeLimit(5 * 1024 * 1024)]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkImport([FromForm] ImportCurriculumRequest request, CancellationToken cancellationToken)
         {
-            if (request.File is null || request.File.Length == 0)
-                return BadRequest(new { status = "Error", message = "A non-empty curriculum CSV file is required." });
-            if (!string.Equals(Path.GetExtension(request.File.FileName), ".csv", StringComparison.OrdinalIgnoreCase))
-                return BadRequest(new { status = "Error", message = "Curriculum bulk import accepts CSV files only." });
+            var validationError = await CsvUploadValidator.ValidateAsync(request.File, cancellationToken);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
+            var file = request.File!;
 
             var subjects = new List<CurriculumSubjectRequest>();
             var errors = new List<object>();
-            await using (var stream = request.File.OpenReadStream())
+            await using (var stream = file.OpenReadStream())
             using (var reader = new StreamReader(stream))
             using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
             {
@@ -160,8 +294,8 @@ namespace Client_app.Controllers
                     {
                         var subject = new CurriculumSubjectRequest
                         {
-                            SubjectCode = CsvValue(csv, headers, "subjectcode", "code"),
-                            SubjectTitle = CsvValue(csv, headers, "subjecttitle", "subjectname", "title"),
+                            SubjectCode = CsvValue(csv, headers, "subjectcode", "coursecode", "code"),
+                            SubjectTitle = CsvValue(csv, headers, "subjecttitle", "coursetitle", "subjectname", "title"),
                             Units = CsvDecimal(csv, headers, rowNumber, true, "units"),
                             LectureHours = CsvDecimal(csv, headers, rowNumber, false, "lecturehours", "lecture"),
                             LaboratoryHours = CsvDecimal(csv, headers, rowNumber, false, "laboratoryhours", "labhours", "laboratory"),
@@ -185,15 +319,23 @@ namespace Client_app.Controllers
             foreach (var duplicate in subjects.GroupBy(item => $"{item.YearLevel}|{item.Semester}|{item.SubjectCode}", StringComparer.OrdinalIgnoreCase).Where(group => group.Count() > 1))
                 errors.Add(new { row = 0, message = $"Duplicate curriculum subject: {duplicate.First().SubjectCode} ({duplicate.First().YearLevel}/{duplicate.First().Semester})." });
             var codes = subjects.Select(subject => subject.SubjectCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var subject in subjects.Where(subject => !string.IsNullOrWhiteSpace(subject.Prerequisite) && !codes.Contains(subject.Prerequisite!)))
-                errors.Add(new { row = 0, message = $"Prerequisite {subject.Prerequisite} for {subject.SubjectCode} does not exist in the uploaded curriculum." });
+            foreach (var subject in subjects)
+            {
+                foreach (var prerequisite in PrerequisiteCodes(subject.Prerequisite))
+                {
+                    if (string.Equals(prerequisite, subject.SubjectCode, StringComparison.OrdinalIgnoreCase))
+                        errors.Add(new { row = 0, message = $"{subject.SubjectCode} cannot be its own prerequisite." });
+                    else if (!codes.Contains(prerequisite))
+                        errors.Add(new { row = 0, message = $"Prerequisite {prerequisite} for {subject.SubjectCode} does not exist in the uploaded curriculum." });
+                }
+            }
             if (errors.Count > 0)
                 return BadRequest(new { status = "Error", message = "Curriculum CSV validation failed. No records were created.", errors });
 
             await using var connection = await OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             var actor = await GetActorAsync(connection, transaction, cancellationToken);
-            var program = await ResolveOwnedProgramAsync(connection, transaction, actor.Id, request.ProgramCode, cancellationToken);
+            var program = await ResolveOwnedProgramAsync(connection, transaction, actor.Email, request.ProgramCode, cancellationToken);
             long curriculumId;
             try
             {
@@ -309,6 +451,110 @@ namespace Client_app.Controllers
             return Ok(new { status = "Success", data = await LoadCurriculumAsync(connection, id, cancellationToken) });
         }
 
+        [HttpPost("{id:long}/subjects/bulk-import")]
+        [Authorize(Roles = "department_admin")]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
+        public async Task<IActionResult> BulkImportSubjects(long id, [FromForm] IFormFile? file, CancellationToken cancellationToken)
+        {
+            var validationError = await CsvUploadValidator.ValidateAsync(file, cancellationToken);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
+
+            var (subjects, errors) = await ParseCurriculumSubjectsAsync(file!, cancellationToken);
+            if (subjects.Count == 0)
+                errors.Add(new CsvImportError(0, "The CSV contains no valid subject rows."));
+            foreach (var duplicate in subjects
+                .GroupBy(item => $"{item.YearLevel}|{item.Semester}|{item.SubjectCode}", StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() > 1))
+            {
+                errors.Add(new CsvImportError(0,
+                    $"Duplicate curriculum subject: {duplicate.First().SubjectCode} ({duplicate.First().YearLevel}/{duplicate.First().Semester})."));
+            }
+            if (errors.Count > 0)
+                return BadRequest(new
+                {
+                    status = "Error",
+                    message = $"Curriculum CSV validation failed. No records were created. {string.Join(" ", errors.Take(5).Select(error => error.Message))}",
+                    errors
+                });
+
+            await using var connection = await OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await RequireEditableOwnedCurriculumAsync(connection, transaction, id, cancellationToken);
+
+            var existingSubjects = new List<(long Id, string Code, int YearLevel, string Semester)>();
+            await using (var existing = new NpgsqlCommand(@"
+                SELECT subject_id, subject_code, year_level, semester
+                FROM curriculum_subjects
+                WHERE curriculum_id = @curriculumId
+                FOR UPDATE;", connection, transaction))
+            {
+                existing.Parameters.AddWithValue("curriculumId", id);
+                await using var reader = await existing.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                    existingSubjects.Add((reader.GetInt64(0), reader.GetString(1), reader.GetInt16(2), reader.GetString(3)));
+            }
+
+            var allCodes = existingSubjects.Select(item => item.Code)
+                .Concat(subjects.Select(item => item.SubjectCode))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var subject in subjects)
+            {
+                foreach (var prerequisite in PrerequisiteCodes(subject.Prerequisite))
+                {
+                    if (string.Equals(prerequisite, subject.SubjectCode, StringComparison.OrdinalIgnoreCase))
+                        errors.Add(new CsvImportError(0, $"{subject.SubjectCode} cannot be its own prerequisite."));
+                    else if (!allCodes.Contains(prerequisite))
+                        errors.Add(new CsvImportError(0, $"Prerequisite {prerequisite} for {subject.SubjectCode} does not exist in this curriculum."));
+                }
+            }
+            if (errors.Count > 0)
+                return BadRequest(new
+                {
+                    status = "Error",
+                    message = $"Curriculum CSV validation failed. No records were created. {string.Join(" ", errors.Take(5).Select(error => error.Message))}",
+                    errors
+                });
+
+            static string Slot(int year, string semester, string code) => $"{year}|{semester}|{code}".ToUpperInvariant();
+            var existingSlots = existingSubjects.Select(item => Slot(item.YearLevel, item.Semester, item.Code)).ToHashSet();
+            var pending = subjects.Where(item => !existingSlots.Contains(Slot(item.YearLevel, item.Semester, item.SubjectCode))).ToList();
+            try
+            {
+                foreach (var subject in pending)
+                {
+                    await using var insert = new NpgsqlCommand(@"
+                        INSERT INTO curriculum_subjects
+                            (curriculum_id, subject_code, subject_title, units, lecture_hours, laboratory_hours,
+                             prerequisite, year_level, semester, subject_type)
+                        VALUES (@curriculumId, @code, @title, @units, @lecture, @laboratory,
+                                @prerequisite, @yearLevel, @semester, @subjectType);", connection, transaction);
+                    AddSubjectParameters(insert, id, subject);
+                    await insert.ExecuteNonQueryAsync(cancellationToken);
+                }
+            }
+            catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UniqueViolation)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Conflict(new { status = "Error", message = "A curriculum subject conflicts with an existing row. No subjects were imported." });
+            }
+
+            var actor = await GetActorAsync(connection, transaction, cancellationToken);
+            await TouchCurriculumAsync(connection, transaction, id, cancellationToken);
+            await _auditLog.LogAsync(actor.Email, actor.Role, "CURRICULUM_SUBJECTS_BULK_IMPORTED", "curriculum", id.ToString(), null,
+                new { importedCount = pending.Count, skippedCount = subjects.Count - pending.Count },
+                "Chairperson imported validated curriculum subjects in one transaction.", IpAddress(), connection, transaction, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return Ok(new
+            {
+                status = "Success",
+                message = pending.Count == 0 ? "All uploaded subjects already exist in this curriculum." : $"{pending.Count} subjects imported successfully.",
+                importedCount = pending.Count,
+                skippedCount = subjects.Count - pending.Count,
+                data = await LoadCurriculumAsync(connection, id, cancellationToken)
+            });
+        }
+
         [HttpPut("{id:long}/subjects/{subjectId:long}")]
         [Authorize(Roles = "department_admin")]
         public async Task<IActionResult> UpdateSubject(long id, long subjectId, [FromBody] CurriculumSubjectRequest request, CancellationToken cancellationToken)
@@ -363,6 +609,63 @@ namespace Client_app.Controllers
                 new { subjectId, subjectCode }, null, "Chairperson removed a curriculum subject.", IpAddress(), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return Ok(new { status = "Success", data = await LoadCurriculumAsync(connection, id, cancellationToken) });
+        }
+
+        [HttpDelete("{id:long}/subjects/bulk")]
+        [Authorize(Roles = "department_admin")]
+        public async Task<IActionResult> RemoveSubjects(
+            long id,
+            [FromBody] BulkDeleteCurriculumSubjectsRequest request,
+            CancellationToken cancellationToken)
+        {
+            var subjectIds = request.SubjectIds.Where(value => value > 0).Distinct().ToArray();
+            if (subjectIds.Length == 0 || subjectIds.Length != request.SubjectIds.Length)
+                return BadRequest(new { status = "Error", message = "Select one or more unique curriculum subject IDs." });
+
+            await using var connection = await OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await RequireEditableOwnedCurriculumAsync(connection, transaction, id, cancellationToken);
+
+            var curriculumSubjects = new List<(long Id, string Code, string? Prerequisite)>();
+            await using (var lookup = new NpgsqlCommand(@"
+                SELECT subject_id, subject_code, prerequisite
+                FROM curriculum_subjects
+                WHERE curriculum_id = @curriculumId
+                FOR UPDATE;", connection, transaction))
+            {
+                lookup.Parameters.AddWithValue("curriculumId", id);
+                await using var reader = await lookup.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                    curriculumSubjects.Add((reader.GetInt64(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2)));
+            }
+
+            var selected = curriculumSubjects.Where(item => subjectIds.Contains(item.Id)).ToList();
+            if (selected.Count != subjectIds.Length)
+                return BadRequest(new { status = "Error", message = "Every selected subject must belong to the requested curriculum. Nothing was deleted." });
+            var selectedIdSet = subjectIds.ToHashSet();
+            var selectedCodes = selected.Select(item => item.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var dependent = curriculumSubjects.FirstOrDefault(item =>
+                !selectedIdSet.Contains(item.Id) && PrerequisiteCodes(item.Prerequisite).Any(selectedCodes.Contains));
+            if (dependent.Id != 0)
+                return Conflict(new { status = "Error", message = $"{dependent.Code} still references a selected subject as a prerequisite. Nothing was deleted." });
+
+            await using (var delete = new NpgsqlCommand(@"
+                DELETE FROM curriculum_subjects
+                WHERE curriculum_id = @curriculumId AND subject_id = ANY(@subjectIds);", connection, transaction))
+            {
+                delete.Parameters.AddWithValue("curriculumId", id);
+                delete.Parameters.Add("subjectIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint).Value = subjectIds;
+                if (await delete.ExecuteNonQueryAsync(cancellationToken) != subjectIds.Length)
+                    throw new InvalidOperationException("The selected subjects changed before deletion. Nothing was deleted.");
+            }
+
+            var actor = await GetActorAsync(connection, transaction, cancellationToken);
+            await TouchCurriculumAsync(connection, transaction, id, cancellationToken);
+            await _auditLog.LogAsync(actor.Email, actor.Role, "SUBJECTS_BULK_REMOVED", "curriculum", id.ToString(),
+                selected.Select(item => new { subjectId = item.Id, subjectCode = item.Code }).ToArray(), null,
+                "Chairperson removed selected curriculum subjects in one transaction.", IpAddress(), connection, transaction, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return Ok(new { status = "Success", message = $"{subjectIds.Length} subjects removed.", data = await LoadCurriculumAsync(connection, id, cancellationToken) });
         }
 
         [HttpPost("{id:long}/submit")]
@@ -421,11 +724,12 @@ namespace Client_app.Controllers
                 publish.Parameters.AddWithValue("id", id);
                 await publish.ExecuteNonQueryAsync(cancellationToken);
             }
-            var affectedStudents = await AssignProgramCurriculumAsync(
+            await ActivateProgramCurriculumAsync(
                 connection, transaction, curriculum.ProgramId, id, actor.Id, cancellationToken);
+            var affectedStudents = 0;
             await _auditLog.LogAsync(actor.Email, actor.Role, "CURRICULUM_PUBLISHED", "curriculum", id.ToString(),
                 new { status = curriculum.Status }, new { status = CurriculumStatuses.Published },
-                $"Registrar reviewed and published the submitted curriculum and assigned it to the program ({affectedStudents} student(s) synchronized).",
+                "Registrar reviewed and published the submitted curriculum. Cohort assignment remains a separate controlled action.",
                 IpAddress(), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             await TryRecordLedgerAuditAsync("CURRICULUM_PUBLISHED", id, actor, new[] { "status", "published_at" }, cancellationToken);
@@ -443,23 +747,54 @@ namespace Client_app.Controllers
                 "CURRICULUM_ARCHIVED", "Registrar archived the published curriculum.", null, true, cancellationToken);
 
         [HttpPut("{id:long}/program-assignment")]
-        [Authorize(Roles = "department_admin,registrar")]
-        public async Task<IActionResult> AssignProgram(long id, CancellationToken cancellationToken)
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> AssignProgram(long id, [FromBody] AssignCurriculumBatchRequest request,
+            CancellationToken cancellationToken)
         {
             await using var connection = await OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             var curriculum = await RequireStatusAsync(connection, transaction, id,
                 new[] { CurriculumStatuses.Published, CurriculumStatuses.Archived }, cancellationToken);
             var actor = await GetActorAsync(connection, transaction, cancellationToken);
-            if (actor.Role == "department_admin")
+            await using (var assignment = new NpgsqlCommand(@"
+                INSERT INTO curriculum_batch_assignments
+                    (program_id, batch_year, curriculum_id, assigned_by, assigned_at, updated_at)
+                VALUES (@programId, @batchYear, @curriculumId, @actorId, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (program_id, batch_year) DO UPDATE
+                SET curriculum_id = EXCLUDED.curriculum_id, assigned_by = EXCLUDED.assigned_by,
+                    assigned_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP;", connection, transaction))
             {
-                await ResolveOwnedProgramAsync(connection, transaction, actor.Id, curriculum.ProgramCode, cancellationToken);
+                assignment.Parameters.AddWithValue("programId", curriculum.ProgramId);
+                assignment.Parameters.AddWithValue("batchYear", request.BatchYear);
+                assignment.Parameters.AddWithValue("curriculumId", id);
+                assignment.Parameters.AddWithValue("actorId", actor.Id);
+                await assignment.ExecuteNonQueryAsync(cancellationToken);
             }
-            var affectedStudents = await AssignProgramCurriculumAsync(
-                connection, transaction, curriculum.ProgramId, id, actor.Id, cancellationToken);
-            await _auditLog.LogAsync(actor.Email, actor.Role, "PROGRAM_CURRICULUM_ASSIGNED", "curriculum", id.ToString(), null,
-                new { curriculum.ProgramId, affectedStudents },
-                $"{(actor.Role == "registrar" ? "Registrar" : "Department Head")} changed the active curriculum for the academic program.",
+            int affectedStudents;
+            await using (var enrollments = new NpgsqlCommand(@"
+                UPDATE student_enrollments
+                SET curriculum_id = @curriculumId, updated_at = CURRENT_TIMESTAMP
+                WHERE program_id = @programId AND batch_year = @batchYear AND status = 'ENROLLED';", connection, transaction))
+            {
+                enrollments.Parameters.AddWithValue("curriculumId", id);
+                enrollments.Parameters.AddWithValue("programId", curriculum.ProgramId);
+                enrollments.Parameters.AddWithValue("batchYear", request.BatchYear);
+                affectedStudents = await enrollments.ExecuteNonQueryAsync(cancellationToken);
+            }
+            await using (var profiles = new NpgsqlCommand(@"
+                UPDATE studentprofiles profile SET curriculum_id = @curriculumId
+                WHERE profile.batch_year = @batchYear
+                  AND LOWER(profile.department) IN (LOWER(@programCode), LOWER(@programName));", connection, transaction))
+            {
+                profiles.Parameters.AddWithValue("curriculumId", id);
+                profiles.Parameters.AddWithValue("batchYear", request.BatchYear);
+                profiles.Parameters.AddWithValue("programCode", curriculum.ProgramCode);
+                profiles.Parameters.AddWithValue("programName", curriculum.ProgramName);
+                await profiles.ExecuteNonQueryAsync(cancellationToken);
+            }
+            await _auditLog.LogAsync(actor.Email, actor.Role, "CURRICULUM_BATCH_ASSIGNED", "curriculum", id.ToString(), null,
+                new { curriculum.ProgramId, request.BatchYear, affectedStudents },
+                "Registrar assigned the published curriculum to one student cohort.",
                 IpAddress(), connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             await TryRecordLedgerAuditAsync("PROGRAM_CURRICULUM_ASSIGNED", id, actor,
@@ -467,7 +802,8 @@ namespace Client_app.Controllers
             return Ok(new
             {
                 status = "Success",
-                message = "The curriculum is now active for every student in the program.",
+                message = $"The curriculum is now assigned to batch {request.BatchYear} only.",
+                batchYear = request.BatchYear,
                 affectedStudents,
                 data = await LoadCurriculumAsync(connection, id, cancellationToken)
             });
@@ -489,36 +825,8 @@ namespace Client_app.Controllers
         public async Task<IActionResult> GetStudentCurriculum(CancellationToken cancellationToken)
         {
             await using var connection = await OpenConnectionAsync(cancellationToken);
-            await using var command = new NpgsqlCommand(@"
-                SELECT c.curriculum_id
-                FROM users u
-                JOIN studentprofiles sp ON sp.user_id = u.id
-                JOIN LATERAL (
-                    SELECT se.program_id, se.curriculum_id, se.status
-                    FROM student_enrollments se
-                    WHERE se.student_user_id = u.id
-                      AND LOWER(TRIM(se.student_no)) = LOWER(TRIM(sp.student_no))
-                    ORDER BY se.school_year DESC,
-                             CASE se.semester WHEN 'MIDYEAR' THEN 3 WHEN 'SECOND' THEN 2 ELSE 1 END DESC,
-                             se.enrollment_id DESC
-                    LIMIT 1
-                ) enrollment ON TRUE
-                LEFT JOIN program_curriculum_assignments pca ON pca.program_id = enrollment.program_id
-                JOIN curriculums c ON c.curriculum_id = COALESCE(enrollment.curriculum_id, pca.curriculum_id)
-                    AND c.program_id = enrollment.program_id AND c.status IN ('PUBLISHED', 'ARCHIVED')
-                WHERE LOWER(u.email) = LOWER(@actor) AND LOWER(u.role) = 'student'
-                  AND LOWER(u.status) = 'approved' AND u.is_active
-                  AND enrollment.status = 'ENROLLED';", connection);
-            command.Parameters.AddWithValue("actor", ActorEmail());
-            long? resolvedId = null;
-            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
-            {
-                if (await reader.ReadAsync(cancellationToken))
-                {
-                    resolvedId = reader.IsDBNull(0) ? null : reader.GetInt64(0);
-                }
-            }
-            if (!resolvedId.HasValue) return NotFound(new { status = "Error", message = "No published curriculum is assigned to your academic program." });
+            var resolvedId = await StudentCurriculumResolver.ResolveAsync(connection, ActorEmail(), cancellationToken);
+            if (!resolvedId.HasValue) return NotFound(new { status = "Error", message = "No published curriculum checklist is assigned to this student." });
             var curriculum = await LoadCurriculumAsync(connection, resolvedId.Value, cancellationToken);
             if (curriculum.Status is not (CurriculumStatuses.Published or CurriculumStatuses.Archived))
                 return NotFound(new { status = "Error", message = "Your program curriculum is not available." });
@@ -530,21 +838,22 @@ namespace Client_app.Controllers
         public async Task<IActionResult> GetFacultyCurricula(CancellationToken cancellationToken)
         {
             await using var connection = await OpenConnectionAsync(cancellationToken);
+            var authorizedProgramIds = await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(
+                connection, ActorEmail(), cancellationToken);
+            if (authorizedProgramIds.Count == 0)
+                return Ok(new { status = "Success", data = Array.Empty<CurriculumDto>() });
+
             var ids = new List<long>();
             await using (var command = new NpgsqlCommand(@"
                 SELECT DISTINCT c.curriculum_id
-                FROM users u
-                LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
-                LEFT JOIN facultysections fs ON fs.user_id = u.id
-                JOIN academic_programs p ON LOWER(p.program_name) = LOWER(COALESCE(fs.department, fp.department))
-                                         OR LOWER(p.program_code) = LOWER(COALESCE(fs.department, fp.department))
-                JOIN program_curriculum_assignments pca ON pca.program_id = p.program_id
+                FROM program_curriculum_assignments pca
                 JOIN curriculums c ON c.curriculum_id = pca.curriculum_id
-                    AND c.status IN ('PUBLISHED', 'ARCHIVED')
-                WHERE LOWER(u.email) = LOWER(@actor) AND LOWER(u.role) = 'faculty'
+                    AND c.program_id = pca.program_id
+                    AND c.status = 'PUBLISHED'
+                WHERE pca.program_id = ANY(@programIds)
                 ORDER BY c.curriculum_id DESC;", connection))
             {
-                command.Parameters.AddWithValue("actor", ActorEmail());
+                command.Parameters.AddWithValue("programIds", authorizedProgramIds.ToArray());
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken);
                 while (await reader.ReadAsync(cancellationToken)) ids.Add(reader.GetInt64(0));
             }
@@ -651,31 +960,27 @@ namespace Client_app.Controllers
             if (role == "faculty")
             {
                 if (curriculum.Status != CurriculumStatuses.Published) return false;
+                var authorizedProgramIds = await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(
+                    connection, ActorEmail(), cancellationToken);
+                if (!authorizedProgramIds.Contains(curriculum.ProgramId)) return false;
+
                 await using var facultyCommand = new NpgsqlCommand(@"
                     SELECT COUNT(*)
-                    FROM users u
-                    JOIN academic_programs p ON p.program_id = @programId
-                    WHERE LOWER(u.email) = LOWER(@actor)
-                      AND (
-                          EXISTS (SELECT 1 FROM facultyprofiles fp WHERE fp.user_id = u.id
-                                  AND (LOWER(fp.department) = LOWER(p.program_name) OR LOWER(fp.department) = LOWER(p.program_code)))
-                          OR EXISTS (SELECT 1 FROM facultysections fs WHERE fs.user_id = u.id
-                                     AND (LOWER(fs.department) = LOWER(p.program_name) OR LOWER(fs.department) = LOWER(p.program_code)))
-                      );", connection);
-                facultyCommand.Parameters.AddWithValue("actor", ActorEmail());
+                    FROM program_curriculum_assignments assignment
+                    JOIN curriculums published
+                      ON published.curriculum_id = assignment.curriculum_id
+                     AND published.program_id = assignment.program_id
+                     AND published.status = 'PUBLISHED'
+                    WHERE assignment.program_id = @programId
+                      AND assignment.curriculum_id = @curriculumId;", connection);
                 facultyCommand.Parameters.AddWithValue("programId", curriculum.ProgramId);
+                facultyCommand.Parameters.AddWithValue("curriculumId", curriculum.CurriculumId);
                 return Convert.ToInt64(await facultyCommand.ExecuteScalarAsync(cancellationToken)) > 0;
             }
-            await using (var command = new NpgsqlCommand($@"
-                SELECT COUNT(*) FROM users u JOIN adminprofiles profile ON profile.user_id = u.id
-                JOIN academic_programs p ON p.program_id = @programId
-                WHERE LOWER(u.email) = LOWER(@actor)
-                  AND (LOWER(profile.department) = LOWER(p.program_name) OR LOWER(profile.department) = LOWER(p.program_code));", connection))
-            {
-                command.Parameters.AddWithValue("actor", ActorEmail());
-                command.Parameters.AddWithValue("programId", curriculum.ProgramId);
-                return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) > 0;
-            }
+            if (role != "department_admin") return false;
+            var departmentProgramIds = await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedProgramIdsAsync(
+                connection, ActorEmail(), cancellationToken: cancellationToken);
+            return departmentProgramIds.Contains(curriculum.ProgramId);
         }
 
         private async Task<CurriculumDto> RequireEditableOwnedCurriculumAsync(
@@ -688,7 +993,7 @@ namespace Client_app.Controllers
             allowedStatuses ??= new[] { CurriculumStatuses.Draft, CurriculumStatuses.Returned };
             var curriculum = await RequireStatusAsync(connection, transaction, id, allowedStatuses, cancellationToken);
             var actor = await GetActorAsync(connection, transaction, cancellationToken);
-            await ResolveOwnedProgramAsync(connection, transaction, actor.Id, curriculum.ProgramCode, cancellationToken);
+            await ResolveOwnedProgramAsync(connection, transaction, actor.Email, curriculum.ProgramCode, cancellationToken);
             return curriculum;
         }
 
@@ -749,6 +1054,56 @@ namespace Client_app.Controllers
         };
 
         private static string NormalizeCsvHeader(string value) => Regex.Replace(value ?? string.Empty, "[^a-z0-9]", string.Empty, RegexOptions.IgnoreCase).ToLowerInvariant();
+        private sealed record CsvImportError(int Row, string Message);
+
+        private static async Task<(List<CurriculumSubjectRequest> Subjects, List<CsvImportError> Errors)> ParseCurriculumSubjectsAsync(
+            IFormFile file,
+            CancellationToken cancellationToken)
+        {
+            var subjects = new List<CurriculumSubjectRequest>();
+            var errors = new List<CsvImportError>();
+            await using var stream = file.OpenReadStream();
+            using var reader = new StreamReader(stream);
+            using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
+            if (!await csv.ReadAsync() || !csv.ReadHeader())
+            {
+                errors.Add(new CsvImportError(1, "The curriculum CSV must include a header row."));
+                return (subjects, errors);
+            }
+
+            var headers = (csv.HeaderRecord ?? Array.Empty<string>())
+                .GroupBy(NormalizeCsvHeader)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+            var rowNumber = 1;
+            while (await csv.ReadAsync())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                rowNumber++;
+                try
+                {
+                    var subject = new CurriculumSubjectRequest
+                    {
+                        SubjectCode = CsvValue(csv, headers, "subjectcode", "coursecode", "code"),
+                        SubjectTitle = CsvValue(csv, headers, "subjecttitle", "coursetitle", "subjectname", "title"),
+                        Units = CsvDecimal(csv, headers, rowNumber, true, "units"),
+                        LectureHours = CsvDecimal(csv, headers, rowNumber, false, "lecturehours", "lecture"),
+                        LaboratoryHours = CsvDecimal(csv, headers, rowNumber, false, "laboratoryhours", "labhours", "laboratory"),
+                        Prerequisite = CsvValue(csv, headers, "prerequisite", "prerequisites"),
+                        YearLevel = CsvInteger(csv, headers, rowNumber, "yearlevel", "year"),
+                        Semester = CsvValue(csv, headers, "semester", "term"),
+                        SubjectType = CsvValue(csv, headers, "subjecttype", "type")
+                    };
+                    NormalizeAndValidateSubject(subject);
+                    subjects.Add(subject);
+                }
+                catch (ArgumentException exception)
+                {
+                    errors.Add(new CsvImportError(rowNumber, exception.Message));
+                }
+            }
+            return (subjects, errors);
+        }
+
         private static string CsvValue(CsvReader csv, IReadOnlyDictionary<string, string> headers, params string[] aliases)
         {
             var header = aliases.Select(NormalizeCsvHeader).FirstOrDefault(headers.ContainsKey);
@@ -765,26 +1120,32 @@ namespace Client_app.Controllers
         private static int CsvInteger(CsvReader csv, IReadOnlyDictionary<string, string> headers, int row, params string[] aliases)
         {
             var value = CsvValue(csv, headers, aliases);
-            var match = Regex.Match(value, "[1-4]");
-            if (!match.Success || !int.TryParse(match.Value, out var parsed))
-                throw new ArgumentException($"Row {row}: year level must be from 1 to 4.");
+            var match = Regex.Match(value, @"^(?:year\s*)?([1-4])(?:st|nd|rd|th)?(?:\s*year)?$", RegexOptions.IgnoreCase);
+            if (!match.Success || !int.TryParse(match.Groups[1].Value, out var parsed))
+                throw new ArgumentException($"Row {row}: Year Level must be a whole number from 1 to 4.");
             return parsed;
         }
+
+        private static IEnumerable<string> PrerequisiteCodes(string? prerequisite) =>
+            (prerequisite ?? string.Empty)
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(value => !string.IsNullOrWhiteSpace(value));
 
         private static async Task ValidatePrerequisiteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long curriculumId, string? prerequisite, long? subjectId, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(prerequisite)) return;
-            await using var command = new NpgsqlCommand(@"
-                SELECT COUNT(*) FROM curriculum_subjects
-                WHERE curriculum_id = @curriculumId AND LOWER(subject_code) = LOWER(@prerequisite)
-                  AND (@subjectId IS NULL OR subject_id <> @subjectId);", connection, transaction);
-            command.Parameters.AddWithValue("curriculumId", curriculumId);
-            command.Parameters.AddWithValue("prerequisite", prerequisite);
-            var subjectIdParameter = command.Parameters.Add("subjectId", NpgsqlDbType.Bigint);
-            subjectIdParameter.Value = (object?)subjectId ?? DBNull.Value;
-            if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 0)
+            foreach (var prerequisiteCode in PrerequisiteCodes(prerequisite))
             {
-                throw new ArgumentException("Prerequisite subject must already exist in this curriculum.");
+                await using var command = new NpgsqlCommand(@"
+                    SELECT COUNT(*) FROM curriculum_subjects
+                    WHERE curriculum_id = @curriculumId AND LOWER(subject_code) = LOWER(@prerequisite)
+                      AND (@subjectId IS NULL OR subject_id <> @subjectId);", connection, transaction);
+                command.Parameters.AddWithValue("curriculumId", curriculumId);
+                command.Parameters.AddWithValue("prerequisite", prerequisiteCode);
+                var subjectIdParameter = command.Parameters.Add("subjectId", NpgsqlDbType.Bigint);
+                subjectIdParameter.Value = (object?)subjectId ?? DBNull.Value;
+                if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 0)
+                    throw new ArgumentException($"Prerequisite {prerequisiteCode} must already exist in this curriculum.");
             }
         }
 
@@ -811,24 +1172,26 @@ namespace Client_app.Controllers
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        private async Task<(int Id, string Code, string Name)> ResolveOwnedProgramAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int actorId, string programCode, CancellationToken cancellationToken)
+        private async Task<(int Id, string Code, string Name)> ResolveOwnedProgramAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string actorEmail, string programCode, CancellationToken cancellationToken)
         {
+            var requestedProgramId = await FacultyCurriculumAuthorizationService.ResolveUniqueProgramIdAsync(
+                connection, programCode, transaction, cancellationToken);
+            var authorizedProgramIds = await FacultyCurriculumAuthorizationService.ResolveDepartmentAuthorizedProgramIdsAsync(
+                connection, actorEmail, transaction, cancellationToken);
+            if (!requestedProgramId.HasValue || !authorizedProgramIds.Contains(requestedProgramId.Value))
+                throw new UnauthorizedAccessException("Chairpersons may manage only their assigned academic program.");
+
             await using var command = new NpgsqlCommand(@"
                 SELECT p.program_id, p.program_code, p.program_name
                 FROM academic_programs p
-                JOIN adminprofiles ap ON ap.user_id = @actorId
-                JOIN users u ON u.id = ap.user_id
-                WHERE LOWER(p.program_code) = LOWER(@programCode) AND p.is_active = TRUE
-                  AND LOWER(u.role) = 'department_admin' AND u.is_active = TRUE
-                  AND (LOWER(ap.department) = LOWER(p.program_name) OR LOWER(ap.department) = LOWER(p.program_code));", connection, transaction);
-            command.Parameters.AddWithValue("actorId", actorId);
-            command.Parameters.AddWithValue("programCode", programCode.Trim());
+                WHERE p.program_id = @programId AND p.is_active = TRUE;", connection, transaction);
+            command.Parameters.AddWithValue("programId", requestedProgramId.Value);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken)) throw new UnauthorizedAccessException("Chairpersons may manage only their assigned academic program.");
             return (reader.GetInt32(0), reader.GetString(1), reader.GetString(2));
         }
 
-        private static async Task<int> AssignProgramCurriculumAsync(
+        private static async Task ActivateProgramCurriculumAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
             int programId,
@@ -851,6 +1214,18 @@ namespace Client_app.Controllers
                 assignment.Parameters.AddWithValue("actorId", actorId);
                 await assignment.ExecuteNonQueryAsync(cancellationToken);
             }
+        }
+
+        private static async Task<int> AssignProgramCurriculumAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            int programId,
+            long curriculumId,
+            int actorId,
+            CancellationToken cancellationToken)
+        {
+            await ActivateProgramCurriculumAsync(
+                connection, transaction, programId, curriculumId, actorId, cancellationToken);
 
             int affectedStudents;
             await using (var enrollments = new NpgsqlCommand(@"
@@ -966,7 +1341,7 @@ namespace Client_app.Controllers
 
         private string ActorEmail() => User.Identity?.Name ?? throw new UnauthorizedAccessException("Authenticated identity is missing.");
         private string ActorRole() => NormalizeRole(User.FindFirst("dbRole")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value);
-        private string? IpAddress() => HttpContext.Connection.RemoteIpAddress?.ToString();
+        private string? IpAddress() => ClientIpResolver.Resolve(HttpContext);
         private static string NormalizeRole(string? role) => (role ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_') switch
         {
             "dept_admin" or "deptadmin" or "chairperson" or "department_head" => "department_admin",

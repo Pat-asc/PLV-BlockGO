@@ -6,6 +6,9 @@ metadata:
   namespace: plv-fabric
 data:
   NODE_ENV: production
+  # GKE pod/ingress range plus Google Front End proxy ranges. Express rejects
+  # forwarding headers from every other directly connected address.
+  TRUST_PROXY_CIDRS: 10.72.0.0/16,10.96.0.0/16,35.191.0.0/16,130.211.0.0/22
   AUTH_SERVICE_URL: http://auth-service.plv-fabric.svc.cluster.local:4001
   IDENTITY_SERVICE_URL: http://fabric-identity-service.plv-fabric.svc.cluster.local:4002
   LEDGER_SERVICE_URL: http://ledger-service.plv-fabric.svc.cluster.local:4003
@@ -32,7 +35,9 @@ data:
   FABRIC_CA_DEPARTMENT_TLS_CERT: /etc/hyperledger/fabric-ca-roots/department-tls-cert.pem
   FABRIC_CA_INSECURE_TLS: "false"
   FABRIC_GATEWAY_TLS_ROOTS: /etc/hyperledger/fabric-gateway-tls
-  FABRIC_DISCOVERY_ENABLED: "true"
+  # Peers run in separate campus namespaces and advertise namespace-local gossip
+  # addresses. Use the gateway's explicit cross-namespace FQDN profile instead.
+  FABRIC_DISCOVERY_ENABLED: "false"
   FABRIC_HA_ENABLED: "true"
   FABRIC_DISABLED_ORDERERS: "orderer5,orderer6"
   FABRIC_PEER_REGISTRAR_2_URL: grpcs://peer-registrar-2.plv-main-campus.svc.cluster.local:7051
@@ -76,14 +81,12 @@ spec:
         imagePullPolicy: Always
         command: ["npm", "run", "start:gateway"]
         ports: [{ name: api, containerPort: 4000 }]
-        envFrom: [{ configMapRef: { name: middleware-service-config } }]
+        envFrom:
+        - configMapRef: { name: middleware-service-config }
+        - configMapRef: { name: blockgo-public-hosting }
         env:
         - { name: PORT, value: "4000" }
         - { name: NODE_OPTIONS, value: "--max-old-space-size=160" }
-        - name: FRONTEND_URL
-          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: FRONTEND_URL, optional: true } }
-        - name: CORS_ORIGINS
-          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: CORS_ORIGINS, optional: true } }
         startupProbe: &gateway-health
           httpGet: { path: /api/health, port: 4000 }
           periodSeconds: 5
@@ -107,6 +110,7 @@ metadata:
   labels: { app: middleware-api }
   annotations:
     cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default":"blockgo-forwarded-headers"}'
 spec:
   selector: { app: middleware-api }
   ports: [{ name: api, port: 4000, targetPort: 4000 }]
@@ -146,6 +150,7 @@ spec:
         ports: [{ name: api, containerPort: 4001 }]
         envFrom:
         - configMapRef: { name: middleware-service-config }
+        - configMapRef: { name: blockgo-public-hosting }
         env:
         - { name: PORT, value: "4001" }
         - { name: NODE_OPTIONS, value: "--max-old-space-size=192" }
@@ -161,12 +166,26 @@ spec:
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: BOOTSTRAP_REGISTRAR_PASS } }
         - name: BOOTSTRAP_SYSTEM_ADMIN_PASS
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: BOOTSTRAP_SYSTEM_ADMIN_PASS } }
-        - name: FRONTEND_URL
-          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: FRONTEND_URL, optional: true } }
         - name: EMAIL_USER
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: EMAIL_USER, optional: true } }
         - name: EMAIL_PASS
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: EMAIL_PASS, optional: true } }
+        - name: EMAIL_HOST
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: EMAIL_HOST, optional: true } }
+        - name: EMAIL_PORT
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: EMAIL_PORT, optional: true } }
+        - name: SMTP_HOST
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: SMTP_HOST, optional: true } }
+        - name: SMTP_PORT
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: SMTP_PORT, optional: true } }
+        - name: SMTP_USER
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: SMTP_USER, optional: true } }
+        - name: SMTP_PASS
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: SMTP_PASS, optional: true } }
+        - name: SMTP_SECURE
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: SMTP_SECURE, optional: true } }
+        - name: EMAIL_FROM
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: EMAIL_FROM, optional: true } }
         startupProbe: &auth-health
           httpGet: { path: /api/health, port: 4001 }
           periodSeconds: 5
@@ -213,6 +232,7 @@ spec:
       initContainers:
       - name: wait-for-wallets
         image: busybox:1.36.1
+        resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {cpu: 100m, memory: 64Mi}}
         command: ["/bin/sh", "-ec", "for e in couchdb-wallet-registrar.plv-main-campus.svc.cluster.local:5985 couchdb-wallet-faculty.plv-annex-campus.svc.cluster.local:5985 couchdb-wallet-department.plv-pubad-campus.svc.cluster.local:5985; do until nc -w 2 ${e%:*} ${e##*:} </dev/null; do sleep 2; done; done"]
       containers:
       - name: identity-service
@@ -227,6 +247,10 @@ spec:
         - { name: NODE_OPTIONS, value: "--max-old-space-size=256" }
         - name: INTERNAL_API_KEY
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: INTERNAL_API_KEY } }
+        - name: POSTGRES_USER
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: POSTGRES_USER } }
+        - name: POSTGRES_PASS
+          valueFrom: { secretKeyRef: { name: blockgo-secrets, key: POSTGRES_PASS } }
         - name: COUCHDB_USER
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: COUCHDB_USER } }
         - name: COUCHDB_PASS
@@ -286,6 +310,7 @@ spec:
       initContainers:
       - name: wait-for-wallets
         image: busybox:1.36.1
+        resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {cpu: 100m, memory: 64Mi}}
         command: ["/bin/sh", "-ec", "for e in couchdb-wallet-registrar.plv-main-campus.svc.cluster.local:5985 couchdb-wallet-faculty.plv-annex-campus.svc.cluster.local:5985 couchdb-wallet-department.plv-pubad-campus.svc.cluster.local:5985; do until nc -w 2 ${e%:*} ${e##*:} </dev/null; do sleep 2; done; done"]
       containers:
       - name: ledger-service

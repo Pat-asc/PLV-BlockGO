@@ -4,6 +4,9 @@
 # Usage:
 #   ./k8s/deploy-k8s.sh local apply
 #   ./k8s/deploy-k8s.sh production apply
+#   ./k8s/deploy-k8s.sh production apply-application
+#   ./k8s/deploy-k8s.sh production apply-hosting
+#   ./k8s/deploy-k8s.sh production hosting-plan
 #   ./k8s/deploy-k8s.sh local verify
 #   ./k8s/deploy-k8s.sh production status
 #   ./k8s/deploy-k8s.sh production gke-setup
@@ -46,6 +49,34 @@ compute_local_source_revision() {
     printf 'workspace\n'
 }
 
+load_public_hosting_file() {
+    local config_file="$1"
+    [[ -f "$config_file" ]] || return 0
+
+    local raw_line key value
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        raw_line="${raw_line%$'\r'}"
+        [[ -z "$raw_line" || "$raw_line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$raw_line" == *=* ]] || {
+            echo "ERROR: Invalid public-hosting setting in ${config_file}: ${raw_line}" >&2
+            return 1
+        }
+        key="${raw_line%%=*}"
+        value="${raw_line#*=}"
+        case "$key" in
+            BLOCKGO_PUBLIC_HOST|BLOCKGO_PUBLIC_IP|BLOCKGO_PUBLIC_SCHEME|BLOCKGO_PUBLIC_TLS_SECRET|BLOCKGO_ALLOWED_ORIGINS) ;;
+            *)
+                echo "ERROR: Unsupported setting ${key} in ${config_file}." >&2
+                return 1
+                ;;
+        esac
+        if [[ -z "${!key:-}" ]]; then
+            printf -v "$key" '%s' "$value"
+            export "$key"
+        fi
+    done < "$config_file"
+}
+
 PROFILE="${K8S_PROFILE:-local}"
 ACTION="${1:-apply}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-20m}"
@@ -73,6 +104,8 @@ PEER_REBOOTSTRAP_TARGETS="${PEER_REBOOTSTRAP_TARGETS:-}"
 PEER_REBOOTSTRAP_POD_IMAGE="${PEER_REBOOTSTRAP_POD_IMAGE:-alpine:3.20}"
 REINSTALL_CHAINCODE_AFTER_REBOOTSTRAP="${REINSTALL_CHAINCODE_AFTER_REBOOTSTRAP:-true}"
 PEER_ALLOW_PRODUCTION_REBOOTSTRAP="${PEER_ALLOW_PRODUCTION_REBOOTSTRAP:-false}"
+DEPLOY_SECONDARY_PEERS="${DEPLOY_SECONDARY_PEERS:-false}"
+export DEPLOY_SECONDARY_PEERS
 
 # Local testing defaults: keep one replica per stateless service and preserve memory
 # safety limits. Grafana/Prometheus observability remains enabled in local testing.
@@ -85,9 +118,9 @@ if [[ "${1:-}" == "local" || "${1:-}" == "production" ]]; then
     ACTION="${2:-apply}"
 elif [[ "${2:-}" == "local" || "${2:-}" == "production" ]]; then
     PROFILE="$2"
-elif [[ "${1:-}" == "apply" || "${1:-}" == "delete" || "${1:-}" == "status" || "${1:-}" == "verify" || "${1:-}" == "gke-setup" || "${1:-}" == "repair-fabric" || "${1:-}" == "diagnose" || "${1:-}" == "rebootstrap-peers" ]]; then
+elif [[ "${1:-}" == "apply" || "${1:-}" == "apply-application" || "${1:-}" == "apply-hosting" || "${1:-}" == "hosting-plan" || "${1:-}" == "delete" || "${1:-}" == "status" || "${1:-}" == "verify" || "${1:-}" == "gke-setup" || "${1:-}" == "repair-fabric" || "${1:-}" == "diagnose" || "${1:-}" == "rebootstrap-peers" ]]; then
     ACTION="$1"
-elif [[ "${2:-}" == "apply" || "${2:-}" == "delete" || "${2:-}" == "status" || "${2:-}" == "verify" || "${2:-}" == "gke-setup" || "${2:-}" == "repair-fabric" || "${2:-}" == "diagnose" || "${2:-}" == "rebootstrap-peers" ]]; then
+elif [[ "${2:-}" == "apply" || "${2:-}" == "apply-application" || "${2:-}" == "apply-hosting" || "${2:-}" == "hosting-plan" || "${2:-}" == "delete" || "${2:-}" == "status" || "${2:-}" == "verify" || "${2:-}" == "gke-setup" || "${2:-}" == "repair-fabric" || "${2:-}" == "diagnose" || "${2:-}" == "rebootstrap-peers" ]]; then
     ACTION="$2"
 fi
 
@@ -100,12 +133,21 @@ case "$PROFILE" in
 esac
 
 case "$ACTION" in
-    apply|delete|status|verify|gke-setup|repair-fabric|diagnose|rebootstrap-peers) ;;
+    apply|apply-application|apply-hosting|hosting-plan|delete|status|verify|gke-setup|repair-fabric|diagnose|rebootstrap-peers) ;;
     *)
-        echo "Usage: $0 [local|production] [apply|delete|status|verify|gke-setup|repair-fabric|diagnose|rebootstrap-peers]"
+        echo "Usage: $0 [local|production] [apply|apply-application|apply-hosting|hosting-plan|delete|status|verify|gke-setup|repair-fabric|diagnose|rebootstrap-peers]"
         exit 1
         ;;
 esac
+
+PUBLIC_HOSTING_CONFIG_FILE="${BLOCKGO_PUBLIC_HOSTING_CONFIG_FILE:-./k8s/production-hosting.env}"
+load_public_hosting_file "$PUBLIC_HOSTING_CONFIG_FILE"
+BLOCKGO_PUBLIC_HOST="${BLOCKGO_PUBLIC_HOST:-}"
+BLOCKGO_PUBLIC_IP="${BLOCKGO_PUBLIC_IP:-}"
+BLOCKGO_PUBLIC_SCHEME="${BLOCKGO_PUBLIC_SCHEME:-https}"
+BLOCKGO_PUBLIC_TLS_SECRET="${BLOCKGO_PUBLIC_TLS_SECRET:-blockgo-public-tls}"
+BLOCKGO_ALLOWED_ORIGINS="${BLOCKGO_ALLOWED_ORIGINS:-}"
+BLOCKGO_HOSTING_DRY_RUN="${BLOCKGO_HOSTING_DRY_RUN:-false}"
 
 export PROFILE
 export K8S_PROFILE="$PROFILE"
@@ -160,10 +202,6 @@ if [[ -z "${PEER_AUTO_REPAIR_TRANSIENT_STORE+x}" ]]; then
 fi
 export PEER_AUTO_REPAIR_TRANSIENT_STORE
 
-# The ledger-provider ID store tracks the peer's ledger/channel inventory and is not
-# disposable. For the specific LevelDB "entry point missing/corrupted" startup panic,
-# local recovery is limited to repairing an invalid/missing CURRENT pointer when an
-# intact MANIFEST-* file exists. The database directory itself is never deleted.
 if [[ -z "${PEER_AUTO_REPAIR_LEDGER_PROVIDER_CURRENT+x}" ]]; then
     if [[ "$PROFILE" == "local" ]]; then
         PEER_AUTO_REPAIR_LEDGER_PROVIDER_CURRENT="true"
@@ -190,7 +228,7 @@ if [[ "$PROFILE" == "local" ]]; then
 fi
 
 NAMESPACES=(plv-fabric plv-main-campus plv-annex-campus plv-pubad-campus)
-TMP_K8S_DIR="./k8s/.tmp-k8s"
+TMP_K8S_DIR="${BLOCKGO_RENDER_DIR:-./k8s/.tmp-k8s}"
 LOCAL_STATIC_PVS=(
     pv-orderer-1
     pv-orderer-2
@@ -242,6 +280,199 @@ validate_script_integrity() {
         echo "Also keep the provided .gitattributes file so future checkouts use LF."
         return 1
     fi
+}
+
+validate_dns_hostname() {
+    local hostname="$1"
+    [[ ${#hostname} -le 253 ]] || return 1
+    [[ "$hostname" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || return 1
+    [[ "$hostname" != *..* ]] || return 1
+
+    local label
+    local labels=()
+    IFS='.' read -r -a labels <<< "$hostname"
+    for label in "${labels[@]}"; do
+        [[ ${#label} -le 63 ]] || return 1
+        [[ "$label" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || return 1
+    done
+}
+
+validate_ipv4_address() {
+    local address="$1"
+    local octet
+    local octets=()
+    IFS='.' read -r -a octets <<< "$address"
+    [[ ${#octets[@]} -eq 4 ]] || return 1
+    for octet in "${octets[@]}"; do
+        [[ "$octet" =~ ^[0-9]{1,3}$ ]] || return 1
+        (( 10#$octet >= 0 && 10#$octet <= 255 )) || return 1
+    done
+}
+
+validate_public_origin() {
+    local origin="$1"
+    [[ "$origin" != "*" ]] || return 1
+    [[ "$origin" =~ ^https?://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$ ]] || return 1
+
+    local authority="${origin#*://}"
+    local hostname="${authority%%:*}"
+    validate_dns_hostname "$hostname" || return 1
+    if [[ "$authority" == *:* ]]; then
+        local port="${authority##*:}"
+        (( 10#$port >= 1 && 10#$port <= 65535 )) || return 1
+    fi
+}
+
+validate_public_host_settings() {
+    if [[ "$PROFILE" == "local" && -z "$BLOCKGO_PUBLIC_HOST" ]]; then
+        BLOCKGO_PUBLIC_HOST="localhost"
+        BLOCKGO_PUBLIC_IP="127.0.0.1"
+        BLOCKGO_PUBLIC_SCHEME="http"
+        BLOCKGO_PUBLIC_TLS_SECRET="blockgo-local-tls"
+    fi
+
+    if [[ -z "$BLOCKGO_PUBLIC_HOST" ]]; then
+        echo "ERROR: BLOCKGO_PUBLIC_HOST must be set for production (hostname only, for example plv-blockgo.com)." >&2
+        return 1
+    fi
+    if [[ "$BLOCKGO_PUBLIC_HOST" == *"://"* || "$BLOCKGO_PUBLIC_HOST" == */* || "$BLOCKGO_PUBLIC_HOST" == *\?* || "$BLOCKGO_PUBLIC_HOST" == *\#* || "$BLOCKGO_PUBLIC_HOST" =~ [[:space:]] ]]; then
+        echo "ERROR: BLOCKGO_PUBLIC_HOST must be a hostname only, without scheme, path, query, fragment, or whitespace." >&2
+        return 1
+    fi
+    if ! validate_dns_hostname "$BLOCKGO_PUBLIC_HOST"; then
+        echo "ERROR: BLOCKGO_PUBLIC_HOST is not a valid lowercase DNS hostname: ${BLOCKGO_PUBLIC_HOST}" >&2
+        return 1
+    fi
+    if [[ "$PROFILE" == "production" && "$BLOCKGO_PUBLIC_HOST" != *.* ]]; then
+        echo "ERROR: Production BLOCKGO_PUBLIC_HOST must be a fully qualified public hostname." >&2
+        return 1
+    fi
+    if [[ "$BLOCKGO_PUBLIC_SCHEME" != "http" && "$BLOCKGO_PUBLIC_SCHEME" != "https" ]]; then
+        echo "ERROR: BLOCKGO_PUBLIC_SCHEME must be http or https." >&2
+        return 1
+    fi
+    if [[ "$PROFILE" == "production" && "$BLOCKGO_PUBLIC_SCHEME" != "https" ]]; then
+        echo "ERROR: Production requires BLOCKGO_PUBLIC_SCHEME=https for Cloudflare Full (strict) origin encryption. HTTP is permitted only by the local development profile." >&2
+        return 1
+    fi
+    if [[ "$PROFILE" == "production" && -z "$BLOCKGO_PUBLIC_IP" ]]; then
+        echo "ERROR: BLOCKGO_PUBLIC_IP must be set to the public GKE ingress/origin IPv4 address used by Cloudflare." >&2
+        return 1
+    fi
+    if [[ -n "$BLOCKGO_PUBLIC_IP" ]] && ! validate_ipv4_address "$BLOCKGO_PUBLIC_IP"; then
+        echo "ERROR: BLOCKGO_PUBLIC_IP must be a valid IPv4 address." >&2
+        return 1
+    fi
+    if ! validate_dns_hostname "$BLOCKGO_PUBLIC_TLS_SECRET"; then
+        echo "ERROR: BLOCKGO_PUBLIC_TLS_SECRET must be a valid Kubernetes DNS subdomain name." >&2
+        return 1
+    fi
+
+    BLOCKGO_PUBLIC_ORIGIN="${BLOCKGO_PUBLIC_SCHEME}://${BLOCKGO_PUBLIC_HOST}"
+    BLOCKGO_PUBLIC_API_URL="${BLOCKGO_PUBLIC_ORIGIN}/api"
+    if [[ "$BLOCKGO_PUBLIC_SCHEME" == "https" ]]; then
+        BLOCKGO_PUBLIC_WEBSOCKET_URL="wss://${BLOCKGO_PUBLIC_HOST}"
+    else
+        BLOCKGO_PUBLIC_WEBSOCKET_URL="ws://${BLOCKGO_PUBLIC_HOST}"
+    fi
+    if [[ -z "$BLOCKGO_ALLOWED_ORIGINS" ]]; then
+        if [[ "$PROFILE" == "local" ]]; then
+            BLOCKGO_ALLOWED_ORIGINS="http://localhost:8080,http://localhost:8090,http://localhost:8100,http://localhost:3000"
+        else
+            BLOCKGO_ALLOWED_ORIGINS="$BLOCKGO_PUBLIC_ORIGIN"
+        fi
+    fi
+    if [[ "$BLOCKGO_ALLOWED_ORIGINS" == ,* || "$BLOCKGO_ALLOWED_ORIGINS" == *, || "$BLOCKGO_ALLOWED_ORIGINS" == *,,* ]]; then
+        echo "ERROR: BLOCKGO_ALLOWED_ORIGINS contains an empty origin entry." >&2
+        return 1
+    fi
+
+    local origin
+    local origins=()
+    IFS=',' read -r -a origins <<< "$BLOCKGO_ALLOWED_ORIGINS"
+    for origin in "${origins[@]}"; do
+        origin="${origin#"${origin%%[![:space:]]*}"}"
+        origin="${origin%"${origin##*[![:space:]]}"}"
+        if ! validate_public_origin "$origin"; then
+            echo "ERROR: Invalid BLOCKGO_ALLOWED_ORIGINS entry '${origin}'. Use explicit http(s) origins without paths; wildcard origins are prohibited." >&2
+            return 1
+        fi
+    done
+}
+
+render_public_hosting_manifests() {
+    local render_dir="$1"
+    validate_public_host_settings
+
+    local file escaped_host escaped_ip escaped_scheme escaped_origin escaped_api_url escaped_websocket_url escaped_tls escaped_origins
+    escaped_host="${BLOCKGO_PUBLIC_HOST//&/\\&}"
+    escaped_ip="${BLOCKGO_PUBLIC_IP//&/\\&}"
+    escaped_scheme="${BLOCKGO_PUBLIC_SCHEME//&/\\&}"
+    escaped_origin="${BLOCKGO_PUBLIC_ORIGIN//&/\\&}"
+    escaped_api_url="${BLOCKGO_PUBLIC_API_URL//&/\\&}"
+    escaped_websocket_url="${BLOCKGO_PUBLIC_WEBSOCKET_URL//&/\\&}"
+    escaped_tls="${BLOCKGO_PUBLIC_TLS_SECRET//&/\\&}"
+    escaped_origins="${BLOCKGO_ALLOWED_ORIGINS//&/\\&}"
+    while IFS= read -r -d '' file; do
+        grep -q -E '__BLOCKGO_PUBLIC_|__BLOCKGO_ALLOWED_ORIGINS__' "$file" || continue
+        sed -i \
+            -e "s|__BLOCKGO_PUBLIC_HOST__|${escaped_host}|g" \
+            -e "s|__BLOCKGO_PUBLIC_IP__|${escaped_ip}|g" \
+            -e "s|__BLOCKGO_PUBLIC_SCHEME__|${escaped_scheme}|g" \
+            -e "s|__BLOCKGO_PUBLIC_ORIGIN__|${escaped_origin}|g" \
+            -e "s|__BLOCKGO_PUBLIC_API_URL__|${escaped_api_url}|g" \
+            -e "s|__BLOCKGO_PUBLIC_WEBSOCKET_URL__|${escaped_websocket_url}|g" \
+            -e "s|__BLOCKGO_PUBLIC_TLS_SECRET__|${escaped_tls}|g" \
+            -e "s|__BLOCKGO_ALLOWED_ORIGINS__|${escaped_origins}|g" \
+            "$file"
+    done < <(find "$render_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -print0)
+
+    if grep -R -n -E '__BLOCKGO_PUBLIC_[A-Z_]+__|__BLOCKGO_ALLOWED_ORIGINS__' "$render_dir"; then
+        echo "ERROR: One or more public-hosting placeholders remain unresolved." >&2
+        return 1
+    fi
+}
+
+validate_render_directory() {
+    case "$TMP_K8S_DIR" in
+        ""|/|.|./|..|../|./k8s|"$NETWORK_ROOT"|"$SCRIPT_DIR")
+            echo "ERROR: Refusing to use unsafe manifest render directory '${TMP_K8S_DIR}'." >&2
+            return 1
+            ;;
+    esac
+}
+
+prepare_hosting_manifests() {
+    validate_render_directory
+    rm -rf "$TMP_K8S_DIR"
+    mkdir -p "$TMP_K8S_DIR"
+    cp ./k8s/02-public-hosting.yaml "$TMP_K8S_DIR/"
+    cp ./k8s/12-frontend-nginx-config.yaml "$TMP_K8S_DIR/"
+    cp ./k8s/15-main-ingress.yaml "$TMP_K8S_DIR/"
+    render_public_hosting_manifests "$TMP_K8S_DIR"
+}
+
+show_hosting_plan() {
+    prepare_hosting_manifests
+    echo "======================================"
+    echo "BlockGo Public Hosting Plan"
+    echo "======================================"
+    echo "Public host:       ${BLOCKGO_PUBLIC_HOST}"
+    echo "Public IP:         ${BLOCKGO_PUBLIC_IP}"
+    echo "Public scheme:     ${BLOCKGO_PUBLIC_SCHEME}"
+    echo "Public URL:        ${BLOCKGO_PUBLIC_ORIGIN}"
+    echo "API URL:           ${BLOCKGO_PUBLIC_API_URL}"
+    echo "Realtime URL:      ${BLOCKGO_PUBLIC_WEBSOCKET_URL}/chatHub"
+    echo "IPFS URL:          ${BLOCKGO_PUBLIC_ORIGIN}/ipfs"
+    echo "TLS secret:        ${BLOCKGO_PUBLIC_TLS_SECRET}"
+    echo "DNS provider:      Cloudflare"
+    echo "Cloudflare proxy:  Enabled"
+    echo "Origin HTTPS:      Required"
+    echo "CORS origins:      ${BLOCKGO_ALLOWED_ORIGINS}"
+    echo "Affected resources: ConfigMap/blockgo-public-hosting, ConfigMap/frontend-nginx-config, Ingress/main-ingress"
+    echo "Application rollouts on apply: middleware-api, auth-service, dotnet-api-gateway, frontend"
+    echo "Fabric network:    unchanged (Kubernetes internal DNS)"
+    echo "Rendered manifests: ${TMP_K8S_DIR}"
 }
 
 init_repair_audit() {
@@ -2335,6 +2566,21 @@ EOF
     echo "Generated ConfigMaps and Secrets are ready."
 }
 
+publish_runtime_migrations_configmap() {
+    local migration_config_args=()
+    local migration_file
+    for migration_file in ../migrations/[0-9][0-9][0-9]_*.sql; do
+        migration_config_args+=("--from-file=$(basename "$migration_file")=$migration_file")
+    done
+    if (( ${#migration_config_args[@]} == 0 )); then
+        echo "ERROR: No numbered PostgreSQL migrations were found in ../migrations."
+        return 1
+    fi
+    kubectl create configmap postgres-runtime-migrations \
+        "${migration_config_args[@]}" \
+        -n plv-main-campus --dry-run=client -o yaml | kubectl apply -f -
+}
+
 remove_local_memory_limits_from_generated_manifests() {
     if [[ "$PROFILE" != "local" ]]; then
         return
@@ -2356,6 +2602,7 @@ clear_existing_local_memory_limits() {
 }
 
 prepare_manifests() {
+    validate_render_directory
     rm -rf "$TMP_K8S_DIR"
     mkdir -p "$TMP_K8S_DIR"
     cp ./k8s/*.yaml "$TMP_K8S_DIR/"
@@ -2363,7 +2610,6 @@ prepare_manifests() {
     if [[ "$PROFILE" == "local" ]]; then
         echo "Preparing local lightweight manifests with immutable source image tag ${LOCAL_IMAGE_TAG}, one-replica apps, and smaller storage."
         cp ./k8s/01b-persistent-volumes.local-kind.yaml.example "$TMP_K8S_DIR/01b-persistent-volumes.local-kind.yaml"
-        cp ./k8s/09a-ipfs-webui-bootstrap.local.yaml.example "$TMP_K8S_DIR/09a-ipfs-webui-bootstrap.yaml"
         local pv_root
         pv_root="$(local_pv_root)"
         echo "Local PV hostPath root: $pv_root"
@@ -2432,6 +2678,8 @@ prepare_manifests() {
             return 1
         fi
     fi
+
+    render_public_hosting_manifests "$TMP_K8S_DIR"
 }
 
 resolve_gke_zones() {
@@ -2599,12 +2847,12 @@ setup_gke_cluster() {
     # BLOCKGO GKE COST GUARDRAILS
     # ============================================================
     # Production remains spread across three zones, but the regional
-    # node pool is constrained to 4-6 total worker nodes to reduce the
-    # risk of an unexpected monthly compute-cost spike.
+    # node pool is constrained to 4-5 total worker nodes. GKE maxSurge is
+    # per zone, so zero surge avoids exceeding a 12-vCPU quota in 3 zones.
     # ============================================================
     local min_total_nodes="${GKE_MIN_TOTAL_NODES:-4}"
-    local max_total_nodes="${GKE_MAX_TOTAL_NODES:-6}"
-    local initial_nodes_per_zone="${GKE_INITIAL_NODES_PER_ZONE:-2}"
+    local max_total_nodes="${GKE_MAX_TOTAL_NODES:-5}"
+    local initial_nodes_per_zone="${GKE_INITIAL_NODES_PER_ZONE:-1}"
     local machine_type="${GKE_MACHINE_TYPE:-e2-highmem-2}"
     local vcpu_cost_cap="${GKE_VCPU_COST_CAP:-12}"
     local vcpu_per_node=""
@@ -2632,10 +2880,10 @@ setup_gke_cluster() {
         echo "ERROR: Production GKE requires at least 4 total worker nodes."
         return 1
     fi
-    if (( max_total_nodes > 6 )); then
-        echo "ERROR: Cost guardrail prevents more than 6 GKE worker nodes."
+    if (( max_total_nodes > 5 )); then
+        echo "ERROR: Cost guardrail prevents more than 5 GKE worker nodes plus one surge node."
         echo "Requested maximum: ${max_total_nodes}"
-        echo "Allowed maximum: 6"
+        echo "Allowed maximum: 5"
         return 1
     fi
     if (( min_total_nodes > max_total_nodes )); then
@@ -2643,7 +2891,7 @@ setup_gke_cluster() {
         return 1
     fi
     if (( initial_nodes_per_zone < 1 || initial_nodes_per_zone > 2 )); then
-        echo "ERROR: GKE_INITIAL_NODES_PER_ZONE must be 1 or 2 for this 3-zone, 4-6 node design."
+        echo "ERROR: GKE_INITIAL_NODES_PER_ZONE must be 1 or 2 for this 3-zone, 4-5 node design."
         return 1
     fi
 
@@ -2668,7 +2916,7 @@ setup_gke_cluster() {
     echo "vCPU cost ceiling:   ${vcpu_cost_cap}"
     echo "Maximum node vCPUs:  ${maximum_total_vcpus}"
     echo "Initial nodes/zone:  ${initial_nodes_per_zone}"
-    echo "Upgrade surge nodes: 0"
+    echo "Upgrade surge nodes per zone: 0 (quota-safe)"
     echo "Cloud workload logs: disabled"
     echo "======================================"
 
@@ -2680,8 +2928,8 @@ setup_gke_cluster() {
             --node-locations "$node_locations" \
             --num-nodes "$initial_nodes_per_zone" \
             --machine-type "$machine_type" \
-            --disk-type "${GKE_NODE_DISK_TYPE:-pd-balanced}" \
-            --disk-size "${GKE_NODE_DISK_GB:-100}" \
+            --disk-type "${GKE_NODE_DISK_TYPE:-pd-standard}" \
+            --disk-size "${GKE_NODE_DISK_GB:-50}" \
             --release-channel regular \
             --enable-ip-alias \
             --enable-shielded-nodes \
@@ -2850,10 +3098,10 @@ verify_required_application_fixes() {
         echo "ERROR: The System Administrator password-reset role boundary is missing."
         return 1
     }
-    grep -q 'HttpPost("registrar-correct/{recordId}")' ../client-app/Controllers/GradeController.cs || {
-        echo "ERROR: The Registrar finalized-grade correction endpoint is missing."
+    if grep -q 'HttpPost("registrar-correct/{recordId}")' ../client-app/Controllers/GradeController.cs; then
+        echo "ERROR: The prohibited Registrar direct grade-correction endpoint is present."
         return 1
-    }
+    fi
     if grep -q 'Commit Corrected Grade' ../frontend/src/components/registrar/RegistrarGradesView.jsx; then
         echo "ERROR: The Registrar grade-correction frontend control must remain disabled."
         return 1
@@ -2924,12 +3172,12 @@ verify_required_application_fixes() {
         echo "ERROR: The 45-second backend keepalive interval is missing."
         return 1
     }
-    grep -q 'MaximumRegistrarAccounts = 2' ../client-app/Services/AccountProvisioningService.cs || {
-        echo "ERROR: The two-Registrar backend limit is missing."
+    grep -q 'MaximumRegistrarAccounts = 5' ../client-app/Services/AccountProvisioningService.cs || {
+        echo "ERROR: The five-Registrar backend limit is missing."
         return 1
     }
-    grep -q 'two-Registrar limit has been reached' ../frontend/src/components/system-admin/RegistrarAccountManagement.jsx || {
-        echo "ERROR: The two-Registrar frontend limit state is missing."
+    grep -q 'five-Registrar limit has been reached' ../frontend/src/components/system-admin/RegistrarAccountManagement.jsx || {
+        echo "ERROR: The five-Registrar frontend limit state is missing."
         return 1
     }
     grep -q 'Network and Docker Issues' ../client-app/Controllers/SupportTicketsController.cs || {
@@ -2952,7 +3200,7 @@ verify_required_application_fixes() {
         echo "ERROR: Stable role routes are missing from the frontend."
         return 1
     }
-    grep -q 'try_files.*index.html' ./k8s/12-frontend-ha.yaml || {
+    grep -q 'try_files.*index.html' ./k8s/12-frontend-nginx-config.yaml || {
         echo "ERROR: Kubernetes Nginx does not support direct role-route navigation."
         return 1
     }
@@ -3045,23 +3293,21 @@ prepare_production_source_images() {
     local tag="$PRODUCTION_IMAGE_TAG"
     echo "Building production application images from the current workspace at ${repository}/*:${tag}..."
 
+    local images=(fabric-middleware client-app frontend)
     docker build -t "${repository}/fabric-middleware:${tag}" -f ../middleware/Dockerfile ../middleware
     docker build -t "${repository}/client-app:${tag}" -f ../client-app/Dockerfile ../client-app
     docker build -t "${repository}/frontend:${tag}" -f ../frontend/Dockerfile ../frontend
-    docker build -t "${repository}/registrar-chaincode:${tag}" -f ../chaincode/Dockerfile ../chaincode
-    docker build -t "${repository}/postgres-backup:${tag}" -f ./k8s/postgres-backup/Dockerfile ./k8s/postgres-backup
-    docker image tag "${repository}/registrar-chaincode:${tag}" "${repository}/faculty-chaincode:${tag}"
-    docker image tag "${repository}/registrar-chaincode:${tag}" "${repository}/department-chaincode:${tag}"
+
+    if [[ "$ACTION" != "apply-application" ]]; then
+        docker build -t "${repository}/registrar-chaincode:${tag}" -f ../chaincode/Dockerfile ../chaincode
+        docker build -t "${repository}/postgres-backup:${tag}" -f ./k8s/postgres-backup/Dockerfile ./k8s/postgres-backup
+        docker image tag "${repository}/registrar-chaincode:${tag}" "${repository}/faculty-chaincode:${tag}"
+        docker image tag "${repository}/registrar-chaincode:${tag}" "${repository}/department-chaincode:${tag}"
+        images+=(registrar-chaincode faculty-chaincode department-chaincode postgres-backup)
+    fi
 
     local image_name
-    for image_name in \
-        fabric-middleware \
-        client-app \
-        frontend \
-        registrar-chaincode \
-        faculty-chaincode \
-        department-chaincode \
-        postgres-backup; do
+    for image_name in "${images[@]}"; do
         echo "Publishing ${repository}/${image_name}:${tag}..."
         docker push "${repository}/${image_name}:${tag}"
     done
@@ -3107,9 +3353,12 @@ verify_deployment_inputs() {
         ../migrations/006_chat_conversation_states.sql \
         ../migrations/007_group_chats.sql \
         ../migrations/008_support_ticket_specialist_assignments.sql \
+        ../migrations/018_password_reset_tokens.sql \
         ./k8s/backup_postgres.sh \
         ./k8s/15-postgres-backup.yaml \
         ./k8s/postgres-backup/Dockerfile \
+        ./k8s/02-public-hosting.yaml \
+        ./k8s/12-frontend-nginx-config.yaml \
         ./k8s/couchdb-health-probe-json-patch.json \
         ../monitoring/grafana-dashboard.json \
         ../monitoring/grafana-kubernetes-memory.json \
@@ -3393,6 +3642,7 @@ configure_peer_channel_endpoint_aliases() {
         repair_lost_local_pvcs
     fi
     apply_manifest "$TMP_K8S_DIR/02-configmap-secret.yaml"
+    apply_manifest "$TMP_K8S_DIR/02-public-hosting.yaml"
     apply_manifest "$TMP_K8S_DIR/03-Abac.yaml"
 
     echo "======================================"
@@ -3434,7 +3684,7 @@ configure_peer_channel_endpoint_aliases() {
     apply_peer_manifest "$TMP_K8S_DIR/07-peer-registrar.yaml"
     apply_peer_manifest "$TMP_K8S_DIR/07-peer-faculty.yaml"
     apply_peer_manifest "$TMP_K8S_DIR/07-peer-department.yaml"
-    if [[ "$PROFILE" == "production" ]]; then
+    if [[ "$PROFILE" == "production" ]] && is_true "$DEPLOY_SECONDARY_PEERS"; then
         apply_peer_manifest "$TMP_K8S_DIR/07-peer-secondary.yaml"
     fi
     apply_couchdb_health_probes
@@ -3462,15 +3712,9 @@ configure_peer_channel_endpoint_aliases() {
 
     if ! ensure_job_from_manifest ipfs-webui-bootstrap plv-fabric \
         "$TMP_K8S_DIR/09a-ipfs-webui-bootstrap.yaml" 420; then
-        if [[ "$PROFILE" == "local" ]]; then
-            echo "WARNING: Optional local IPFS Web UI bootstrap did not complete."
-            show_job_diagnostics ipfs-webui-bootstrap plv-fabric
-            echo "Continuing with the local core deployment. A later apply will retry the Web UI asset."
-        else
-            echo "ERROR: IPFS Web UI bootstrap failed."
-            show_job_diagnostics ipfs-webui-bootstrap plv-fabric
-            return 1
-        fi
+        echo "ERROR: IPFS Web UI bootstrap failed."
+        show_job_diagnostics ipfs-webui-bootstrap plv-fabric
+        return 1
     fi
 
     apply_manifest "$TMP_K8S_DIR/09c-ipfs-pin-reconciler.yaml"
@@ -3478,7 +3722,7 @@ configure_peer_channel_endpoint_aliases() {
 
     echo "======================================"
     echo "Phase 5/7 - Chaincode and application services"
-    echo "======================================"
+    echo "======================================"       
     apply_manifest "$TMP_K8S_DIR/17-chaincode.yaml"
     apply_manifest "$TMP_K8S_DIR/18-faculty-chaincode.yaml"
     apply_manifest "$TMP_K8S_DIR/19-department-chaincode.yaml"
@@ -3488,6 +3732,7 @@ configure_peer_channel_endpoint_aliases() {
     echo "======================================"
     echo "Phase 6/7 - Frontend and utilities"
     echo "======================================"
+    apply_manifest "$TMP_K8S_DIR/12-frontend-nginx-config.yaml"
     apply_manifest "$TMP_K8S_DIR/12-frontend-ha.yaml"
     apply_manifest "$TMP_K8S_DIR/13-cli.yaml"
 
@@ -3513,9 +3758,11 @@ configure_peer_channel_endpoint_aliases() {
         restart_peer_and_wait peer-registrar plv-main-campus
         restart_peer_and_wait peer-faculty plv-annex-campus
         restart_peer_and_wait peer-department plv-pubad-campus
-        restart_peer_and_wait peer-registrar-2 plv-main-campus
-        restart_peer_and_wait peer-faculty-2 plv-annex-campus
-        restart_peer_and_wait peer-department-2 plv-pubad-campus
+        if is_true "$DEPLOY_SECONDARY_PEERS"; then
+            restart_peer_and_wait peer-registrar-2 plv-main-campus
+            restart_peer_and_wait peer-faculty-2 plv-annex-campus
+            restart_peer_and_wait peer-department-2 plv-pubad-campus
+        fi
 
         restart_deployment_and_wait registrar-chaincode plv-main-campus
         restart_deployment_and_wait faculty-chaincode plv-annex-campus
@@ -3632,12 +3879,14 @@ wait_deployments() {
         ensure_orderer_ready orderer-4 plv-annex-campus
         ensure_orderer_ready orderer-5 plv-pubad-campus
         ensure_orderer_ready orderer-6 plv-pubad-campus
-        wait_rollout statefulset/couchdb-registrar-2 plv-main-campus
-        wait_rollout statefulset/couchdb-faculty-2 plv-annex-campus
-        wait_rollout statefulset/couchdb-department-2 plv-pubad-campus
-        ensure_peer_ready_with_rebootstrap peer-registrar-2 plv-main-campus
-        ensure_peer_ready_with_rebootstrap peer-faculty-2 plv-annex-campus
-        ensure_peer_ready_with_rebootstrap peer-department-2 plv-pubad-campus
+        if is_true "$DEPLOY_SECONDARY_PEERS"; then
+            wait_rollout statefulset/couchdb-registrar-2 plv-main-campus
+            wait_rollout statefulset/couchdb-faculty-2 plv-annex-campus
+            wait_rollout statefulset/couchdb-department-2 plv-pubad-campus
+            ensure_peer_ready_with_rebootstrap peer-registrar-2 plv-main-campus
+            ensure_peer_ready_with_rebootstrap peer-faculty-2 plv-annex-campus
+            ensure_peer_ready_with_rebootstrap peer-department-2 plv-pubad-campus
+        fi
     fi
 
     echo "All requested dependency waves are ready."
@@ -3660,27 +3909,29 @@ verify_deployed_application_revision() {
         echo "ERROR: Migration 008 is absent from the deployed migration ConfigMap."
         return 1
     }
+    grep -q '018_password_reset_tokens.sql' <<< "$migration_config" || {
+        echo "ERROR: Migration 018 is absent from the deployed migration ConfigMap."
+        return 1
+    }
 
     local migration_logs
-    migration_logs="$(kubectl logs job/postgres-schema-migrations -n plv-main-campus --all-containers=true 2>/dev/null || true)"
-    if ! grep -q 'Applying 006_chat_conversation_states.sql' <<< "$migration_logs" ||
-       ! grep -q 'Applying 007_group_chats.sql' <<< "$migration_logs" ||
-       ! grep -q 'Applying 008_support_ticket_specialist_assignments.sql' <<< "$migration_logs"; then
-        local migration_schema_state
-        migration_schema_state="$(
-            kubectl exec -n plv-main-campus postgres-primary-0 -- \
-                sh -c 'PGPASSWORD="$POSTGRESQL_PASSWORD" psql -U "$POSTGRESQL_USERNAME" -d "$POSTGRESQL_DATABASE" -Atc "SELECT to_regclass('"'"'public.chat_conversation_states'"'"') IS NOT NULL, to_regclass('"'"'public.chat_groups'"'"') IS NOT NULL, EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='"'"'public'"'"' AND table_name='"'"'support_tickets'"'"' AND column_name='"'"'assigned_specialist'"'"');"' \
-                2>/dev/null
-        )" || {
-            echo "ERROR: Migration Job logs are unavailable and the live PostgreSQL schema could not be inspected."
-            return 1
-        }
-        if [[ "$migration_schema_state" != "t|t|t" ]]; then
-            echo "ERROR: Required chat/support migrations are absent from the live PostgreSQL schema."
-            return 1
-        fi
-        echo "Migration Job logs are unavailable; required migrations were verified from the live PostgreSQL schema."
-    fi
+    migration_logs="$(kubectl logs job/postgres-schema-migrations -n plv-main-campus --all-containers=true)"
+    grep -q 'Applying 006_chat_conversation_states.sql' <<< "$migration_logs" || {
+        echo "ERROR: Migration 006 was not observed in the completed migration Job."
+        return 1
+    }
+    grep -q 'Applying 007_group_chats.sql' <<< "$migration_logs" || {
+        echo "ERROR: Migration 007 was not observed in the completed migration Job."
+        return 1
+    }
+    grep -q 'Applying 008_support_ticket_specialist_assignments.sql' <<< "$migration_logs" || {
+        echo "ERROR: Migration 008 was not observed in the completed migration Job."
+        return 1
+    }
+    grep -q 'Applying 018_password_reset_tokens.sql' <<< "$migration_logs" || {
+        echo "ERROR: Migration 018 was not observed in the completed migration Job."
+        return 1
+    }
 
     local image_repository=""
     local image_tag=""
@@ -3732,7 +3983,7 @@ verify_deployed_application_revision() {
     kubectl exec "$frontend_pod" -n plv-fabric -- sh -ec \
         "grep -R -q 'Group invitations' /usr/share/nginx/html/static/js && \
          grep -R -q 'Permanently delete every message' /usr/share/nginx/html/static/js && \
-         grep -R -q 'two-Registrar limit has been reached' /usr/share/nginx/html/static/js && \
+         grep -R -q 'five-Registrar limit has been reached' /usr/share/nginx/html/static/js && \
          grep -R -q 'Delete Registrar' /usr/share/nginx/html/static/js && \
          grep -R -q 'kiosk&theme=light' /usr/share/nginx/html/static/js && \
          grep -R -q 'blockgo.auth.token' /usr/share/nginx/html/static/js && \
@@ -3781,7 +4032,6 @@ verify_deployed_application_revision() {
 
 bootstrap_application_accounts() {
     local job_name="blockgo-app-bootstrap"
-    local bootstrap_url="http://middleware-api.plv-fabric.svc.cluster.local:4000/api/bootstrap"
     local bootstrap_resources="          resources:
             requests:
               memory: 128Mi
@@ -3792,15 +4042,11 @@ bootstrap_application_accounts() {
 
     if [[ "$PROFILE" == "local" ]]; then
         # Do not impose a RAM request/limit on the local bootstrap helper.
-        # The current service route exposes bootstrap as GET while the gateway's
-        # method allow-list expects POST. Use the cluster-internal auth endpoint in
-        # local deployments without changing the production bootstrap path.
-        bootstrap_url="http://auth-service.plv-fabric.svc.cluster.local:4001/api/bootstrap"
-        bootstrap_resources="        resources:
-          requests:
-            cpu: 10m
-          limits:
-            cpu: 50m"
+        bootstrap_resources="          resources:
+            requests:
+              cpu: 10m
+            limits:
+              cpu: 50m"
     fi
 
     echo "Bootstrapping application administrator accounts..."
@@ -3837,7 +4083,7 @@ spec:
         args:
         - >-
           wget -T 15 -qO- --header="x-api-key: \${INTERNAL_API_KEY}"
-          ${bootstrap_url}
+          http://middleware-api.plv-fabric.svc.cluster.local:4000/api/bootstrap
 ${bootstrap_resources}
 EOF
 
@@ -3852,39 +4098,9 @@ EOF
     echo "Application administrator bootstrap completed."
 }
 
-local_fabric_channel_is_live() {
-    [[ "$PROFILE" == "local" ]] || return 1
-
-    local target namespace deployment
-    local targets=(
-        "plv-main-campus:peer-registrar"
-        "plv-annex-campus:peer-faculty"
-        "plv-pubad-campus:peer-department"
-    )
-
-    for target in "${targets[@]}"; do
-        namespace="${target%%:*}"
-        deployment="${target##*:}"
-
-        kubectl exec -n "$namespace" "deployment/$deployment" -c peer -- \
-            env CORE_PEER_ADDRESS=localhost:7051 peer channel list 2>/dev/null | \
-            grep -Fxq "$FABRIC_CHANNEL_NAME" || return 1
-
-        kubectl exec -n "$namespace" "deployment/$deployment" -c peer -- \
-            env CORE_PEER_ADDRESS=localhost:7051 peer channel getinfo \
-                -c "$FABRIC_CHANNEL_NAME" >/dev/null 2>&1 || return 1
-    done
-}
-
 bootstrap_fabric() {
     if [[ "${FABRIC_BOOTSTRAP:-true}" != "true" ]]; then
         echo "Skipping Fabric channel and chaincode bootstrap because FABRIC_BOOTSTRAP is not true."
-        return
-    fi
-
-    if local_fabric_channel_is_live; then
-        echo "Existing local Fabric channel is healthy on all peers; skipping destructive/unnecessary re-bootstrap."
-        echo "Peer ledger volumes and the installed chaincode state are being preserved."
         return
     fi
 
@@ -3929,26 +4145,6 @@ local_http_ready() {
     fi
 }
 
-local_http_contains() {
-    local url="$1"
-    local pattern="$2"
-
-    if uses_windows_host_networking; then
-        powershell.exe -NoProfile -Command \
-            "try { \$response = Invoke-WebRequest -UseBasicParsing -Uri '${url}' -TimeoutSec 3; if (\$response.StatusCode -eq 200 -and \$response.Content -match '${pattern}') { exit 0 } } catch {}; exit 1" \
-            >/dev/null 2>&1
-        return
-    fi
-
-    curl -fsS --max-time 3 "$url" 2>/dev/null | grep -Eq "$pattern"
-}
-
-local_frontend_routes_ready() {
-    local_http_ready http://127.0.0.1:8080/nginx-health &&
-        local_http_contains http://127.0.0.1:8080/login '<div[^>]*id="root"[^>]*>' &&
-        local_http_ready http://127.0.0.1:8080/api/backend/health
-}
-
 start_local_port_forward_process() {
     local namespace="$1"
     local service="$2"
@@ -3956,20 +4152,12 @@ start_local_port_forward_process() {
     local log_file="$4"
 
     if uses_windows_host_networking; then
-        local windows_pid windows_log_file windows_error_file windows_pid_file
-        windows_log_file="$(wslpath -w "$(realpath -m "$log_file")")"
-        windows_error_file="$(wslpath -w "$(realpath -m "${log_file%.log}.error.log")")"
-        windows_pid_file="$(wslpath -w "$(realpath -m "${log_file%.log}.pid")")"
-        rm -f "${log_file%.log}.pid"
-
-        # Returning the PID through a command-substitution pipe can keep WSL waiting
-        # for the long-running Windows child. Write it to the existing helper PID file
-        # instead and detach the long-running child's output streams from the caller.
-        timeout 10s powershell.exe -NoProfile -Command \
-            "\$process = Start-Process -FilePath 'kubectl.exe' -ArgumentList @('port-forward','--address=127.0.0.1','-n','${namespace}','service/${service}','${port_mapping}') -RedirectStandardOutput '${windows_log_file}' -RedirectStandardError '${windows_error_file}' -WindowStyle Hidden -PassThru; Set-Content -LiteralPath '${windows_pid_file}' -Value \$process.Id -NoNewline; exit 0" \
-            >/dev/null 2>&1 || true
-
-        windows_pid="$(tr -d '[:space:]' < "${log_file%.log}.pid" 2>/dev/null || true)"
+        local windows_pid
+        windows_pid="$(
+            powershell.exe -NoProfile -Command \
+                "\$process = Start-Process -FilePath 'kubectl.exe' -ArgumentList @('port-forward','--address=127.0.0.1','-n','${namespace}','service/${service}','${port_mapping}') -WindowStyle Hidden -PassThru; [Console]::Write(\$process.Id); exit 0" |
+                tr -d '\r\n'
+        )"
         if [[ ! "$windows_pid" =~ ^[0-9]+$ ]]; then
             echo "ERROR: Windows kubectl port-forward process did not return a valid PID."
             return 1
@@ -4016,46 +4204,26 @@ stop_local_port_forward_pid_file() {
     rm -f "$pid_file"
 }
 
-stop_local_port_forward_for_service() {
-    local namespace="$1"
-    local service="$2"
-    local local_port="$3"
-
-    if uses_windows_host_networking; then
-        powershell.exe -NoProfile -Command \
-            "Get-CimInstance Win32_Process -Filter \"Name = 'kubectl.exe'\" | Where-Object { \$_.CommandLine -match 'port-forward' -and \$_.CommandLine -match '${namespace}' -and \$_.CommandLine -match 'service/${service}' -and \$_.CommandLine -match '${local_port}:' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }" \
-            >/dev/null 2>&1 || true
-        return
-    fi
-
-    if command -v pkill >/dev/null 2>&1; then
-        pkill -9 -f "[k]ubectl(.exe)?[[:space:]].*port-forward.*${namespace}.*service/${service}.*${local_port}:" \
-            >/dev/null 2>&1 || true
-    fi
-}
-
 start_local_frontend() {
     local pid_file=".local-frontend-port-forward.pid"
     local log_file=".local-frontend-port-forward.log"
     local pid_reference=""
 
-    stop_local_port_forward_pid_file "$pid_file"
-    stop_local_port_forward_for_service plv-fabric frontend-service 8080
-    sleep 1
+    if local_http_ready http://127.0.0.1:8080/nginx-health; then
+        echo "Local frontend is already available at http://localhost:8080"
+        return
+    fi
 
-    rm -f "$log_file" "${log_file%.log}.error.log"
+    stop_local_port_forward_pid_file "$pid_file"
+
+    rm -f "$log_file"
     start_local_port_forward_process \
         plv-fabric frontend-service 8080:80 "$log_file"
     pid_reference="$LOCAL_PORT_FORWARD_PID"
     echo "$pid_reference" > "$pid_file"
 
     for _ in $(seq 1 30); do
-        if local_frontend_routes_ready; then
-            sleep 2
-            if ! local_port_forward_process_alive "$pid_reference" ||
-               ! local_frontend_routes_ready; then
-                continue
-            fi
+        if local_http_ready http://127.0.0.1:8080/nginx-health; then
             echo "Local frontend is available at http://localhost:8080"
             return
         fi
@@ -4068,9 +4236,6 @@ start_local_frontend() {
     echo "ERROR: Frontend port-forward did not become ready."
     if [[ -f "$log_file" ]]; then
         tail -n 20 "$log_file"
-    fi
-    if [[ -f "${log_file%.log}.error.log" ]]; then
-        tail -n 20 "${log_file%.log}.error.log"
     fi
     return 1
 }
@@ -4391,11 +4556,13 @@ repair_fabric_storage() {
             "orderer-5|plv-pubad-campus"
             "orderer-6|plv-pubad-campus"
         )
-        peers+=(
-            "peer-registrar-2|plv-main-campus"
-            "peer-faculty-2|plv-annex-campus"
-            "peer-department-2|plv-pubad-campus"
-        )
+        if is_true "$DEPLOY_SECONDARY_PEERS"; then
+            peers+=(
+                "peer-registrar-2|plv-main-campus"
+                "peer-faculty-2|plv-annex-campus"
+                "peer-department-2|plv-pubad-campus"
+            )
+        fi
     fi
 
     echo "Scanning Fabric orderers..."
@@ -4809,48 +4976,245 @@ rebootstrap_corrupt_peers() {
     echo "  kubectl get pods -A"
 }
 
+validate_public_tls_secret() {
+    [[ "$PROFILE" == "production" ]] || return 0
+
+    if ! command -v openssl >/dev/null 2>&1; then
+        echo "ERROR: openssl is required to validate the production public TLS certificate." >&2
+        return 1
+    fi
+
+    local tls_type tls_cert_b64 tls_key_b64 tls_dir cert_file key_file
+    local cert_public_key key_public_key failure=""
+    tls_type="$(kubectl get secret "$BLOCKGO_PUBLIC_TLS_SECRET" -n plv-fabric -o jsonpath='{.type}' 2>/dev/null || true)"
+    if [[ "$tls_type" != "kubernetes.io/tls" ]]; then
+        echo "ERROR: plv-fabric/${BLOCKGO_PUBLIC_TLS_SECRET} must exist and be a kubernetes.io/tls Secret before changing the public ingress." >&2
+        return 1
+    fi
+
+    tls_cert_b64="$(kubectl get secret "$BLOCKGO_PUBLIC_TLS_SECRET" -n plv-fabric -o jsonpath='{.data.tls\.crt}' 2>/dev/null || true)"
+    tls_key_b64="$(kubectl get secret "$BLOCKGO_PUBLIC_TLS_SECRET" -n plv-fabric -o jsonpath='{.data.tls\.key}' 2>/dev/null || true)"
+    if [[ -z "$tls_cert_b64" || -z "$tls_key_b64" ]]; then
+        echo "ERROR: plv-fabric/${BLOCKGO_PUBLIC_TLS_SECRET} must contain non-empty tls.crt and tls.key entries." >&2
+        return 1
+    fi
+
+    tls_dir="$(mktemp -d "${TMPDIR:-/tmp}/blockgo-public-tls.XXXXXX")"
+    cert_file="${tls_dir}/tls.crt"
+    key_file="${tls_dir}/tls.key"
+
+    if ! printf '%s' "$tls_cert_b64" | base64 --decode > "$cert_file" 2>/dev/null; then
+        failure="tls.crt is not valid base64 data"
+    elif ! printf '%s' "$tls_key_b64" | base64 --decode > "$key_file" 2>/dev/null; then
+        failure="tls.key is not valid base64 data"
+    elif ! openssl x509 -in "$cert_file" -noout >/dev/null 2>&1; then
+        failure="tls.crt is not a valid X.509 certificate"
+    elif ! openssl pkey -in "$key_file" -noout >/dev/null 2>&1; then
+        failure="tls.key is not a valid private key"
+    elif ! openssl x509 -in "$cert_file" -noout -checkend 0 >/dev/null 2>&1; then
+        failure="the public TLS certificate is expired"
+    elif ! openssl x509 -in "$cert_file" -noout -checkhost "$BLOCKGO_PUBLIC_HOST" >/dev/null 2>&1; then
+        failure="the public TLS certificate does not cover ${BLOCKGO_PUBLIC_HOST}"
+    else
+        cert_public_key="$(openssl x509 -in "$cert_file" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null || true)"
+        key_public_key="$(openssl pkey -in "$key_file" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null || true)"
+        if [[ -z "$cert_public_key" || "$cert_public_key" != "$key_public_key" ]]; then
+            failure="tls.key does not match tls.crt"
+        fi
+    fi
+
+    rm -f -- "$cert_file" "$key_file"
+    rmdir -- "$tls_dir"
+
+    if [[ -n "$failure" ]]; then
+        echo "ERROR: Public TLS validation failed for plv-fabric/${BLOCKGO_PUBLIC_TLS_SECRET}: ${failure}." >&2
+        return 1
+    fi
+
+    echo "Validated public TLS Secret plv-fabric/${BLOCKGO_PUBLIC_TLS_SECRET}: current certificate covers ${BLOCKGO_PUBLIC_HOST} and matches its private key."
+}
+
 show_status() {
     kubectl get pods -A
     kubectl get svc -A
+
+    if [[ "$PROFILE" == "production" ]]; then
+        local public_ip public_scheme public_origin websocket_url tls_secret ingress_address tls_status
+        public_ip="$(kubectl get configmap blockgo-public-hosting -n plv-fabric -o jsonpath='{.data.BLOCKGO_PUBLIC_IP}' 2>/dev/null || true)"
+        public_scheme="$(kubectl get configmap blockgo-public-hosting -n plv-fabric -o jsonpath='{.data.BLOCKGO_PUBLIC_SCHEME}' 2>/dev/null || true)"
+        public_origin="$(kubectl get configmap blockgo-public-hosting -n plv-fabric -o jsonpath='{.data.BLOCKGO_PUBLIC_ORIGIN}' 2>/dev/null || true)"
+        websocket_url="$(kubectl get configmap blockgo-public-hosting -n plv-fabric -o jsonpath='{.data.BLOCKGO_PUBLIC_WEBSOCKET_URL}' 2>/dev/null || true)"
+        tls_secret="$(kubectl get ingress main-ingress -n plv-fabric -o jsonpath='{.spec.tls[0].secretName}' 2>/dev/null || true)"
+        ingress_address="$(discover_public_ingress_address)"
+        public_ip="${public_ip:-$ingress_address}"
+        tls_status="INSECURE"
+        [[ "$public_scheme" == "https" ]] && tls_status="HTTPS"
+        echo ""
+        echo "PUBLIC HOSTING"
+        echo "  Public URL:       ${public_origin:-<not configured>}"
+        echo "  Public IP:        ${public_ip:-pending}"
+        echo "  DNS Provider:     Cloudflare"
+        echo "  Cloudflare Proxy: Enabled"
+        echo "  TLS:              ${tls_status}"
+        echo "  TLS Secret:       ${tls_secret:-<not configured>}"
+        echo "  Origin HTTPS:     Required"
+        echo "  Realtime URL:     ${websocket_url:-<not configured>}/chatHub"
+        if [[ -n "$ingress_address" && -n "$public_ip" && "$ingress_address" != "$public_ip" ]]; then
+            echo "  Ingress address:  ${ingress_address} (does not match configured Public IP)"
+        fi
+        echo "  Frontend service: frontend-service.plv-fabric.svc.cluster.local:80"
+        echo "  API service:      client-app-service.plv-fabric.svc.cluster.local:5000"
+        echo "  CORS origins:     $(kubectl get configmap blockgo-public-hosting -n plv-fabric -o jsonpath='{.data.CORS_ORIGINS}' 2>/dev/null || printf '<not configured>')"
+        echo ""
+        echo "FABRIC NETWORK"
+        echo "  Endpoint mode: Kubernetes internal DNS"
+        echo "  Fabric TLS: Unchanged"
+        echo "  Public hosting changes do not modify orderers or peers."
+    fi
 }
 
-local_fabric_crypto_secrets_exist() {
-    local required_secrets=(
-        "plv-main-campus/ca-registrar-identity"
-        "plv-annex-campus/ca-faculty-identity"
-        "plv-pubad-campus/ca-department-identity"
-        "plv-fabric/fabric-ca-roots"
-        "plv-fabric/fabric-gateway-tls-roots"
-        "plv-main-campus/orderer-1-crypto"
-        "plv-main-campus/orderer-2-crypto"
-        "plv-annex-campus/orderer-3-crypto"
-        "plv-main-campus/peer-registrar-crypto"
-        "plv-main-campus/peer-registrar-2-crypto"
-        "plv-annex-campus/peer-faculty-crypto"
-        "plv-annex-campus/peer-faculty-2-crypto"
-        "plv-pubad-campus/peer-department-crypto"
-        "plv-pubad-campus/peer-department-2-crypto"
-        "plv-main-campus/admin-registrar-crypto"
-        "plv-annex-campus/admin-faculty-crypto"
-        "plv-pubad-campus/admin-department-crypto"
-        "plv-fabric/admin-registrar-crypto"
-        "plv-fabric/admin-faculty-crypto"
-        "plv-fabric/admin-department-crypto"
-        "plv-main-campus/chaincode-registrar-tls"
-        "plv-annex-campus/chaincode-faculty-tls"
-        "plv-pubad-campus/chaincode-department-tls"
-        "plv-main-campus/fabric-artifacts"
-        "plv-annex-campus/fabric-artifacts"
-        "plv-pubad-campus/fabric-artifacts"
-    )
-    local secret_ref namespace secret_name
-    for secret_ref in "${required_secrets[@]}"; do
-        namespace="${secret_ref%%/*}"
-        secret_name="${secret_ref#*/}"
-        if ! kubectl get secret "$secret_name" -n "$namespace" >/dev/null 2>&1; then
+discover_public_ingress_address() {
+    local address
+    address="$(kubectl get ingress main-ingress -n plv-fabric \
+        -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+    if [[ -z "$address" ]]; then
+        address="$(kubectl get ingress main-ingress -n plv-fabric \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+    fi
+    printf '%s' "$address"
+}
+
+apply_public_hosting() {
+    if [[ "$PROFILE" != "production" ]]; then
+        echo "ERROR: apply-hosting is reserved for the production public-hosting boundary." >&2
+        return 1
+    fi
+
+    prepare_hosting_manifests
+    validate_public_tls_secret
+
+    apply_manifest "$TMP_K8S_DIR/02-public-hosting.yaml"
+    apply_manifest "$TMP_K8S_DIR/12-frontend-nginx-config.yaml"
+    apply_manifest "$TMP_K8S_DIR/15-main-ingress.yaml"
+
+    # Keep this action application-only. Restart the consumers so their envFrom
+    # values and Nginx configuration are reloaded; no Fabric resource is touched.
+    kubectl rollout restart deployment/middleware-api deployment/auth-service \
+        deployment/dotnet-api-gateway deployment/frontend \
+        --namespace plv-fabric
+    wait_rollout deployment/middleware-api plv-fabric
+    wait_rollout deployment/auth-service plv-fabric
+    wait_rollout deployment/dotnet-api-gateway plv-fabric
+    wait_rollout deployment/frontend plv-fabric
+
+    local ingress_address
+    ingress_address="$(discover_public_ingress_address)"
+    echo "======================================"
+    echo "Public hosting configuration applied"
+    echo "======================================"
+    echo "Public URL: ${BLOCKGO_PUBLIC_ORIGIN}"
+    echo "Public IP: ${BLOCKGO_PUBLIC_IP}"
+    echo "API URL: ${BLOCKGO_PUBLIC_API_URL}"
+    echo "Realtime URL: ${BLOCKGO_PUBLIC_WEBSOCKET_URL}/chatHub"
+    echo "DNS Provider: Cloudflare"
+    echo "Cloudflare Proxy: Enabled"
+    echo "TLS: HTTPS"
+    echo "TLS Secret: ${BLOCKGO_PUBLIC_TLS_SECRET}"
+    echo "Origin HTTPS: Required"
+    if [[ -n "$ingress_address" ]]; then
+        echo "Ingress external address: ${ingress_address}"
+        echo "Cloudflare DNS action required: point/proxy ${BLOCKGO_PUBLIC_HOST} to ${ingress_address}."
+    else
+        echo "External ingress address is still pending."
+        echo "Cloudflare DNS action required after allocation: point/proxy ${BLOCKGO_PUBLIC_HOST} to the ingress address."
+    fi
+    echo "Fabric TLS: Unchanged"
+    echo "Fabric orderers and peers were not modified."
+}
+
+deploy_application_only() {
+    if [[ "$PROFILE" != "production" ]]; then
+        echo "ERROR: apply-application is reserved for the production application rollout."
+        return 1
+    fi
+
+    echo "Deploying only the affected application services (middleware, ASP.NET services, and frontend)."
+    verify_required_application_fixes
+    validate_production_image_settings
+
+    local migration_018_missing=false
+    local migration_018_table=""
+    migration_018_table="$(kubectl exec statefulset/postgres-primary -n plv-main-campus -- bash -ec \
+        'PGPASSWORD="$POSTGRESQL_PASSWORD" psql -U "$POSTGRESQL_USERNAME" -d "$POSTGRESQL_DATABASE" -tAc "SELECT COALESCE(to_regclass('"'"'public.password_reset_tokens'"'"')::text, '"'"''"'"');"' \
+        2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$migration_018_table" != "password_reset_tokens" ]]; then
+        migration_018_missing=true
+    fi
+
+    publish_runtime_migrations_configmap
+    prepare_production_source_images
+    prepare_manifests
+
+    apply_manifest "$TMP_K8S_DIR/02-public-hosting.yaml"
+    apply_manifest "$TMP_K8S_DIR/12-frontend-nginx-config.yaml"
+
+    if is_true "$migration_018_missing"; then
+        echo "Migration 018 is absent in production; applying the idempotent numbered migration set."
+        FORCE_BOOTSTRAP_JOBS=true ensure_job_from_manifest postgres-schema-migrations plv-main-campus \
+            "$TMP_K8S_DIR/04a-postgres-configmap.yaml" 660
+        kubectl logs job/postgres-schema-migrations -n plv-main-campus --all-containers=true |
+            grep -q 'Applying 018_password_reset_tokens.sql' || {
+                echo "ERROR: Migration 018 was not observed in the completed migration Job."
+                return 1
+            }
+    else
+        echo "Migration 018 is already present; no production migration Job will be rerun."
+    fi
+
+    apply_manifest "$TMP_K8S_DIR/08-middleware-api.yaml"
+    apply_manifest "$TMP_K8S_DIR/14-client-app.yaml"
+    apply_manifest "$TMP_K8S_DIR/12-frontend-ha.yaml"
+    apply_manifest "$TMP_K8S_DIR/15-main-ingress.yaml"
+
+    local deployment
+    for deployment in auth-service fabric-identity-service ledger-service grade-upload-service settings-service middleware-api \
+        dotnet-api-gateway dotnet-auth-service dotnet-academic-service dotnet-grade-service dotnet-operations-service dotnet-realtime-service frontend; do
+        wait_rollout "deployment/${deployment}" plv-fabric
+    done
+
+    local repository="${PRODUCTION_IMAGE_REPOSITORY%/}"
+    local expected_tag="$PRODUCTION_IMAGE_TAG"
+    local entry image_name deployed_image
+    for entry in \
+        "middleware-api|fabric-middleware" \
+        "auth-service|fabric-middleware" \
+        "fabric-identity-service|fabric-middleware" \
+        "ledger-service|fabric-middleware" \
+        "grade-upload-service|fabric-middleware" \
+        "settings-service|fabric-middleware" \
+        "dotnet-api-gateway|client-app" \
+        "dotnet-auth-service|client-app" \
+        "dotnet-academic-service|client-app" \
+        "dotnet-grade-service|client-app" \
+        "dotnet-operations-service|client-app" \
+        "dotnet-realtime-service|client-app" \
+        "frontend|frontend"; do
+        IFS='|' read -r deployment image_name <<< "$entry"
+        deployed_image="$(kubectl get deployment "$deployment" -n plv-fabric -o jsonpath='{.spec.template.spec.containers[0].image}')"
+        if [[ "$deployed_image" != "${repository}/${image_name}:${expected_tag}" ]]; then
+            echo "ERROR: plv-fabric/${deployment} uses ${deployed_image}; expected ${repository}/${image_name}:${expected_tag}."
             return 1
         fi
     done
+
+    echo "Verifying SMTP transport authentication without sending an email."
+    kubectl exec deployment/auth-service -n plv-fabric -- node -e '
+      fetch("http://127.0.0.1:4001/internal/smtp-health", { headers: { "x-api-key": process.env.INTERNAL_API_KEY } })
+        .then(async response => { if (!response.ok) throw new Error(`SMTP health returned HTTP ${response.status}`); console.log("SMTP transport verified."); })
+        .catch(error => { console.error(error.message); process.exit(1); });
+    '
+
+    echo "Affected application services deployed successfully; Fabric, chaincode, peers, orderers, and backup workloads were not applied or restarted."
 }
 
 main() {
@@ -4859,9 +5223,39 @@ main() {
         verify)
             verify_deployment_inputs
             ;;
+        hosting-plan)
+            if [[ "$PROFILE" != "production" ]]; then
+                echo "ERROR: hosting-plan is reserved for production public-hosting configuration." >&2
+                return 1
+            fi
+            show_hosting_plan
+            ;;
+        apply-hosting)
+            if [[ "$PROFILE" != "production" ]]; then
+                echo "ERROR: apply-hosting is reserved for production public-hosting configuration." >&2
+                return 1
+            fi
+            if is_true "$BLOCKGO_HOSTING_DRY_RUN"; then
+                show_hosting_plan
+                echo "Dry run only: no Kubernetes resources were changed."
+                return 0
+            fi
+            validate_public_host_settings
+            check_kubectl
+            if ! kubectl cluster-info >/dev/null 2>&1; then
+                echo "Hosting configuration was validated locally, but Kubernetes changes were not applied because the cluster API is unavailable." >&2
+                return 1
+            fi
+            apply_public_hosting
+            ;;
         apply)
+            validate_public_host_settings
             check_kubectl
             check_cluster
+            if [[ "$PROFILE" == "production" ]]; then
+                apply_manifest ./k8s/00-namespace.yaml
+                validate_public_tls_secret
+            fi
             if [[ "$PROFILE" == "local" ]]; then
                 clear_local_autoscaling_and_pdbs
             fi
@@ -4887,18 +5281,13 @@ main() {
             sed -i 's/\r$//' "$local_crypto_script"
             chmod +x "$local_crypto_script"
 
-            if [[ "$PROFILE" == "local" ]] && local_fabric_crypto_secrets_exist; then
-                echo "Reusing the complete existing local Fabric crypto secret set."
-                echo "Tracked private keys are not required for an in-place local redeployment."
-            else
-                if ! bash "$local_crypto_script"; then
-                    echo "ERROR: Fabric crypto secret generation failed."
-                    echo "Kubernetes deployment has been stopped."
-                    exit 1
-                fi
-
-                echo "Crypto Secrets generated successfully."
+            if ! bash "$local_crypto_script"; then
+                echo "ERROR: Fabric crypto secret generation failed."
+                echo "Kubernetes deployment has been stopped."
+                exit 1
             fi
+
+            echo "Crypto Secrets generated successfully."
 
             deploy_manifests
             wait_for_all_pvcs_bound
@@ -4911,6 +5300,15 @@ main() {
             fi
             bootstrap_fabric
             echo "Deployment complete."
+            ;;
+        apply-application)
+            validate_public_host_settings
+            check_kubectl
+            check_cluster
+            cluster_preflight
+            validate_public_tls_secret
+            validate_production_zone_nodes
+            deploy_application_only
             ;;
         delete)
             check_kubectl
