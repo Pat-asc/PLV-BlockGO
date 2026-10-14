@@ -272,19 +272,28 @@ jobs:
           echo "iac_count=$iac_count" >> "$GITHUB_OUTPUT"
           echo "Prepared $changed_count changed file(s), including $iac_count IaC file(s), for regression security scanning."
 
-      - name: Set up frozen middleware runtime
+      - name: Set up Node.js 20
         uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: middleware/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            middleware/package-lock.json
 
-      - name: Verify frozen Fabric SDK audit exceptions
+      - name: Verify frontend production dependencies
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npm audit --omit=dev --json > npm-audit.json || true
+          node ../.github/scripts/verify-npm-audit.js npm-audit.json
+
+      - name: Verify middleware production dependencies
         working-directory: middleware
         run: |
           set -euo pipefail
           npm audit --omit=dev --json > npm-audit.json || true
-          node ../.github/scripts/verify-frozen-fabric-audit.js npm-audit.json
+          node ../.github/scripts/verify-npm-audit.js npm-audit.json
 
       - name: Report dependency findings
         uses: aquasecurity/trivy-action@v0.36.0
@@ -296,6 +305,7 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tests/AssignmentRegressionTests/bin,tests/AssignmentRegressionTests/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
+          skip-files: frontend/package-lock.json,middleware/package-lock.json
           exit-code: "0"
           format: table
 
@@ -309,6 +319,7 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tests/AssignmentRegressionTests/bin,tests/AssignmentRegressionTests/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
+          skip-files: frontend/package-lock.json,middleware/package-lock.json
           exit-code: "0"
           format: json
           output: security-results/trivy-dependencies.json
@@ -323,6 +334,7 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           skip-dirs: frontend/node_modules,middleware/node_modules,client-app/bin,client-app/obj,tests/EnrollmentImportChecks/bin,tests/EnrollmentImportChecks/obj,tests/EnrollmentSectioningChecks/bin,tests/EnrollmentSectioningChecks/obj,tests/AssignmentRegressionTests/bin,tests/AssignmentRegressionTests/obj,tmp,network/ipfs_data,network/fabric-k8s-data,network/channel-artifacts-final
+          skip-files: frontend/package-lock.json,middleware/package-lock.json
           exit-code: "0"
           format: sarif
           limit-severities-for-sarif: true
@@ -338,52 +350,10 @@ jobs:
           from pathlib import Path
 
           report_path = Path("security-results/trivy-dependencies.json")
-          lock_path = Path("middleware/package-lock.json")
-
           if not report_path.is_file():
               raise SystemExit("Trivy dependency JSON report is missing.")
 
-          if not lock_path.is_file():
-              raise SystemExit("middleware/package-lock.json is missing.")
-
-          lock = json.loads(lock_path.read_text(encoding="utf-8"))
-          installed_fabric_network = (
-              lock.get("packages", {})
-              .get("node_modules/fabric-network", {})
-              .get("version")
-          )
-
-          if installed_fabric_network != "2.2.20":
-              raise SystemExit(
-                  "Temporary Fabric SDK vulnerability exceptions are valid only "
-                  "for fabric-network@2.2.20; found "
-                  f"{installed_fabric_network!r}."
-              )
-
-          # Temporary, narrowly scoped exception for vulnerabilities inherited
-          # through the deprecated fabric-network@2.2.20 dependency chain.
-          # Any other HIGH/CRITICAL finding remains blocking.
-          approved = {
-              "jsrsasign": {
-                  "GHSA-rh63-9qcf-83gf",
-                  "CVE-2024-21484",
-                  "GHSA-w8q8-93cx-6h7r",
-                  "CVE-2026-4601",
-                  "GHSA-464q-cqxq-xhgr",
-                  "CVE-2026-4603",
-                  "GHSA-8qwj-4jxw-m8jw",
-                  "CVE-2026-4602",
-                  "GHSA-5jx8-q4cp-rhh6",
-                  "CVE-2026-4599",
-                  "GHSA-8g7p-jf3g-gxcp",
-                  "CVE-2026-4598",
-                  "GHSA-wvqx-v3f6-w8rh",
-                  "CVE-2026-4600",
-              },
-          }
-
           report = json.loads(report_path.read_text(encoding="utf-8"))
-          excepted = []
           blocking = []
 
           for result in report.get("Results", []) or []:
@@ -405,42 +375,14 @@ jobs:
                       "fixed": str(finding.get("FixedVersion", "")),
                   }
 
-                  is_middleware_lock = target.endswith(
-                      "middleware/package-lock.json"
-                  )
-                  is_approved_id = vuln_id in approved.get(package, set())
-                  is_approved_version = (
-                      package == "jsrsasign"
-                      and item["installed"] == "10.9.0"
-                  )
-
-                  if is_middleware_lock and is_approved_id and is_approved_version:
-                      excepted.append(item)
-                  else:
-                      blocking.append(item)
+                  blocking.append(item)
 
           print()
           print("==========================================")
           print("Trivy dependency vulnerability gate")
           print("==========================================")
-          print(
-              "fabric-network version: "
-              f"{installed_fabric_network}"
-          )
-          print(f"Approved temporary exceptions: {len(excepted)}")
           print(f"Blocking findings:              {len(blocking)}")
           print()
-
-          if excepted:
-              print("APPROVED TEMPORARY FABRIC SDK EXCEPTIONS:")
-              for item in excepted:
-                  print(
-                      "  - "
-                      f"{item['severity']} {item['id']} "
-                      f"{item['package']}@{item['installed']} "
-                      f"({item['target']})"
-                  )
-              print()
 
           if blocking:
               print("BLOCKING HIGH/CRITICAL FINDINGS:")
@@ -456,7 +398,7 @@ jobs:
               sys.exit(1)
 
           print(
-              "PASS: No unapproved HIGH/CRITICAL dependency "
+              "PASS: No HIGH/CRITICAL dependency "
               "vulnerabilities were found."
           )
           PY

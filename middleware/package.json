@@ -37,8 +37,9 @@
     "pg": "^8.20.0"
   },
   "overrides": {
-    "fabric-common": {
-      "jsrsasign": "11.1.1"
+    "jsrsasign": "11.1.1",
+    "fabric-protos": {
+      "@grpc/grpc-js": "1.13.6"
     }
   }
 }
