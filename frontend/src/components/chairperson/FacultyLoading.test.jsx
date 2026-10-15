@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import FacultyLoading, { FACULTY_LOADING_CSV_TEMPLATE } from "./FacultyLoading";
 import {
   bulkAssignFacultyLoads,
@@ -112,10 +112,14 @@ test("groups Faculty Loading Preview sections under one stable faculty identity"
     "11,IT 102,BSIT 1-2,2026-2027,FIRST"
   );
 
-  expect(screen.getByText("2 section assignments")).toBeInTheDocument();
-  expect(screen.getByText("BSIT 1-1")).toBeInTheDocument();
-  expect(screen.getByText("BSIT 1-2")).toBeInTheDocument();
-  expect(screen.getByText("Faculty Loading Preview")).toHaveClass("bg-[#003366]", "text-white");
+  const dialog = screen.getByRole("dialog", { name: "Faculty Loading Preview" });
+  expect(dialog).toHaveClass("max-h-[90vh]", "max-w-6xl", "dark:bg-slate-900");
+  expect(within(dialog).getByText("Faculty Loading Preview")).toHaveClass("text-[#003366]", "dark:text-sky-300");
+  expect(within(dialog).getByText("2 section assignments")).toBeInTheDocument();
+  expect(within(dialog).getByText("BSIT 1-1")).toBeInTheDocument();
+  expect(within(dialog).getByText("BSIT 1-2")).toBeInTheDocument();
+  expect(within(dialog).getByTestId("faculty-loading-preview-scroll-area")).toHaveClass("max-h-[58vh]", "overflow-auto");
+  expect(within(dialog).queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
 });
 
 test("partial success preserves the failed row and Clear Selection removes only pending rows", async () => {
@@ -149,6 +153,7 @@ test("partial success preserves the failed row and Clear Selection removes only 
   expect(await screen.findByRole("alert")).toHaveTextContent("Pending — Subject not found");
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Clear Selection" }));
+  expect(screen.queryByRole("dialog", { name: "Faculty Loading Preview" })).not.toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toHaveLength(1);
   expect(screen.getAllByText("Professor A").length).toBeGreaterThan(0);

@@ -373,6 +373,20 @@ test('uses readable dark surfaces for the editable curriculum checklist rows', a
   expect(within(row).getByText('IT 101')).toHaveClass('dark:text-sky-300');
 });
 
+test('keeps curriculum search, filters, and totals in one wrapping inline toolbar', async () => {
+  fetchCurriculums.mockResolvedValue({ data: [curriculumWithSubjects()] });
+  render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);
+
+  await screen.findByRole('checkbox', { name: 'Select IT 101' });
+  const toolbar = screen.getByTestId('curriculum-filter-toolbar');
+  expect(toolbar).toHaveClass('flex', 'flex-wrap', 'items-center');
+  expect(within(toolbar).getByPlaceholderText('Search subjects...')).toBeInTheDocument();
+  expect(within(toolbar).getByLabelText('Filter by year level')).toBeInTheDocument();
+  expect(within(toolbar).getByLabelText('Filter by semester')).toBeInTheDocument();
+  expect(within(toolbar).getByText(/Total Subjects:/)).toBeInTheDocument();
+  expect(within(toolbar).getByText(/Total Units:/)).toBeInTheDocument();
+});
+
 test('moves the single inline editor directly below the selected row and cancels without saving', async () => {
   fetchCurriculums.mockResolvedValue({ data: [curriculumWithSubjects()] });
   render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);

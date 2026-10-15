@@ -44,15 +44,16 @@ test('a workload action opens one centered modal instead of an inline collapsibl
   expect(screen.queryByRole('dialog', { name: 'Review Encoded Grades' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Review Encoded' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Review Section' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Review Grades' })).not.toBeInTheDocument();
 
-  const trigger = screen.getByRole('button', { name: 'Review Grades' });
-  trigger.focus();
-  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole('button', { name: 'View Sections' }));
+  const facultySections = screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ });
+  fireEvent.click(within(facultySections).getByRole('button', { name: 'Review Grades' }));
 
   expect(screen.getByRole('dialog', { name: 'Review Encoded Grades' })).toHaveClass('max-w-6xl', 'max-h-[92vh]', 'dark:bg-slate-900');
   fireEvent.click(screen.getByRole('button', { name: 'Close Review Encoded Grades' }));
   expect(screen.queryByRole('dialog', { name: 'Review Encoded Grades' })).not.toBeInTheDocument();
-  expect(trigger).toHaveFocus();
+  expect(screen.getByRole('button', { name: 'View Sections' })).toBeInTheDocument();
 });
 
 test('the modal shows metadata, Student-ID-aligned tables, mismatch count, and internal scrolling', () => {

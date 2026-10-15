@@ -201,6 +201,19 @@ test("renders Assigned Sections before Subject Assigning", async () => {
   expect(assigned.compareDocumentPosition(assigning) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
+test("keeps the manual assignment workspace responsive with a 2x2 filter group and internal section scrolling", async () => {
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await screen.findByRole("button", { name: /Carlos Reyes/ });
+
+  expect(screen.getByTestId("assignment-workspace-columns")).toHaveClass("sa-columns");
+  expect(screen.getByTestId("available-subjects-panel")).toHaveClass("sa-card");
+  expect(screen.getByTestId("available-sections-panel")).toHaveClass("sa-card");
+  const filters = screen.getByTestId("available-subject-filters");
+  expect(filters).toHaveClass("sa-filters");
+  expect(within(filters).getByRole("button", { name: "Academic Program" })).toBeInTheDocument();
+  expect(within(filters).getAllByRole("combobox")).toHaveLength(3);
+});
+
 test("shows the authoritative period and explicit period columns", async () => {
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   expect(await screen.findByLabelText("Current academic period")).toHaveTextContent("2026-2027 · 2nd Semester");

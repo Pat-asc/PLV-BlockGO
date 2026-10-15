@@ -346,7 +346,7 @@ const CurriculumBuilder = ({ department = '' }) => {
     <section data-testid="curriculum-builder-checklist" className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-700">
         <div><h2 className="font-bold">Current Curriculum Checklist</h2></div>
-        <div className="flex flex-wrap gap-2">
+        <div data-testid="curriculum-filter-toolbar" className="flex flex-wrap items-center gap-2">
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search subjects..." className={`${inputClass} mt-0 w-52`} />
           <select aria-label="Filter by year level" value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} className={`${inputClass} mt-0 w-36`}><option value="all">All years</option>{Object.entries(years).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
           <select aria-label="Filter by semester" value={semesterFilter} onChange={(e) => setSemesterFilter(e.target.value)} className={`${inputClass} mt-0 w-40`}><option value="all">All semesters</option>{Object.entries(semesters).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>

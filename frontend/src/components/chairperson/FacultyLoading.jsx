@@ -16,6 +16,7 @@ import { downloadTemplateButtonClass } from "../shared/downloadButtonStyles";
 import { pushAssignmentsSharedState } from "../../utils/sharedClientState";
 import { reconcileActiveAssignmentCache } from "../../utils/facultyAssignmentState";
 import { DAY_OPTIONS, formatFacultySchedule } from "../../utils/facultySchedule";
+import Modal from "../../services/Modal";
 
 const SEMESTER_OPTIONS = ["1st Semester", "2nd Semester", "Summer"];
 export { DAY_OPTIONS } from "../../utils/facultySchedule";
@@ -92,6 +93,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
   const [facultyLoadingPreview, setFacultyLoadingPreview] = useState([]);
   const [facultyLoadingErrors, setFacultyLoadingErrors] = useState([]);
   const [facultyLoadingSummary, setFacultyLoadingSummary] = useState(null);
+  const [facultyLoadingPreviewOpen, setFacultyLoadingPreviewOpen] = useState(false);
   const [approvedFaculties, setApprovedFaculties] = useState([]);
   const [assignmentOptions, setAssignmentOptions] = useState({ sections: [], subjects: [], schoolYears: [] });
   const [isBulkSaving, setIsBulkSaving] = useState(false);
@@ -660,6 +662,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
       setFacultyLoadingPreview(previewRows);
       setFacultyLoadingErrors(errors);
       setFacultyLoadingSummary(summary);
+      setFacultyLoadingPreviewOpen(true);
 
       if (!previewRows.length) {
         showSystemNotification(
@@ -749,6 +752,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
       });
       if (!failedAssignments.length) {
         setFacultyLoadingFile(null);
+        setFacultyLoadingPreviewOpen(false);
       }
       showSystemNotification(
         failedAssignments.length
@@ -801,6 +805,13 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
     (assignment) => assignment.loadMode !== "Faculty Loading"
   ).length;
 
+  const clearFacultyLoadingPreview = () => {
+    setFacultyLoadingPreview([]);
+    setFacultyLoadingErrors([]);
+    setFacultyLoadingSummary(null);
+    setFacultyLoadingPreviewOpen(false);
+  };
+
   return (
     <div className="space-y-6">
 
@@ -834,6 +845,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
                   setFacultyLoadingPreview([]);
                   setFacultyLoadingErrors([]);
                   setFacultyLoadingSummary(null);
+                  setFacultyLoadingPreviewOpen(false);
                 }}
                 className="block w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-500 file:mr-10 file:border-0 file:border-r file:border-solid file:border-slate-300 file:bg-transparent file:pr-4 file:text-sm file:font-semibold file:text-slate-500"
               />
@@ -854,16 +866,20 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
           </button>
         </div>
 
-        {(facultyLoadingPreview.length > 0 || facultyLoadingErrors.length > 0) ? (
-          <div className="mt-6 rounded-2xl border border-blue-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+        <Modal
+          isOpen={facultyLoadingPreviewOpen}
+          onClose={() => { if (!isBulkSaving) setFacultyLoadingPreviewOpen(false); }}
+          title="Faculty Loading Preview"
+          closeOnBackdrop={!isBulkSaving}
+          closeOnEscape={!isBulkSaving}
+          panelClassName="flex max-h-[90vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6"
+          bodyClassName="min-h-0 flex-1 overflow-y-auto pr-1"
+        >
+          <div className="space-y-4 text-slate-700 dark:text-slate-200">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h4 className="inline-flex rounded-lg bg-[#003366] px-3 py-2 text-lg font-bold text-white dark:bg-sky-900">
-                  Faculty Loading Preview
-                </h4>
-                
                 {facultyLoadingSummary ? (
-                  <p className="mt-2 text-sm font-medium text-slate-700">
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
                     Processed {facultyLoadingSummary.totalRows} row
                     {facultyLoadingSummary.totalRows === 1 ? "" : "s"}:{" "}
                     {facultyLoadingSummary.acceptedRows} accepted,{" "}
@@ -874,13 +890,9 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setFacultyLoadingPreview([]);
-                    setFacultyLoadingErrors([]);
-                    setFacultyLoadingSummary(null);
-                  }}
-                  disabled={isBulkSaving || !facultyLoadingPreview.length}
-                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  onClick={clearFacultyLoadingPreview}
+                  disabled={isBulkSaving || (!facultyLoadingPreview.length && !facultyLoadingErrors.length)}
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                 >
                   Clear Selection
                 </button>
@@ -913,8 +925,8 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
               </div>
             ) : null}
 
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full bg-white">
+            <div className="max-h-[58vh] overflow-auto rounded-xl border border-slate-200 dark:border-slate-700" data-testid="faculty-loading-preview-scroll-area">
+              <table className="min-w-[920px] bg-white dark:bg-slate-900">
                 <thead>
                   <tr className="bg-[#003366] text-white">
                     <th className="px-4 py-3 text-left text-sm">Faculty</th>
@@ -960,7 +972,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
               </table>
             </div>
           </div>
-        ) : null}
+        </Modal>
       </section>
 
       <div hidden={assignmentMode === "bulk"} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

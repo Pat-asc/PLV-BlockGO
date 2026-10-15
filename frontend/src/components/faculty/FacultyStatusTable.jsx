@@ -1,4 +1,5 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import Modal from "../../services/Modal";
 import StatusBadge from "../shared/StatusBadge";
 
 const normalizeStanding = (value = "") => String(value || "").trim().toLowerCase();
@@ -70,6 +71,7 @@ const formatTrackingDate = (value) => {
 
 function FacultyStatusTable({ rows, selectedReviewKey, onSelectSection, viewMode = "default", loadError = "" }) {
   const copy = getViewCopy(viewMode);
+  const [selectedFacultyKey, setSelectedFacultyKey] = useState("");
   const workloadRows = useMemo(() => rows
     .map((section) => {
       const prioritySummary = getPrioritySummary(section);
@@ -83,7 +85,7 @@ function FacultyStatusTable({ rows, selectedReviewKey, onSelectSection, viewMode
     workloadRows.forEach((section) => {
       const facultyKey = String(
         section.facultyId || section.facultyUserId || section.facultyEmail || section.email || `review:${section.reviewKey}`
-      );
+      ).trim().toLowerCase();
       if (!groups.has(facultyKey)) {
         groups.set(facultyKey, {
           facultyKey,
@@ -95,6 +97,18 @@ function FacultyStatusTable({ rows, selectedReviewKey, onSelectSection, viewMode
     });
     return [...groups.values()];
   }, [workloadRows]);
+  const selectedFaculty = facultyGroups.find((group) => group.facultyKey === selectedFacultyKey) || null;
+
+  useEffect(() => {
+    if (selectedFacultyKey && !facultyGroups.some((group) => group.facultyKey === selectedFacultyKey)) {
+      setSelectedFacultyKey("");
+    }
+  }, [facultyGroups, selectedFacultyKey]);
+
+  const openSection = (section) => {
+    setSelectedFacultyKey("");
+    onSelectSection?.(rows.find((row) => row.reviewKey === section.reviewKey) || section);
+  };
 
   if (viewMode === "default") {
     return (
@@ -113,49 +127,82 @@ function FacultyStatusTable({ rows, selectedReviewKey, onSelectSection, viewMode
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{copy.description}</p>
       </header>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[980px]">
+        <table className="w-full min-w-[560px]">
           <thead>
             <tr className="bg-[#003366] text-white dark:bg-slate-800">
-              {['Faculty', 'Section', 'Subject', 'School Year', 'Semester', 'Term', 'Workflow State', 'Action'].map((label) => (
+              {['Faculty', 'Sections', 'Action'].map((label) => (
                 <th key={label} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide">{label}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loadError ? (
-              <tr><td colSpan="8" role="alert" className="px-6 py-10 text-center text-sm font-medium text-red-700 dark:text-red-300">{loadError}</td></tr>
-            ) : facultyGroups.length ? facultyGroups.flatMap((facultyGroup) => facultyGroup.sections.map((section, sectionIndex) => {
-              const priorityLabel = buildPriorityLabel(section.prioritySummary);
-              const selected = selectedReviewKey === section.reviewKey;
-              return (
-                <tr key={section.reviewKey} data-faculty-group={facultyGroup.facultyKey} className={`border-b border-slate-200 align-top transition dark:border-slate-700 ${selected ? 'bg-blue-50 dark:bg-sky-950/30' : section.priorityScore ? 'bg-red-50/60 dark:bg-red-950/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/70'}`}>
-                  {sectionIndex === 0 ? <td rowSpan={facultyGroup.sections.length} className="border-r border-slate-200 bg-slate-50 px-4 py-4 text-sm font-bold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"><span className="block">{facultyGroup.facultyName}</span><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">{facultyGroup.sections.length} encoded section{facultyGroup.sections.length === 1 ? '' : 's'}</span></td> : null}
-                  <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300">{section.sectionName}</td>
-                  <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300">
-                    <span className="font-semibold">{section.subjectCode || 'Unknown subject'}</span>
-                    {section.subjectTitle ? <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{section.subjectTitle}</span> : null}
-                    {priorityLabel ? <span className="mt-1 block text-xs font-semibold text-red-700 dark:text-red-300">Check first • {priorityLabel}</span> : null}
-                  </td>
-                  <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300">{section.schoolYear || 'Unknown'}</td>
-                  <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300">{section.semester || 'Unknown'}</td>
-                  <td className="px-4 py-4 text-sm capitalize text-slate-700 dark:text-slate-300">{section.term || 'midterm'}</td>
-                  <td className="px-4 py-4">
-                    <StatusBadge status={section.sentToRegistrar ? 'forwarded' : section.reviewStatus} label={getWorkflowLabel(section)} />
-                    {viewMode === 'forwarded' ? <span className="mt-2 block text-xs text-slate-500 dark:text-slate-400">{formatTrackingDate(section.finalizedAt)}<br />{section.finalizedBy || 'Registrar'}</span> : null}
-                  </td>
-                  <td className="px-4 py-4">
-                    <button type="button" onClick={() => onSelectSection?.(rows.find((row) => row.reviewKey === section.reviewKey) || section)} className="rounded-lg bg-[#003366] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#00264d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:bg-sky-700 dark:hover:bg-sky-600">
-                      {copy.action}
-                    </button>
-                  </td>
-                </tr>
-              );
-            })) : (
-              <tr><td colSpan="8" className="px-6 py-10 text-center text-sm text-slate-500 dark:text-slate-400">{copy.empty}</td></tr>
+              <tr><td colSpan="3" role="alert" className="px-6 py-10 text-center text-sm font-medium text-red-700 dark:text-red-300">{loadError}</td></tr>
+            ) : facultyGroups.length ? facultyGroups.map((facultyGroup) => (
+              <tr key={facultyGroup.facultyKey} data-faculty-group={facultyGroup.facultyKey} className="border-b border-slate-200 transition hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800/70">
+                <td className="px-4 py-4 text-sm font-bold text-slate-900 dark:text-slate-100">{facultyGroup.facultyName}</td>
+                <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-300">{facultyGroup.sections.length} section{facultyGroup.sections.length === 1 ? '' : 's'}</td>
+                <td className="px-4 py-4">
+                  <button type="button" onClick={() => setSelectedFacultyKey(facultyGroup.facultyKey)} className="rounded-lg bg-[#003366] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#00264d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:bg-sky-700 dark:hover:bg-sky-600">
+                    View Sections
+                  </button>
+                </td>
+              </tr>
+            )) : (
+              <tr><td colSpan="3" className="px-6 py-10 text-center text-sm text-slate-500 dark:text-slate-400">{copy.empty}</td></tr>
             )}
           </tbody>
         </table>
       </div>
+
+      <Modal
+        isOpen={Boolean(selectedFaculty)}
+        onClose={() => setSelectedFacultyKey("")}
+        title={`${selectedFaculty?.facultyName || "Faculty"} — Encoded Sections`}
+        description={`${selectedFaculty?.sections.length || 0} applicable section${selectedFaculty?.sections.length === 1 ? "" : "s"} in ${copy.title}.`}
+        panelClassName="flex max-h-[90vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6"
+        bodyClassName="min-h-0 flex-1 overflow-y-auto"
+      >
+        <div className="overflow-x-auto" data-testid="faculty-sections-scroll-area">
+          <table className="w-full min-w-[920px] text-left">
+            <thead className="sticky top-0 z-10 bg-[#003366] text-white dark:bg-slate-800">
+              <tr>
+                {['Section', 'Subject', 'School Year', 'Semester', 'Term', 'Workflow State', 'Action'].map((label) => (
+                  <th key={label} className="px-4 py-3 text-xs font-bold uppercase tracking-wide">{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(selectedFaculty?.sections || []).map((section) => {
+                const priorityLabel = buildPriorityLabel(section.prioritySummary);
+                const selected = selectedReviewKey === section.reviewKey;
+                return (
+                  <tr key={section.reviewKey} className={`border-b border-slate-200 align-top dark:border-slate-700 ${selected ? 'bg-blue-50 dark:bg-sky-950/30' : section.priorityScore ? 'bg-red-50/60 dark:bg-red-950/20' : 'dark:bg-slate-900'}`}>
+                    <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300">{section.sectionName}</td>
+                    <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300">
+                      <span className="font-semibold">{section.subjectCode || 'Unknown subject'}</span>
+                      {section.subjectTitle ? <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{section.subjectTitle}</span> : null}
+                      {priorityLabel ? <span className="mt-1 block text-xs font-semibold text-red-700 dark:text-red-300">Check first • {priorityLabel}</span> : null}
+                    </td>
+                    <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300">{section.schoolYear || 'Unknown'}</td>
+                    <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300">{section.semester || 'Unknown'}</td>
+                    <td className="px-4 py-4 text-sm capitalize text-slate-700 dark:text-slate-300">{section.term || 'midterm'}</td>
+                    <td className="px-4 py-4">
+                      <StatusBadge status={section.sentToRegistrar ? 'forwarded' : section.reviewStatus} label={getWorkflowLabel(section)} />
+                      {viewMode === 'forwarded' ? <span className="mt-2 block text-xs text-slate-500 dark:text-slate-400">{formatTrackingDate(section.finalizedAt)}<br />{section.finalizedBy || 'Registrar'}</span> : null}
+                    </td>
+                    <td className="px-4 py-4">
+                      <button type="button" onClick={() => openSection(section)} className="rounded-lg bg-[#003366] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#00264d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:bg-sky-700 dark:hover:bg-sky-600">
+                        {copy.action}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Modal>
     </section>
   );
 }
