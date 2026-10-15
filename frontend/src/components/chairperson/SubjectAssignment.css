@@ -33,11 +33,13 @@
 .sa-tabs button{display:flex;align-items:center;justify-content:center;gap:12px;padding:12px 22px;font-weight:700;min-width:24%}
 .sa-tabs button.active{background:#003366;color:#facc15;border-radius:10px;box-shadow:0 1px 2px #0000000d}
 .sa-tabs>span{font-size:12px;color:#64748b;padding:0 15px}
-.sa-columns{display:grid;grid-template-columns:minmax(320px,.78fr) minmax(0,1.7fr);gap:24px;align-items:start}
+.sa-columns{display:grid;grid-template-columns:minmax(320px,.8fr) minmax(0,1.68fr);gap:24px;align-items:start}
 .sa-columns>.sa-card{min-width:0}
 .sa-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:14px;row-gap:16px;margin-bottom:16px}
 .sa-filters label,.sa-program{font-size:13px;color:#617aaa;font-weight:650;min-width:0}
-.sa-filters select,.sa-program select{display:block;width:100%;min-height:42px;margin-top:6px;border:1px solid #cbd5e1;border-radius:8px;padding:9px 10px;background:white;font-size:13px;color:#214786}
+.sa-filters>div:first-child>span{margin-bottom:0;font-size:13px;font-weight:650;color:#617aaa}
+.sa-filters select,.sa-program select,.sa-filters>div:first-child>button{width:100%;height:42px;min-height:42px;margin-top:6px;border:1px solid #cbd5e1;border-radius:8px;padding:9px 10px;background:white;font-size:13px;font-weight:400;color:#214786}
+.sa-filters select,.sa-program select{display:block}
 .sa-program{display:block;margin-bottom:18px}
 .sa-bulk-workspace{display:flex;flex-direction:column;gap:20px}
 .sa-table-scroll{max-width:100%;overflow:auto;margin-top:12px;border-radius:8px}
@@ -84,14 +86,14 @@
 .dark .sa-card,.dark .sa-tabs{border-color:#334155;background:#0f172a}
 .dark .sa-header h2,.dark .sa-section-title h3,.dark .sa-heading h3,.dark .sa-professor h3{color:#7dd3fc}
 .dark .sa-header p,.dark .sa-section-title p,.dark .sa-heading p,.dark .sa-professor p,.dark .sa-assigned-context,.dark .sa-footnote{color:#94a3b8}
-.dark .sa-search,.dark .sa-filters select,.dark .sa-program select,.dark .sa-schedule{border-color:#475569;background:#1e293b;color:#f1f5f9}
+.dark .sa-search,.dark .sa-filters select,.dark .sa-program select,.dark .sa-filters>div:first-child>button,.dark .sa-schedule{border-color:#475569;background:#1e293b;color:#f1f5f9}
 .dark .sa-search input{color:#f1f5f9}
 .dark .sa-professor{background:#1e293b}
 .dark .sa-professors button{border-color:#334155}
 .dark .sa-professors button:hover{background:#1e3a5f}
 .dark .subject-assignment th{background:#1e293b;color:#f1f5f9}
 .dark .subject-assignment .faculty-loading-records-header th{background:#0c4a6e;color:#fff}
-.dark .sa-filters label,.dark .sa-program{color:#cbd5e1}
+.dark .sa-filters label,.dark .sa-program,.dark .sa-filters>div:first-child>span{color:#cbd5e1}
 .dark .subject-assignment td{border-color:#334155}
 .dark .subject-assignment tr.selected{background:#0c4a6e}
 @media(max-width:1150px){.sa-lookup{grid-template-columns:1fr}

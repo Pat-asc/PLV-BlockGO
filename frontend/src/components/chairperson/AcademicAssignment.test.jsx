@@ -210,8 +210,11 @@ test("keeps the manual assignment workspace responsive with a 2x2 filter group a
   expect(screen.getByTestId("available-sections-panel")).toHaveClass("sa-card");
   const filters = screen.getByTestId("available-subject-filters");
   expect(filters).toHaveClass("sa-filters");
-  expect(within(filters).getByRole("button", { name: "Academic Program" })).toBeInTheDocument();
-  expect(within(filters).getAllByRole("combobox")).toHaveLength(3);
+  const programFilter = within(filters).getByRole("button", { name: "Academic Program" });
+  const nativeFilters = within(filters).getAllByRole("combobox");
+  expect(programFilter).toBeInTheDocument();
+  expect(nativeFilters).toHaveLength(3);
+  expect([programFilter, ...nativeFilters]).toHaveLength(4);
 });
 
 test("visually separates the Faculty Loading workspace without changing its modal workflow", async () => {
