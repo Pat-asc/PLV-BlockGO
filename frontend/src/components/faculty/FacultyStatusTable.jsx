@@ -106,7 +106,6 @@ function FacultyStatusTable({ rows, selectedReviewKey, onSelectSection, viewMode
   }, [facultyGroups, selectedFacultyKey]);
 
   const openSection = (section) => {
-    setSelectedFacultyKey("");
     onSelectSection?.(rows.find((row) => row.reviewKey === section.reviewKey) || section);
   };
 

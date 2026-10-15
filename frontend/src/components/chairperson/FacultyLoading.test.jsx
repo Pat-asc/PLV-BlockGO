@@ -122,6 +122,19 @@ test("groups Faculty Loading Preview sections under one stable faculty identity"
   expect(within(dialog).queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
 });
 
+test("renders Distributed Faculty Loading Records with a high-contrast BlockGo blue header", async () => {
+  render(<FacultyLoading chairpersonDepartment="BS Information Technology" assignmentMode="bulk" />);
+  await waitFor(() => expect(fetchFacultyAssignmentOptions).toHaveBeenCalled());
+
+  expect(screen.getByTestId("faculty-loading-workspace")).toHaveClass("space-y-8");
+  expect(screen.getByTestId("distributed-faculty-loading-panel")).toHaveClass("dark:bg-slate-900");
+  expect(screen.getByTestId("distributed-faculty-loading-table")).toHaveClass("faculty-loading-records-table");
+  const header = screen.getByTestId("distributed-faculty-loading-header");
+  expect(header).toHaveClass("faculty-loading-records-header", "bg-[#003366]", "text-white", "dark:bg-sky-900");
+  expect(within(header).getByRole("columnheader", { name: "Faculty" })).toBeInTheDocument();
+  expect(within(header).getByRole("columnheader", { name: "Day" })).toBeInTheDocument();
+});
+
 test("partial success preserves the failed row and Clear Selection removes only pending rows", async () => {
   bulkAssignFacultyLoads.mockImplementation(async (rows) => ({
     status: "PartialSuccess",

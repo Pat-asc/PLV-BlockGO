@@ -53,6 +53,7 @@ test('groups by stable faculty identity and does not merge different faculty wit
   expect(within(dialog).queryByText('BSIT 1-1')).not.toBeInTheDocument();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Review Grades' }));
   expect(onSelectSection).toHaveBeenCalledWith(rows[2]);
+  expect(screen.getByRole('dialog', { name: /Faculty One.*Encoded Sections/ })).toBeInTheDocument();
 });
 
 test('shows finalized tracking metadata and opens the selected record', () => {

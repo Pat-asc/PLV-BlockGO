@@ -1669,6 +1669,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                     onSendBack={(notes) => handleBulkReturn(notes)} 
                                     onViewIpfs={handleViewIpfs}
                                     onRetryArchive={['PENDING', 'FAILED'].includes(selectedReviewSection.ipfsArchiveStatus) ? handleRetryArchive : null}
+                                    onBack={() => setSelectedReviewSection(null)}
                                     onClose={() => setSelectedReviewSection(null)}
                                 />
                             )}

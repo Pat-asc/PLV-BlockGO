@@ -4,6 +4,7 @@ import { getGradeEquivalent } from "../../utils/gradingHelpers";
 import Modal from "../../services/Modal";
 import StatusBadge from "../shared/StatusBadge";
 import GradeVersionHistory from "../shared/GradeVersionHistory";
+import BackButton from "../shared/BackButton";
 
 const getEncodingTermLabel = (term = "") =>
   String(term || "").toLowerCase() === "finals" ? "Finals" : "Midterm";
@@ -206,6 +207,10 @@ function SectionReviewPanel({
     if (!busy) (onClose || onBack)?.();
   }, [busy, onBack, onClose]);
 
+  const requestBack = useCallback(() => {
+    if (!busy) (onBack || onClose)?.();
+  }, [busy, onBack, onClose]);
+
   return (
     <>
       <Modal
@@ -220,6 +225,14 @@ function SectionReviewPanel({
         {selectedSection ? (
           <div className="flex min-h-0 flex-1 flex-col" data-testid="section-review-modal-content" data-source-view={sourceView || ""}>
             <div className="shrink-0 space-y-3">
+              <div className="flex items-center border-b border-slate-200 pb-3 dark:border-slate-700">
+                <BackButton
+                  onClick={requestBack}
+                  label="Back to Sections"
+                  disabled={busy}
+                  className="-ml-2 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-sky-300"
+                />
+              </div>
               <div className="grid grid-cols-2 gap-2 lg:grid-cols-6">
                 {metadataItems(selectedSection, activeTerm).map(([label, value]) => (
                   <div key={label} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">

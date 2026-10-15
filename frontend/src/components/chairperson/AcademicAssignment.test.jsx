@@ -214,6 +214,15 @@ test("keeps the manual assignment workspace responsive with a 2x2 filter group a
   expect(within(filters).getAllByRole("combobox")).toHaveLength(3);
 });
 
+test("visually separates the Faculty Loading workspace without changing its modal workflow", async () => {
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await screen.findByRole("button", { name: /Carlos Reyes/ });
+
+  fireEvent.click(screen.getByRole("button", { name: "Bulk Assignment" }));
+  expect(screen.getByTestId("faculty-loading-section")).toHaveClass("sa-bulk-workspace");
+  expect(screen.getByText("Bulk import")).toBeInTheDocument();
+});
+
 test("shows the authoritative period and explicit period columns", async () => {
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   expect(await screen.findByLabelText("Current academic period")).toHaveTextContent("2026-2027 · 2nd Semester");
