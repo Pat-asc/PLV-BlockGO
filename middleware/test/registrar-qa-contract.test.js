@@ -51,12 +51,14 @@ test('invalid role-drop targets are rejected before credentials or history chang
 test('student enrollment derives its school year and semester from exactly one active period', () => {
   const controller = read('client-app', 'Controllers', 'AuthController.cs');
   const action = actionBetween(controller, '[HttpPost("students/bulk-upload")]', '[HttpPost("create-student")]');
+  const periodService = read('client-app', 'Services', 'EncodingPeriodSettingService.cs');
 
-  assert.match(action, /FROM academic_periods[\s\S]*UPPER\(status\) = 'ACTIVE'/);
-  assert.match(action, /activeEnrollmentPeriods\.Count == 0/);
-  assert.match(action, /activeEnrollmentPeriods\.Count > 1/);
-  assert.match(action, /schoolYear = NormalizeSchoolYear\(activeEnrollmentPeriods\[0\]\.SchoolYear\)/);
-  assert.match(action, /semester = NormalizeEnrollmentSemester\(activeEnrollmentPeriods\[0\]\.Semester\)/);
+  assert.match(action, /ResolveActiveEnrollmentPeriodAsync/);
+  assert.match(periodService, /SELECT DISTINCT school_year, semester[\s\S]*UPPER\(status\) = 'ACTIVE'/);
+  assert.match(periodService, /periods\.Count > 1/);
+  assert.match(periodService, /periods\.Count == 1/);
+  assert.match(action, /schoolYear = activeEnrollmentPeriod\.SchoolYear/);
+  assert.match(action, /semester = activeEnrollmentPeriod\.Semester/);
 });
 
 test('sectioning eligibility has no recency cutoff and remains exact-period scoped', () => {

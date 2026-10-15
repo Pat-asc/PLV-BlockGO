@@ -1005,8 +1005,18 @@ export const getAuditLogs = async (recordId) => {
     return await fetchWithAuth(`/Grades/audit-logs/${encodeURIComponent(recordId)}`);
 };
 
-export const fetchRegistrarDashboardOverview = async () => {
-    return await fetchWithAuth('/RegistrarDashboard/overview');
+export const fetchRegistrarDashboardOverview = async ({ schoolYear, semester, term, department, program, signal } = {}) => {
+    const params = new URLSearchParams();
+    if (schoolYear) params.set('schoolYear', schoolYear);
+    if (semester) params.set('semester', semester);
+    if (term) params.set('term', term);
+    if (department) params.set('department', department);
+    if (program) params.set('program', program);
+    const query = params.toString();
+    return await fetchWithAuth(`/RegistrarDashboard/overview${query ? `?${query}` : ''}`, {
+        cache: 'no-store',
+        signal,
+    });
 };
 
 export const queryRegistrarLogs = async (params = {}) => {

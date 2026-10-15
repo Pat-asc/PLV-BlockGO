@@ -46,6 +46,19 @@ test('System Administrator operations remain protected and read-only', () => {
   assert.match(auditLogService, /SendAsync\("TransactionRecorded"/);
 });
 
+test('successful authentication is audited once and login analytics remain System Administrator restricted', () => {
+  const loginRoute = authService.slice(
+    authService.indexOf("app.post('/api/login'"),
+    authService.indexOf("app.post('/internal/auth/introspect'")
+  );
+  assert.match(loginRoute, /await bcrypt\.compare[\s\S]*await recordLoginAudit\(req, account, role\)/);
+  assert.equal((loginRoute.match(/recordLoginAudit\(req, account, role\)/g) || []).length, 1);
+  assert.match(authService, /INSERT INTO audit_logs[\s\S]*'LOGIN_SUCCESS'[\s\S]*CURRENT_TIMESTAMP/);
+  assert.match(monitoringController, /Authorize\(Roles = "system_admin"\)/);
+  assert.match(monitoringController, /LoginActivityService\.GetAsync/);
+  assert.doesNotMatch(monitoringController, /INSERT INTO audit_logs/);
+});
+
 test('security alert IP trackers are stable, incremental, and start at 100', () => {
   assert.match(monitoringController, /LEFT JOIN ip_tracker_mappings tracker ON tracker\.ip_address = event\.ip_address/);
   assert.match(monitoringController, /ipTracker = reader\.IsDBNull\(6\) \? null : IpTrackerFormatter\.Format\(reader\.GetInt64\(6\)\)/);

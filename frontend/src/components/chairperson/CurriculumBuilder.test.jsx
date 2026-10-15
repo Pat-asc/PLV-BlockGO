@@ -312,12 +312,14 @@ test('persists and reloads all four year levels through one transactional import
 
   await waitFor(() => expect(bulkImportCurriculumSubjects).toHaveBeenCalledTimes(1));
   for (const subject of imported) {
-    const row = (await screen.findByRole('checkbox', { name: `Select ${subject.subjectCode}` })).closest('tr');
+    const row = await screen.findByRole('row', { name: new RegExp(`^Select ${subject.subjectCode}`) });
     expect(row).toHaveTextContent(yearsForTest[subject.yearLevel]);
     expect(row).toHaveTextContent(subject.semester === 'FIRST' ? '1st Semester' : '2nd Semester');
     expect(row).toHaveTextContent(String(subject.units));
-    if (subject.prerequisite) expect(row).toHaveTextContent(subject.prerequisite);
   }
+  imported.filter((subject) => subject.prerequisite).forEach((subject) => {
+    expect(screen.getByRole('row', { name: new RegExp(`^Select ${subject.subjectCode}`) })).toHaveTextContent(subject.prerequisite);
+  });
 });
 
 const curriculumWithSubjects = () => ({
@@ -374,16 +376,18 @@ test('uses readable dark surfaces for the editable curriculum checklist rows', a
 test('moves the single inline editor directly below the selected row and cancels without saving', async () => {
   fetchCurriculums.mockResolvedValue({ data: [curriculumWithSubjects()] });
   render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);
-  const firstRow = (await screen.findByRole('checkbox', { name: 'Select IT 101' })).closest('tr');
+  const firstRow = await screen.findByRole('row', { name: /Select IT 101/ });
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Edit' }));
-  const firstEditor = screen.getByRole('form', { name: 'Edit Subject IT 101' });
-  expect(firstEditor.closest('tr').previousElementSibling).toBe(firstRow);
+  expect(screen.getByRole('form', { name: 'Edit Subject IT 101' })).toBeInTheDocument();
+  const firstRows = screen.getAllByRole('row');
+  expect(firstRows.indexOf(screen.getByRole('row', { name: 'Editor for IT 101' }))).toBe(firstRows.indexOf(firstRow) + 1);
   expect(screen.queryByRole('form', { name: 'Add Subject' })).not.toBeInTheDocument();
 
-  const secondRow = screen.getByRole('checkbox', { name: 'Select IT 201' }).closest('tr');
+  const secondRow = screen.getByRole('row', { name: /Select IT 201/ });
   fireEvent.click(within(secondRow).getByRole('button', { name: 'Edit' }));
   expect(screen.queryByRole('form', { name: 'Edit Subject IT 101' })).not.toBeInTheDocument();
-  expect(screen.getByRole('form', { name: 'Edit Subject IT 201' }).closest('tr').previousElementSibling).toBe(secondRow);
+  const secondRows = screen.getAllByRole('row');
+  expect(secondRows.indexOf(screen.getByRole('row', { name: 'Editor for IT 201' }))).toBe(secondRows.indexOf(secondRow) + 1);
   fireEvent.click(within(screen.getByRole('form', { name: 'Edit Subject IT 201' })).getByRole('button', { name: 'Cancel' }));
   expect(updateCurriculumSubject).not.toHaveBeenCalled();
   expect(screen.queryByRole('form', { name: /Edit Subject/ })).not.toBeInTheDocument();
@@ -395,7 +399,7 @@ test('keeps inline validation errors and active filters beside the edited subjec
   render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);
   await screen.findByRole('checkbox', { name: 'Select IT 201' });
   fireEvent.change(screen.getByLabelText('Filter by year level'), { target: { value: '2' } });
-  const row = screen.getByRole('checkbox', { name: 'Select IT 201' }).closest('tr');
+  const row = screen.getByRole('row', { name: /Select IT 201/ });
   fireEvent.click(within(row).getByRole('button', { name: 'Edit' }));
   const editor = screen.getByRole('form', { name: 'Edit Subject IT 201' });
   fireEvent.click(within(editor).getByRole('button', { name: 'Save Changes' }));

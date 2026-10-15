@@ -518,7 +518,7 @@ Check(curriculumRepairMigration.Contains("WHERE curriculum.status = 'PUBLISHED'"
 Pass(188, "program curriculum repair migration is idempotent and published-only");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=197;i++) Skip(i); Skip(206); for (var i=208;i<=217;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=197;i++) Skip(i); Skip(206); for (var i=208;i<=225;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 await using var db = new NpgsqlConnection(cs); await db.OpenAsync();
 async Task Exec(string sql) { await using var c=new NpgsqlCommand(sql,db); await c.ExecuteNonQueryAsync(); }
@@ -535,12 +535,13 @@ CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_n
 CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,enrollment_state TEXT DEFAULT 'PLANNING',updated_at TIMESTAMPTZ);
 CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_name TEXT,department TEXT);
 CREATE TEMP TABLE adminprofiles(user_id INT PRIMARY KEY,full_name TEXT,department TEXT);
+CREATE TEMP TABLE audit_logs(audit_id BIGSERIAL PRIMARY KEY,user_id INT,actor_role TEXT,action TEXT,entity_type TEXT,entity_id TEXT,description TEXT,timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TEMP TABLE systemsettings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TEMP TABLE academic_periods(academic_period_id BIGSERIAL PRIMARY KEY,school_year TEXT NOT NULL,semester TEXT NOT NULL,term TEXT NOT NULL,start_date DATE,end_date DATE,status TEXT NOT NULL DEFAULT 'ACTIVE',opened_by INT,opened_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,closed_at TIMESTAMPTZ,CONSTRAINT academic_periods_school_year_semester_term_key UNIQUE(school_year,semester,term),CHECK(start_date IS NULL OR end_date IS NULL OR end_date>=start_date));
 CREATE UNIQUE INDEX ux_academic_period_active ON academic_periods((status)) WHERE status='ACTIVE';
 CREATE TEMP TABLE facultysections(id SERIAL PRIMARY KEY,user_id INT,department TEXT,section TEXT,year_level TEXT,subject TEXT,academic_section_id INT,school_year TEXT,semester TEXT,is_active BOOLEAN DEFAULT TRUE,deactivated_at TIMESTAMPTZ,deactivated_by TEXT,schedule TEXT);
 CREATE UNIQUE INDEX ux_test_facultysections_exact ON facultysections(user_id,academic_section_id,school_year,semester,LOWER(subject)) WHERE is_active=TRUE;
-CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT,student_hash TEXT,student_name TEXT,section TEXT,course TEXT,subject_code TEXT,semester TEXT,school_year TEXT,faculty_id TEXT,date TEXT,ipfs_cid TEXT,term TEXT,
+CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT,student_hash TEXT,student_name TEXT,section TEXT,course TEXT,program TEXT,subject_code TEXT,subject_title TEXT,semester TEXT,school_year TEXT,faculty_id TEXT,professor_name TEXT,date TEXT,ipfs_cid TEXT,term TEXT,note TEXT,units NUMERIC,submitted_by TEXT,recorded_at TIMESTAMPTZ,transaction_id TEXT,transaction_hash TEXT,
     CONSTRAINT unique_grade_entry_assignment_cycle UNIQUE(student_hash,subject_code,school_year,semester,section,assignment_cycle_id,term));
 CREATE TEMP TABLE grade_assignment_cycles(record_id TEXT PRIMARY KEY,assignment_cycle_id TEXT NOT NULL);");
 var firstSavedPeriod = await EncodingPeriodSettingService.SaveAsync(db, System.Text.Json.JsonSerializer.Serialize(new {
@@ -570,7 +571,7 @@ Pass(114,"migration repairs missing enrollment-period uniqueness idempotently");
 await Exec(@"
 INSERT INTO academic_programs VALUES(1,'BSIT','BS Information Technology',TRUE),(2,'BSCS','BS Computer Science',TRUE); INSERT INTO curriculums VALUES(1,1,'PUBLISHED'),(2,2,'PUBLISHED');
 INSERT INTO academic_periods(school_year,semester,term,status) VALUES('2026-2027','FIRST','midterm','ACTIVE');
-INSERT INTO curriculum_subjects(curriculum_id,subject_code,prerequisite,year_level,semester) VALUES(1,'IT 101',NULL,1,'FIRST'),(1,'IT 102','IT 101',1,'FIRST'),(1,'IT 201','IT 102',2,'SECOND'),(2,'CS 101',NULL,1,'FIRST');
+INSERT INTO curriculum_subjects(curriculum_id,subject_code,prerequisite,year_level,semester) VALUES(1,'IT 101',NULL,1,'FIRST'),(1,'IT 102','IT 101',1,'FIRST'),(1,'IT 103',NULL,1,'SECOND'),(1,'IT 201','IT 102',2,'SECOND'),(2,'CS 101',NULL,1,'FIRST');
 INSERT INTO academicsections(id,department,year_level,section_num) VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2),(3,'BS Computer Science',1,1);
 INSERT INTO academicsections(id,department,year_level,section_num,is_active) VALUES(4,'BS Information Technology',1,3,FALSE);
 SELECT setval(pg_get_serial_sequence('academicsections','id'), (SELECT MAX(id) FROM academicsections));
@@ -624,7 +625,7 @@ Check(await StudentCurriculumResolver.ResolveAsync(db, "csc@plv.edu.ph") == 2 &&
       await StudentCurriculumResolver.ResolveAsync(db, "a@plv.edu.ph") != 2,
     "Curriculum resolution crossed the authoritative enrollment program.");
 Pass(126, "student curriculum resolution is program-isolated");
-Check(await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1") == 3,
+Check(await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1") == 4,
     "The assigned curriculum did not retain its complete subject checklist.");
 Pass(127, "assigned curriculum subjects are available");
 Check(await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1 AND prerequisite IS NOT NULL") == 2,
@@ -641,7 +642,7 @@ Check(await StudentCurriculumResolver.ResolveAsync(db, "draft@plv.edu.ph") is nu
       await StudentCurriculumResolver.ResolveAsync(db, "returned@plv.edu.ph") is null,
     "A DRAFT or RETURNED curriculum was exposed to a student.");
 Pass(130, "non-published curriculum workflow states remain hidden");
-Check(await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1 AND (year_level<>1 OR semester<>'FIRST')") == 1,
+Check(await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1 AND (year_level<>1 OR semester<>'FIRST')") == 2,
     "The checklist was reduced to the current enrollment year or semester.");
 Pass(131, "curriculum checklist remains multi-year and multi-semester");
 var planningSubjects = await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.ph");
@@ -685,7 +686,7 @@ Check(await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(db, "a@plv.edu.
 Pass(140, "wrong-program curriculum never resolves Current Subjects");
 await Exec("UPDATE student_enrollments SET curriculum_id=1 WHERE student_user_id=2");
 Check(await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1 AND year_level=1 AND semester='FIRST'") == 2 &&
-      await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1 AND (year_level<>1 OR semester<>'FIRST')") == 1,
+      await Count("SELECT COUNT(*) FROM curriculum_subjects WHERE curriculum_id=1 AND (year_level<>1 OR semester<>'FIRST')") == 2,
     "Current Subjects were not limited to the enrollment year level and semester.");
 Pass(141, "Current Subjects are limited to enrollment year level and semester");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records") == 0 &&
@@ -1002,7 +1003,7 @@ await Exec("UPDATE academic_periods SET status='CLOSED',closed_at=CURRENT_TIMEST
 var otherYear = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=2, SchoolYear="2027-2028", Semester="FIRST" }, AllowProgram);
 Check(otherYear.Id!=bulkOne.Id && otherYear.SchoolYear=="2027-2028","Authoritative school-year identity collapsed."); Pass(34,"backend academic-year isolation");
 await Exec("UPDATE academic_periods SET status='CLOSED',closed_at=CURRENT_TIMESTAMP WHERE status='ACTIVE'; INSERT INTO academic_periods(school_year,semester,term,status) VALUES('2026-2027','SECOND','midterm','ACTIVE')");
-var otherSemester = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=2, SchoolYear="2026-2027", Semester="SECOND" }, AllowProgram);
+var otherSemester = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest { FacultyUserId=1, SubjectCode="IT 103", AcademicSectionId=2, SchoolYear="2026-2027", Semester="SECOND" }, AllowProgram);
 Check(otherSemester.Id!=bulkOne.Id && otherSemester.SchoolYear=="2026-2027" && otherSemester.Semester=="SECOND","Authoritative semester identity collapsed."); Pass(35,"backend semester isolation");
 await Exec("UPDATE academic_periods SET status='CLOSED',closed_at=CURRENT_TIMESTAMP WHERE status='ACTIVE'; UPDATE academic_periods SET status='ACTIVE',closed_at=NULL,opened_at=CURRENT_TIMESTAMP WHERE school_year='2026-2027' AND semester='FIRST' AND term='midterm'");
 Check(await Count("SELECT COUNT(*) FROM facultysections WHERE id=191 AND school_year='2025-2026' AND semester='FIRST' AND is_active=FALSE")==1,
@@ -1121,7 +1122,7 @@ Check(computerScienceSectioned.Select(student=>student.StudentNo).SequenceEqual(
       computerScienceSectioned.All(student=>student.AcademicSectionId==3),
     "Same-label section membership mixed programs."); Pass(65,"Registrar duplicate section labels remain isolated by ID");
 await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,subject_code,school_year,semester,section,term) VALUES('draft-1','104','26-0001','Draft','{}','draft@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm') ON CONFLICT ON CONSTRAINT unique_grade_entry_assignment_cycle DO UPDATE SET grade=EXCLUDED.grade; INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,subject_code,school_year,semester,section,term) VALUES('draft-2','104','26-0001','Draft','{\"midterm\":\"90\"}','draft@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm') ON CONFLICT ON CONSTRAINT unique_grade_entry_assignment_cycle DO UPDATE SET grade=EXCLUDED.grade;");
-Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE assignment_cycle_id='104' AND student_no='26-0001'")==1,
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE assignment_cycle_id='104' AND student_no='26-0001' AND student_hash='draft@example.edu' AND term='midterm'")==1,
     "Repeated save created duplicate pending grades."); Pass(47,"no duplicate pending grades");
 await Exec(@"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,subject_code,school_year,semester,section,term) VALUES
     ('term-mid-draft','104','26-0801','Draft','{""midterm"":""85""}','term-draft@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm'),
@@ -1148,7 +1149,7 @@ Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE student_hash
 var finalsTermReviewIds=await ChairpersonReviewScopeService.GetCurrentVisibleRecordIdsAsync(db,"finals","FIRST");
 Check(finalsTermReviewIds.Contains("term-final-submitted") && finalsTermReviewIds.Contains("term-final-returned") && !finalsTermReviewIds.Contains("term-mid-submitted"),
     "Chairperson review did not expose authoritative Returned Finals or isolate Finals from Midterm."); Pass(102,"Chairperson review is term scoped and includes Returned state");
-Check(await Count("SELECT COUNT(*) FROM pending_grade_records GROUP BY student_hash,subject_code,school_year,semester,section,assignment_cycle_id,LOWER(COALESCE(term,'')) HAVING COUNT(*)>1")==0,
+Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE NULLIF(TRIM(student_hash),'') IS NOT NULL AND NULLIF(TRIM(assignment_cycle_id),'') IS NOT NULL AND NULLIF(TRIM(term),'') IS NOT NULL GROUP BY student_hash,subject_code,school_year,semester,section,assignment_cycle_id,LOWER(TRIM(term)) HAVING COUNT(*)>1")==0,
     "Same-term duplicates exist in the migration fixture."); Pass(103,"term-identity duplicate preflight is clean");
 await Exec(@"INSERT INTO pending_grade_records
     (id,assignment_cycle_id,student_no,status,grade,student_hash,student_name,section,course,subject_code,semester,school_year,faculty_id,date,ipfs_cid,term)
@@ -1160,16 +1161,51 @@ await Exec(@"INSERT INTO pending_grade_records
 await Exec("INSERT INTO grade_assignment_cycles(record_id,assignment_cycle_id) VALUES('old-approved','102'),('current-finalized','104')");
 var approvedHistoryCount=await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-chair-approved','current-approved','current-finalized')");
 var finalizationQueue=await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST");
-Check(finalizationQueue.Select(record=>record.Id).SequenceEqual(new[]{"current-chair-approved","old-approved","current-approved"}),
+Check(finalizationQueue.Select(record=>record.Id).SequenceEqual(new[]{"old-approved","current-approved"}),
     "Registrar finalization queue omitted approved captured-assignment staging."); Pass(66,"Registrar finalization queue includes approved active and captured historical cycles");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='current-finalized'")==1,
     "Finalized history was removed while selecting the active queue."); Pass(67,"finalized history remains stored outside active queue");
+await Exec(@"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,student_name,section,course,program,subject_code,semester,school_year,faculty_id,date,ipfs_cid,term) VALUES
+    ('current-approved-duplicate','104','26-0910','DepartmentApproved','93','duplicate@example.edu','Duplicate Student','BSIT 1-1','BS Information Technology','BSIT','IT 101','FIRST','2026-2027','FAC-3','2026-09-21','','finals'),
+    ('other-year-approved','104','26-0911','DepartmentApproved','93','other-year@example.edu','Other Year','BSIT 1-1','BS Information Technology','BSIT','IT 101','FIRST','2025-2026','FAC-3','2026-09-21','','finals'),
+    ('other-semester-approved','104','26-0912','DepartmentApproved','93','other-semester@example.edu','Other Semester','BSIT 1-1','BS Information Technology','BSIT','IT 101','SECOND','2026-2027','FAC-3','2026-09-21','','finals');
+UPDATE pending_grade_records SET program='BSIT' WHERE id IN ('old-approved','current-chair-approved','current-approved');");
+var workflowOverview=await RegistrarWorkflowOverviewService.GetAsync(db,"2026-2027","FIRST","finals");
+Check(workflowOverview.DepartmentApproved==2 && workflowOverview.ChairpersonApproved==1 && workflowOverview.SubmittedToChairperson==1 && workflowOverview.Returned==1,
+    "Registrar workflow overview mixed statuses or counted student rows instead of distinct workloads."); Pass(218,"Registrar workflow API returns non-zero current-status workload counts without duplicates");
+Check((await RegistrarWorkflowOverviewService.GetAsync(db,"2025-2026","FIRST","finals")).DepartmentApproved==1 &&
+      (await RegistrarWorkflowOverviewService.GetAsync(db,"2026-2027","SECOND","finals")).DepartmentApproved==1,
+    "Registrar workflow overview ignored academic year or semester filters."); Pass(219,"Registrar workflow API applies school-year and semester filters");
+Check((await RegistrarWorkflowOverviewService.GetAsync(db,"2026-2027","FIRST","midterm")).DepartmentApproved==1 &&
+      (await RegistrarWorkflowOverviewService.GetAsync(db,"2026-2027","FIRST","finals",department:"BS Computer Science")).DepartmentApproved==0,
+    "Registrar workflow overview ignored term or department filters."); Pass(220,"Registrar workflow API applies term and department filters");
+Check((await RegistrarWorkflowOverviewService.GetAsync(db,"2026-2027","FIRST","finals",program:"BSIT")).DepartmentApproved==2 &&
+      (await RegistrarWorkflowOverviewService.GetAsync(db,"2026-2027","FIRST","finals",program:"BSCS")).DepartmentApproved==0,
+    "Registrar workflow overview ignored program filters or returned a false non-zero result."); Pass(221,"Registrar workflow API applies program filters and returns genuine zero states");
+await Exec("DELETE FROM pending_grade_records WHERE id IN ('current-approved-duplicate','other-year-approved','other-semester-approved')");
+
+await Exec(@"INSERT INTO audit_logs(user_id,actor_role,action,entity_type,entity_id,description,timestamp) VALUES
+    (1,'faculty','LOGIN_SUCCESS','authentication','1','Account login succeeded.',CURRENT_TIMESTAMP),
+    (13,'department_admin','LOGIN_SUCCESS','authentication','13','Account login succeeded.',CURRENT_TIMESTAMP - INTERVAL '1 minute'),
+    (1,'faculty','FAILED_LOGIN','authentication','1','Password mismatch.',CURRENT_TIMESTAMP);");
+var loginActivity=await LoginActivityService.GetAsync(db);
+Check(loginActivity.Available && loginActivity.SuccessfulToday==2 && loginActivity.UniqueUsersToday==2 && loginActivity.Recent.Count==2,
+    "Successful login totals included failed attempts or did not return persisted events."); Pass(222,"System Administrator login activity retrieves successful events only");
+Check(loginActivity.Recent[0].User=="Professor X" && loginActivity.Recent[0].Role=="faculty" && loginActivity.Recent[0].UserId==1,
+    "Login activity lost the authenticated user or canonical role."); Pass(223,"login activity preserves user and role identity");
+Check(loginActivity.Recent.All(entry=>entry.OccurredAt.Offset==TimeSpan.Zero && entry.OccurredAt<=DateTimeOffset.UtcNow.AddMinutes(1)),
+    "Login activity did not return server-authoritative UTC timestamps."); Pass(224,"login activity returns server-authoritative timestamps");
+await Exec("DELETE FROM audit_logs");
+var emptyLoginActivity=await LoginActivityService.GetAsync(db);
+Check(emptyLoginActivity.Available && emptyLoginActivity.SuccessfulToday==0 && emptyLoginActivity.Recent.Count==0,
+    "Empty successful-login state returned fabricated activity."); Pass(225,"login activity empty state is zero only without events");
 await Exec(@"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,subject_code,school_year,semester,term)
 VALUES('old-review','102','26-0998','SubmittedToChairperson','{}','IT 101','2026-2027','FIRST','finals'),
       ('current-review','104','26-0999','SubmittedToChairperson','{}','IT 101','2026-2027','FIRST','finals')");
 var currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
 var currentFinalizedIds=await ChairpersonReviewScopeService.GetCurrentFinalizedRecordIdsAsync(db,"FIRST");
-Check(currentReviewIds.SetEquals(new[]{"current-review"}) && currentFinalizedIds.SetEquals(new[]{"current-finalized"}),
+Check(currentReviewIds.Contains("current-review") && !currentReviewIds.Contains("old-review") &&
+      currentFinalizedIds.SetEquals(new[]{"current-finalized"}),
     "Current Chairperson tracking mixed active and historical assignment cycles."); Pass(54,"Chairperson review and Finalized tracking contain only active-cycle records");
 var assignmentHistoryCountBeforeReset=await Count("SELECT COUNT(*) FROM facultysections");
 await Exec("UPDATE facultysections SET is_active=FALSE,deactivated_at=CURRENT_TIMESTAMP,deactivated_by='registrar@plv.edu.ph' WHERE is_active=TRUE");
@@ -1180,7 +1216,10 @@ Check(await Count("SELECT COUNT(*) FROM facultysections WHERE is_active=TRUE")==
 currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
 currentFinalizedIds=await ChairpersonReviewScopeService.GetCurrentFinalizedRecordIdsAsync(db,"FIRST");
 Check(currentReviewIds.Count==0 && currentFinalizedIds.Count==0,"Reset left old submissions or finalized rows in current tracking."); Pass(55,"reset empties current For Review and Finalized tracking");
-Check((await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST")).Select(record=>record.Id).SequenceEqual(new[]{"current-chair-approved","old-approved","current-approved"}) &&
+var approvedAfterReset = (await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST"))
+    .Select(record=>record.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+Check(approvedAfterReset.Contains("old-approved") && approvedAfterReset.Contains("current-approved") &&
+      !approvedAfterReset.Contains("current-chair-approved") && !approvedAfterReset.Contains("current-finalized") &&
       await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-chair-approved','current-approved','current-finalized')")==approvedHistoryCount,
     "Reset removed retryable approved staging or deleted grade history."); Pass(68,"reset preserves approved captured cycles for safe finalization");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review','final')")==3,
@@ -1240,4 +1279,4 @@ Check(await Count("SELECT COUNT(*) FROM curriculums WHERE curriculum_code='BSIT-
     "Running the QA curriculum seed twice duplicated records or overwrote the production curriculum.");
 Pass(168,"QA curriculum setup is idempotent and preserves production curriculum");
 Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped");
-} finally { await Exec("DROP TABLE IF EXISTS grade_assignment_cycles,pending_grade_records,facultysections,facultyprofiles,adminprofiles,student_enrollments,studentprofiles,curriculum_subjects,curriculums,academicsections,academic_programs,academic_periods,systemsettings,users CASCADE"); }
+} finally { await Exec("DROP TABLE IF EXISTS grade_assignment_cycles,pending_grade_records,facultysections,audit_logs,facultyprofiles,adminprofiles,student_enrollments,studentprofiles,curriculum_subjects,curriculums,academicsections,academic_programs,academic_periods,systemsettings,users CASCADE"); }

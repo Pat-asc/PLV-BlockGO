@@ -256,6 +256,7 @@ namespace Client_app.Controllers
         {
             var services = new List<object>();
             var database = new { status = "down", name = "", sizeBytes = (long?)null, activeConnections = (long?)null };
+            var loginActivity = LoginActivitySummary.Unavailable;
             var dbStopwatch = Stopwatch.StartNew();
             try
             {
@@ -268,6 +269,8 @@ namespace Client_app.Controllers
                 await reader.ReadAsync(cancellationToken);
                 database = new { status = "healthy", name = reader.GetString(0), sizeBytes = (long?)reader.GetInt64(1), activeConnections = (long?)reader.GetInt64(2) };
                 services.Add(Service("postgres", "PostgreSQL", "Data", "healthy", dbStopwatch.ElapsedMilliseconds, "Database query completed.", "PostgreSQL"));
+                await reader.CloseAsync();
+                loginActivity = await LoginActivityService.GetAsync(connection, cancellationToken: cancellationToken);
             }
             catch (Exception exception)
             {
@@ -394,6 +397,7 @@ namespace Client_app.Controllers
                     runningPods,
                     healthyFabricTargets = services.Count(item => JsonSerializer.Serialize(item).Contains("Fabric Middleware") && JsonSerializer.Serialize(item).Contains("healthy"))
                 },
+                loginActivity,
                 alerts
             });
         }

@@ -124,9 +124,9 @@ test('backend curriculum metadata overrides stale local assignment display data'
 test('assignment card keeps a responsive single-card layout for narrow screens', async () => {
   render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
 
-  const title = await screen.findByText('Introduction to IT');
-  expect(title.parentElement).toHaveClass('break-words');
-  expect(title.closest('article')).toHaveClass('flex', 'h-full', 'flex-col');
+  const card = await screen.findByRole('article', { name: /IT 101.*BSIT 1-1/ });
+  expect(within(card).getByText('Introduction to IT')).toBeInTheDocument();
+  expect(card).toHaveClass('flex', 'h-full', 'flex-col');
 });
 
 test('backend enrollment period overrides a stale SECOND assignment and Save sends FIRST', async () => {

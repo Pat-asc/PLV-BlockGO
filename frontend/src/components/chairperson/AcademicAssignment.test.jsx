@@ -104,7 +104,7 @@ test.each([
 
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
 
-  const row = (await screen.findByText(subjectCode)).closest("tr");
+  const row = await screen.findByRole("row", { name: new RegExp(subjectCode) });
   expect(within(row).getByText(String(units))).toBeInTheDocument();
   expect(within(row).queryByText("0")).not.toBeInTheDocument();
 });
@@ -122,7 +122,7 @@ test("same subject in two sections retains both assignments and the same authori
 
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
 
-  const rows = (await screen.findAllByText("IT 201")).map((cell) => cell.closest("tr"));
+  const rows = await screen.findAllByRole("row", { name: /IT 201/ });
   expect(rows).toHaveLength(2);
   expect(rows.map((row) => within(row).getByText("3"))).toHaveLength(2);
   expect(screen.getByText("BSIT 2-1")).toBeInTheDocument();
@@ -139,7 +139,7 @@ test("legacy unresolved saved assignment displays N/A rather than fabricated uni
 
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
 
-  const row = (await screen.findByText("LEG 101")).closest("tr");
+  const row = await screen.findByRole("row", { name: /LEG 101/ });
   expect(within(row).getByText("Not available")).toBeInTheDocument();
   expect(within(row).getByText("N/A")).toBeInTheDocument();
   expect(within(row).queryByText("0")).not.toBeInTheDocument();

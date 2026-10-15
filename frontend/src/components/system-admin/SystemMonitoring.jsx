@@ -52,6 +52,14 @@ const formatMetric = (value, fractionDigits = 0) => {
   return Number.isFinite(numericValue) ? numericValue.toFixed(fractionDigits) : '--';
 };
 
+const roleLabel = (role) => ({
+  system_admin: 'System Administrator',
+  registrar: 'Registrar',
+  department_admin: 'Chairperson',
+  faculty: 'Faculty',
+  student: 'Student',
+}[String(role || '').trim().toLowerCase()] || String(role || 'Unknown').replaceAll('_', ' '));
+
 function StatusBadge({ status = 'checking', label }) {
   const normalizedStatus = String(status || 'checking').toLowerCase();
   return (
@@ -158,6 +166,8 @@ function SystemMonitoring({ activeView = 'overview' }) {
   const runtime = summary?.runtime || {};
   const database = summary?.database || {};
   const infrastructure = summary?.infrastructure || {};
+  const loginActivity = summary?.loginActivity || {};
+  const recentLogins = loginActivity.recent || [];
   const metricsAvailable = infrastructure.source === 'prometheus';
   const overallStatus = summary?.status || (isRefreshing ? 'checking' : 'warning');
   const resolveEvent = async (eventId) => {
@@ -167,11 +177,28 @@ function SystemMonitoring({ activeView = 'overview' }) {
 
   const overview = (
     <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Overall" value={overallStatus.replaceAll('_', ' ')} tone={overallStatus} />
         <Metric label="Active Alerts" value={metricsAvailable ? alerts.length : '--'} tone={alerts.length ? 'warning' : 'default'} />
         <Metric label="Backend Uptime" value={formatDuration(runtime.uptimeSeconds)} />
+        <Metric label="Successful Logins Today" value={loginActivity.available === false ? '--' : formatMetric(loginActivity.successfulToday)} />
       </div>
+
+      <section className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+          <h3 className="text-base font-bold text-[#003366]">Recent Login Activity</h3>
+          <span className="text-sm text-slate-500">{loginActivity.available === false ? 'Unavailable' : `${formatMetric(loginActivity.uniqueUsersToday)} unique users today`}</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-500"><tr><th className="px-4 py-3">User</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Login time</th><th className="px-4 py-3">Status</th></tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {recentLogins.map((login) => <tr key={login.auditId}><td className="px-4 py-3 font-semibold text-slate-900">{login.user}</td><td className="px-4 py-3 text-slate-600">{roleLabel(login.role)}</td><td className="px-4 py-3 text-slate-600">{formatDateTime(login.occurredAt)}</td><td className="px-4 py-3"><StatusBadge status="healthy" label="Successful" /></td></tr>)}
+              {!recentLogins.length ? <tr><td colSpan="4" className="px-4 py-6 text-center text-slate-500">{loginActivity.available === false ? 'Login activity is currently unavailable.' : 'No successful login events have been recorded.'}</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <section className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
