@@ -6,7 +6,8 @@ public sealed record RegistrarWorkflowOverview(
     long SubmittedToChairperson,
     long ChairpersonApproved,
     long DepartmentApproved,
-    long Returned);
+    long Returned,
+    long SubmittedToRegistrar);
 
 public static class RegistrarWorkflowOverviewService
 {
@@ -38,7 +39,7 @@ public static class RegistrarWorkflowOverviewService
                   AND (@department IS NULL OR LOWER(TRIM(COALESCE(fs.department, ''))) = LOWER(TRIM(@department)))
                   AND (@program IS NULL OR LOWER(TRIM(COALESCE(NULLIF(pgr.program, ''), pgr.course, ''))) = LOWER(TRIM(@program)))
                   AND LOWER(TRIM(pgr.status)) IN (
-                      'submittedtochairperson', 'chairpersonapproved', 'departmentapproved', 'returned'
+                      'submittedtoregistrar', 'submittedtochairperson', 'chairpersonapproved', 'departmentapproved', 'returned'
                   )
             )
             SELECT normalized_status, COUNT(*)
@@ -56,12 +57,14 @@ public static class RegistrarWorkflowOverviewService
         long chairpersonApproved = 0;
         long departmentApproved = 0;
         long returned = 0;
+        long submittedToRegistrar = 0;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             var count = reader.GetInt64(1);
             switch (reader.GetString(0))
             {
+                case "submittedtoregistrar": submittedToRegistrar = count; break;
                 case "submittedtochairperson": submitted = count; break;
                 case "chairpersonapproved": chairpersonApproved = count; break;
                 case "departmentapproved": departmentApproved = count; break;
@@ -69,6 +72,6 @@ public static class RegistrarWorkflowOverviewService
             }
         }
 
-        return new RegistrarWorkflowOverview(submitted, chairpersonApproved, departmentApproved, returned);
+        return new RegistrarWorkflowOverview(submitted, chairpersonApproved, departmentApproved, returned, submittedToRegistrar);
     }
 }

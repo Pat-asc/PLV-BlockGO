@@ -180,7 +180,35 @@ namespace Client_app.Controllers
                     subjectRows.Add(new CurrentSubjectRow(
                         reader.GetString(0), reader.GetString(1), reader.GetDecimal(2),
                         reader.IsDBNull(3) ? "To be assigned" : reader.GetString(3),
-                        reader.IsDBNull(4) ? "" : reader.GetString(4)));
+                        reader.IsDBNull(4) ? "" : reader.GetString(4), canonicalSection, false));
+            }
+
+            await using (var nonRegularCommand = new NpgsqlCommand(@"
+                SELECT cs.subject_code, cs.subject_title, cs.units,
+                       COALESCE(fp.full_name, u.email) AS faculty_name,
+                       fs.id::text AS assignment_cycle_id, fs.section
+                FROM student_non_regular_subjects assignment
+                JOIN curriculum_subjects cs ON cs.subject_id = assignment.subject_id
+                JOIN facultysections fs ON fs.id = assignment.faculty_section_id AND fs.is_active = TRUE
+                JOIN users u ON u.id = fs.user_id AND LOWER(u.role) = 'faculty'
+                LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
+                WHERE assignment.student_user_id = (
+                    SELECT id FROM users WHERE LOWER(email) = LOWER(@studentEmail) LIMIT 1)
+                  AND assignment.enrollment_id = @enrollmentId
+                  AND assignment.school_year = @schoolYear
+                  AND assignment.semester = @semester
+                  AND assignment.status = 'ACTIVE'
+                ORDER BY cs.subject_code;", connection))
+            {
+                nonRegularCommand.Parameters.AddWithValue("studentEmail", email);
+                nonRegularCommand.Parameters.AddWithValue("enrollmentId", enrollmentId);
+                nonRegularCommand.Parameters.AddWithValue("schoolYear", schoolYear);
+                nonRegularCommand.Parameters.AddWithValue("semester", semester);
+                await using var reader = await nonRegularCommand.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                    subjectRows.Add(new CurrentSubjectRow(
+                        reader.GetString(0), reader.GetString(1), reader.GetDecimal(2),
+                        reader.GetString(3), reader.GetString(4), reader.GetString(5), true));
             }
 
             var ledgerAvailable = true;
@@ -222,7 +250,7 @@ namespace Client_app.Controllers
             {
                 var attempt = new StudentSubjectAttempt(
                     enrollmentId, email, studentNo, subject.SubjectCode, schoolYear, semester,
-                    canonicalSection, subject.AssignmentCycleId);
+                    subject.Section, subject.AssignmentCycleId);
                 var resolved = StudentSubjectGradeResolver.Resolve(attempt, finalizedRecords, ledgerAvailable);
                 var record = resolved.Record;
                 var equivalent = resolved.FinalizedGrade.HasValue
@@ -250,7 +278,9 @@ namespace Client_app.Controllers
                     units = subject.Units,
                     schoolYear,
                     semester,
-                    section = canonicalSection,
+                    section = subject.Section,
+                    subjectClassification = subject.IsNonRegular ? "NON-REGULAR" : "REGULAR",
+                    isNonRegular = subject.IsNonRegular,
                     professor = subject.FacultyName,
                     facultyName = subject.FacultyName,
                     enrollmentId,
@@ -917,7 +947,9 @@ namespace Client_app.Controllers
             string SubjectTitle,
             decimal Units,
             string FacultyName,
-            string AssignmentCycleId);
+            string AssignmentCycleId,
+            string Section,
+            bool IsNonRegular);
     }
 
     public class UpdateProfileRequest

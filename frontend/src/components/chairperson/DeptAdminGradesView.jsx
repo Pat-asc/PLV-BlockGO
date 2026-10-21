@@ -1664,6 +1664,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                     selectedSection={selectedReviewSection} 
                                     activeTerm={activeEncodingTerm}
                                     sourceView={activeChairTab}
+                                    observerOnly
                                     onApprove={handleBulkApprove} 
                                     onSendToRegistrar={handleSendToRegistrar}
                                     onSendBack={(notes) => handleBulkReturn(notes)} 

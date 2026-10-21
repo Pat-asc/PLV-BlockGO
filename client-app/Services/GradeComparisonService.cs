@@ -120,7 +120,7 @@ public static class GradeComparisonService
     {
         var normalized = value?.Trim().ToLowerInvariant();
         if (normalized is null or "" or "draft" or "returned" or "submitted" or
-            "submittedtochairperson" or "chairpersonapproved" or "departmentapproved" or
+            "submittedtoregistrar" or "submittedtochairperson" or "chairpersonapproved" or "departmentapproved" or
             "approved" or "issued" or "corrected" or "finalized")
             return null;
         return ComparableGrade(value, term);

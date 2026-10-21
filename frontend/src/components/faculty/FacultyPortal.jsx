@@ -738,7 +738,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     const sectionData = sections[sectionName];
     if (!sectionData || !sectionData.students) return;
     if (!isLockedSectionStatus(getSectionTermStatus(sectionName))) {
-      showSystemNotification("Export PDF is available only after the grades for this section have been submitted to the Chairperson.");
+      showSystemNotification("Export PDF is available only after the grades for this section have been submitted to the Registrar.");
       return;
     }
     
@@ -1011,7 +1011,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     );
     
     if (hasIncomplete) {
-      showSystemNotification(`Submission Blocked: All students in the section must have ${encodingTerm === 'midterm' ? 'Midterm' : 'Finals'} grades encoded before submitting to the Chairperson.`);
+      showSystemNotification(`Submission Blocked: All students in the section must have ${encodingTerm === 'midterm' ? 'Midterm' : 'Finals'} grades encoded before submitting to the Registrar.`);
       return;
     }
 
@@ -1254,13 +1254,13 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
             {isSubmittedToChairperson && (
               <div className="border-b border-red-200 bg-red-50 p-4 text-center text-sm font-semibold text-red-700">
-                 These grades have already been uploaded to chairperson and are now locked from further encoding.
+                 These grades have been submitted to the Registrar and are locked from further encoding.
               </div>
             )}
 
             {currentStatus === 'returned' && sections[activeSection]?.reviewNote ? (
               <div className="border-b border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                <p className="font-semibold">Returned by chairperson</p>
+                <p className="font-semibold">Returned by Registrar</p>
                 <p className="mt-1">{sections[activeSection].reviewNote}</p>
               </div>
             ) : null}
@@ -1407,7 +1407,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                   disabled={isSubmittedToChairperson || hasValidationErrors(activeSection) || isClosed}
                   className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
-                  Submit to Chairperson
+                  Submit to Registrar
                 </button>
               </div>
             </div>
@@ -1416,13 +1416,13 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       )}
 
       </div>
-      <Modal isOpen={!!submitConfirmSection} onClose={() => setSubmitConfirmSection(null)} title="Submit Grades to Chairperson">
+      <Modal isOpen={!!submitConfirmSection} onClose={() => setSubmitConfirmSection(null)} title="Submit Grades to Registrar">
         <div className="flex flex-col gap-4">
           <p className="text-sm text-slate-600">
             Are you sure the encoded grades for <span className="font-semibold text-slate-800">{submitConfirmSection || 'this section'}</span> are final?
           </p>
           <p className="text-sm text-red-600">
-            Once submitted to the Chairperson, these grades cannot be changed or edited anymore.
+            Once submitted to the Registrar, these grades cannot be changed unless the Registrar returns the section with remarks.
           </p>
           <div className="mt-2 flex justify-end gap-3">
             <button
@@ -1461,7 +1461,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             {uploadResult.type === 'success' ? (
               <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
                 <p className="font-bold">Status: Draft - grades remain editable.</p>
-                <p className="mt-1">Nothing was submitted to the Chairperson or finalized. No IPFS upload or Fabric write occurs during Draft import; ledger processing happens only after Chairperson approval and Registrar finalization.</p>
+                <p className="mt-1">Nothing was submitted to the Registrar or finalized. No IPFS upload or Fabric write occurs during Draft import; ledger processing happens only after Registrar review and finalization.</p>
                 {uploadResult.counts && <p className="mt-2 text-xs">Processed: {uploadResult.counts.processed} | Saved: {uploadResult.counts.successful} | Failed: {uploadResult.counts.failed}</p>}
               </div>
             ) : (

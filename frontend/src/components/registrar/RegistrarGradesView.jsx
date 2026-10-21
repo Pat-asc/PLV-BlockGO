@@ -575,16 +575,6 @@ const RegistrarGradesView = ({
         return { finalAverage: rawGrade };
     }, []);
 
-    const formatGradePayload = useCallback((rawGrade) => {
-        const payload = parseGradePayload(rawGrade);
-        const values = [
-            payload.midterm ? `Midterm: ${payload.midterm}` : null,
-            payload.finals ? `Finals: ${payload.finals}` : null,
-            payload.finalAverage ? `Equivalent: ${payload.finalAverage}` : null,
-        ].filter(Boolean);
-        return values.length > 0 ? values.join(' · ') : 'Not recorded';
-    }, [parseGradePayload]);
-
     const formatStudentStanding = useCallback((standing) => {
         switch (standing) {
             case 'dropped':
@@ -1260,17 +1250,18 @@ const RegistrarGradesView = ({
                                                                 <p className="break-all text-sm text-slate-500">{faculty.email}</p>
                                                             </div>
                                                             <div>
-                                                                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Current Assignment</span>
+                                                                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Home Department</span>
                                                                 {(!faculty.department || faculty.department === 'Unassigned')
                                                                     ? <span className="inline-block rounded-full bg-red-100 px-3 py-1 text-xs font-bold text-red-800">Unassigned</span>
-                                                                    : <span className="inline-block rounded-lg bg-green-100 px-3 py-1 text-xs font-bold text-green-800">{faculty.department} - {faculty.yearLevel}{faculty.section}</span>}
+                                                                    : <span className="inline-block rounded-lg bg-green-100 px-3 py-1 text-xs font-bold text-green-800">{faculty.department}</span>}
+                                                                {facultyAssignments[faculty.id]?.department && faculty.department !== facultyAssignments[faculty.id]?.department ? <span className="ml-2 inline-block rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">CROSS-DEPARTMENT ASSIGNMENT</span> : null}
                                                             </div>
                                                         </div>
                                                     </div>
 
                                                     <div className="grid gap-3 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,1fr)_auto]">
                                                         <label className="block">
-                                                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Department</span>
+                                                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Subject Department</span>
                                                             <select defaultValue="" onChange={(e) => setFacultyAssignments(prev => ({...prev, [faculty.id]: {...prev[faculty.id], department: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
                                                                 <option value="" disabled>Select department</option>
                                                                 {departments.map(d => <option key={d} value={d}>{d}</option>)}

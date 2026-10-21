@@ -20,7 +20,7 @@ public static class RegistrarFinalizationScopeService
                    COALESCE(pgr.note, ''), COALESCE(pgr.subject_title, ''),
                    COALESCE(pgr.professor_name, ''), COALESCE(pgr.program, ''),
                    COALESCE(pgr.units, 0), COALESCE(pgr.submitted_by, ''),
-                   pgr.recorded_at, COALESCE(pgr.transaction_id, ''),
+                   COALESCE(pgr.submitted_at, pgr.recorded_at), COALESCE(pgr.transaction_id, ''),
                    COALESCE(pgr.transaction_hash, '')
             FROM pending_grade_records pgr
             JOIN facultysections fs
@@ -28,7 +28,7 @@ public static class RegistrarFinalizationScopeService
              AND LOWER(TRIM(fs.school_year)) = LOWER(TRIM(pgr.school_year))
              AND LOWER(TRIM(fs.semester)) = LOWER(TRIM(pgr.semester))
              AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(pgr.subject_code))
-            WHERE LOWER(TRIM(pgr.status)) = 'departmentapproved'
+            WHERE LOWER(TRIM(pgr.status)) IN ('submittedtoregistrar', 'departmentapproved')
               AND LOWER(TRIM(pgr.semester)) = LOWER(TRIM(@semester))
               AND LOWER(TRIM(pgr.term)) = LOWER(TRIM(@term))
             ORDER BY pgr.school_year, pgr.semester, pgr.course, pgr.section,

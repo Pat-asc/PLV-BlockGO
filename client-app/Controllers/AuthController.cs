@@ -1101,7 +1101,7 @@ namespace Client_app.Controllers
                            enrollment.school_year, enrollment.semester, enrollment.status,
                            prog.program_code, enrollment.enrollment_state, enrollment.batch_year,
                             enrollment.nstp_option, enrollment.enrollment_id,
-                            enrollment.academic_section_id
+                            enrollment.academic_section_id, sp.is_irregular
                     FROM Users u
                     JOIN StudentProfiles sp ON u.id = sp.user_id
                     LEFT JOIN LATERAL (
@@ -1167,7 +1167,8 @@ namespace Client_app.Controllers
                             batchYear = reader.IsDBNull(16) ? (int?)null : reader.GetInt32(16),
                             nstpOption = reader.IsDBNull(17) ? null : reader.GetString(17),
                             enrollmentId = reader.IsDBNull(18) ? (long?)null : reader.GetInt64(18),
-                            academicSectionId = reader.IsDBNull(19) ? (int?)null : reader.GetInt32(19)
+                            academicSectionId = reader.IsDBNull(19) ? (int?)null : reader.GetInt32(19),
+                            isIrregular = !reader.IsDBNull(20) && reader.GetBoolean(20)
                         });
                     }
                 }
@@ -1397,6 +1398,198 @@ namespace Client_app.Controllers
                 });
             }
             return Ok(new { status = "Success", data = new { studentId = id, schoolYear = normalizedYear, semester = normalizedSemester, section = sectionName, subjects } });
+        }
+
+        [HttpGet("students/{id:int}/non-regular-subject-options")]
+        [Authorize(Roles = "department_admin")]
+        public async Task<IActionResult> GetNonRegularSubjectOptions(int id, CancellationToken cancellationToken)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            var context = await LoadIrregularStudentContextAsync(connection, id, cancellationToken);
+            if (context is null) return NotFound(new { status = "Error", message = "Current enrolled student was not found." });
+            if (!await CanManageAcademicProgramAsync(connection, context.Value.ProgramCode, cancellationToken)) return Forbid();
+            if (!context.Value.IsIrregular)
+                return StatusCode(StatusCodes.Status403Forbidden, new { status = "Error", code = "REGULAR_STUDENT", message = "Cross-curriculum subjects are available only to officially tagged irregular students." });
+
+            var options = new List<object>();
+            await using (var command = new NpgsqlCommand(@"
+                SELECT p.program_id, p.program_code, p.program_name,
+                       c.curriculum_id, c.curriculum_name, c.curriculum_version,
+                       cs.subject_id, cs.subject_code, cs.subject_title, cs.units, COALESCE(cs.prerequisite, ''),
+                       fs.id, fs.section, COALESCE(fs.schedule, '')
+                FROM curriculums c
+                JOIN academic_programs p ON p.program_id = c.program_id AND p.is_active = TRUE
+                JOIN curriculum_subjects cs ON cs.curriculum_id = c.curriculum_id
+                LEFT JOIN facultysections fs
+                  ON LOWER(fs.subject) = LOWER(cs.subject_code)
+                 AND fs.school_year = @schoolYear AND fs.semester = @semester AND fs.is_active = TRUE
+                 AND LOWER(fs.department) IN (LOWER(p.program_code), LOWER(p.program_name))
+                WHERE c.status = 'PUBLISHED' AND cs.semester = @semester
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM student_enrollments current_enrollment
+                      JOIN curriculum_subjects current_subject
+                        ON current_subject.curriculum_id = current_enrollment.curriculum_id
+                       AND current_subject.year_level = current_enrollment.year_level
+                       AND current_subject.semester = current_enrollment.semester
+                      WHERE current_enrollment.enrollment_id = @enrollmentId
+                        AND LOWER(BTRIM(current_subject.subject_code)) = LOWER(BTRIM(cs.subject_code)))
+                ORDER BY p.program_name, c.curriculum_name, cs.subject_code, fs.section;", connection))
+            {
+                command.Parameters.AddWithValue("schoolYear", context.Value.SchoolYear);
+                command.Parameters.AddWithValue("semester", context.Value.Semester);
+                command.Parameters.AddWithValue("enrollmentId", context.Value.EnrollmentId);
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken)) options.Add(new
+                {
+                    programId = reader.GetInt32(0), programCode = reader.GetString(1), programName = reader.GetString(2),
+                    curriculumId = reader.GetInt64(3), curriculumName = reader.GetString(4), curriculumVersion = reader.GetString(5),
+                    subjectId = reader.GetInt64(6), subjectCode = reader.GetString(7), subjectTitle = reader.GetString(8),
+                    units = reader.GetDecimal(9), prerequisite = reader.GetString(10),
+                    facultySectionId = reader.IsDBNull(11) ? (int?)null : reader.GetInt32(11),
+                    section = reader.IsDBNull(12) ? null : reader.GetString(12), schedule = reader.GetString(13)
+                });
+            }
+            var existing = new List<object>();
+            await using (var existingCommand = new NpgsqlCommand(@"
+                SELECT assignment.subject_id, assignment.subject_code, subject.subject_title,
+                       program.program_code, curriculum.curriculum_name, curriculum.curriculum_version,
+                       assignment.faculty_section_id, section.section, COALESCE(section.schedule, ''),
+                       assignment.override_reason, assignment.added_at
+                FROM student_non_regular_subjects assignment
+                JOIN curriculum_subjects subject ON subject.subject_id = assignment.subject_id
+                JOIN academic_programs program ON program.program_id = assignment.source_program_id
+                JOIN curriculums curriculum ON curriculum.curriculum_id = assignment.source_curriculum_id
+                JOIN facultysections section ON section.id = assignment.faculty_section_id
+                WHERE assignment.student_user_id = @studentId
+                  AND assignment.school_year = @schoolYear
+                  AND assignment.semester = @semester
+                  AND assignment.status = 'ACTIVE'
+                ORDER BY program.program_code, assignment.subject_code;", connection))
+            {
+                existingCommand.Parameters.AddWithValue("studentId", id);
+                existingCommand.Parameters.AddWithValue("schoolYear", context.Value.SchoolYear);
+                existingCommand.Parameters.AddWithValue("semester", context.Value.Semester);
+                await using var reader = await existingCommand.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken)) existing.Add(new
+                {
+                    subjectId = reader.GetInt64(0), subjectCode = reader.GetString(1), subjectTitle = reader.GetString(2),
+                    programCode = reader.GetString(3), curriculumName = reader.GetString(4), curriculumVersion = reader.GetString(5),
+                    facultySectionId = reader.GetInt32(6), section = reader.GetString(7), schedule = reader.GetString(8),
+                    overrideReason = reader.IsDBNull(9) ? null : reader.GetString(9), createdAt = reader.GetDateTime(10)
+                });
+            }
+            return Ok(new { status = "Success", student = new { id, context.Value.SchoolYear, context.Value.Semester, isIrregular = true }, data = options, existing });
+        }
+
+        [HttpPost("students/{id:int}/non-regular-subjects")]
+        [Authorize(Roles = "department_admin")]
+        public async Task<IActionResult> AssignNonRegularSubjects(int id, [FromBody] NonRegularSubjectAssignmentRequest request, CancellationToken cancellationToken)
+        {
+            if (request?.Selections is null || request.Selections.Count == 0)
+                return BadRequest(new { status = "Error", message = "Select at least one subject." });
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            var context = await LoadIrregularStudentContextAsync(connection, id, cancellationToken);
+            if (context is null) return NotFound(new { status = "Error", message = "Current enrolled student was not found." });
+            if (!await CanManageAcademicProgramAsync(connection, context.Value.ProgramCode, cancellationToken)) return Forbid();
+            if (!context.Value.IsIrregular)
+                return StatusCode(StatusCodes.Status403Forbidden, new { status = "Error", code = "REGULAR_STUDENT", message = "Only officially tagged irregular students may receive non-regular subjects." });
+
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            foreach (var selection in request.Selections.GroupBy(item => item.SubjectId).Select(group => group.First()))
+            {
+                await using var resolve = new NpgsqlCommand(@"
+                    SELECT p.program_id, c.curriculum_id, cs.subject_code, COALESCE(cs.prerequisite, '')
+                    FROM curriculum_subjects cs
+                    JOIN curriculums c ON c.curriculum_id = cs.curriculum_id AND c.status = 'PUBLISHED'
+                    JOIN academic_programs p ON p.program_id = c.program_id AND p.is_active = TRUE
+                    JOIN facultysections fs ON fs.id = @facultySectionId AND fs.is_active = TRUE
+                    WHERE cs.subject_id = @subjectId
+                      AND cs.semester = @semester
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM student_enrollments current_enrollment
+                          JOIN curriculum_subjects current_subject
+                            ON current_subject.curriculum_id = current_enrollment.curriculum_id
+                           AND current_subject.year_level = current_enrollment.year_level
+                           AND current_subject.semester = current_enrollment.semester
+                          WHERE current_enrollment.enrollment_id = @enrollmentId
+                            AND LOWER(BTRIM(current_subject.subject_code)) = LOWER(BTRIM(cs.subject_code)))
+                      AND LOWER(fs.subject) = LOWER(cs.subject_code)
+                      AND fs.school_year = @schoolYear AND fs.semester = @semester
+                      AND LOWER(fs.department) IN (LOWER(p.program_code), LOWER(p.program_name))
+                    LIMIT 1;", connection, transaction);
+                resolve.Parameters.AddWithValue("facultySectionId", selection.FacultySectionId);
+                resolve.Parameters.AddWithValue("subjectId", selection.SubjectId);
+                resolve.Parameters.AddWithValue("enrollmentId", context.Value.EnrollmentId);
+                resolve.Parameters.AddWithValue("schoolYear", context.Value.SchoolYear);
+                resolve.Parameters.AddWithValue("semester", context.Value.Semester);
+                await using var reader = await resolve.ExecuteReaderAsync(cancellationToken);
+                if (!await reader.ReadAsync(cancellationToken))
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return BadRequest(new { status = "Error", message = "A selected subject does not have a valid current-period teaching assignment." });
+                }
+                var programId = reader.GetInt32(0);
+                var curriculumId = reader.GetInt64(1);
+                var subjectCode = reader.GetString(2);
+                var prerequisite = reader.GetString(3);
+                await reader.CloseAsync();
+                if (!string.IsNullOrWhiteSpace(prerequisite) &&
+                    !new[] { "none", "n/a", "na", "-" }.Contains(prerequisite.Trim().ToLowerInvariant()) &&
+                    string.IsNullOrWhiteSpace(selection.OverrideReason))
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return BadRequest(new { status = "Error", code = "PREREQUISITE_OVERRIDE_REASON_REQUIRED", message = $"{subjectCode} has a prerequisite. Record an authorized override reason." });
+                }
+                await using var insert = new NpgsqlCommand(@"
+                    INSERT INTO student_non_regular_subjects
+                        (student_user_id, enrollment_id, school_year, semester, source_program_id,
+                         source_curriculum_id, subject_id, subject_code, faculty_section_id, added_by, override_reason)
+                    VALUES (@studentId, @enrollmentId, @schoolYear, @semester, @programId,
+                            @curriculumId, @subjectId, @subjectCode, @facultySectionId,
+                            (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1), @overrideReason)
+                    ON CONFLICT (student_user_id, school_year, semester, subject_id) DO NOTHING;", connection, transaction);
+                insert.Parameters.AddWithValue("studentId", id);
+                insert.Parameters.AddWithValue("enrollmentId", context.Value.EnrollmentId);
+                insert.Parameters.AddWithValue("schoolYear", context.Value.SchoolYear);
+                insert.Parameters.AddWithValue("semester", context.Value.Semester);
+                insert.Parameters.AddWithValue("programId", programId);
+                insert.Parameters.AddWithValue("curriculumId", curriculumId);
+                insert.Parameters.AddWithValue("subjectId", selection.SubjectId);
+                insert.Parameters.AddWithValue("subjectCode", subjectCode);
+                insert.Parameters.AddWithValue("facultySectionId", selection.FacultySectionId);
+                insert.Parameters.AddWithValue("actor", User.Identity?.Name ?? string.Empty);
+                insert.Parameters.AddWithValue("overrideReason", (object?)selection.OverrideReason?.Trim() ?? DBNull.Value);
+                if (await insert.ExecuteNonQueryAsync(cancellationToken) == 0)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return Conflict(new { status = "Error", code = "DUPLICATE_NON_REGULAR_SUBJECT", message = $"{subjectCode} is already assigned for this academic period." });
+                }
+            }
+            await transaction.CommitAsync(cancellationToken);
+            await SafeNotifyAcademicDataChangedAsync("non_regular_subjects_assigned", context.Value.ProgramCode, User.Identity?.Name);
+            return Ok(new { status = "Success", assignedCount = request.Selections.Count });
+        }
+
+        private async Task<(long EnrollmentId, string SchoolYear, string Semester, string ProgramCode, bool IsIrregular)?> LoadIrregularStudentContextAsync(
+            NpgsqlConnection connection, int studentUserId, CancellationToken cancellationToken)
+        {
+            await using var command = new NpgsqlCommand(@"
+                SELECT e.enrollment_id, e.school_year, e.semester, p.program_code, sp.is_irregular
+                FROM student_enrollments e
+                JOIN studentprofiles sp ON sp.user_id = e.student_user_id
+                JOIN academic_programs p ON p.program_id = e.program_id
+                JOIN academic_periods ap ON ap.status = 'ACTIVE' AND ap.school_year = e.school_year AND ap.semester = e.semester
+                WHERE e.student_user_id = @studentUserId AND e.status = 'ENROLLED'
+                ORDER BY e.updated_at DESC LIMIT 1;", connection);
+            command.Parameters.AddWithValue("studentUserId", studentUserId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken)
+                ? (reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetBoolean(4))
+                : null;
         }
 
         [HttpGet("students/unassigned-enrolled")]
@@ -2149,6 +2342,162 @@ namespace Client_app.Controllers
             }
         }
 
+        [HttpGet("faculty/access-status")]
+        [Authorize(Roles = "faculty")]
+        public async Task<IActionResult> GetFacultyAccessStatus()
+        {
+            var email = User.Identity?.Name?.Trim() ?? string.Empty;
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(HttpContext.RequestAborted);
+            await using var command = new NpgsqlCommand(@"
+                SELECT COALESCE(fac.is_blocked, FALSE), COALESCE(fac.block_reason, '')
+                FROM users u
+                LEFT JOIN faculty_access_controls fac ON fac.faculty_user_id = u.id
+                WHERE LOWER(u.email) = LOWER(@email) AND LOWER(u.role) = 'faculty'
+                LIMIT 1;", connection);
+            command.Parameters.AddWithValue("email", email);
+            await using var reader = await command.ExecuteReaderAsync(HttpContext.RequestAborted);
+            if (!await reader.ReadAsync(HttpContext.RequestAborted)) return NotFound(new { status = "Error", message = "Faculty account was not found." });
+            return Ok(new { status = "Success", isBlocked = reader.GetBoolean(0), reason = reader.GetString(1) });
+        }
+
+        [HttpGet("faculty/access-controls")]
+        [Authorize(Roles = "department_admin")]
+        public async Task<IActionResult> GetFacultyAccessControls()
+        {
+            var actor = User.Identity?.Name?.Trim() ?? string.Empty;
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(HttpContext.RequestAborted);
+            var rows = new List<object>();
+            await using var command = new NpgsqlCommand(@"
+                SELECT u.id, u.email, fp.full_name, fp.department,
+                       COALESCE(fac.is_blocked, FALSE), COALESCE(fac.block_reason, ''),
+                       fac.blocked_at, fac.unblocked_at
+                FROM users u
+                JOIN facultyprofiles fp ON fp.user_id = u.id
+                JOIN users actor ON LOWER(actor.email) = LOWER(@actor)
+                JOIN adminprofiles ap ON ap.user_id = actor.id
+                JOIN academic_programs p
+                  ON LOWER(ap.department) IN (LOWER(p.program_code), LOWER(p.program_name))
+                LEFT JOIN faculty_access_controls fac ON fac.faculty_user_id = u.id
+                WHERE LOWER(u.role) = 'faculty' AND u.is_active = TRUE
+                  AND LOWER(fp.department) IN (LOWER(p.program_code), LOWER(p.program_name))
+                ORDER BY fp.full_name;", connection);
+            command.Parameters.AddWithValue("actor", actor);
+            await using var reader = await command.ExecuteReaderAsync(HttpContext.RequestAborted);
+            while (await reader.ReadAsync(HttpContext.RequestAborted))
+                rows.Add(new
+                {
+                    facultyUserId = reader.GetInt32(0), email = reader.GetString(1),
+                    fullName = reader.GetString(2), department = reader.GetString(3),
+                    isBlocked = reader.GetBoolean(4), reason = reader.GetString(5),
+                    blockedAt = reader.IsDBNull(6) ? (DateTime?)null : reader.GetDateTime(6),
+                    unblockedAt = reader.IsDBNull(7) ? (DateTime?)null : reader.GetDateTime(7)
+                });
+            return Ok(new { status = "Success", faculties = rows });
+        }
+
+        [HttpPost("faculty/{facultyUserId:int}/block")]
+        [Authorize(Roles = "department_admin")]
+        public async Task<IActionResult> BlockFaculty(int facultyUserId, [FromBody] FacultyBlockRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request?.Reason))
+                return BadRequest(new { status = "Error", code = "BLOCK_REASON_REQUIRED", message = "A reason for blocking is required." });
+            return await SetFacultyBlockedAsync(facultyUserId, true, request.Reason.Trim());
+        }
+
+        [HttpPost("faculty/{facultyUserId:int}/unblock")]
+        [Authorize(Roles = "department_admin")]
+        public Task<IActionResult> UnblockFaculty(int facultyUserId) =>
+            SetFacultyBlockedAsync(facultyUserId, false, null);
+
+        private async Task<IActionResult> SetFacultyBlockedAsync(int facultyUserId, bool isBlocked, string? reason)
+        {
+            var actorEmail = User.Identity?.Name?.Trim() ?? string.Empty;
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(HttpContext.RequestAborted);
+            await using var transaction = await connection.BeginTransactionAsync(HttpContext.RequestAborted);
+
+            int actorId;
+            string facultyEmail;
+            string department;
+            await using (var scope = new NpgsqlCommand(@"
+                SELECT actor.id, faculty.email, fp.department
+                FROM users actor
+                JOIN adminprofiles ap ON ap.user_id = actor.id
+                JOIN academic_programs p
+                  ON LOWER(ap.department) IN (LOWER(p.program_code), LOWER(p.program_name))
+                 AND p.is_active = TRUE
+                JOIN users faculty ON faculty.id = @facultyUserId
+                JOIN facultyprofiles fp ON fp.user_id = faculty.id
+                WHERE LOWER(actor.email) = LOWER(@actorEmail)
+                  AND LOWER(actor.role) = 'department_admin'
+                  AND LOWER(faculty.role) = 'faculty'
+                  AND faculty.is_active = TRUE
+                  AND LOWER(fp.department) IN (LOWER(p.program_code), LOWER(p.program_name))
+                FOR UPDATE OF faculty;", connection, transaction))
+            {
+                scope.Parameters.AddWithValue("facultyUserId", facultyUserId);
+                scope.Parameters.AddWithValue("actorEmail", actorEmail);
+                await using var reader = await scope.ExecuteReaderAsync(HttpContext.RequestAborted);
+                if (!await reader.ReadAsync(HttpContext.RequestAborted))
+                {
+                    await transaction.RollbackAsync(HttpContext.RequestAborted);
+                    return Forbid();
+                }
+                actorId = reader.GetInt32(0);
+                facultyEmail = reader.GetString(1);
+                department = reader.GetString(2);
+            }
+
+            await using (var upsert = new NpgsqlCommand(@"
+                INSERT INTO faculty_access_controls
+                    (faculty_user_id, department, is_blocked, block_reason, blocked_by, blocked_at, unblocked_by, unblocked_at, updated_at)
+                VALUES (@facultyUserId, @department, @isBlocked, @reason,
+                        CASE WHEN @isBlocked THEN @actorId ELSE NULL END,
+                        CASE WHEN @isBlocked THEN CURRENT_TIMESTAMP ELSE NULL END,
+                        CASE WHEN @isBlocked THEN NULL ELSE @actorId END,
+                        CASE WHEN @isBlocked THEN NULL ELSE CURRENT_TIMESTAMP END,
+                        CURRENT_TIMESTAMP)
+                ON CONFLICT (faculty_user_id) DO UPDATE SET
+                    department = EXCLUDED.department,
+                    is_blocked = EXCLUDED.is_blocked,
+                    block_reason = CASE WHEN EXCLUDED.is_blocked THEN EXCLUDED.block_reason ELSE NULL END,
+                    blocked_by = CASE WHEN EXCLUDED.is_blocked THEN EXCLUDED.blocked_by ELSE faculty_access_controls.blocked_by END,
+                    blocked_at = CASE WHEN EXCLUDED.is_blocked THEN EXCLUDED.blocked_at ELSE faculty_access_controls.blocked_at END,
+                    unblocked_by = CASE WHEN EXCLUDED.is_blocked THEN NULL ELSE EXCLUDED.unblocked_by END,
+                    unblocked_at = CASE WHEN EXCLUDED.is_blocked THEN NULL ELSE EXCLUDED.unblocked_at END,
+                    updated_at = CURRENT_TIMESTAMP;", connection, transaction))
+            {
+                upsert.Parameters.AddWithValue("facultyUserId", facultyUserId);
+                upsert.Parameters.AddWithValue("department", department);
+                upsert.Parameters.AddWithValue("isBlocked", isBlocked);
+                upsert.Parameters.AddWithValue("reason", (object?)reason ?? DBNull.Value);
+                upsert.Parameters.AddWithValue("actorId", actorId);
+                await upsert.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+            }
+
+            await using (var audit = new NpgsqlCommand(@"
+                INSERT INTO faculty_access_events (faculty_user_id, department, action, reason, acted_by)
+                VALUES (@facultyUserId, @department, @action, @reason, @actorId);", connection, transaction))
+            {
+                audit.Parameters.AddWithValue("facultyUserId", facultyUserId);
+                audit.Parameters.AddWithValue("department", department);
+                audit.Parameters.AddWithValue("action", isBlocked ? "BLOCKED" : "UNBLOCKED");
+                audit.Parameters.AddWithValue("reason", (object?)reason ?? DBNull.Value);
+                audit.Parameters.AddWithValue("actorId", actorId);
+                await audit.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+            }
+            await transaction.CommitAsync(HttpContext.RequestAborted);
+
+            await _chatHubContext.Clients.Group($"private_{facultyEmail.ToLowerInvariant()}").SendAsync("FacultyAccessChanged", new
+            {
+                IsBlocked = isBlocked, Reason = reason ?? string.Empty, ChangedAt = DateTime.UtcNow
+            }, HttpContext.RequestAborted);
+            await SafeNotifyAcademicDataChangedAsync(isBlocked ? "faculty_blocked" : "faculty_unblocked", department, actorEmail);
+            return Ok(new { status = "Success", isBlocked, reason = reason ?? string.Empty });
+        }
+
         [HttpGet("faculty/assignment-options")]
         [Authorize(Roles = "department_admin,registrar")]
         public async Task<IActionResult> GetFacultyAssignmentOptions([FromQuery] string department)
@@ -2360,19 +2709,42 @@ namespace Client_app.Controllers
             {
                 await using var conn = new NpgsqlConnection(_connectionString);
                 await conn.OpenAsync();
+                var academicSectionId = request.AcademicSectionId;
+                var schoolYear = request.SchoolYear;
+                var semester = request.Semester;
+                if (academicSectionId <= 0 || string.IsNullOrWhiteSpace(schoolYear) || string.IsNullOrWhiteSpace(semester))
+                {
+                    await using var periodCommand = new NpgsqlCommand(@"
+                        SELECT school_year, semester FROM academic_periods
+                        WHERE status = 'ACTIVE' ORDER BY opened_at DESC LIMIT 1;", conn);
+                    await using var periodReader = await periodCommand.ExecuteReaderAsync(HttpContext.RequestAborted);
+                    if (!await periodReader.ReadAsync(HttpContext.RequestAborted))
+                        return BadRequest(new { status = "Error", message = "No active academic period is configured." });
+                    schoolYear = periodReader.GetString(0);
+                    semester = periodReader.GetString(1);
+                    await periodReader.CloseAsync();
+                    var sectionLabel = $"{request.YearLevel}-{request.Section}";
+                    var resolvedSection = await FacultyBulkAssignmentService.ResolveAcademicSectionAsync(
+                        conn, request.Department, sectionLabel, schoolYear, semester,
+                        request.AcademicSectionId > 0 ? request.AcademicSectionId : null,
+                        (program, token) => CanManageAcademicProgramAsync(conn, program, token),
+                        HttpContext.RequestAborted);
+                    academicSectionId = resolvedSection.Id;
+                }
                 var saved = await FacultyBulkAssignmentService.AssignAsync(
                     conn,
                     new BulkFacultyAssignmentItemRequest
                     {
                         FacultyUserId = id,
                         SubjectCode = request.Subject ?? string.Empty,
-                        AcademicSectionId = request.AcademicSectionId,
-                        SchoolYear = request.SchoolYear,
-                        Semester = request.Semester,
+                        AcademicSectionId = academicSectionId,
+                        SchoolYear = schoolYear,
+                        Semester = semester,
                         Schedule = request.Schedule
                     },
                     (program, token) => CanManageAcademicProgramAsync(conn, program, token),
-                    HttpContext.RequestAborted);
+                    HttpContext.RequestAborted,
+                    User.IsInRole("registrar"));
 
                 if (!saved.AlreadyAssigned)
                 {
@@ -2394,7 +2766,10 @@ namespace Client_app.Controllers
                         facultyAssignmentId = saved.Id,
                         assignmentCycleId = saved.AssignmentCycleId,
                         facultyId = saved.FacultyUserId,
+                        facultyHomeDepartment = saved.FacultyHomeDepartment,
                         department = saved.Program,
+                        subjectDepartment = saved.Program,
+                        isCrossDepartment = saved.IsCrossDepartment,
                         section = saved.Section,
                         yearLevel = saved.YearLevel,
                         subject = saved.SubjectCode,
@@ -2494,7 +2869,8 @@ namespace Client_app.Controllers
                         connection,
                         authoritativeItem,
                         (program, token) => CanManageAcademicProgramAsync(connection, program, token),
-                        cancellationToken);
+                        cancellationToken,
+                        User.IsInRole("registrar"));
                     if (saved.AlreadyAssigned) alreadyAssigned++;
                     else created++;
 

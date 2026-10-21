@@ -138,9 +138,9 @@ flowchart TD
     CH -->|assign faculty to subject-section-period| LOAD[Faculty loading]
     LOAD --> FAC[Faculty roster and grade workspace]
 
-    FAC -->|encode and submit| REVIEW[Chairperson grade review]
-    REVIEW -->|return with remarks| FAC
-    REVIEW -->|approve and send| FINALQ[Registrar finalization queue]
+    FAC -->|encode and submit| FINALQ[Registrar review and finalization queue]
+    FINALQ -->|return with reason| FAC
+    CH -->|read-only realtime observation| FINALQ
     FINALQ -->|finalize| FABRIC[Finalized Fabric grade]
     FABRIC -->|release exact version| STUDENT[Student grade view]
 
@@ -154,8 +154,8 @@ flowchart TD
 |---|---|---|
 | Student | Own profile, subjects, released grades, own transaction history | Read only; own identity and released records only |
 | Faculty | Assigned rosters, draft/returned grades, section submission | Current application workflow stages in PostgreSQL; legacy issue functions still exist but are not the canonical finalization path |
-| Chairperson / `department_admin` | Curriculum authoring, faculty loading, department grade review, return/approval/handoff | May read department-scoped history and create an authorized new version of an already-finalized grade |
-| Registrar | Accounts, enrollment, sections, periods, curriculum approval, finalization, release | Sole canonical batch finalizer; may read finalized grades but must not directly correct a finalized grade |
+| Chairperson / `department_admin` | Curriculum authoring, faculty loading/access control, department grade observation, irregular-subject assignment | May read department-scoped workflow/history and create an authorized new version of an already-finalized grade; cannot approve or return active Faculty submissions |
+| Registrar | Accounts, enrollment, sections, periods, curriculum approval, submission review, return, finalization, release | Sole active-workflow reviewer and canonical batch finalizer; may read finalized grades but must not directly correct a finalized grade |
 | System Administrator | Registrar accounts, support, monitoring, transactions, sanitized world-state browser | Database-only account; read paths can use the protected Registrar service identity fallback; no personal Fabric wallet |
 
 Authorization is enforced more than once:
@@ -193,13 +193,10 @@ These states belong to `pending_grade_records` in PostgreSQL.
 ```mermaid
 stateDiagram-v2
     [*] --> Draft: Faculty records or imports grades
-    Draft --> SubmittedToChairperson: Faculty submits complete section
-    Returned --> SubmittedToChairperson: Faculty corrects and resubmits
-    SubmittedToChairperson --> Returned: Chairperson returns with remarks
-    SubmittedToChairperson --> ChairpersonApproved: Chairperson approves exact section rows
-    ChairpersonApproved --> DepartmentApproved: Chairperson sends to Registrar
-    DepartmentApproved --> Returned: Registrar returns staged work
-    DepartmentApproved --> FabricCommit: Registrar finalizes exact batch
+    Draft --> SubmittedToRegistrar: Faculty submits complete section
+    Returned --> SubmittedToRegistrar: Faculty corrects and resubmits
+    SubmittedToRegistrar --> Returned: Registrar returns exact submission with reason
+    SubmittedToRegistrar --> FabricCommit: Registrar approves and finalizes exact batch
     FabricCommit --> [*]: Verified staging rows removed
 ```
 
@@ -235,7 +232,7 @@ sequenceDiagram
 
     Registrar->>UI: Finalize approved section
     UI->>API: POST /api/Grades/finalize with record IDs
-    API->>PG: Load current DepartmentApproved queue
+    API->>PG: Load current SubmittedToRegistrar queue
     API->>API: Verify role, scope, period, status, and exact records
     API->>BS: FinalizeApprovedGradesAsync approved snapshots
     BS->>LS: POST /api/finalize-approved-grades<br/>internal key plus x-user-identity
@@ -249,7 +246,7 @@ sequenceDiagram
     LS-->>BS: Verified response
     BS-->>API: Finalized records
     API->>API: Compare committed records to staged snapshots
-    API->>PG: Delete only verified DepartmentApproved staging rows
+    API->>PG: Delete only verified SubmittedToRegistrar staging rows
     API->>IP: Build and encrypt finalized grading-sheet archive
     API->>PG: Save archive CID/status metadata
     API-->>UI: Finalized plus archive status
@@ -366,6 +363,8 @@ Key sources:
 | Programs, curricula, subjects, active curriculum assignment | PostgreSQL | `CurriculumsController`, curriculum migrations |
 | Academic periods, enrollment, sections | PostgreSQL | `AuthController`, `SectioningController`, `academic_periods`, `student_enrollments`, `academicsections` |
 | Faculty assignments and schedule | PostgreSQL | `facultysections`, `grade_assignment_cycles` |
+| Faculty access state and block/unblock audit | PostgreSQL | `faculty_access_controls`, `faculty_access_events` |
+| Official irregular flag and cross-curriculum assignments | PostgreSQL | `studentprofiles.is_irregular`, `student_non_regular_subjects` |
 | Draft, returned, submitted, approved grades | PostgreSQL | `pending_grade_records` |
 | Finalized grade current value | Fabric world state, materialized in peer CouchDB | `FinalizeApprovedGrades`, `ReadGrade`, `GetAllGrades` |
 | Every finalized grade version | Fabric block/key history | `GetGradeHistory`, `GetStudentTransactions` |

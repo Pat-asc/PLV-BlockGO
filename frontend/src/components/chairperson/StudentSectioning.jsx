@@ -16,6 +16,8 @@ import {
   fetchApprovedStudents,
   fetchCurriculum,
   fetchDepartmentSections,
+  fetchNonRegularSubjectOptions,
+  assignNonRegularSubjects,
 } from "../../services/api";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
 import CurriculumViewer from "../shared/CurriculumViewer";
@@ -158,6 +160,8 @@ const getCurrentRolloverBatches = (workspaces = []) => {
 
 const buildIrregularSubjectKey = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const hasPrerequisite = (value = "") =>
+  Boolean(value.trim()) && !["none", "n/a", "na", "-"].includes(value.trim().toLowerCase());
 const BACKEND_BATCH_KEY_PREFIX = "backend-approved-students";
 const BACKEND_SYNCED_AT = "1970-01-01T00:00:00.000Z";
 
@@ -234,7 +238,8 @@ const buildBackendBatch = (department, approvedStudents = [], academicSections =
         yearLevel: inferredYearLevel,
         sectionCode,
         sectionName: sectionCode ? getDefaultSectionName(department, sectionCode) : "",
-        studentType: "Regular",
+        studentType: student.isIrregular ? "Irregular" : "Regular",
+        isIrregular: Boolean(student.isIrregular),
         remarks: student.assignmentStatus || "",
         curriculumId: student.curriculumId || null,
         curriculumName: student.curriculumName || "",
@@ -320,6 +325,10 @@ function StudentSectioning({
   const [programError, setProgramError] = useState("");
   const [curriculumView, setCurriculumView] = useState(null);
   const [curriculumLoading, setCurriculumLoading] = useState(false);
+  const [nonRegularView, setNonRegularView] = useState(null);
+  const [nonRegularSearch, setNonRegularSearch] = useState("");
+  const [nonRegularSelections, setNonRegularSelections] = useState({});
+  const [nonRegularSaving, setNonRegularSaving] = useState(false);
   const [batches, setBatches] = useState(() => {
     const saved = localStorage.getItem(STUDENT_BATCHES_KEY);
     return saved ? JSON.parse(saved) : [];
@@ -408,6 +417,40 @@ function StudentSectioning({
       setCurriculumView({ student, curriculum: null, error: error.message || "Unable to load the assigned curriculum." });
     } finally {
       setCurriculumLoading(false);
+    }
+  };
+
+  const handleOpenNonRegularSubjects = async (student) => {
+    setNonRegularView({ student, options: [], existing: [], loading: true, error: "" });
+    setNonRegularSearch("");
+    setNonRegularSelections({});
+    try {
+      const response = await fetchNonRegularSubjectOptions(student.userId);
+      setNonRegularView({
+        student,
+        options: response?.data || [],
+        existing: response?.existing || [],
+        loading: false,
+        error: "",
+      });
+    } catch (error) {
+      setNonRegularView({ student, options: [], existing: [], loading: false, error: error.message || "Unable to load non-regular subject options." });
+    }
+  };
+
+  const handleSaveNonRegularSubjects = async () => {
+    const selections = Object.values(nonRegularSelections).filter((selection) => selection.selected);
+    if (!selections.length || !nonRegularView?.student?.userId) return;
+    setNonRegularSaving(true);
+    try {
+      await assignNonRegularSubjects(nonRegularView.student.userId, selections.map(({ subjectId, facultySectionId, overrideReason }) => ({ subjectId, facultySectionId, overrideReason })));
+      showSystemNotification(`${selections.length} non-regular subject${selections.length === 1 ? "" : "s"} assigned.`, "success");
+      setNonRegularView(null);
+      window.dispatchEvent(new CustomEvent("blockgo:academic-data-changed"));
+    } catch (error) {
+      setNonRegularView((current) => ({ ...current, error: error.message || "Unable to assign the selected subjects." }));
+    } finally {
+      setNonRegularSaving(false);
     }
   };
 
@@ -3011,7 +3054,10 @@ function StudentSectioning({
                             ) : null}
                           </td>
                           <td className="px-4 py-3 text-slate-700 dark:text-slate-200">
-                            {buildStudentName(student)}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span>{buildStudentName(student)}</span>
+                              {student.isIrregular ? <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">Irregular</span> : null}
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
                             {student.sex || "--"}
@@ -3045,7 +3091,7 @@ function StudentSectioning({
                             )}
                           </td>
                           <td className="px-4 py-3 text-slate-700 dark:text-slate-200">
-                            {student.curriculumId ? <div><p className="font-semibold">{student.curriculumName || "Assigned curriculum"}</p><p className="text-xs text-slate-500 dark:text-slate-400">Version: {student.curriculumVersion || "—"}</p><button type="button" onClick={() => handleViewCurriculum(student)} className="mt-2 rounded-lg border border-[#003366] px-3 py-1.5 text-xs font-semibold text-[#003366] hover:bg-[#003366] hover:text-white dark:border-sky-300 dark:text-sky-300">View Curriculum</button></div> : <span className="text-slate-500 dark:text-slate-400">No curriculum assigned</span>}
+                            {student.curriculumId ? <div><p className="font-semibold">{student.curriculumName || "Assigned curriculum"}</p><p className="text-xs text-slate-500 dark:text-slate-400">Version: {student.curriculumVersion || "—"}</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => handleViewCurriculum(student)} className="rounded-lg border border-[#003366] px-3 py-1.5 text-xs font-semibold text-[#003366] hover:bg-[#003366] hover:text-white dark:border-sky-300 dark:text-sky-300">View Curriculum</button>{student.isIrregular ? <button type="button" onClick={() => handleOpenNonRegularSubjects(student)} className="rounded-lg border border-violet-300 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-950/40">Add Non-Regular Subject</button> : null}</div></div> : <span className="text-slate-500 dark:text-slate-400">No curriculum assigned</span>}
                           </td>
                           {canEditRoster ? (
                             <td className="px-4 py-3">
@@ -3214,6 +3260,39 @@ function StudentSectioning({
             ) : null}
           </main>
       </div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">Select a Program to view created sections.</div>}
+
+      <Modal
+        isOpen={Boolean(nonRegularView)}
+        onClose={() => !nonRegularSaving && setNonRegularView(null)}
+        title="Assign Non-Regular Subjects"
+        description={nonRegularView ? `${nonRegularView.student.studentId} · ${buildStudentName(nonRegularView.student)} · Officially tagged irregular student` : ""}
+        panelClassName="flex max-h-[90vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6"
+        bodyClassName="min-h-0 flex-1 overflow-y-auto"
+      >
+        {nonRegularView?.error ? <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{nonRegularView.error}</div> : null}
+        {nonRegularView?.loading ? <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">Loading published curriculum subjects and current teaching assignments...</p> : (
+          <div className="space-y-5">
+            {nonRegularView?.existing?.length ? <section className="rounded-xl border border-violet-200 bg-violet-50 p-4 dark:border-violet-900 dark:bg-violet-950/30"><h4 className="font-semibold text-violet-900 dark:text-violet-200">Current non-regular subjects</h4><div className="mt-3 flex flex-wrap gap-2">{nonRegularView.existing.map((item) => <span key={`${item.subjectId}-${item.facultySectionId}`} className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 shadow-sm dark:bg-slate-900 dark:text-violet-300">{item.programCode} · {item.subjectCode} · {item.section}</span>)}</div></section> : null}
+            <label className="block"><span className="mb-1 block text-sm font-semibold text-slate-700 dark:text-slate-200">Search subjects</span><input value={nonRegularSearch} onChange={(event) => setNonRegularSearch(event.target.value)} placeholder="Program, curriculum, code, or title" className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-[#003366] focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-blue-900" /></label>
+            <div className="max-h-[52vh] space-y-3 overflow-y-auto pr-1" data-testid="non-regular-subject-options">
+              {(nonRegularView?.options || []).filter((option) => {
+                const query = nonRegularSearch.trim().toLowerCase();
+                return !query || [option.programCode, option.programName, option.curriculumName, option.subjectCode, option.subjectTitle].some((value) => String(value || "").toLowerCase().includes(query));
+              }).map((option) => {
+                const key = `${option.subjectId}:${option.facultySectionId || "none"}`;
+                const selected = nonRegularSelections[key];
+                const alreadyAssigned = nonRegularView.existing.some((item) => Number(item.subjectId) === Number(option.subjectId));
+                const unavailable = !option.facultySectionId || alreadyAssigned;
+                return <article key={key} className={`rounded-xl border p-4 ${selected?.selected ? "border-violet-500 bg-violet-50 dark:bg-violet-950/30" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
+                  <div className="flex items-start gap-3"><input type="checkbox" className="mt-1 h-4 w-4 accent-violet-700" aria-label={`Select ${option.subjectCode} ${option.section || ""}`} checked={Boolean(selected?.selected)} disabled={unavailable} onChange={(event) => setNonRegularSelections((current) => ({ ...current, [key]: { subjectId: option.subjectId, facultySectionId: option.facultySectionId, overrideReason: current[key]?.overrideReason || "", selected: event.target.checked } }))} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-slate-900 dark:text-slate-100">{option.subjectCode} — {option.subjectTitle}</p><span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">NON-REGULAR</span></div><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{option.programCode} · {option.curriculumName} · Version {option.curriculumVersion}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{option.facultySectionId ? `${option.section} · ${option.schedule || "Schedule not specified"}` : "No current teaching assignment available"}{alreadyAssigned ? " · Already assigned" : ""}</p>{hasPrerequisite(option.prerequisite) ? <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">Prerequisite: {option.prerequisite}</p> : null}</div></div>
+                  {selected?.selected && hasPrerequisite(option.prerequisite) ? <label className="mt-3 block"><span className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-200">Authorized prerequisite override reason</span><textarea value={selected.overrideReason} onChange={(event) => setNonRegularSelections((current) => ({ ...current, [key]: { ...current[key], overrideReason: event.target.value } }))} rows={2} className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-amber-700 dark:bg-slate-800 dark:text-slate-100" /></label> : null}
+                </article>;
+              })}
+            </div>
+            <div className="flex justify-end gap-3 border-t border-slate-200 pt-4 dark:border-slate-700"><button type="button" onClick={() => setNonRegularView(null)} disabled={nonRegularSaving} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200">Cancel</button><button type="button" onClick={handleSaveNonRegularSubjects} disabled={nonRegularSaving || !Object.values(nonRegularSelections).some((item) => item.selected)} className="rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{nonRegularSaving ? "Assigning..." : "Assign Selected Subjects"}</button></div>
+          </div>
+        )}
+      </Modal>
 
       <Modal isOpen={Boolean(curriculumView)} onClose={() => setCurriculumView(null)} title="Assigned Curriculum" description={curriculumView ? `${curriculumView.student.studentId} · ${buildStudentName(curriculumView.student)} · ${curriculumView.student.schoolYear || "Current enrollment"} ${curriculumView.student.semester || ""}` : ""} panelClassName="flex max-h-[90vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6" bodyClassName="min-h-0 flex-1 overflow-y-auto">
         {curriculumView?.error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{curriculumView.error}</div> : <CurriculumViewer curricula={curriculumView?.curriculum ? [curriculumView.curriculum] : []} currentYear={Number.parseInt(curriculumView?.student?.yearLevel, 10) || 0} loading={curriculumLoading} emptyMessage="No curriculum assigned" showInternalMetadata />}

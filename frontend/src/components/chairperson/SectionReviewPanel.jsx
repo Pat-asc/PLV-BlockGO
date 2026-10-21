@@ -59,6 +59,7 @@ function SectionReviewPanel({
   onRetryArchive,
   onClose,
   onBack,
+  observerOnly = false,
 }) {
   const [draftNotes, setDraftNotes] = useState({});
   const [approveConfirmationOpen, setApproveConfirmationOpen] = useState(false);
@@ -150,9 +151,9 @@ function SectionReviewPanel({
   }, { passed: 0, failed: 0, d: 0, ud: 0, w: 0, inc: 0, flagged: 0 }), [rows]);
   const reviewStatus = selectedSection?.reviewStatus || "pending";
   const alreadySent = Boolean(selectedSection?.sentToRegistrar);
-  const canReturn = (reviewStatus === "submitted" || reviewStatus === "approved") && !alreadySent;
-  const canApprove = reviewStatus === "submitted";
-  const showHandoff = reviewStatus === "approved";
+  const canReturn = !observerOnly && (reviewStatus === "submitted" || reviewStatus === "approved") && !alreadySent;
+  const canApprove = !observerOnly && reviewStatus === "submitted";
+  const showHandoff = !observerOnly && reviewStatus === "approved";
   const finalized = reviewStatus === "forwarded";
 
   const confirmApprove = async () => {
@@ -251,6 +252,7 @@ function SectionReviewPanel({
                   <span key={label} className="rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300"><span>{label}</span> <strong>{count}</strong></span>
                 ))}
               </div>
+              {observerOnly && !finalized ? <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200">Department visibility only. The Registrar owns return and finalization decisions for this submission.</p> : null}
               {String(activeTerm).toLowerCase() === "finals" ? <p className="text-xs text-amber-800 dark:text-amber-300">Highlighted names are in the Dean&apos;s List grade range. Official eligibility still depends on all semester subjects.</p> : null}
             </div>
 

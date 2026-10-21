@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchRegistrarDashboardOverview } from '../../services/api';
 
 const emptyCounts = {
+  submittedToRegistrar: 0,
   submittedToChairperson: 0,
   chairpersonApproved: 0,
   departmentApproved: 0,
@@ -37,7 +38,7 @@ function RegistrarDashboard({ filters = {} }) {
     refresh();
     const handleAcademicChange = (event) => {
       const reason = String(event.detail?.reason || event.detail?.Reason || '').toLowerCase();
-      if (['grade_approved', 'grade_finalized', 'grades_sent_to_registrar', 'grade_returned', 'grade_submitted'].includes(reason)) refresh();
+      if (['section_submitted_to_registrar', 'grade_approved', 'grade_finalized', 'grades_sent_to_registrar', 'grade_returned', 'grade_submitted'].includes(reason)) refresh();
     };
     window.addEventListener('blockgo:academic-data-changed', handleAcademicChange);
     return () => {
@@ -47,11 +48,12 @@ function RegistrarDashboard({ filters = {} }) {
   }, [refresh]);
 
   const counts = overview?.counts || emptyCounts;
+  const awaitingRegistrar = (counts.submittedToRegistrar || 0) + (counts.departmentApproved || 0);
   const overviewCards = [
-    { title: 'Awaiting Registrar', value: counts.departmentApproved, subtitle: 'Department-approved sections ready for finalization' },
-    { title: 'Approved by Chairperson', value: counts.chairpersonApproved, subtitle: 'Sections approved but not yet sent to the Registrar' },
+    { title: 'Awaiting Registrar', value: awaitingRegistrar, subtitle: 'Faculty submissions ready for Registrar review and finalization' },
     { title: 'Returned to Faculty', value: counts.returned, subtitle: 'Sections sent back for correction' },
-    { title: 'Submitted to Chairperson', value: counts.submittedToChairperson, subtitle: 'Sections still under Chairperson review' },
+    { title: 'Legacy Chairperson Review', value: counts.submittedToChairperson, subtitle: 'Compatibility rows from the former approval workflow' },
+    { title: 'Legacy Chairperson Approved', value: counts.chairpersonApproved, subtitle: 'Compatibility rows not yet migrated to Registrar review' },
   ];
 
   return (
@@ -79,13 +81,13 @@ function RegistrarDashboard({ filters = {} }) {
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <h3 className="text-xl font-bold text-[#003366] dark:text-blue-300">Chairperson to Registrar Flow</h3>
+          <h3 className="text-xl font-bold text-[#003366] dark:text-blue-300">Faculty to Registrar Flow</h3>
           <div className="inline-flex w-fit rounded-full bg-blue-100 px-4 py-2 text-sm font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-200">Workflow Tracking</div>
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-sm text-slate-500 dark:text-slate-400">Ready for Finalization</p><p className="mt-1 font-semibold text-slate-800 dark:text-slate-100">{counts.departmentApproved}</p></div>
-          <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-sm text-slate-500 dark:text-slate-400">Chairperson Approved</p><p className="mt-1 font-semibold text-slate-800 dark:text-slate-100">{counts.chairpersonApproved}</p></div>
+          <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-sm text-slate-500 dark:text-slate-400">Ready for Registrar Review</p><p className="mt-1 font-semibold text-slate-800 dark:text-slate-100">{awaitingRegistrar}</p></div>
+          <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-sm text-slate-500 dark:text-slate-400">Direct Faculty Submissions</p><p className="mt-1 font-semibold text-slate-800 dark:text-slate-100">{counts.submittedToRegistrar || 0}</p></div>
           <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-sm text-slate-500 dark:text-slate-400">Needs Faculty Revision</p><p className="mt-1 font-semibold text-slate-800 dark:text-slate-100">{counts.returned}</p></div>
         </div>
       </div>

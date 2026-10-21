@@ -44,6 +44,11 @@ const fetchWithAuth = async (endpoint, options = {}) => {
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         const errorMessage = String(errorData.message || errorData.error || 'API Request Failed');
+        if (response.status === 403 && errorData.code === 'FACULTY_BLOCKED' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('blockgo:faculty-access-changed', {
+                detail: { isBlocked: true, reason: errorData.reason || errorMessage }
+            }));
+        }
         const sessionRejected = response.status === 401 ||
             (response.status === 403 && /invalid|expired|revoked|inactive|no longer authorized/i.test(errorMessage));
         if (sessionRejected) expireAuthSession(response.status === 401 ? 'unauthorized' : 'revoked');
@@ -337,6 +342,11 @@ export const returnGrade = async (id, note, invokerId = '') => {
         body: JSON.stringify({ note, invokerId })
     });
 };
+
+export const returnGradeSubmission = async (recordIds, note) => fetchWithAuth('/Grades/return-submission', {
+    method: 'POST',
+    body: JSON.stringify({ recordIds, note })
+});
 
 export const enrollFabricIdentity = async ({ username, role, password }) => {
     return await fetchWithAuth('/enroll', {
@@ -640,6 +650,24 @@ export const revokeDepartmentAdmin = async (id) => {
 export const fetchApprovedFaculties = async () => {
     return await fetchWithAuth(`/Auth/faculty/approved`);
 };
+
+export const fetchNonRegularSubjectOptions = async (studentUserId) =>
+    fetchWithAuth(`/Auth/students/${studentUserId}/non-regular-subject-options`);
+export const assignNonRegularSubjects = async (studentUserId, selections) =>
+    fetchWithAuth(`/Auth/students/${studentUserId}/non-regular-subjects`, {
+        method: 'POST',
+        body: JSON.stringify({ selections })
+    });
+
+export const fetchFacultyAccessStatus = async () => fetchWithAuth('/Auth/faculty/access-status');
+export const fetchFacultyAccessControls = async () => fetchWithAuth('/Auth/faculty/access-controls');
+export const blockFaculty = async (facultyUserId, reason) => fetchWithAuth(`/Auth/faculty/${facultyUserId}/block`, {
+    method: 'POST',
+    body: JSON.stringify({ reason })
+});
+export const unblockFaculty = async (facultyUserId) => fetchWithAuth(`/Auth/faculty/${facultyUserId}/unblock`, {
+    method: 'POST'
+});
 
 export const fetchFacultyAssignmentOptions = async (department) =>
     fetchWithAuth(`/Auth/faculty/assignment-options?department=${encodeURIComponent(department)}`);

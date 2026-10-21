@@ -682,7 +682,7 @@ namespace BlockGo.Controllers
         }
 
         [HttpPost("record")]
-        [Authorize(Roles = "faculty,department_admin")]
+        [Authorize(Roles = "faculty")]
         public async Task<IActionResult> RecordGrade([FromBody] GradeRequest request)
         {
             if (request == null)
@@ -1064,7 +1064,8 @@ namespace BlockGo.Controllers
                 var effectiveFacultyId = resolvedFaculty.Identity ?? facultyId;
                 var compactSection = facultyAssignment.CanonicalSection;
                 var subjectCodeFromLabel = facultyAssignment.Subject;
-                if (resolvedFaculty.Department == null || string.IsNullOrWhiteSpace(subjectCodeFromLabel))
+                var subjectDepartment = facultyAssignment.Department?.Trim();
+                if (string.IsNullOrWhiteSpace(subjectDepartment) || string.IsNullOrWhiteSpace(subjectCodeFromLabel))
                     return BadRequest(new { status = "Error", message = "An assigned subject and section are required for submission." });
                 string? departmentCode;
                 using (var program = new NpgsqlCommand(@"
@@ -1073,11 +1074,11 @@ namespace BlockGo.Controllers
                        OR LOWER(TRIM(p.program_code)) = LOWER(TRIM(@department))
                     LIMIT 1", conn))
                 {
-                    program.Parameters.AddWithValue("department", resolvedFaculty.Department);
+                    program.Parameters.AddWithValue("department", subjectDepartment);
                     departmentCode = (await program.ExecuteScalarAsync())?.ToString();
                 }
                 if (departmentCode == null ||
-                    !(string.Equals(department?.Trim(), resolvedFaculty.Department, StringComparison.OrdinalIgnoreCase) ||
+                    !(string.Equals(department?.Trim(), subjectDepartment, StringComparison.OrdinalIgnoreCase) ||
                       string.Equals(department?.Trim(), departmentCode, StringComparison.OrdinalIgnoreCase)))
                     return Forbid();
 
@@ -1124,8 +1125,10 @@ namespace BlockGo.Controllers
 
                 using var cmd = new NpgsqlCommand(@"
                     UPDATE pending_grade_records
-                    SET status = 'SubmittedToChairperson',
+                    SET status = 'SubmittedToRegistrar',
                         date = @date,
+                        submitted_at = CURRENT_TIMESTAMP,
+                        submission_version = submission_version + CASE WHEN LOWER(status) = 'returned' THEN 1 ELSE 0 END,
                         school_year = @schoolYear,
                         semester = @semester,
                         course = @department,
@@ -1168,7 +1171,7 @@ namespace BlockGo.Controllers
                            OR LOWER(TRIM(COALESCE(section, ''))) = LOWER(TRIM(@compactSection)))", conn);
                 cmd.Parameters.AddWithValue("faculty", effectiveFacultyId);
                 cmd.Parameters.AddWithValue("assignmentCycleId", facultyAssignment.Id.ToString());
-                cmd.Parameters.AddWithValue("department", resolvedFaculty.Department);
+                cmd.Parameters.AddWithValue("department", subjectDepartment);
                 cmd.Parameters.AddWithValue("departmentCode", departmentCode);
                 cmd.Parameters.AddWithValue("section", section);
                 cmd.Parameters.AddWithValue("compactSection", compactSection);
@@ -1196,8 +1199,8 @@ namespace BlockGo.Controllers
                     });
                 }
 
-                await NotifyAcademicDataChangedAsync("section_submitted", department, facultyId);
-                return Ok(new { status = "Success", message = "Section submitted to Chairperson.", updated });
+                await NotifyAcademicDataChangedAsync("section_submitted_to_registrar", subjectDepartment, facultyId);
+                return Ok(new { status = "Success", message = "Section submitted to the Registrar for review.", updated });
             }
             catch (GradeEncodingPeriodException ex)
             {
@@ -1330,6 +1333,11 @@ namespace BlockGo.Controllers
                 ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(255);
                 ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS transaction_hash VARCHAR(255);
                 ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS assignment_cycle_id VARCHAR(100) NOT NULL DEFAULT 'legacy';
+                ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS submission_version INTEGER NOT NULL DEFAULT 1;
+                ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMP WITH TIME ZONE;
+                ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS returned_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+                ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE;
+                ALTER TABLE pending_grade_records ADD COLUMN IF NOT EXISTS return_reason TEXT;
             END $$;";
 
         private async Task EnsurePendingGradeSchemaAsync(NpgsqlConnection connection)
@@ -2710,7 +2718,7 @@ namespace BlockGo.Controllers
                     static bool IsCurrentWorkflowStatus(string? status)
                     {
                         var normalized = status?.Trim().ToLowerInvariant();
-                        return normalized is "draft" or "returned" or "submitted" or "submittedtochairperson" or
+                        return normalized is "draft" or "returned" or "submitted" or "submittedtoregistrar" or "submittedtochairperson" or
                             "chairpersonapproved" or "departmentapproved" or "finalized";
                     }
 
@@ -3197,7 +3205,7 @@ namespace BlockGo.Controllers
         }
 
         [HttpPost("approve")]
-        [Authorize(Roles = "department_admin")]
+        [Authorize(Roles = "__legacy_grade_workflow_disabled")]
         public async Task<IActionResult> ApproveGrades([FromBody] ApproveGradesRequest request)
         {
             var invokerId = AuthenticatedEmail();
@@ -3215,7 +3223,7 @@ namespace BlockGo.Controllers
         // Retained for compatibility with older clients. New Chairperson UI uses the
         // atomic section endpoint above so one confirmation produces one request.
         [HttpPost("approve/{recordId}")]
-        [Authorize(Roles = "department_admin")]
+        [Authorize(Roles = "__legacy_grade_workflow_disabled")]
         public async Task<IActionResult> ApproveGrade(string recordId, [FromQuery] string invokerId)
         {
             invokerId = AuthenticatedEmail();
@@ -3327,7 +3335,7 @@ namespace BlockGo.Controllers
         }
 
         [HttpPost("send-to-registrar")]
-        [Authorize(Roles = "department_admin")]
+        [Authorize(Roles = "__legacy_grade_workflow_disabled")]
         public async Task<IActionResult> SendGradesToRegistrar([FromBody] SendGradesToRegistrarRequest request)
         {
             var invokerId = AuthenticatedEmail();
@@ -3525,7 +3533,7 @@ namespace BlockGo.Controllers
                 await using (var cleanup = new NpgsqlCommand(@"
                     DELETE FROM pending_grade_records
                     WHERE id = ANY(@recordIds)
-                      AND LOWER(TRIM(status)) = 'departmentapproved';", connection, cleanupTransaction))
+                      AND LOWER(TRIM(status)) IN ('submittedtoregistrar', 'departmentapproved');", connection, cleanupTransaction))
                 {
                     cleanup.Parameters.AddWithValue("recordIds", recordIds);
                     var deleted = await cleanup.ExecuteNonQueryAsync(HttpContext.RequestAborted);
@@ -3829,6 +3837,58 @@ namespace BlockGo.Controllers
                 foreach (var record in records)
                     if (await CanAccessGradeRecordAsync(connection, record.Id, AuthenticatedEmail(), "registrar"))
                         authorizedRecords.Add(record);
+
+                var finalizedLedgerRecords = new List<AcademicRecord>();
+                try
+                {
+                    finalizedLedgerRecords = await LoadFinalizedLedgerRecordsAsync(AuthenticatedEmail());
+                }
+                catch (Exception comparisonException)
+                {
+                    _logger.LogWarning(comparisonException,
+                        "Finalized grade references are unavailable while loading the Registrar finalization queue");
+                }
+
+                var historyByRecordId = new Dictionary<string, List<GradeComparisonHistoryEntry>>(
+                    StringComparer.OrdinalIgnoreCase);
+                var authorizedIds = authorizedRecords.Select(record => record.Id).ToArray();
+                if (authorizedIds.Length > 0)
+                {
+                    await using var historyCommand = new NpgsqlCommand(@"
+                        SELECT logid, recordid, oldgrade, newgrade, reasontext, timestamp
+                        FROM gradecorrectionlogs
+                        WHERE recordid = ANY(@recordIds)
+                        ORDER BY logid DESC;", connection);
+                    historyCommand.Parameters.AddWithValue("recordIds", authorizedIds);
+                    await using var historyReader = await historyCommand.ExecuteReaderAsync(HttpContext.RequestAborted);
+                    while (await historyReader.ReadAsync(HttpContext.RequestAborted))
+                    {
+                        var recordId = historyReader.GetString(1);
+                        if (!historyByRecordId.TryGetValue(recordId, out var entries))
+                        {
+                            entries = new List<GradeComparisonHistoryEntry>();
+                            historyByRecordId[recordId] = entries;
+                        }
+                        entries.Add(new GradeComparisonHistoryEntry(
+                            historyReader.GetInt32(0), recordId,
+                            historyReader.IsDBNull(2) ? null : historyReader.GetString(2),
+                            historyReader.IsDBNull(3) ? null : historyReader.GetString(3),
+                            historyReader.IsDBNull(4) ? null : historyReader.GetString(4),
+                            historyReader.IsDBNull(5)
+                                ? DateTimeOffset.MinValue
+                                : new DateTimeOffset(DateTime.SpecifyKind(historyReader.GetDateTime(5), DateTimeKind.Utc))));
+                    }
+                }
+
+                foreach (var record in authorizedRecords)
+                {
+                    historyByRecordId.TryGetValue(record.Id, out var history);
+                    var comparison = GradeComparisonService.Compare(record, finalizedLedgerRecords, history);
+                    record.CurrentGrade = comparison.CurrentGrade;
+                    record.ReferenceGrade = comparison.ReferenceGrade;
+                    record.IntegrityStatus = comparison.IntegrityStatus;
+                    record.ReferenceSource = comparison.ReferenceSource;
+                }
                 return Ok(new { status = "Success", data = authorizedRecords });
             }
             catch (Exception ex)
@@ -4047,8 +4107,95 @@ namespace BlockGo.Controllers
             }
         }
 
+        [HttpPost("return-submission")]
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> ReturnSubmission([FromBody] ReturnSubmissionRequest request)
+        {
+            var note = request?.Note?.Trim();
+            var recordIds = (request?.RecordIds ?? new List<string>())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (recordIds.Length == 0)
+                return BadRequest(new { status = "Error", message = "At least one submitted grade record is required." });
+            if (string.IsNullOrWhiteSpace(note) || note.Length < 3)
+                return BadRequest(new { status = "Error", code = "RETURN_REASON_REQUIRED", message = "Return remarks must contain at least 3 characters." });
+
+            var actor = AuthenticatedEmail();
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(HttpContext.RequestAborted);
+            await using var transaction = await connection.BeginTransactionAsync(HttpContext.RequestAborted);
+            var rows = new List<(string Id, string Faculty, string Course, string Assignment, string Term, string SchoolYear, string Semester)>();
+            string? invalidStatus = null;
+            await using (var select = new NpgsqlCommand(@"
+                SELECT id, COALESCE(faculty_id, ''), COALESCE(course, ''),
+                       COALESCE(assignment_cycle_id, ''), COALESCE(term, ''),
+                       COALESCE(school_year, ''), COALESCE(semester, ''), status
+                FROM pending_grade_records
+                WHERE id = ANY(@recordIds)
+                FOR UPDATE;", connection, transaction))
+            {
+                select.Parameters.AddWithValue("recordIds", recordIds);
+                await using var reader = await select.ExecuteReaderAsync(HttpContext.RequestAborted);
+                while (await reader.ReadAsync(HttpContext.RequestAborted))
+                {
+                    var status = reader.IsDBNull(7) ? string.Empty : reader.GetString(7);
+                    if (!string.Equals(status, "SubmittedToRegistrar", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(status, "DepartmentApproved", StringComparison.OrdinalIgnoreCase))
+                    {
+                        invalidStatus = status;
+                        continue;
+                    }
+                    rows.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetString(6)));
+                }
+            }
+            if (invalidStatus is not null)
+            {
+                await transaction.RollbackAsync(HttpContext.RequestAborted);
+                return Conflict(new { status = "Error", message = $"A grade in {invalidStatus} status cannot be returned." });
+            }
+            if (rows.Count != recordIds.Length || rows.Any(row =>
+                    !string.Equals(row.Assignment, rows[0].Assignment, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(row.Term, rows[0].Term, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(row.SchoolYear, rows[0].SchoolYear, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(row.Semester, rows[0].Semester, StringComparison.OrdinalIgnoreCase)))
+            {
+                await transaction.RollbackAsync(HttpContext.RequestAborted);
+                return Conflict(new { status = "Error", message = "The selected grades no longer form one authoritative submission. Refresh and try again." });
+            }
+
+            await using (var update = new NpgsqlCommand(@"
+                UPDATE pending_grade_records
+                SET status = 'Returned', note = @note, return_reason = @note,
+                    returned_by = (SELECT id FROM users WHERE LOWER(email) = LOWER(@actor) LIMIT 1),
+                    returned_at = CURRENT_TIMESTAMP, date = @date
+                WHERE id = ANY(@recordIds)
+                  AND LOWER(BTRIM(status)) IN ('submittedtoregistrar', 'departmentapproved');", connection, transaction))
+            {
+                update.Parameters.AddWithValue("recordIds", recordIds);
+                update.Parameters.AddWithValue("note", note);
+                update.Parameters.AddWithValue("actor", actor);
+                update.Parameters.AddWithValue("date", DateTime.UtcNow.ToString("O"));
+                if (await update.ExecuteNonQueryAsync(HttpContext.RequestAborted) != recordIds.Length)
+                {
+                    await transaction.RollbackAsync(HttpContext.RequestAborted);
+                    return Conflict(new { status = "Error", message = "The submission changed before it could be returned. Nothing was changed." });
+                }
+            }
+            await transaction.CommitAsync(HttpContext.RequestAborted);
+
+            foreach (var faculty in rows.Select(row => row.Faculty).Where(value => value.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
+                await _chatHubContext.Clients.Group($"private_{faculty.ToLowerInvariant()}").SendAsync("GradeReturned", new
+                {
+                    Type = "grade_returned", RecordIds = recordIds, Note = note, Actor = actor, OccurredAt = DateTimeOffset.UtcNow
+                }, HttpContext.RequestAborted);
+            await NotifyAcademicDataChangedAsync("grade_returned", rows[0].Course, actor);
+            return Ok(new { status = "Success", message = "The submission was returned to Faculty.", returnedCount = recordIds.Length });
+        }
+
         [HttpPost("return/{recordId}")]
-        [Authorize(Roles = "department_admin")]
+        [Authorize(Roles = "registrar")]
         public async Task<IActionResult> ReturnGrade(string recordId, [FromBody] ReturnRequest request)
         {
             var note = request.Note?.Trim();
@@ -4073,18 +4220,21 @@ namespace BlockGo.Controllers
                         FOR UPDATE
                     )
                     UPDATE pending_grade_records AS grade
-                    SET status = 'Returned', note = @note, date = @dt
+                    SET status = 'Returned', note = @note, date = @dt,
+                        returned_by = (SELECT id FROM users WHERE LOWER(email) = LOWER(@invoker) LIMIT 1),
+                        returned_at = CURRENT_TIMESTAMP,
+                        return_reason = @note
                     FROM candidate
                     WHERE grade.id = candidate.id
                       AND (
-                          (@isRegistrar AND LOWER(candidate.status) IN ('departmentapproved', 'approved'))
-                          OR (NOT @isRegistrar AND LOWER(candidate.status) IN ('submittedtochairperson', 'submitted', 'chairpersonapproved'))
+                          (@isRegistrar AND LOWER(candidate.status) IN ('submittedtoregistrar', 'departmentapproved', 'approved'))
                       )
                     RETURNING grade.id, candidate.status, grade.faculty_id, grade.course;", conn, transaction);
                 cmd.Parameters.AddWithValue("note", note);
                 cmd.Parameters.AddWithValue("dt", DateTime.UtcNow.ToString("o"));
                 cmd.Parameters.AddWithValue("id", recordId);
                 cmd.Parameters.AddWithValue("isRegistrar", isRegistrar);
+                cmd.Parameters.AddWithValue("invoker", invokerId);
                 string? returnedId = null;
                 string? previousStatus = null;
                 string? facultyId = null;
@@ -4106,7 +4256,7 @@ namespace BlockGo.Controllers
                         INSERT INTO gradecorrectionlogs (recordid, oldgrade, newgrade, reasontext, approvedby, timestamp) 
                         VALUES (@rid, @old, @new, @reason, @appr, CURRENT_TIMESTAMP)", conn, transaction);
                     cmdLog.Parameters.AddWithValue("rid", recordId);
-                    cmdLog.Parameters.AddWithValue("old", previousStatus ?? "SubmittedToChairperson");
+                    cmdLog.Parameters.AddWithValue("old", previousStatus ?? "SubmittedToRegistrar");
                     cmdLog.Parameters.AddWithValue("new", "Returned");
                     cmdLog.Parameters.AddWithValue("reason", note);
                     cmdLog.Parameters.AddWithValue("appr", invokerId);
@@ -4140,6 +4290,12 @@ namespace BlockGo.Controllers
         {
             public string? Note { get; set; }
             public string? InvokerId { get; set; }
+        }
+
+        public class ReturnSubmissionRequest
+        {
+            public List<string> RecordIds { get; set; } = new();
+            public string? Note { get; set; }
         }
 
         [HttpPost("status/{recordId}")]

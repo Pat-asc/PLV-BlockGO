@@ -123,10 +123,15 @@ public static class FacultyAssignmentRosterService
         NpgsqlConnection connection, Assignment assignment, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(@"
-            SELECT e.enrollment_id, u.id, NULLIF(BTRIM(sp.student_no), ''),
-                   COALESCE(sp.full_name, ''), u.email,
-                   e.academic_section_id, e.program_id, e.school_year, e.semester, e.status,
-                   NULLIF(BTRIM(e.student_no), '')
+            SELECT DISTINCT ON (student_user_id) enrollment_id, student_user_id, student_no,
+                   full_name, email, academic_section_id, program_id, school_year,
+                   semester, status, enrollment_student_no
+            FROM (
+            SELECT e.enrollment_id, u.id AS student_user_id, NULLIF(BTRIM(sp.student_no), '') AS student_no,
+                   COALESCE(sp.full_name, '') AS full_name, u.email AS email,
+                   e.academic_section_id AS academic_section_id, e.program_id AS program_id,
+                   e.school_year AS school_year, e.semester AS semester, e.status AS status,
+                   NULLIF(BTRIM(e.student_no), '') AS enrollment_student_no
             FROM student_enrollments e
             JOIN users u ON u.id = e.student_user_id
             LEFT JOIN studentprofiles sp ON sp.user_id = u.id
@@ -137,7 +142,27 @@ public static class FacultyAssignmentRosterService
               AND LOWER(u.role) = 'student'
               AND LOWER(u.status) = 'approved'
               AND u.is_active = TRUE
-            ORDER BY sp.full_name, sp.student_no;", connection);
+            UNION ALL
+            SELECT e.enrollment_id, u.id AS student_user_id, NULLIF(BTRIM(sp.student_no), '') AS student_no,
+                   COALESCE(sp.full_name, ''), u.email,
+                   e.academic_section_id, e.program_id, e.school_year, e.semester, e.status,
+                   NULLIF(BTRIM(e.student_no), '')
+            FROM student_non_regular_subjects nrs
+            JOIN student_enrollments e ON e.enrollment_id = nrs.enrollment_id
+            JOIN users u ON u.id = nrs.student_user_id
+            LEFT JOIN studentprofiles sp ON sp.user_id = u.id
+            WHERE nrs.faculty_section_id = @facultySectionId
+              AND nrs.school_year = @schoolYear
+              AND nrs.semester = @semester
+              AND nrs.status = 'ACTIVE'
+              AND UPPER(BTRIM(e.status)) = 'ENROLLED'
+              AND sp.is_irregular = TRUE
+              AND LOWER(u.role) = 'student'
+              AND LOWER(u.status) = 'approved'
+              AND u.is_active = TRUE
+            ) roster
+            ORDER BY student_user_id, full_name, student_no;", connection);
+        command.Parameters.AddWithValue("facultySectionId", assignment.Id);
         command.Parameters.AddWithValue("academicSectionId", assignment.AcademicSectionId);
         command.Parameters.AddWithValue("schoolYear", assignment.SchoolYear);
         command.Parameters.AddWithValue("semester", assignment.Semester);

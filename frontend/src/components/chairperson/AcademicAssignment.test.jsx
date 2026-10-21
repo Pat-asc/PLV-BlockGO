@@ -2,8 +2,8 @@ import React from "react";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import AcademicAssignment from "./AcademicAssignment";
-import { fetchApprovedFaculties, fetchCurriculums, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend } from "../../services/api";
-jest.mock("../../services/api", () => ({ fetchApprovedFaculties: jest.fn(), fetchCurriculums: jest.fn(), fetchFacultyAssignmentOptions: jest.fn(), assignFacultyLoadToBackend: jest.fn() }));
+import { blockFaculty, fetchApprovedFaculties, fetchCurriculums, fetchFacultyAccessControls, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend, unblockFaculty } from "../../services/api";
+jest.mock("../../services/api", () => ({ fetchApprovedFaculties: jest.fn(), fetchCurriculums: jest.fn(), fetchFacultyAccessControls: jest.fn(), fetchFacultyAssignmentOptions: jest.fn(), assignFacultyLoadToBackend: jest.fn(), blockFaculty: jest.fn(), unblockFaculty: jest.fn() }));
 jest.mock("../../utils/sharedClientState", () => ({ pushAssignmentsSharedState: jest.fn() }));
 jest.mock("./FacultyLoading", () => ({
   __esModule: true,
@@ -20,6 +20,9 @@ beforeEach(() => {
     schoolYears: ["2026-2027"], enrollmentPeriods: [],
     activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
   });
+  fetchFacultyAccessControls.mockResolvedValue({ faculties: [{ facultyUserId: 1, isBlocked: false }] });
+  blockFaculty.mockResolvedValue({ status: "Success" });
+  unblockFaculty.mockResolvedValue({ status: "Success" });
   assignFacultyLoadToBackend.mockResolvedValue({ status: "Success", assignment: { id: 77, academicSectionId: 31 } });
   localStorage.setItem("studentSections", JSON.stringify([{ program: "Bachelor of Science in Information Technology", yearLevel: "3rd Year", section: "IT 3A", schoolYear: "2026", semester: "2nd Semester", students: [] }]));
 });

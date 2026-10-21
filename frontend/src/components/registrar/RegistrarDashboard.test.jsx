@@ -11,6 +11,7 @@ const response = (counts = {}) => ({
   status: 'Success',
   filters: { schoolYear: '2026-2027', semester: 'FIRST', term: 'finals' },
   counts: {
+    submittedToRegistrar: 4,
     submittedToChairperson: 3,
     chairpersonApproved: 2,
     departmentApproved: 5,
@@ -28,10 +29,10 @@ test('renders authoritative non-zero workflow counts without mixing statuses', a
   render(<RegistrarDashboard />);
 
   expect(await screen.findByText('2026-2027 • FIRST • finals')).toBeInTheDocument();
-  expect(within(screen.getByRole('article', { name: 'Awaiting Registrar' })).getByText('5')).toBeInTheDocument();
-  expect(within(screen.getByRole('article', { name: 'Approved by Chairperson' })).getByText('2')).toBeInTheDocument();
+  expect(within(screen.getByRole('article', { name: 'Awaiting Registrar' })).getByText('9')).toBeInTheDocument();
   expect(within(screen.getByRole('article', { name: 'Returned to Faculty' })).getByText('1')).toBeInTheDocument();
-  expect(within(screen.getByRole('article', { name: 'Submitted to Chairperson' })).getByText('3')).toBeInTheDocument();
+  expect(within(screen.getByRole('article', { name: 'Legacy Chairperson Review' })).getByText('3')).toBeInTheDocument();
+  expect(within(screen.getByRole('article', { name: 'Legacy Chairperson Approved' })).getByText('2')).toBeInTheDocument();
 });
 
 test('passes academic and organizational filters to the API', async () => {
@@ -50,7 +51,7 @@ test('passes academic and organizational filters to the API', async () => {
 
 test('shows zero only when the API returns genuine zero counts', async () => {
   fetchRegistrarDashboardOverview.mockResolvedValue(response({
-    submittedToChairperson: 0, chairpersonApproved: 0, departmentApproved: 0, returned: 0,
+    submittedToRegistrar: 0, submittedToChairperson: 0, chairpersonApproved: 0, departmentApproved: 0, returned: 0,
   }));
   render(<RegistrarDashboard />);
 
@@ -58,11 +59,11 @@ test('shows zero only when the API returns genuine zero counts', async () => {
   expect(within(screen.getByRole('article', { name: 'Awaiting Registrar' })).getByText('0')).toBeInTheDocument();
 });
 
-test('refreshes after Chairperson handoff and Registrar finalization events', async () => {
+test('refreshes after direct Faculty submission and Registrar finalization events', async () => {
   render(<RegistrarDashboard />);
   await screen.findByRole('article', { name: 'Awaiting Registrar' });
 
-  fireEvent(window, new CustomEvent('blockgo:academic-data-changed', { detail: { reason: 'grades_sent_to_registrar' } }));
+  fireEvent(window, new CustomEvent('blockgo:academic-data-changed', { detail: { reason: 'section_submitted_to_registrar' } }));
   await waitFor(() => expect(fetchRegistrarDashboardOverview).toHaveBeenCalledTimes(2));
 
   fireEvent(window, new CustomEvent('blockgo:academic-data-changed', { detail: { reason: 'grade_finalized' } }));

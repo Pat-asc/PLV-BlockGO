@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import FacultyLoading from "./FacultyLoading";
-import { fetchApprovedFaculties, fetchCurriculums, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend } from "../../services/api";
+import { fetchApprovedFaculties, fetchCurriculums, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend, fetchFacultyAccessControls, blockFaculty, unblockFaculty } from "../../services/api";
 import { pushAssignmentsSharedState } from "../../utils/sharedClientState";
 import { reconcileActiveAssignmentCache } from "../../utils/facultyAssignmentState";
 import { buildFacultySchedule, DAY_OPTIONS, facultySchedulesOverlap, formatFacultySchedule, isValidScheduleRange, parseFacultySchedule } from "../../utils/facultySchedule";
 import "./SubjectAssignment.css";
 import BoundedSelect from "../shared/BoundedSelect";
+import Modal from "../../services/Modal";
 
 const nameOf = (person) => person?.fullname || person?.fullName || person?.name || person?.email || "";
 const idOf = (person) => String(person?.id || person?.email || "");
@@ -40,6 +41,10 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   const [saved, setSaved] = useState([]);
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  const [accessControls, setAccessControls] = useState([]);
+  const [blockModalOpen, setBlockModalOpen] = useState(false);
+  const [blockReason, setBlockReason] = useState("");
+  const [updatingAccess, setUpdatingAccess] = useState(false);
 
   const [schedules, setSchedules] = useState({});
   const applyAssignmentOptions = useCallback((nextOptions) => {
@@ -78,6 +83,10 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     });
     return () => { active = false; };
   }, [applyAssignmentOptions, chairpersonDepartment]);
+  const refreshAccessControls = useCallback(() => fetchFacultyAccessControls()
+    .then((response) => setAccessControls(response?.faculties || []))
+    .catch(() => setNotice("Faculty access-control status could not be loaded.")), []);
+  useEffect(() => { refreshAccessControls(); }, [refreshAccessControls]);
   useEffect(() => {
     const handleAcademicDataChanged = () => refreshAssignments().catch(() => setNotice("Current assignments could not be refreshed. Please try again."));
     window.addEventListener("blockgo:academic-data-changed", handleAcademicDataChanged);
@@ -114,6 +123,7 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   }, [assignmentOptions.assignments]);
   const departmentFaculty = faculty.filter((person) => (person.department || person.program) === chairpersonDepartment || (person.department || person.program) === program);
   const selectedProfessor = departmentFaculty.find((person) => idOf(person) === professor);
+  const selectedAccess = accessControls.find((item) => String(item.facultyUserId) === String(selectedProfessor?.id));
   const programName = availablePrograms.find((item) => item.code === program)?.name || chairpersonDepartment || program;
   const curriculum = curricula.find((item) => item.programCode === program && item.status === "PUBLISHED");
   const canonicalSubjects = assignmentOptions.subjects?.length ? assignmentOptions.subjects : (curriculum?.subjects || []);
@@ -203,6 +213,23 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     selectedSubjectCode
   );
   const selectProfessor = (person) => { setProfessor(idOf(person)); setLookup(""); setProfessorListOpen(false); };
+  const updateFacultyAccess = async () => {
+    if (!selectedProfessor || updatingAccess) return;
+    if (!selectedAccess?.isBlocked && blockReason.trim().length < 3) return;
+    setUpdatingAccess(true);
+    try {
+      if (selectedAccess?.isBlocked) await unblockFaculty(selectedProfessor.id);
+      else await blockFaculty(selectedProfessor.id, blockReason.trim());
+      setBlockModalOpen(false);
+      setBlockReason("");
+      await refreshAccessControls();
+      setNotice(selectedAccess?.isBlocked ? "Faculty academic access restored." : "Faculty academic access blocked. Chat remains available.");
+    } catch (error) {
+      setNotice(error?.message || "Faculty access could not be updated.");
+    } finally {
+      setUpdatingAccess(false);
+    }
+  };
   const add = (section, index) => {
     if (!subject || !selectedProfessor) return;
 
@@ -293,6 +320,7 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     <section className="sa-info sa-current-period" aria-label="Current academic period">
       <span>Academic Period</span><strong>{activePeriodLabel}</strong>
     </section>
+    {selectedProfessor ? <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900" aria-label="Faculty Access Control"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-bold text-[#003366] dark:text-sky-200">Faculty Access Control</h3><p className="text-sm text-slate-600 dark:text-slate-300">{selectedAccess?.isBlocked ? `Blocked: ${selectedAccess.reason}` : "Academic access is active."}</p></div><button type="button" onClick={() => { if (selectedAccess?.isBlocked) updateFacultyAccess(); else setBlockModalOpen(true); }} disabled={updatingAccess} className={`rounded-lg px-4 py-2 text-sm font-bold text-white disabled:bg-slate-400 ${selectedAccess?.isBlocked ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-red-700 hover:bg-red-800'}`}>{updatingAccess ? "Updating…" : selectedAccess?.isBlocked ? "Unblock Faculty" : "Block Faculty"}</button></div></section> : null}
     {mode === "manual" && <section className="sa-card sa-assigned" aria-label="Assigned Sections"><div className="sa-assigned-header"><Heading icon="cap" title="Assigned Sections" /><div className="sa-totals"><div><Icon type="book"/><span>Total Assignments<strong>{professorDraft.length}</strong></span></div><div><Icon type="cap"/><span>Total Units<strong>{pendingUnits}</strong></span></div></div></div><p className="sa-assigned-context">{selectedProfessor ? `Showing saved and pending sections for ${nameOf(selectedProfessor)}.` : "Showing all current assignments. Select a professor below to manage their load."}</p><div className="sa-table-scroll"><table><thead><tr><th>Professor</th><th>Subject Code</th><th>Subject Title</th><th>Section</th><th>School Year</th><th>Semester</th><th>Units</th><th>Schedule</th><th>Action</th></tr></thead><tbody>{displayedRows.map((item) => <tr key={`${item.assignmentState}-${item.id || identity(item)}`}><td>{item.facultyName || item.facultyEmail || "Assigned faculty"}</td><td>{item.subjectCode}</td><td>{item.subjectTitle || "Not available"}</td><td>{item.sectionName}</td><td>{item.schoolYear || "—"}</td><td>{terms[item.semesterCode] || item.semester || "—"}</td><td>{item.units === null || item.units === undefined || String(item.units).trim() === "" ? "N/A" : item.units}</td><td>{formatFacultySchedule(item.schedule, item.day)}</td><td>{item.assignmentState === "pending" ? <button type="button" className="sa-remove" aria-label={`Remove ${item.subjectCode} ${item.sectionName}`} onClick={() => setDraft((current) => current.filter((row) => row.id !== item.id))}><Icon type="trash"/></button> : <span className="sa-saved">Saved</span>}</td></tr>)}{!displayedRows.length && <tr><td colSpan="9" className="sa-empty">No assignments yet.</td></tr>}</tbody></table></div>{selectedProfessor && <footer><button type="button" className="sa-clear" disabled={saving || !professorDraft.length} onClick={clearProfessorSelection}>♧ &nbsp; Clear Selection</button><span>{professorDraft.length > 0 ? `${professorDraft.length} pending assignment${professorDraft.length > 1 ? "s" : ""}` : savedRows.length > 0 ? `${savedRows.length} saved assignment${savedRows.length > 1 ? "s" : ""}` : ""}</span><button type="button" className="sa-save" disabled={!professorDraft.length || saving} onClick={save}><Icon type="save"/>{saving ? "Saving…" : "Save Assignments"}</button></footer>}</section>}
     <div className="sa-section-title"><h3>Subject Assigning</h3><p>Select a professor, subject, section, and optional meeting schedule.</p></div>
     <section className="sa-card sa-lookup"><div><Heading title="Professor Lookup" /><div className="sa-search"><Icon type="search"/><input aria-label="Search professors" onFocus={() => setProfessorListOpen(true)} onClick={() => setProfessorListOpen(true)} placeholder="Search professor by name or faculty ID..." value={lookup} onChange={(event) => setLookup(event.target.value)}/><button aria-label="Clear professor search" onClick={() => setLookup("")}>×</button></div><div className="sa-professors">{(professorListOpen || lookup || !selectedProfessor) && (departmentFaculty.filter((person) => `${nameOf(person)} ${idOf(person)}`.toLowerCase().includes(lookup.toLowerCase())).map((person) => <button key={idOf(person)} onClick={() => selectProfessor(person)}>{nameOf(person)} <small>{idOf(person)}</small></button>))}{loading && <p>Loading professors…</p>}{!loading && !departmentFaculty.length && <p>No approved professors available.</p>}</div></div><div className="sa-professor"><span className="sa-avatar">{nameOf(selectedProfessor).split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("") || <Icon/>}</span><div><h3>{nameOf(selectedProfessor) || "Select a professor"}</h3><p>Faculty ID: &nbsp; {professor || "—"}</p><p>Department: &nbsp; {selectedProfessor?.department || selectedProfessor?.program || "—"}</p></div><div className="sa-badge"><Icon type="cap"/><div><strong>{totalUnits} units</strong><small>{rows.length} assignments</small></div></div></div></section>
@@ -301,6 +329,12 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     <div className="sa-columns" data-testid="assignment-workspace-columns"><section className="sa-card" data-testid="available-subjects-panel"><Heading icon="book" title="Available Subjects" /><div className="sa-filters" data-testid="available-subject-filters"><BoundedSelect label="Academic Program" value={program} onChange={(value) => { setProgram(value); setSubjectCode(""); setAcademicSectionFilter("all"); }} options={availablePrograms.map((item) => ({ value: item.code, label: item.name }))} searchable /><label>Year Level<select value={year} onChange={(event) => { setYear(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{years.map((item) => <option key={item}>{item}</option>)}</select></label><label>Semester<select value={term} onChange={(event) => { setTerm(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{semesterOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label>Section Filter<select aria-label="Section Filter" value={academicSectionFilter} onChange={(event) => setAcademicSectionFilter(event.target.value)}><option value="all">All Sections</option>{sectionFilterOptions.map((item) => <option key={item.academicSectionId} value={String(item.academicSectionId)}>{item.section}</option>)}</select></label></div><div className="sa-search"><Icon type="search"/><input aria-label="Search subjects" placeholder="Search subjects by code or title..." value={query} onChange={(event) => setQuery(event.target.value)}/></div><div className="sa-table-scroll"><table><thead><tr><th></th><th>Subject Code</th><th>Subject Title</th><th>Units</th></tr></thead><tbody>{visibleSubjects.map((item) => <tr key={item.subjectCode} className={subjectCode === item.subjectCode ? "selected" : ""}><td><input type="radio" name="subject" aria-label={`Select ${item.subjectCode}`} checked={subjectCode === item.subjectCode} onChange={() => setSubjectCode(item.subjectCode)}/></td><td><button className="sa-text-button" onClick={() => setSubjectCode(item.subjectCode)}>{item.subjectCode}</button></td><td>{item.subjectTitle}</td><td>{item.units}</td></tr>)}{!visibleSubjects.length && <tr><td colSpan="4" className="sa-empty">{loading ? "Loading subjects…" : !curriculum ? "No published curriculum for this program." : "No subjects match these filters."}</td></tr>}</tbody></table></div><p className="sa-footnote">Showing {visibleSubjects.length} of {subjects.length} subjects</p></section>
     <section className="sa-card" data-testid="available-sections-panel"><Heading title={`Available Sections${subject ? ` for ${subject.subjectCode}` : ""}`} /><div className="sa-table-scroll"><table><thead><tr><th>Section</th><th>Year Level</th><th>Day</th><th>Start Time</th><th>End Time</th><th>Action</th></tr></thead><tbody>{subject && sections.map((section, index) => { const scheduleKey = scheduleKeyFor(section); const schedule = schedules[scheduleKey] || { day: "", startTime: "", endTime: "" }; const updateSchedule = (field, value) => setSchedules((current) => ({ ...current, [scheduleKey]: { ...(current[scheduleKey] || { day: "", startTime: "", endTime: "" }), [field]: value } })); return <tr key={`${section.academicSectionId}-${section.schoolYear}`}><td className="sa-section-name">{section.section}<small>{section.schoolYear} · {section.semester}</small></td><td>{section.yearLevel}</td><td><select className="sa-schedule" aria-label={`Day for ${section.section}`} value={schedule.day} onChange={(event) => updateSchedule("day", event.target.value)}><option value="">Choose day</option>{DAY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></td><td><input className="sa-schedule" type="time" aria-label={`Start time for ${section.section}`} value={schedule.startTime} onChange={(event) => updateSchedule("startTime", event.target.value)}/></td><td><input className="sa-schedule" type="time" aria-label={`End time for ${section.section}`} value={schedule.endTime} onChange={(event) => updateSchedule("endTime", event.target.value)}/></td><td><button type="button" className="sa-assign" disabled={!selectedProfessor || saving || !section.periodMatchesActive} onClick={() => add(section, index)}>＋ Assign</button></td></tr>; })}{(!subject || !sections.length) && <tr><td colSpan="6" className="sa-empty">{!subject ? "No subject selected." : "No enrolled sections match this program, year level, and semester."}</td></tr>}</tbody></table></div><div className="sa-info sa-selected"><span>ⓘ</span><div><strong>Selected Subject: {subject ? `${subject.subjectCode} – ${subject.subjectTitle}` : "None"}</strong></div></div></section></div>
 </>}
+    <Modal isOpen={blockModalOpen} onClose={() => { if (!updatingAccess) setBlockModalOpen(false); }} title="Block Faculty Academic Access" description={`Block ${nameOf(selectedProfessor)} from academic functions? Chat and logout will remain available.`} closeOnBackdrop={!updatingAccess} closeOnEscape={!updatingAccess}>
+      <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">Reason for blocking
+        <textarea value={blockReason} onChange={(event) => setBlockReason(event.target.value)} rows={4} className="mt-2 w-full resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600/20 dark:border-slate-600 dark:bg-slate-800 dark:text-white" placeholder="Required" />
+      </label>
+      <div className="mt-4 flex justify-end gap-3"><button type="button" onClick={() => setBlockModalOpen(false)} disabled={updatingAccess} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold dark:border-slate-600">Cancel</button><button type="button" onClick={updateFacultyAccess} disabled={blockReason.trim().length < 3 || updatingAccess} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white disabled:bg-slate-400">{updatingAccess ? "Blocking…" : "Block Faculty"}</button></div>
+    </Modal>
   </div>;
 }
 

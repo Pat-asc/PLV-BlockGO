@@ -110,7 +110,7 @@ Check(new[] { "final", "finals", "FINAL", "FINALS" }.All(term =>
         GradeEncodingPeriodService.ParseOpen($"{{\"semester\":\"FIRST\",\"startDate\":\"2026-09-01\",\"endDate\":\"2026-09-30\",\"term\":\"{term}\"}}", new DateOnly(2026, 9, 22)).Term == "finals"),
     "Authoritative Finals aliases did not normalize."); Pass(73, "authoritative Finals casing normalization");
 Check(RegistrarGradeLedgerMetadataService.IsBrowsableStatus("Finalized") &&
-      !new[] { "Draft", "SubmittedToChairperson", "Returned", "ChairpersonApproved", "DepartmentApproved" }
+      !new[] { "Draft", "SubmittedToRegistrar", "SubmittedToChairperson", "Returned", "ChairpersonApproved", "DepartmentApproved" }
           .Any(RegistrarGradeLedgerMetadataService.IsBrowsableStatus),
     "Registrar ledger browsing exposed a grade before authoritative finalization.");
 Pass(82, "Registrar ledger visibility is Finalized-only");
@@ -160,7 +160,7 @@ var correctedUnreleasedGrade = new AcademicRecord
 Check(!GradeReleasePolicy.IsVisibleToStudent(correctedUnreleasedGrade, releasedGradeIds),
     "A corrected v2 inherited the release of finalized v1.");
 Pass(124, "corrected finalized version requires a new Registrar release");
-var hiddenWorkflowGrades = new[] { "Draft", "SubmittedToChairperson", "Returned", "ChairpersonApproved", "DepartmentApproved" }
+var hiddenWorkflowGrades = new[] { "Draft", "SubmittedToRegistrar", "SubmittedToChairperson", "Returned", "ChairpersonApproved", "DepartmentApproved" }
     .Select(status => new AcademicRecord
     {
         Id = $"hidden-{status}", StudentHash = "student@plv.edu.ph", StudentNo = "26-0042",
@@ -516,6 +516,50 @@ Check(curriculumRepairMigration.Contains("WHERE curriculum.status = 'PUBLISHED'"
       curriculumRepairMigration.Contains("IS DISTINCT FROM EXCLUDED.curriculum_id"),
     "The production data repair is not idempotent or does not select one published curriculum per program.");
 Pass(188, "program curriculum repair migration is idempotent and published-only");
+
+Check(gradeControllerSource.Contains("SET status = 'SubmittedToRegistrar'") &&
+      gradeControllerSource.Contains("section_submitted_to_registrar") &&
+      gradeControllerSource.Contains("[HttpPost(\"return-submission\")]") &&
+      gradeControllerSource.Contains("FinalizeApprovedGradesAsync") &&
+      gradeControllerSource.Contains("GradeLedgerMatch.IsSameGrade"),
+    "The direct Faculty-to-Registrar workflow does not preserve verified Fabric finalization and return handling.");
+Pass(226, "Faculty submissions enter the Registrar queue and retain verified Fabric finalization");
+
+Check(gradeControllerSource.Split("[Authorize(Roles = \"__legacy_grade_workflow_disabled\")]", StringSplitOptions.None).Length - 1 == 3 &&
+      gradeControllerSource.Contains("[Authorize(Roles = \"department_admin\")]") &&
+      gradeControllerSource.Contains("CorrectFinalizedGrade"),
+    "Legacy Chairperson approval actions remain reachable or finalized-grade correction lost its separate authorization boundary.");
+Pass(227, "Chairperson pre-finalization approval is disabled while finalized correction remains scoped");
+
+var facultyAccessMiddlewareSource = await File.ReadAllTextAsync(
+    FindRepositoryFile("client-app", "Middleware", "FacultyAccessControlMiddleware.cs"));
+var normalizedFacultyAccessMiddlewareSource = facultyAccessMiddlewareSource.ToLowerInvariant();
+Check(normalizedFacultyAccessMiddlewareSource.Contains("faculty_access_controls") &&
+      normalizedFacultyAccessMiddlewareSource.Contains("faculty_blocked") &&
+      normalizedFacultyAccessMiddlewareSource.Contains("/api/chathub") &&
+      normalizedFacultyAccessMiddlewareSource.Contains("/api/auth/faculty/access-status"),
+    "Blocked Faculty enforcement is missing its database check, machine-readable denial, or Chat/session exceptions.");
+Pass(228, "blocked Faculty APIs fail closed while Chat and access-status remain available");
+
+var workflowMigration = await File.ReadAllTextAsync(
+    FindRepositoryFile("migrations", "029_direct_registrar_workflow_and_faculty_access.sql"));
+Check(workflowMigration.Contains("ADD COLUMN IF NOT EXISTS is_irregular") &&
+      workflowMigration.Contains("CREATE TABLE IF NOT EXISTS faculty_access_controls") &&
+      workflowMigration.Contains("CREATE TABLE IF NOT EXISTS faculty_access_events") &&
+      workflowMigration.Contains("CREATE TABLE IF NOT EXISTS student_non_regular_subjects") &&
+      workflowMigration.Contains("classification = 'NON_REGULAR'") &&
+      workflowMigration.Contains("UNIQUE (student_user_id, school_year, semester, subject_id)"),
+    "Migration 029 is missing additive irregular-subject, Faculty access-control, audit, or duplicate-protection schema.");
+Pass(229, "migration 029 preserves audited access control and stable non-regular subject identity");
+
+var facultyBulkAssignmentSource = await File.ReadAllTextAsync(
+    FindRepositoryFile("client-app", "Services", "FacultyBulkAssignmentService.cs"));
+Check(facultyBulkAssignmentSource.Contains("bool allowCrossDepartmentFaculty = false") &&
+      facultyBulkAssignmentSource.Contains("@allowCrossDepartmentFaculty = TRUE") &&
+      facultyBulkAssignmentSource.Contains("FacultyHomeDepartment") &&
+      facultyBulkAssignmentSource.Contains("IsCrossDepartment"),
+    "Cross-department Faculty loading is not an explicit Registrar-only opt-in with preserved department metadata.");
+Pass(230, "Registrar cross-department assignment is explicit and Chairperson remains fail-closed by default");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
 if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=197;i++) Skip(i); Skip(206); for (var i=208;i<=225;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
@@ -1155,23 +1199,24 @@ await Exec(@"INSERT INTO pending_grade_records
     (id,assignment_cycle_id,student_no,status,grade,student_hash,student_name,section,course,subject_code,semester,school_year,faculty_id,date,ipfs_cid,term)
     VALUES
     ('old-approved','102','26-0901','DepartmentApproved','90','old@example.edu','Old Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-1','2026-09-01','','finals'),
+    ('current-direct','104','26-0899','SubmittedToRegistrar','89','direct@example.edu','Direct Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-3','2026-09-21','','finals'),
     ('current-chair-approved','104','26-0900','ChairpersonApproved','90','chair-approved@example.edu','Chair Approved Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-3','2026-09-21','','finals'),
     ('current-approved','104','26-0902','DepartmentApproved','91','current@example.edu','Current Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-3','2026-09-21','','finals'),
     ('current-finalized','104','26-0903','Finalized','92','final@example.edu','Final Student','BSIT 1-1','BS Information Technology','IT 101','FIRST','2026-2027','FAC-3','2026-09-21','','finals');");
 await Exec("INSERT INTO grade_assignment_cycles(record_id,assignment_cycle_id) VALUES('old-approved','102'),('current-finalized','104')");
-var approvedHistoryCount=await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-chair-approved','current-approved','current-finalized')");
+var approvedHistoryCount=await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-direct','current-chair-approved','current-approved','current-finalized')");
 var finalizationQueue=await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST");
-Check(finalizationQueue.Select(record=>record.Id).SequenceEqual(new[]{"old-approved","current-approved"}),
-    "Registrar finalization queue omitted approved captured-assignment staging."); Pass(66,"Registrar finalization queue includes approved active and captured historical cycles");
+Check(finalizationQueue.Select(record=>record.Id).SequenceEqual(new[]{"current-direct","old-approved","current-approved"}),
+    "Registrar finalization queue omitted direct or legacy approved captured-assignment staging."); Pass(66,"Registrar finalization queue includes direct, approved active, and captured historical cycles");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id='current-finalized'")==1,
     "Finalized history was removed while selecting the active queue."); Pass(67,"finalized history remains stored outside active queue");
 await Exec(@"INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,student_name,section,course,program,subject_code,semester,school_year,faculty_id,date,ipfs_cid,term) VALUES
     ('current-approved-duplicate','104','26-0910','DepartmentApproved','93','duplicate@example.edu','Duplicate Student','BSIT 1-1','BS Information Technology','BSIT','IT 101','FIRST','2026-2027','FAC-3','2026-09-21','','finals'),
     ('other-year-approved','104','26-0911','DepartmentApproved','93','other-year@example.edu','Other Year','BSIT 1-1','BS Information Technology','BSIT','IT 101','FIRST','2025-2026','FAC-3','2026-09-21','','finals'),
     ('other-semester-approved','104','26-0912','DepartmentApproved','93','other-semester@example.edu','Other Semester','BSIT 1-1','BS Information Technology','BSIT','IT 101','SECOND','2026-2027','FAC-3','2026-09-21','','finals');
-UPDATE pending_grade_records SET program='BSIT' WHERE id IN ('old-approved','current-chair-approved','current-approved');");
+UPDATE pending_grade_records SET program='BSIT' WHERE id IN ('old-approved','current-direct','current-chair-approved','current-approved');");
 var workflowOverview=await RegistrarWorkflowOverviewService.GetAsync(db,"2026-2027","FIRST","finals");
-Check(workflowOverview.DepartmentApproved==2 && workflowOverview.ChairpersonApproved==1 && workflowOverview.SubmittedToChairperson==1 && workflowOverview.Returned==1,
+Check(workflowOverview.SubmittedToRegistrar==1 && workflowOverview.DepartmentApproved==2 && workflowOverview.ChairpersonApproved==1 && workflowOverview.SubmittedToChairperson==1 && workflowOverview.Returned==1,
     "Registrar workflow overview mixed statuses or counted student rows instead of distinct workloads."); Pass(218,"Registrar workflow API returns non-zero current-status workload counts without duplicates");
 Check((await RegistrarWorkflowOverviewService.GetAsync(db,"2025-2026","FIRST","finals")).DepartmentApproved==1 &&
       (await RegistrarWorkflowOverviewService.GetAsync(db,"2026-2027","SECOND","finals")).DepartmentApproved==1,
@@ -1218,9 +1263,9 @@ currentFinalizedIds=await ChairpersonReviewScopeService.GetCurrentFinalizedRecor
 Check(currentReviewIds.Count==0 && currentFinalizedIds.Count==0,"Reset left old submissions or finalized rows in current tracking."); Pass(55,"reset empties current For Review and Finalized tracking");
 var approvedAfterReset = (await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST"))
     .Select(record=>record.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-Check(approvedAfterReset.Contains("old-approved") && approvedAfterReset.Contains("current-approved") &&
+Check(approvedAfterReset.Contains("old-approved") && approvedAfterReset.Contains("current-direct") && approvedAfterReset.Contains("current-approved") &&
       !approvedAfterReset.Contains("current-chair-approved") && !approvedAfterReset.Contains("current-finalized") &&
-      await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-chair-approved','current-approved','current-finalized')")==approvedHistoryCount,
+      await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-approved','current-direct','current-chair-approved','current-approved','current-finalized')")==approvedHistoryCount,
     "Reset removed retryable approved staging or deleted grade history."); Pass(68,"reset preserves approved captured cycles for safe finalization");
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id IN ('old-review','current-review','final')")==3,
     "Reset deleted historical or finalized grades."); Pass(56,"reset preserves submitted and finalized history");

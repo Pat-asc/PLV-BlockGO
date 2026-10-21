@@ -35,5 +35,8 @@ export const normalizeGradeStatus = (status) => {
 export const isDepartmentApprovedGradeStatus = (status) =>
   ["departmentapproved", "forwarded", "forwardedtoregistrar"].includes(compactStatus(status));
 
+export const isRegistrarReviewGradeStatus = (status) =>
+  ["submittedtoregistrar", "departmentapproved", "forwarded", "forwardedtoregistrar"].includes(compactStatus(status));
+
 export const isChairpersonForwardedGradeStatus = (status) =>
   isDepartmentApprovedGradeStatus(status);

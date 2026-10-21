@@ -1,7 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import StudentSectioning from './StudentSectioning';
-import { fetchAcademicPrograms, fetchApprovedStudents, fetchCurriculum, fetchDepartmentSections } from '../../services/api';
+import { assignNonRegularSubjects, fetchAcademicPrograms, fetchApprovedStudents, fetchCurriculum, fetchDepartmentSections, fetchNonRegularSubjectOptions } from '../../services/api';
 import { getDefaultSectionName } from '../../utils/studentSectioningHelpers';
 
 jest.mock('../../services/api', () => ({
@@ -9,6 +9,8 @@ jest.mock('../../services/api', () => ({
   fetchApprovedStudents: jest.fn(),
   fetchCurriculum: jest.fn(),
   fetchDepartmentSections: jest.fn(),
+  fetchNonRegularSubjectOptions: jest.fn(),
+  assignNonRegularSubjects: jest.fn(),
 }));
 jest.mock('../../utils/sharedClientState', () => ({ pushSectioningSharedState: jest.fn() }));
 
@@ -51,6 +53,31 @@ beforeEach(() => {
     data: program === 'BSIT' ? [{ id: '11', department: 'BSIT', yearLevel: '1', sectionNum: '1' }] : [],
   }));
   fetchCurriculum.mockResolvedValue({ data: curriculum });
+  fetchNonRegularSubjectOptions.mockResolvedValue({ data: [], existing: [] });
+  assignNonRegularSubjects.mockResolvedValue({ status: 'Success' });
+});
+
+test('allows only officially irregular students to receive persisted non-regular subjects', async () => {
+  fetchApprovedStudents.mockResolvedValue({ students: [{ ...student, isIrregular: true }] });
+  fetchNonRegularSubjectOptions.mockResolvedValue({
+    data: [{
+      programCode: 'BSCE', programName: 'Civil Engineering', curriculumName: 'BSCE 2026',
+      curriculumVersion: '1', subjectId: 501, subjectCode: 'CE 101', subjectTitle: 'Engineering Survey',
+      units: 3, prerequisite: 'None', facultySectionId: 77, section: 'BSCE 1-1', schedule: 'MW 08:00-09:30',
+    }],
+    existing: [],
+  });
+  render(<StudentSectioning />);
+
+  fireEvent.click((await screen.findAllByRole('button', { name: 'View Roster' }))[0]);
+  const dialog = screen.getByRole('dialog', { name: /Student Roster/i });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add Non-Regular Subject' }));
+
+  const assignmentDialog = await screen.findByRole('dialog', { name: 'Assign Non-Regular Subjects' });
+  expect(await within(assignmentDialog).findByText('NON-REGULAR')).toBeInTheDocument();
+  fireEvent.click(within(assignmentDialog).getByRole('checkbox', { name: /Select CE 101/ }));
+  fireEvent.click(within(assignmentDialog).getByRole('button', { name: 'Assign Selected Subjects' }));
+  await waitFor(() => expect(assignNonRegularSubjects).toHaveBeenCalledWith(7, [{ subjectId: 501, facultySectionId: 77, overrideReason: '' }]));
 });
 
 test('preserves complete authoritative program codes in section names', () => {

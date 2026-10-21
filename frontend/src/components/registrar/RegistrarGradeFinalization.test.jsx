@@ -1,11 +1,12 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import RegistrarGradeFinalization, { groupApprovedGradeRecords, parseApprovedGradePayload } from './RegistrarGradeFinalization';
-import { fetchRegistrarFinalizationQueue, finalizeApprovedGrades } from '../../services/api';
+import { fetchRegistrarFinalizationQueue, finalizeApprovedGrades, returnGradeSubmission } from '../../services/api';
 
 jest.mock('../../services/api', () => ({
   fetchRegistrarFinalizationQueue: jest.fn(),
   finalizeApprovedGrades: jest.fn(),
+  returnGradeSubmission: jest.fn(),
 }));
 
 jest.mock('../../services/Modal', () => ({ isOpen, title, children }) => isOpen ? (
@@ -16,13 +17,15 @@ const approved = (overrides = {}) => ({
   id: 'grade-1', assignmentCycleId: '41', studentNo: '26-0001', studentName: 'Student One',
   facultyId: 'faculty@plv.edu.ph', section: 'BSIT 1-1', course: 'BSIT', program: 'BSIT',
   subjectCode: 'IT 101', schoolYear: '2026-2027', semester: 'FIRST', term: 'finals',
-  status: 'ChairpersonApproved', grade: '{"midterm":"88.50","finals":"91.25","finalAverage":"89.875"}',
+  status: 'SubmittedToRegistrar', grade: '{"midterm":"88.50","finals":"91.25","finalAverage":"89.875"}',
+  current_grade: '91.25', reference_grade: '90.00', integrity_status: 'MISMATCH', reference_source: 'FABRIC_FINALIZED',
   ...overrides,
 });
 
 beforeEach(() => {
   jest.clearAllMocks();
   fetchRegistrarFinalizationQueue.mockResolvedValue({ data: [] });
+  returnGradeSubmission.mockResolvedValue({ status: 'Success', message: 'Returned' });
 });
 
 test('preserves approved Midterm, Finals, average, and decimal formatting without recomputation', () => {
@@ -58,8 +61,10 @@ test('renders the exact approved queue and sends one section request despite rep
   expect(screen.getAllByText('91.25')).toHaveLength(2);
   expect(screen.getAllByText('89.875')).toHaveLength(2);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Finalize Section' }));
-  const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Finalize Grades' });
+  fireEvent.click(screen.getByRole('button', { name: 'Review Grades' }));
+  expect(within(screen.getByRole('dialog')).getAllByText('90.00')).toHaveLength(2);
+  expect(within(screen.getByRole('dialog')).getAllByText('91.25')).toHaveLength(2);
+  const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve and Finalize' });
   fireEvent.click(confirm);
   fireEvent.click(confirm);
   expect(finalizeApprovedGrades).toHaveBeenCalledTimes(1);
@@ -75,10 +80,22 @@ test('failed Fabric finalization keeps the approved section visible for retry', 
   render(<RegistrarGradeFinalization />);
 
   await screen.findByText('88.50');
-  fireEvent.click(screen.getByRole('button', { name: 'Finalize Section' }));
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Finalize Grades' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Review Grades' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve and Finalize' }));
 
   expect(await screen.findByRole('alert')).toHaveTextContent('Fabric unavailable');
-  expect(screen.getByText('88.50')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Finalize Section' })).toBeEnabled();
+  expect(screen.getAllByText('88.50').length).toBeGreaterThan(0);
+  expect(screen.getByRole('button', { name: 'Review Grades' })).toBeEnabled();
+});
+
+test('Registrar returns one exact submission with a mandatory reason', async () => {
+  fetchRegistrarFinalizationQueue.mockResolvedValueOnce({ data: [approved()] }).mockResolvedValue({ data: [] });
+  render(<RegistrarGradeFinalization />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Review Grades' }));
+  const dialog = screen.getByRole('dialog');
+  const returnButton = within(dialog).getByRole('button', { name: 'Return Grades' });
+  expect(returnButton).toBeDisabled();
+  fireEvent.change(within(dialog).getByPlaceholderText(/Required when returning grades/i), { target: { value: 'Correct the final exam score.' } });
+  fireEvent.click(returnButton);
+  await waitFor(() => expect(returnGradeSubmission).toHaveBeenCalledWith(['grade-1'], 'Correct the final exam score.'));
 });
