@@ -3002,13 +3002,13 @@ setup_gke_cluster() {
     # node pool is constrained to 4-5 total worker nodes. GKE maxSurge is
     # per zone, so zero surge avoids exceeding a 12-vCPU quota in 3 zones.
     # ============================================================
-    local min_total_nodes="${GKE_MIN_TOTAL_NODES:-4}"
-    local max_total_nodes="${GKE_MAX_TOTAL_NODES:-5}"
-    local initial_nodes_per_zone="${GKE_INITIAL_NODES_PER_ZONE:-1}"
+    local min_total_nodes="${GKE_MIN_TOTAL_NODES:-9}"
+    local max_total_nodes="${GKE_MAX_TOTAL_NODES:-9}"
+    local initial_nodes_per_zone="${GKE_INITIAL_NODES_PER_ZONE:-3}"
     local machine_type="${GKE_MACHINE_TYPE:-e2-highmem-2}"
     local boot_disk_type="${GKE_NODE_DISK_TYPE:-pd-standard}"
     local boot_disk_gb="${GKE_NODE_DISK_GB:-50}"
-    local vcpu_cost_cap="${GKE_VCPU_COST_CAP:-12}"
+    local vcpu_cost_cap="${GKE_VCPU_COST_CAP:-18}"
     local vcpu_per_node=""
 
     if ! [[ "$min_total_nodes" =~ ^[0-9]+$ && "$max_total_nodes" =~ ^[0-9]+$ && "$initial_nodes_per_zone" =~ ^[0-9]+$ && "$vcpu_cost_cap" =~ ^[0-9]+$ ]]; then
@@ -3022,22 +3022,22 @@ setup_gke_cluster() {
         return 1
     fi
     vcpu_per_node=2
-    if (( min_total_nodes < 4 )); then
-        echo "ERROR: Production GKE requires at least 4 total worker nodes."
+    if (( min_total_nodes < 9 )); then
+        echo "ERROR: Production GKE requires at least 9 total worker nodes."
         return 1
     fi
-    if (( max_total_nodes > 5 )); then
-        echo "ERROR: Cost guardrail prevents more than 5 GKE worker nodes plus one surge node."
+    if (( max_total_nodes > 9 )); then
+        echo "ERROR: BlockGo production is capped at 9 GKE worker nodes."
         echo "Requested maximum: ${max_total_nodes}"
-        echo "Allowed maximum: 5"
+        echo "Allowed maximum: 9"
         return 1
     fi
     if (( min_total_nodes > max_total_nodes )); then
         echo "ERROR: GKE minimum nodes cannot exceed maximum nodes."
         return 1
     fi
-    if (( initial_nodes_per_zone < 1 || initial_nodes_per_zone > 2 )); then
-        echo "ERROR: GKE_INITIAL_NODES_PER_ZONE must be 1 or 2 for this 3-zone, 4-5 node design."
+    if (( initial_nodes_per_zone != 3 )); then
+        echo "ERROR: GKE_INITIAL_NODES_PER_ZONE must be 3 for this 3-zone, 9-node design."
         return 1
     fi
 
