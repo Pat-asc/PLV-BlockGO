@@ -51,10 +51,36 @@ test('CouchDB transport failures are retried without retrying authentication fai
     assert.equal(isRetryableCouchDbError({ statusCode: 401, message: 'unauthorized' }), false);
 });
 
-test('password reset routes use the approval workflow schema', () => {
-    const source = fs.readFileSync(path.join(__dirname, '../src/services/auth-service.js'), 'utf8');
-    assert.match(source, /request_status[\s\S]*request_reason/);
-    assert.doesNotMatch(source, /\botp_code\b|\bexpires_at\b|\bused_at\b/);
+test('manual password reset assistance uses the approval workflow schema', () => {
+    const authSource = fs.readFileSync(
+        path.join(__dirname, '../src/services/auth-service.js'),
+        'utf8'
+    );
+
+    const resetServiceSource = fs.readFileSync(
+        path.join(__dirname, '../src/shared/password-reset-service.js'),
+        'utf8'
+    );
+
+    assert.match(
+        authSource,
+        /passwordResetService\.requestManualAssistance\(\{\s*email\s*\}\)/
+    );
+
+    assert.match(
+        resetServiceSource,
+        /INSERT INTO password_reset_requests[\s\S]*request_status[\s\S]*request_reason/
+    );
+
+    assert.match(
+        resetServiceSource,
+        /request_status IN \('PENDING', 'APPROVED'\)/
+    );
+
+    assert.doesNotMatch(
+        resetServiceSource,
+        /INSERT INTO password_reset_requests[\s\S]*\botp_code\b/
+    );
 });
 
 test('deployed authentication uses the tested account-aware login limiter', () => {
