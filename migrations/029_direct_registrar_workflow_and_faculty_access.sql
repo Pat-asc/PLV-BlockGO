@@ -14,6 +14,43 @@ ALTER TABLE pending_grade_records
     ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE pending_grade_records
     ADD COLUMN IF NOT EXISTS return_reason TEXT;
+ALTER TABLE pending_grade_records
+    ADD COLUMN IF NOT EXISTS before_submission_grade TEXT;
+ALTER TABLE pending_grade_records
+    ADD COLUMN IF NOT EXISTS submitted_grade_snapshot TEXT;
+
+CREATE TABLE IF NOT EXISTS grade_submission_snapshots (
+    snapshot_id BIGSERIAL PRIMARY KEY,
+    record_id VARCHAR(255) NOT NULL,
+    assignment_cycle_id VARCHAR(100) NOT NULL DEFAULT '',
+    submission_version INTEGER NOT NULL DEFAULT 1,
+    student_id VARCHAR(100) NOT NULL,
+    student_name VARCHAR(255) NOT NULL,
+    course VARCHAR(255) NOT NULL,
+    subject_code VARCHAR(100) NOT NULL,
+    subject_name VARCHAR(255) NOT NULL,
+    school_year VARCHAR(50) NOT NULL,
+    semester VARCHAR(50) NOT NULL,
+    term VARCHAR(20) NOT NULL DEFAULT 'finals',
+    year_level VARCHAR(50) NOT NULL,
+    section VARCHAR(100) NOT NULL,
+    academic_section_id INTEGER,
+    faculty_id VARCHAR(255) NOT NULL,
+    before_grade TEXT,
+    submitted_grade TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'SubmittedToRegistrar',
+    submitted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    returned_at TIMESTAMP WITH TIME ZONE,
+    return_reason TEXT,
+    finalized_at TIMESTAMP WITH TIME ZONE,
+    transaction_id VARCHAR(255),
+    UNIQUE (record_id, submission_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_grade_submission_snapshots_record
+    ON grade_submission_snapshots (record_id, submission_version DESC);
+CREATE INDEX IF NOT EXISTS idx_grade_submission_snapshots_scope
+    ON grade_submission_snapshots (LOWER(course), school_year, semester, term);
 
 CREATE TABLE IF NOT EXISTS faculty_access_controls (
     faculty_user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -75,7 +112,9 @@ CREATE INDEX IF NOT EXISTS idx_non_regular_subjects_faculty_section
     WHERE faculty_section_id IS NOT NULL;
 
 UPDATE pending_grade_records
-SET submitted_at = COALESCE(submitted_at, recorded_at, CURRENT_TIMESTAMP)
+SET submitted_at = COALESCE(submitted_at, recorded_at, CURRENT_TIMESTAMP),
+    before_submission_grade = COALESCE(before_submission_grade, grade),
+    submitted_grade_snapshot = COALESCE(submitted_grade_snapshot, grade)
 WHERE LOWER(BTRIM(COALESCE(status, ''))) IN
       ('submittedtoregistrar', 'submittedtochairperson', 'chairpersonapproved', 'departmentapproved')
-  AND submitted_at IS NULL;
+  AND (submitted_at IS NULL OR submitted_grade_snapshot IS NULL);

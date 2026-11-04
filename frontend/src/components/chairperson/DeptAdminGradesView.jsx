@@ -194,7 +194,7 @@ const parseStoredGrade = (rawGrade) => {
             const preservedMidterm = readRawJsonScalar(rawGrade, ['midterm', 'midterms', 'midtermGrade', 'midterm_grade']);
             const preservedFinals = readRawJsonScalar(rawGrade, ['finals', 'final', 'finalGrade', 'final_grade', 'finalsGrade', 'finals_grade']);
             const preservedAverage = readRawJsonScalar(rawGrade, ['finalAverage', 'grade']);
-                
+
                 let computedRaw = preservedAverage ?? parsed.finalAverage ?? parsed.final ?? parsed.grade ?? '';
                 const mid = parseFloat(parsed.midterm);
                 const fin = parseFloat(parsed.finals);
@@ -484,12 +484,12 @@ const resolveStudentIdentityForRecord = ({
         [fallbackRosterStudent?.lastName, fallbackRosterStudent?.firstName].filter(Boolean).join(', ') ||
         (rosterStudentId ? `Student ${rosterStudentId}` : '');
 
-    let finalStudentName = 
+    let finalStudentName =
         (!isPlaceholderStudentName(recordStudentName) && recordStudentName) ||
         rosterStudentName ||
         recordStudentName ||
         'Student';
-        
+
     if (finalStudentName.includes('@')) {
         finalStudentName = finalStudentName.split('@')[0];
     }
@@ -508,9 +508,9 @@ const resolveStudentIdentityForRecord = ({
 const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole = '', department = '', onLogout }) => {
     const [grades, setGrades] = useState([]);
     const [gradesLoadError, setGradesLoadError] = useState('');
-    
+
     const { addNotification } = useNotification();
-    const [mainTab, setMainTab] = useState('grades'); 
+    const [mainTab, setMainTab] = useState('grades');
     const [selectedReviewSection, setSelectedReviewSection] = useState(null);
     const [uploadFile, setUploadFile] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
@@ -592,7 +592,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
 
         grades.forEach(g => {
             let facId = g.facultyId || g.faculty_id || g.FacultyId || 'Unknown';
-            
+
             // Clean up Fabric Base64 X.509 Identity
             if (facId.length > 40 && !facId.includes('@')) {
                 try {
@@ -756,10 +756,13 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     latestStatusTimestamp: 0,
                     latestStatusPriority: 0,
                     reviewNote: '',
+                    submissionVersion: Number(g.submission_version || g.submissionVersion || 1),
+                    submittedAt: g.submitted_at || g.submittedAt || g.date || g.Date || '',
+                    returnedAt: g.returned_at || g.returnedAt || '',
                     workflowStatuses: new Set(),
                 };
             }
-            
+
             // Ensure the CID is captured even if the first student's record lacked it
             if (!groups[key].ipfsCid && (g.ipfs_cid || g.IpfsCID || g.ipfsCid)) {
                 groups[key].ipfsCid = g.ipfs_cid || g.IpfsCID || g.ipfsCid;
@@ -773,6 +776,17 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 groups[key].ipfsArchiveStatus = g.ipfs_archive_status || g.ipfsArchiveStatus;
             }
             const parsedGrade = parseStoredGrade(getRecordGrade(g));
+            const rawBeforeGrade = g.before_grade ?? g.beforeGrade ?? g.BeforeGrade ?? '';
+            const rawSubmittedGrade = g.submitted_grade ?? g.submittedGrade ?? g.SubmittedGrade ?? '';
+            const parsedBeforeGrade = rawBeforeGrade ? parseStoredGrade(rawBeforeGrade) : null;
+            const parsedSubmittedGrade = rawSubmittedGrade ? parseStoredGrade(rawSubmittedGrade) : null;
+            const recordSubmissionVersion = Number(g.submission_version || g.submissionVersion || 1);
+            if (recordSubmissionVersion > (groups[key].submissionVersion || 1)) {
+                groups[key].submissionVersion = recordSubmissionVersion;
+            }
+            if (!groups[key].submittedAt && (g.submitted_at || g.submittedAt)) {
+                groups[key].submittedAt = g.submitted_at || g.submittedAt;
+            }
             const gradeVal = parsedGrade.finalAverage;
             if (g.date || g.Date) {
                 const currentEarliest = groups[key].earliestEncodedAt ? new Date(groups[key].earliestEncodedAt).getTime() : Number.POSITIVE_INFINITY;
@@ -781,7 +795,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     groups[key].earliestEncodedAt = g.date || g.Date;
                 }
             }
-            
+
             const resolvedStudentIdentity = resolveStudentIdentityForRecord({
                 record: g,
                 assignment: matchedAssignment,
@@ -803,6 +817,15 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 midterm: parsedGrade.midterm || previousGrade.midterm || '-',
                 finals: parsedGrade.finals || previousGrade.finals || '-',
                 finalAverage: gradeVal || previousGrade.finalAverage || '-',
+                beforeMidterm: parsedBeforeGrade?.midterm || parsedBeforeGrade?.finalAverage || previousGrade.beforeMidterm || parsedGrade.midterm || previousGrade.midterm || '-',
+                beforeFinals: parsedBeforeGrade?.finals || parsedBeforeGrade?.finalAverage || previousGrade.beforeFinals || parsedGrade.finals || previousGrade.finals || '-',
+                submittedMidterm: parsedSubmittedGrade?.midterm || parsedSubmittedGrade?.finalAverage || previousGrade.submittedMidterm || parsedGrade.midterm || previousGrade.midterm || '-',
+                submittedFinals: parsedSubmittedGrade?.finals || parsedSubmittedGrade?.finalAverage || previousGrade.submittedFinals || parsedGrade.finals || previousGrade.finals || '-',
+                submissionVersion: recordSubmissionVersion || previousGrade.submissionVersion || 1,
+                submittedAt: g.submitted_at || g.submittedAt || previousGrade.submittedAt || g.date || g.Date || '',
+                returnedAt: g.returned_at || g.returnedAt || previousGrade.returnedAt || '',
+                returnReason: g.return_reason || g.returnReason || previousGrade.returnReason || g.note || g.Note || '',
+                workflowStatus: g.status || g.Status || previousGrade.workflowStatus || '',
                 standing: parsedGrade.standing || previousGrade.standing || g.remarks || g.Remarks || 'active',
                 flagged: parsedGrade.flagged || previousGrade.flagged || g.flagged || g.Flagged === true || String(g.flagged).toLowerCase() === "true",
                 integrityStatus: g.integrity_status || g.integrityStatus || g.IntegrityStatus || previousGrade.integrityStatus || '',
@@ -837,7 +860,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 grade: groups[key].grades[studentKey],
                 referenceGrade: groups[key].referenceGrades[studentKey],
             });
-            
+
             const normalizedReviewStatus = workflowPartition;
             groups[key].workflowStatuses.add(normalizedReviewStatus);
             groups[key].hasChairpersonApproved = groups[key].hasChairpersonApproved || status.includes('chairpersonapproved');
@@ -1252,7 +1275,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
         setClassGrades(prev => {
             const studentGrade = prev[studentId] || {};
             const updated = { ...studentGrade, [field]: value };
-            
+
             if (field === 'midterm' || field === 'finals') {
                 const mid = field === 'midterm' ? value : updated.midterm;
                 const fin = field === 'finals' ? value : updated.finals;
@@ -1404,7 +1427,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     canChairpersonReturnStatus(status)
                 );
             });
-            
+
             for (const g of recordsToReturn) {
                 if (typeof returnGrade === 'function') {
                     await returnGrade(g.id, notes, loggedInEmail);
@@ -1475,7 +1498,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             for (const student of sectionStudents) {
                 const cg = classGrades[student.id];
                 if (!cg || (!cg.midterm && !cg.finals && !cg.finalAverage)) continue;
-                
+
                 const gradePayload = JSON.stringify({ midterm: cg.midterm, finals: cg.finals, finalAverage: cg.finalAverage });
                 const sectionName = selectedMySection.canonicalSection ||
                     `${selectedMySection.department || ''} ${selectedMySection.sectionNum || selectedMySection.section || ''}`.trim();
@@ -1514,13 +1537,13 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
         const sectionStudents = myStudents.filter(s =>
             String(s.facultySectionId) === String(selectedMySection.assignmentCycleId)
         );
-        
+
         const headers = ["Student ID", "Student Name", "Midterm", "Finals", "Final Grade"];
         const rows = sectionStudents.map(student => {
             const cg = classGrades[student.id] || {};
             return [student.studentno || student.email, `"${student.fullname}"`, cg.midterm || "", cg.finals || "", cg.finalAverage || ""].join(",");
         });
-        
+
         const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
         const link = document.createElement("a");
         link.href = encodeURI(csvContent);
@@ -1530,10 +1553,10 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
 
     const handleBulkEnrollMyClass = async () => {
         if (!enrollFile || !selectedMySection) return;
-        
-        const matchedSection = academicSections.find(sec => 
-            sec.department === selectedMySection.department && 
-            String(sec.yearLevel) === String(selectedMySection.yearLevel) && 
+
+        const matchedSection = academicSections.find(sec =>
+            sec.department === selectedMySection.department &&
+            String(sec.yearLevel) === String(selectedMySection.yearLevel) &&
             String(sec.sectionNum) === String(selectedMySection.sectionNum || selectedMySection.section)
         );
 
@@ -1643,7 +1666,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                     {(activeChairTab === 'dashboard' || activeChairTab === 'grades') && <ChairpersonOverview metrics={deptMetrics} />}
                         {['forReview', 'returned', 'approved', 'forwarded', 'flagged'].includes(activeChairTab) && (
                         <div className="flex flex-col gap-6">
-                            <FacultyStatusTable 
+                            <FacultyStatusTable
                                 rows={facultyRows.filter(r => {
                                     if (activeChairTab === 'forReview') return r.reviewStatus === 'submitted';
                                     if (activeChairTab === 'returned') return r.reviewStatus === 'returned';
@@ -1653,21 +1676,21 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                     return true;
                                 })}
                                 allRows={facultyRows}
-                                selectedReviewKey={selectedReviewSection?.reviewKey} 
+                                selectedReviewKey={selectedReviewSection?.reviewKey}
                                 onSelectSection={setSelectedReviewSection}
                                 onViewIpfs={handleViewIpfs}
                                 viewMode={activeChairTab}
                                 loadError={activeChairTab === 'forwarded' ? gradesLoadError : ''}
                             />
                             {selectedReviewSection && (
-                                <SectionReviewPanel 
-                                    selectedSection={selectedReviewSection} 
+                                <SectionReviewPanel
+                                    selectedSection={selectedReviewSection}
                                     activeTerm={activeEncodingTerm}
                                     sourceView={activeChairTab}
                                     observerOnly
-                                    onApprove={handleBulkApprove} 
+                                    onApprove={handleBulkApprove}
                                     onSendToRegistrar={handleSendToRegistrar}
-                                    onSendBack={(notes) => handleBulkReturn(notes)} 
+                                    onSendBack={(notes) => handleBulkReturn(notes)}
                                     onViewIpfs={handleViewIpfs}
                                     onRetryArchive={['PENDING', 'FAILED'].includes(selectedReviewSection.ipfsArchiveStatus) ? handleRetryArchive : null}
                                     onBack={() => setSelectedReviewSection(null)}
@@ -1712,20 +1735,20 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                         </button>
                                     </div>
                                     <h2 className="text-xl font-bold text-[#003366] mb-6">{selectedMySection.department} {selectedMySection.yearLevel}-{selectedMySection.sectionNum || selectedMySection.section} ({selectedMySection.subject})</h2>
-                                    
+
                                     <div className="mb-6 rounded-xl bg-slate-50 p-5 border border-slate-200 flex flex-col md:flex-row md:items-end gap-4">
                                         <div className="flex-1">
                                             <h3 className="font-bold text-emerald-700 mb-2">Enroll Missing Students</h3>
-                                            
-                                            <input 
+
+                                            <input
                                                 id="myclass-student-enroll-upload"
-                                                type="file" 
+                                                type="file"
                                                 accept=".csv,text/csv"
                                                 onChange={(e) => setEnrollFile(e.target.files[0])}
                                                 className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
                                             />
                                         </div>
-                                        <button 
+                                        <button
                                             onClick={handleBulkEnrollMyClass}
                                             disabled={!enrollFile || isEnrolling}
                                             className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50"
@@ -1747,9 +1770,9 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                                 </div>
                                             </div>
                                             <div className="flex flex-wrap items-center gap-3">
-                                                <select 
-                                                    value={statusFilter} 
-                                                    onChange={e => setStatusFilter(e.target.value)} 
+                                                <select
+                                                    value={statusFilter}
+                                                    onChange={e => setStatusFilter(e.target.value)}
                                                     className="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-[#003366]"
                                                 >
                                                     <option value="All">All Statuses</option>
@@ -1760,8 +1783,8 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                                     <option value="INC">INC</option>
                                                 </select>
                                                 <div className="relative overflow-hidden">
-                                                    <input 
-                                                        type="file" 
+                                                    <input
+                                                        type="file"
                                                         accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                                                         onChange={(e) => setUploadFile(e.target.files[0])}
                                                         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
@@ -1884,16 +1907,16 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
             <Modal isOpen={ipfsModalOpen} onClose={() => setIpfsModalOpen(false)} title="IPFS Vault Decryption">
                 <div className="flex flex-col gap-4">
                     <p className="text-sm text-slate-600">
-                        This academic record is encrypted and distributed across the PLV IPFS Network. 
+                        This academic record is encrypted and distributed across the PLV IPFS Network.
                         Enter the Vault Password to view the decrypted content.
                     </p>
                     <div className="relative">
-                        <input 
-                            type={showVaultPassword ? "text" : "password"} 
-                            value={vaultPassword} 
-                            onChange={(e) => setVaultPassword(e.target.value)} 
-                            className="w-full rounded-xl border border-slate-300 px-4 py-3 pr-10 text-sm outline-none focus:border-[#003366]" 
-                            placeholder="Enter Vault Password" 
+                        <input
+                            type={showVaultPassword ? "text" : "password"}
+                            value={vaultPassword}
+                            onChange={(e) => setVaultPassword(e.target.value)}
+                            className="w-full rounded-xl border border-slate-300 px-4 py-3 pr-10 text-sm outline-none focus:border-[#003366]"
+                            placeholder="Enter Vault Password"
                             onKeyDown={(e) => e.key === 'Enter' && submitIpfsPassword()}
                             autoFocus
                         />
@@ -1918,7 +1941,7 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                         <button onClick={submitIpfsPassword} className="rounded-xl bg-[#003366] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#00264d]">Decrypt & View</button>
                     </div>
                 </div>
-            </Modal>            
+            </Modal>
             <Modal isOpen={confirmModal.isOpen} onClose={() => setConfirmModal({ ...confirmModal, isOpen: false })} title={confirmModal.title}>
                 <div className="flex flex-col gap-4">
                     <p className="text-sm text-slate-600">{confirmModal.message}</p>

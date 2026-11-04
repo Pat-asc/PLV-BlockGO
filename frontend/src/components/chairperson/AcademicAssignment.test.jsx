@@ -648,3 +648,36 @@ test("keeps schedules subject-specific so an existing BSIT 1-1 load cannot block
   ));
 });
 
+test("renders Faculty Access Management table and requires a non-blank reason to block Faculty", async () => {
+  fetchFacultyAccessControls.mockResolvedValue({
+    faculties: [{
+      facultyUserId: 1,
+      facultyId: "FAC-001",
+      fullName: "Carlos Reyes",
+      email: "carlos.reyes@plv.edu.ph",
+      department: "Bachelor of Science in Information Technology",
+      isBlocked: false,
+      reason: "",
+    }],
+  });
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  const accessSection = await screen.findByTestId("faculty-access-management");
+  expect(within(accessSection).getByText("FAC-001")).toBeInTheDocument();
+  expect(within(accessSection).getByText("carlos.reyes@plv.edu.ph")).toBeInTheDocument();
+  expect(within(accessSection).getByText("Active")).toBeInTheDocument();
+
+  fireEvent.click(within(accessSection).getByRole("button", { name: "Block Faculty" }));
+  const dialog = await screen.findByRole("dialog", { name: "Block Faculty Academic Access" });
+  const confirmBtn = within(dialog).getByRole("button", { name: "Block Faculty" });
+  expect(confirmBtn).toBeDisabled();
+
+  const reasonBox = within(dialog).getByLabelText("Reason for blocking");
+  fireEvent.change(reasonBox, { target: { value: "   " } });
+  expect(confirmBtn).toBeDisabled();
+
+  fireEvent.change(reasonBox, { target: { value: "Pending compliance with department syllabus audit." } });
+  expect(confirmBtn).toBeEnabled();
+  fireEvent.click(confirmBtn);
+
+  await waitFor(() => expect(blockFaculty).toHaveBeenCalledWith(1, "Pending compliance with department syllabus audit."));
+});

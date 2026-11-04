@@ -190,7 +190,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
   const [rowSaveState, setRowSaveState] = useState({});
   const [sectionStatus, setSectionStatus] = useState({});
   const [validationErrors, setValidationErrors] = useState({});
-  
+
   const [uploadingSection, setUploadingSection] = useState(null);
   const [uploadResult, setUploadResult] = useState(null);
   const [isLoadingData, setIsLoadingData] = useState(true);
@@ -198,6 +198,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
   const hasHydratedFacultyDataRef = useRef(false);
 
   const [sections, setSections] = useState({});
+  const [submittedSnapshots, setSubmittedSnapshots] = useState([]);
   const sectionStatusStorageKey = `facultySectionStatuses:${normalizeText(facultyData?.email || "faculty")}`;
   const facultyGradeSnapshotStorageKey = buildFacultyGradeSnapshotKey(facultyData?.email || "");
 
@@ -412,14 +413,30 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         const latestStatus = latestRecordEntry?.normalizedStatus || "draft";
         const reviewNote =
           latestStatus === "returned"
-            ? latestRecordEntry?.record?.note ||
+            ? latestRecordEntry?.record?.return_reason ||
+              latestRecordEntry?.record?.returnReason ||
+              latestRecordEntry?.record?.note ||
               latestRecordEntry?.record?.Note ||
               ""
             : "";
+        const submittedAt =
+          latestRecordEntry?.record?.submitted_at ||
+          latestRecordEntry?.record?.submittedAt ||
+          latestRecordEntry?.record?.date ||
+          latestRecordEntry?.record?.Date ||
+          "";
+        const submissionVersion =
+          Number(
+            latestRecordEntry?.record?.submission_version ||
+              latestRecordEntry?.record?.submissionVersion ||
+              1
+          ) || 1;
 
         return {
           status: latestStatus,
           note: reviewNote,
+          submittedAt,
+          submissionVersion,
         };
       };
 
@@ -463,7 +480,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             studentRecord.name ||
             [lastName, firstName].filter(Boolean).join(", ") ||
               (rosterStudentId !== 'N/A' ? `Student ${rosterStudentId}` : "Unnamed Student");
-              
+
             if (fullName.includes('@')) {
                 fullName = fullName.split('@')[0];
             }
@@ -524,9 +541,46 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           assignmentCycleId: activeAssignmentCycleId,
           facultySectionId: activeAssignmentCycleId,
           reviewNote: sectionReviewState.note,
+          submittedAt: sectionReviewState.submittedAt || "",
+          submissionVersion: sectionReviewState.submissionVersion || 1,
           students: enrolledStudents
         };
       });
+
+      const snapshotEntries = actualGrades
+        .filter((record) => {
+          const status = normalizeSectionStatusValue(record.status || record.Status);
+          const hasSubmittedTimestamp = Boolean(record.submitted_at || record.submittedAt);
+          const hasSubmittedSnapshot = Boolean(record.submitted_grade || record.submittedGrade);
+          return status !== "draft" || hasSubmittedTimestamp || hasSubmittedSnapshot;
+        })
+        .map((record) => {
+          const term = normalizeEncodingTerm(record.term || record.Term || encodingTerm);
+          const immutableRaw =
+            record.submitted_grade ||
+            record.submittedGrade ||
+            record.grade ||
+            record.Grade ||
+            "";
+          const parsed = parseFacultyGradePayload(immutableRaw, term);
+          return {
+            id: record.id || `${record.studentId || record.student_no}-${record.subject_code}-${term}`,
+            subjectCode: record.subject_code || record.subjectCode || "—",
+            subjectTitle: record.subject_title || record.subjectTitle || record.subject_name || "",
+            section: record.section || record.record_section || "—",
+            studentId: record.student_no || record.studentNo || record.studentId || record.student_hash || "—",
+            studentName: record.student_name || record.studentName || "—",
+            term,
+            midterm: parsed.midterm !== "" && parsed.midterm !== null && parsed.midterm !== undefined ? parsed.midterm : "—",
+            finals: parsed.finals !== "" && parsed.finals !== null && parsed.finals !== undefined ? parsed.finals : "—",
+            standing: parsed.standing || STUDENT_STATUS_ACTIVE,
+            status: record.status || record.Status || "SubmittedToRegistrar",
+            submissionVersion: Number(record.submission_version || record.submissionVersion || 1) || 1,
+            submittedAt: record.submitted_at || record.submittedAt || record.finalized_at || record.date || "",
+            returnReason: record.return_reason || record.returnReason || record.note || "",
+          };
+        });
+      setSubmittedSnapshots(snapshotEntries);
 
       setSections((previousSections) => {
         const mergedSections = {};
@@ -578,6 +632,8 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
               };
             }),
             reviewNote: sectionValue.reviewNote,
+            submittedAt: sectionValue.submittedAt || previousSections[sectionKey]?.submittedAt || "",
+            submissionVersion: sectionValue.submissionVersion || previousSections[sectionKey]?.submissionVersion || 1,
           };
         });
 
@@ -700,12 +756,12 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       ...prev,
       [sectionName]: { ...prev[sectionName], [index]: { ...(prev[sectionName]?.[index] || {}), [field]: error } }
     }));
-    
+
     const updated = JSON.parse(JSON.stringify(sections));
     const student = updated[sectionName].students[index];
     if (student.standing && student.standing !== STUDENT_STATUS_ACTIVE) return;
     updated[sectionName].students[index][field] = value === '' ? '' : parseFloat(value) || 0;
-    
+
     setSections(updated);
     setRowSaveState(prev => ({ ...prev, [sectionName]: { ...(prev[sectionName] || {}), [index]: 'idle' } }));
   }, [sections, encodingTerm, getSectionTermStatus]);
@@ -741,7 +797,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       showSystemNotification("Export PDF is available only after the grades for this section have been submitted to the Registrar.");
       return;
     }
-    
+
     try {
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF();
@@ -768,13 +824,13 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
             unofficiallyDropped: 0,
             incomplete: 0,
         });
-        
+
         doc.setTextColor(0, 51, 102);
         doc.setFontSize(16);
         doc.text("GRADE ENCODING SHEET", 14, 20);
         doc.setFontSize(11);
         doc.text("FACULTY COPY", 14, 26);
-        
+
         doc.setFontSize(10);
         doc.setTextColor(100);
         doc.text(`Department: ${sectionData.sectionCourse}`, 14, 34);
@@ -787,7 +843,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         doc.text(`Dropped (D): ${summary.dropped}`, 110, 57);
         doc.text(`Unofficial Dropped (UD): ${summary.unofficiallyDropped}`, 110, 62);
         doc.text(`Incomplete (INC): ${summary.incomplete}`, 110, 67);
-        
+
         const tableColumn = ["Student ID", "Student Name", "Midterm", "Finals", "Final Grade", "Grade Equivalent", "Status", "Student Status"];
         const tableRows = sectionData.students.map(student => {
             const finalGrade = calculateFinalAverage(student);
@@ -803,12 +859,12 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
               student.standing || STUDENT_STATUS_ACTIVE,
             ];
         });
-        
+
         doc.autoTable({
             head: [tableColumn], body: tableRows, startY: 74, theme: 'striped',
             headStyles: { fillColor: [0, 51, 102], fontSize: 9 }, bodyStyles: { fontSize: 8 }
         });
-        
+
         doc.save(`${sectionName.replace(/[^a-zA-Z0-9-]/g, "_")}_GradingSheet.pdf`);
     } catch (err) {
         showSystemNotification("Could not generate PDF. Make sure jsPDF is available.");
@@ -877,8 +933,8 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
         res = await batchUploadGrades(file, { ...uploadContext, confirmOverwrite: true });
       }
       if (res.status === 'Success' || res.status === 'Partial Success') {
-        setUploadResult({ 
-          type: 'success', 
+        setUploadResult({
+          type: 'success',
           title: res.status === 'Partial Success' ? 'Upload Partially Completed' : 'Upload Successful',
           message: `${res.successful} of ${res.totalProcessed} grade rows were saved as Draft.`,
           context: {
@@ -926,7 +982,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       });
     } finally {
       setUploadingSection(null);
-      e.target.value = null; 
+      e.target.value = null;
     }
   };
 
@@ -935,7 +991,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     const saving = {};
     students.forEach((_, i) => { saving[i] = 'saving'; });
     setRowSaveState(prev => ({ ...prev, [sectionName]: saving }));
-    
+
     try {
       const sectionData = sections[sectionName];
       if (!sectionData.academicSectionId ||
@@ -982,9 +1038,9 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           };
           return issueGrade(gradePayload);
       });
-      
+
       await Promise.all(promises);
-      
+
       const saved = {};
       students.forEach((_, i) => { saved[i] = 'saved'; });
       setRowSaveState(prev => ({ ...prev, [sectionName]: saved }));
@@ -1009,7 +1065,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           : s.finals === '' || Number.isNaN(Number(s.finals))
       )
     );
-    
+
     if (hasIncomplete) {
       showSystemNotification(`Submission Blocked: All students in the section must have ${encodingTerm === 'midterm' ? 'Midterm' : 'Finals'} grades encoded before submitting to the Registrar.`);
       return;
@@ -1022,16 +1078,25 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     try {
       await handleSaveAll(sectionName);
       const sectionData = sections[sectionName];
-      
-      await submitSectionGrades(
+
+      const submitResponse = await submitSectionGrades(
         sectionData.sectionCourse,
         `${sectionData.canonicalSection || sectionName} (${sectionData.subjectCode})`,
         canonicalAcademicSchoolYear(sectionData.schoolYear),
         canonicalAcademicSemester(sectionData.semester),
         sectionData.facultySectionId || sectionData.assignmentCycleId
       );
+      const submittedTimestamp = submitResponse?.submittedAt || new Date().toISOString();
+      setSections((prev) => ({
+        ...prev,
+        [sectionName]: {
+          ...prev[sectionName],
+          submittedAt: submittedTimestamp,
+        },
+      }));
       updateSectionTermStatus(sectionName, encodingTerm, 'submitted');
       setSubmitConfirmSection(null);
+      loadFacultyData(true);
     } catch (e) { showSystemNotification("Error submitting section: " + e.message); }
   };
 
@@ -1045,6 +1110,19 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
   const isGradeEncodingLocked = isSubmittedToChairperson;
   const isMidtermLocked = encodingTerm !== 'midterm';
   const isFinalsLocked = encodingTerm !== 'finals';
+
+  const formatSubmittedTimestamp = (value) => {
+    if (!value) return "—";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return String(value);
+    return parsed.toLocaleString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
   if (portalView === 'curriculum') {
     return (
@@ -1066,6 +1144,80 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
     );
   }
 
+  if (portalView === 'submitted') {
+    return (
+      <div className="min-h-screen bg-slate-50 pb-10 font-sans" data-testid="faculty-submitted-grades-view">
+        <FacultyHeader
+          facultyData={{ ...facultyData, semester: encodingSemester }}
+          totalSections={totalSections}
+          onLogout={onLogout}
+        />
+        <main className="mx-auto w-full max-w-[1440px] px-4 py-5 md:px-6 lg:py-7">
+          <BackButton
+            onClick={() => setPortalView('grades')}
+            className="mb-5"
+            label="Back to Grade Encoding"
+          />
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 bg-slate-50 p-5">
+              <h2 className="text-xl font-bold text-[#003366]">Submitted Grades Snapshot</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Immutable snapshot of grades submitted directly to the Registrar for review and finalization.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[850px] text-left text-sm">
+                <thead className="bg-[#003366] text-white">
+                  <tr>
+                    <th className="p-4">Subject</th>
+                    <th className="p-4">Section</th>
+                    <th className="p-4">Student</th>
+                    <th className="p-4 text-center">Midterm Grade</th>
+                    <th className="p-4 text-center">Final Grade</th>
+                    <th className="p-4 text-center">Submission Status</th>
+                    <th className="p-4">Submitted At</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {submittedSnapshots.map((item, idx) => (
+                    <tr key={`${item.id}-${idx}`} className="border-b border-slate-100 hover:bg-slate-50">
+                      <td className="p-4">
+                        <div className="font-bold text-[#003366]">{item.subjectCode}</div>
+                        {item.subjectTitle ? <div className="text-xs text-slate-500">{item.subjectTitle}</div> : null}
+                      </td>
+                      <td className="p-4 font-semibold text-slate-700">{item.section}</td>
+                      <td className="p-4">
+                        <div className="font-semibold text-slate-800">{item.studentName}</div>
+                        <div className="text-xs text-slate-500">{item.studentId}</div>
+                      </td>
+                      <td className="p-4 text-center font-bold text-slate-800">{item.midterm}</td>
+                      <td className="p-4 text-center font-bold text-slate-800">{item.finals}</td>
+                      <td className="p-4 text-center">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-[#003366]">
+                          {item.status} (v{item.submissionVersion})
+                        </span>
+                      </td>
+                      <td className="p-4 text-xs font-medium text-slate-600" data-testid="submitted-snapshot-timestamp">
+                        {formatSubmittedTimestamp(item.submittedAt)}
+                      </td>
+                    </tr>
+                  ))}
+                  {submittedSnapshots.length === 0 && (
+                    <tr>
+                      <td colSpan="7" className="p-8 text-center text-slate-500">
+                        No submitted grade snapshots found yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="faculty-grade-encoding min-h-screen bg-slate-50 pb-10 font-sans">
       <FacultyHeader
@@ -1075,7 +1227,14 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       />
 
       <div className="w-full px-4 md:px-6">
-        <div className="mt-5 flex justify-end">
+        <div className="mt-5 flex flex-wrap justify-end gap-3">
+          <button
+            type="button"
+            onClick={() => setPortalView('submitted')}
+            className="rounded-lg border border-[#003366] bg-white px-4 py-2 text-sm font-bold text-[#003366] hover:bg-blue-50"
+          >
+            View Submitted Grades
+          </button>
           <button
             type="button"
             onClick={() => setPortalView('curriculum')}
@@ -1170,7 +1329,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                 const secStatus = getSectionTermStatus(sectionName);
 
                 return (
-                  <ProgramCard 
+                  <ProgramCard
                     key={sectionName}
                     sectionName={sectionName}
                     sectionData={sectionData}
@@ -1254,7 +1413,12 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
             {isSubmittedToChairperson && (
               <div className="border-b border-red-200 bg-red-50 p-4 text-center text-sm font-semibold text-red-700">
-                 These grades have been submitted to the Registrar and are locked from further encoding.
+                <div>These grades have been submitted to the Registrar and are locked from further encoding.</div>
+                {sections[activeSection]?.submittedAt && (
+                  <div className="mt-1 text-xs font-medium text-red-800" data-testid="active-section-submitted-at">
+                    Submitted At: {formatSubmittedTimestamp(sections[activeSection].submittedAt)} (Version {sections[activeSection]?.submissionVersion || 1})
+                  </div>
+                )}
               </div>
             )}
 
@@ -1297,7 +1461,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                       <tr key={`${stu.id}-${i}`} className={`border-b border-slate-100 hover:bg-slate-50 ${hasError ? 'bg-red-50' : rowState === 'saved' ? 'bg-green-50' : ''} ${isFlagged ? 'bg-amber-50' : ''}`}>
                         <td className="p-4 font-semibold text-slate-700">{stu.studentNo || stu.id}</td>
                         <td className="p-4 font-medium text-slate-800">{stu.name}</td>
-                        
+
                         <td className="p-4 text-center">
                           <div className="relative inline-block">
                             <input
@@ -1345,7 +1509,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                             {academicStatus}
                           </span>
                         </td>
-                        
+
                         <td className="p-4 text-center">
                           <select
                             value={studentStatus}
@@ -1387,7 +1551,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
                 </tbody>
               </table>
             </div>
-            
+
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-200 bg-slate-50 p-4">
               <div className="flex items-center gap-3">
                 <div className="h-3 w-3 rounded-full bg-red-50 border border-red-200" title="Has Error" /> <span className="text-xs text-slate-500">Error</span>

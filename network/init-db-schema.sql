@@ -405,6 +405,39 @@ CREATE TABLE IF NOT EXISTS student_non_regular_subjects (
     CONSTRAINT uq_non_regular_student_subject_period UNIQUE (student_user_id, school_year, semester, subject_id)
 );
 
+CREATE TABLE IF NOT EXISTS grade_submission_snapshots (
+    snapshot_id BIGSERIAL PRIMARY KEY,
+    record_id VARCHAR(255) NOT NULL,
+    assignment_cycle_id VARCHAR(100) NOT NULL DEFAULT '',
+    submission_version INTEGER NOT NULL DEFAULT 1,
+    student_id VARCHAR(100) NOT NULL,
+    student_name VARCHAR(255) NOT NULL,
+    course VARCHAR(255) NOT NULL,
+    subject_code VARCHAR(100) NOT NULL,
+    subject_name VARCHAR(255) NOT NULL,
+    school_year VARCHAR(50) NOT NULL,
+    semester VARCHAR(50) NOT NULL,
+    term VARCHAR(20) NOT NULL DEFAULT 'finals',
+    year_level VARCHAR(50) NOT NULL,
+    section VARCHAR(100) NOT NULL,
+    academic_section_id INTEGER,
+    faculty_id VARCHAR(255) NOT NULL,
+    before_grade TEXT,
+    submitted_grade TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'SubmittedToRegistrar',
+    submitted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    returned_at TIMESTAMP WITH TIME ZONE,
+    return_reason TEXT,
+    finalized_at TIMESTAMP WITH TIME ZONE,
+    transaction_id VARCHAR(255),
+    UNIQUE (record_id, submission_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_grade_submission_snapshots_record
+    ON grade_submission_snapshots (record_id, submission_version DESC);
+CREATE INDEX IF NOT EXISTS idx_grade_submission_snapshots_scope
+    ON grade_submission_snapshots (LOWER(course), school_year, semester, term);
+
 CREATE TABLE IF NOT EXISTS nstp_options (
     option_code VARCHAR(50) PRIMARY KEY,
     option_name VARCHAR(150) NOT NULL,
@@ -477,7 +510,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     FOREIGN KEY (receiver_email) REFERENCES users(email)
 );
 
--- Online Status table  
+-- Online Status table
 CREATE TABLE IF NOT EXISTS online_status (
     email VARCHAR(100) PRIMARY KEY,
     is_online BOOLEAN DEFAULT false,

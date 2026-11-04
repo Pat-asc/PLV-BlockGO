@@ -39,6 +39,13 @@ const gradeValuesMatch = (left, right) => {
   return String(left).trim().toLowerCase() === String(right).trim().toLowerCase();
 };
 
+const formatSubmittedTimestamp = (value) => {
+  if (!value) return "Recorded on submission";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString();
+};
+
 const metadataItems = (section, activeTerm) => [
   ["Faculty", section.facultyName || "Unknown Faculty"],
   ["Section", section.sectionName || "Unknown Section"],
@@ -62,6 +69,7 @@ function SectionReviewPanel({
   observerOnly = false,
 }) {
   const [draftNotes, setDraftNotes] = useState({});
+  const [monitoringView, setMonitoringView] = useState("submission");
   const [approveConfirmationOpen, setApproveConfirmationOpen] = useState(false);
   const [returnConfirmationOpen, setReturnConfirmationOpen] = useState(false);
   const [handoffConfirmationOpen, setHandoffConfirmationOpen] = useState(false);
@@ -79,6 +87,7 @@ function SectionReviewPanel({
   const busy = isApproving || isReturning || isSendingToRegistrar || isRetryingArchive;
 
   useEffect(() => {
+    setMonitoringView("submission");
     setApproveConfirmationOpen(false);
     setReturnConfirmationOpen(false);
     setHandoffConfirmationOpen(false);
@@ -94,15 +103,25 @@ function SectionReviewPanel({
 
   const rows = useMemo(() => {
     if (!selectedSection) return [];
+    const isFinalsTerm = String(activeTerm).toLowerCase() === "finals";
     return selectedSection.students.map((student) => {
       const studentId = student.studentNo || student.studentId || student.id;
       const record = selectedSection.grades[student.studentNo] ||
         selectedSection.grades[student.studentId] || selectedSection.grades[student.id] || {};
       const referenceRecord = selectedSection.referenceGrades?.[studentId] ||
         selectedSection.referenceGrades?.[student.studentId] || {};
-      const currentGrade = String(activeTerm).toLowerCase() === "finals" ? (record.finals || "-") : (record.midterm || "-");
+      const currentGrade = isFinalsTerm ? (record.finals || "-") : (record.midterm || "-");
       const referenceGrade = referenceRecord.grade || referenceRecord.midterm ||
-        (String(activeTerm).toLowerCase() === "finals" ? record.midterm : "-");
+        (isFinalsTerm ? record.midterm : "-");
+      const beforeGrade = isFinalsTerm
+        ? (record.beforeFinals || record.beforeGrade || referenceGrade || currentGrade || "-")
+        : (record.beforeMidterm || record.beforeGrade || referenceGrade || currentGrade || "-");
+      const submittedGrade = isFinalsTerm
+        ? (record.submittedFinals || record.submittedGrade || currentGrade || "-")
+        : (record.submittedMidterm || record.submittedGrade || currentGrade || "-");
+      const submissionVersion = Number(record.submissionVersion || selectedSection.submissionVersion || 1);
+      const submittedAt = record.submittedAt || selectedSection.submittedAt || selectedSection.finalizedAt || "";
+      const workflowStatus = record.workflowStatus || getReviewStatusLabel(selectedSection.reviewStatus || "pending");
       const numericMidterm = Number(record.midterm);
       const numericFinals = Number(record.finals);
       const finalAverage = Number.isFinite(numericMidterm) && Number.isFinite(numericFinals) && numericMidterm > 0 && numericFinals > 0
@@ -111,12 +130,13 @@ function SectionReviewPanel({
       const standing = record.standing || "active";
       const normalizedStanding = String(standing).toLowerCase();
       const equivalentNumber = Number(gradeEquivalent);
-      const isDeansListCandidate = String(activeTerm).toLowerCase() === "finals" &&
+      const isDeansListCandidate = isFinalsTerm &&
         Number.isFinite(equivalentNumber) && equivalentNumber > 0 && equivalentNumber <= 1.75 &&
         !["dropped", "unofficially_dropped", "withdrawn", "incomplete"].includes(normalizedStanding);
       const integrityStatus = String(record.integrityStatus || "").toLowerCase();
       const mismatch = hasValue(referenceGrade) &&
         (integrityStatus === "mismatch" || !gradeValuesMatch(currentGrade, referenceGrade));
+      const beforeAfterChanged = hasValue(beforeGrade) && hasValue(submittedGrade) && !gradeValuesMatch(beforeGrade, submittedGrade);
 
       return {
         id: studentId,
@@ -127,6 +147,12 @@ function SectionReviewPanel({
         middleName: student.middleName || "",
         currentGrade,
         referenceGrade,
+        beforeGrade,
+        submittedGrade,
+        beforeAfterChanged,
+        submissionVersion,
+        submittedAt,
+        workflowStatus,
         standing,
         isDeansListCandidate,
         flagged: !!record.flagged,
@@ -155,6 +181,9 @@ function SectionReviewPanel({
   const canApprove = !observerOnly && reviewStatus === "submitted";
   const showHandoff = !observerOnly && reviewStatus === "approved";
   const finalized = reviewStatus === "forwarded";
+  const sectionSubmissionVersion = Number(selectedSection?.submissionVersion || rows[0]?.submissionVersion || 1);
+  const sectionSubmittedAt = selectedSection?.submittedAt || rows[0]?.submittedAt || selectedSection?.finalizedAt || "";
+  const sectionStatusLabel = alreadySent ? "Sent to Registrar" : getReviewStatusLabel(reviewStatus);
 
   const confirmApprove = async () => {
     if (approveInFlightRef.current) return;
@@ -247,12 +276,56 @@ function SectionReviewPanel({
                 <span className={`rounded-full px-3 py-1.5 text-sm font-semibold ${differenceCount ? 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'}`}>
                   {differenceCount} {differenceCount === 1 ? 'Difference' : 'Differences'} Detected
                 </span>
-                <StatusBadge status={alreadySent ? "forwarded" : reviewStatus} label={alreadySent ? "Sent to Registrar" : getReviewStatusLabel(reviewStatus)} />
+                <StatusBadge status={alreadySent ? "forwarded" : reviewStatus} label={sectionStatusLabel} />
                 {[["Passed", outcomeSummary.passed], ["Failed", outcomeSummary.failed], ["D", outcomeSummary.d], ["UD", outcomeSummary.ud], ["W", outcomeSummary.w], ["INC", outcomeSummary.inc], ["Flagged", outcomeSummary.flagged]].map(([label, count]) => (
                   <span key={label} className="rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300"><span>{label}</span> <strong>{count}</strong></span>
                 ))}
               </div>
               {observerOnly && !finalized ? <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200">Department visibility only. The Registrar owns return and finalization decisions for this submission.</p> : null}
+              {observerOnly ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/70" data-testid="chairperson-monitoring-actions">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700 dark:text-slate-200">
+                    <span className="rounded bg-white px-2.5 py-1 font-semibold shadow-sm dark:bg-slate-900">Submission Version: v{sectionSubmissionVersion}</span>
+                    <span className="rounded bg-white px-2.5 py-1 font-semibold shadow-sm dark:bg-slate-900">Submitted At: {formatSubmittedTimestamp(sectionSubmittedAt)}</span>
+                    <span className="rounded bg-white px-2.5 py-1 font-semibold shadow-sm dark:bg-slate-900">Current Status: {sectionStatusLabel}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setMonitoringView("submission")}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                        monitoringView === "submission"
+                          ? "bg-[#003366] text-white"
+                          : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                      }`}
+                    >
+                      View Submission
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMonitoringView("beforeAfter")}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                        monitoringView === "beforeAfter"
+                          ? "bg-[#003366] text-white"
+                          : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                      }`}
+                    >
+                      View Before/After
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMonitoringView("history")}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                        monitoringView === "history"
+                          ? "bg-[#003366] text-white"
+                          : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                      }`}
+                    >
+                      View History
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {String(activeTerm).toLowerCase() === "finals" ? <p className="text-xs text-amber-800 dark:text-amber-300">Highlighted names are in the Dean&apos;s List grade range. Official eligibility still depends on all semester subjects.</p> : null}
             </div>
 
@@ -272,22 +345,111 @@ function SectionReviewPanel({
                 </button>
               </div>
 
-              <div className="grid min-w-0 gap-4 lg:grid-cols-2" data-testid="grade-comparison-grid">
-                <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
-                  <h4 className="sticky left-0 top-0 bg-[#003366] px-4 py-3 font-bold text-white dark:bg-sky-900">Current / Submitted</h4>
-                  <table className="min-w-[620px] table-fixed text-sm">
-                    <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">{getEncodingTermLabel(activeTerm)}</th><th className="w-28 px-3 py-2">Status</th><th className="w-32 px-3 py-2">Ledger History</th></tr></thead>
-                    <tbody>{rows.map((row) => <tr key={`current-${row.id}`} data-mismatch={row.mismatch ? "true" : "false"} className={`border-t border-slate-200 dark:border-slate-700 ${row.mismatch ? 'bg-red-50 dark:bg-red-950/30' : row.flagged ? 'bg-amber-50 dark:bg-amber-950/20' : ''}`}><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium"><span data-deans-list-candidate={row.isDeansListCandidate ? "true" : "false"} className={row.isDeansListCandidate ? "rounded bg-amber-200 px-1.5 py-0.5 font-bold text-amber-950 ring-1 ring-amber-400" : ""}>{row.name}</span></td><td className={`px-3 py-2 font-bold ${row.mismatch ? 'text-red-700 dark:text-red-300' : ''}`}>{row.currentGrade}</td><td className="break-words px-3 py-2 capitalize">{String(row.status).replaceAll('_', ' ')}</td><td className="px-3 py-2">{finalized && row.recordId ? <GradeVersionHistory recordId={row.recordId} allowCorrection /> : <span className="text-xs text-slate-400">Not yet finalized</span>}</td></tr>)}</tbody>
+              {observerOnly && monitoringView === "beforeAfter" ? (
+                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700" data-testid="chairperson-before-after-panel">
+                  <div className="bg-[#003366] px-4 py-3 text-white dark:bg-sky-900">
+                    <h4 className="font-bold">Before vs. After Submission Snapshot (Read-Only Audit)</h4>
+                    <p className="text-xs text-blue-100">Compares the pre-submission grade snapshot (Before Value) against the immutable Faculty-submitted snapshot (Submitted Value).</p>
+                  </div>
+                  <table className="min-w-[860px] w-full table-fixed text-sm" data-testid="chairperson-before-after-table">
+                    <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                      <tr>
+                        <th className="w-36 px-3 py-2">Faculty</th>
+                        <th className="w-36 px-3 py-2">Subject</th>
+                        <th className="w-28 px-3 py-2">Section</th>
+                        <th className="w-44 px-3 py-2">Student</th>
+                        <th className="w-28 px-3 py-2">Before Value</th>
+                        <th className="w-28 px-3 py-2">Submitted Value</th>
+                        <th className="w-28 px-3 py-2">Submission Version</th>
+                        <th className="w-40 px-3 py-2">Submitted Timestamp</th>
+                        <th className="w-32 px-3 py-2">Current Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => (
+                        <tr
+                          key={`before-after-${row.id}`}
+                          data-before-after-changed={row.beforeAfterChanged ? "true" : "false"}
+                          className={`border-t border-slate-200 dark:border-slate-700 ${
+                            row.beforeAfterChanged ? "bg-amber-50 dark:bg-amber-950/30" : ""
+                          }`}
+                        >
+                          <td className="break-words px-3 py-2 text-xs">{selectedSection.facultyName || "Unknown Faculty"}</td>
+                          <td className="break-words px-3 py-2 text-xs">{selectedSection.subjectCode || "Unknown Subject"}</td>
+                          <td className="break-words px-3 py-2 text-xs">{selectedSection.sectionName || "Unknown Section"}</td>
+                          <td className="break-words px-3 py-2 font-medium">
+                            <span className="block font-mono text-xs text-slate-500">{row.id}</span>
+                            <span>{row.name}</span>
+                          </td>
+                          <td className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-200">{row.beforeGrade}</td>
+                          <td className={`px-3 py-2 font-bold ${row.beforeAfterChanged ? "text-amber-800 dark:text-amber-300" : "text-[#003366] dark:text-sky-300"}`}>
+                            {row.submittedGrade}
+                          </td>
+                          <td className="px-3 py-2 font-mono text-xs">v{row.submissionVersion}</td>
+                          <td className="px-3 py-2 text-xs">{formatSubmittedTimestamp(row.submittedAt)}</td>
+                          <td className="px-3 py-2 text-xs font-semibold">{row.workflowStatus}</td>
+                        </tr>
+                      ))}
+                    </tbody>
                   </table>
                 </div>
-                <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
-                  <h4 className="sticky left-0 top-0 bg-slate-700 px-4 py-3 font-bold text-white dark:bg-slate-800">Comparison / Reference</h4>
-                  <table className="min-w-[520px] table-fixed text-sm">
-                    <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">Reference</th><th className="w-28 px-3 py-2">Standing</th></tr></thead>
-                    <tbody>{rows.map((row) => <tr key={`reference-${row.id}`} data-mismatch={row.mismatch ? "true" : "false"} className={`border-t border-slate-200 dark:border-slate-700 ${row.mismatch ? 'bg-red-50 dark:bg-red-950/30' : ''}`}><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium"><span data-deans-list-candidate={row.isDeansListCandidate ? "true" : "false"} className={row.isDeansListCandidate ? "rounded bg-amber-200 px-1.5 py-0.5 font-bold text-amber-950 ring-1 ring-amber-400" : ""}>{row.name}</span></td><td className={`px-3 py-2 font-bold ${row.mismatch ? 'text-red-700 dark:text-red-300' : ''}`}>{row.referenceGrade}</td><td className="break-words px-3 py-2 capitalize">{String(row.standing).replaceAll('_', ' ')}</td></tr>)}</tbody>
+              ) : observerOnly && monitoringView === "history" ? (
+                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700" data-testid="chairperson-history-panel">
+                  <div className="bg-slate-700 px-4 py-3 text-white dark:bg-slate-800">
+                    <h4 className="font-bold">Submission & Ledger Version History</h4>
+                    <p className="text-xs text-slate-200">Read-only audit history of Faculty submissions and finalized ledger versions.</p>
+                  </div>
+                  <table className="min-w-[760px] w-full table-fixed text-sm" data-testid="chairperson-history-table">
+                    <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                      <tr>
+                        <th className="w-28 px-3 py-2">Student ID</th>
+                        <th className="w-44 px-3 py-2">Student</th>
+                        <th className="w-28 px-3 py-2">Before Value</th>
+                        <th className="w-28 px-3 py-2">Submitted Value</th>
+                        <th className="w-28 px-3 py-2">Submission Version</th>
+                        <th className="w-40 px-3 py-2">Submitted Timestamp</th>
+                        <th className="w-32 px-3 py-2">Ledger History</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => (
+                        <tr key={`history-${row.id}`} className="border-t border-slate-200 dark:border-slate-700">
+                          <td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td>
+                          <td className="break-words px-3 py-2 font-medium">{row.name}</td>
+                          <td className="px-3 py-2 font-semibold">{row.beforeGrade}</td>
+                          <td className="px-3 py-2 font-bold text-[#003366] dark:text-sky-300">{row.submittedGrade}</td>
+                          <td className="px-3 py-2 font-mono text-xs">v{row.submissionVersion}</td>
+                          <td className="px-3 py-2 text-xs">{formatSubmittedTimestamp(row.submittedAt)}</td>
+                          <td className="px-3 py-2">
+                            {finalized && row.recordId ? (
+                              <GradeVersionHistory recordId={row.recordId} allowCorrection />
+                            ) : (
+                              <span className="text-xs text-slate-400">PostgreSQL snapshot (v{row.submissionVersion})</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
                   </table>
                 </div>
-              </div>
+              ) : (
+                <div className="grid min-w-0 gap-4 lg:grid-cols-2" data-testid="grade-comparison-grid">
+                  <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                    <h4 className="sticky left-0 top-0 bg-[#003366] px-4 py-3 font-bold text-white dark:bg-sky-900">Current / Submitted</h4>
+                    <table className="min-w-[620px] table-fixed text-sm">
+                      <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">{getEncodingTermLabel(activeTerm)}</th><th className="w-28 px-3 py-2">Status</th><th className="w-32 px-3 py-2">Ledger History</th></tr></thead>
+                      <tbody>{rows.map((row) => <tr key={`current-${row.id}`} data-mismatch={row.mismatch ? "true" : "false"} className={`border-t border-slate-200 dark:border-slate-700 ${row.mismatch ? 'bg-red-50 dark:bg-red-950/30' : row.flagged ? 'bg-amber-50 dark:bg-amber-950/20' : ''}`}><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium"><span data-deans-list-candidate={row.isDeansListCandidate ? "true" : "false"} className={row.isDeansListCandidate ? "rounded bg-amber-200 px-1.5 py-0.5 font-bold text-amber-950 ring-1 ring-amber-400" : ""}>{row.name}</span></td><td className={`px-3 py-2 font-bold ${row.mismatch ? 'text-red-700 dark:text-red-300' : ''}`}>{row.currentGrade}</td><td className="break-words px-3 py-2 capitalize">{String(row.status).replaceAll('_', ' ')}</td><td className="px-3 py-2">{finalized && row.recordId ? <GradeVersionHistory recordId={row.recordId} allowCorrection /> : <span className="text-xs text-slate-400">Not yet finalized</span>}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                  <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                    <h4 className="sticky left-0 top-0 bg-slate-700 px-4 py-3 font-bold text-white dark:bg-slate-800">Comparison / Reference</h4>
+                    <table className="min-w-[520px] table-fixed text-sm">
+                      <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">Reference</th><th className="w-28 px-3 py-2">Standing</th></tr></thead>
+                      <tbody>{rows.map((row) => <tr key={`reference-${row.id}`} data-mismatch={row.mismatch ? "true" : "false"} className={`border-t border-slate-200 dark:border-slate-700 ${row.mismatch ? 'bg-red-50 dark:bg-red-950/30' : ''}`}><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium"><span data-deans-list-candidate={row.isDeansListCandidate ? "true" : "false"} className={row.isDeansListCandidate ? "rounded bg-amber-200 px-1.5 py-0.5 font-bold text-amber-950 ring-1 ring-amber-400" : ""}>{row.name}</span></td><td className={`px-3 py-2 font-bold ${row.mismatch ? 'text-red-700 dark:text-red-300' : ''}`}>{row.referenceGrade}</td><td className="break-words px-3 py-2 capitalize">{String(row.standing).replaceAll('_', ' ')}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
               {reviewStatus === "returned" && selectedSection.reviewNote ? <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"><span className="font-bold">Return remarks:</span> {selectedSection.reviewNote}</div> : null}
             </div>
 
