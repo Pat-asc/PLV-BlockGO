@@ -225,3 +225,82 @@ test('24. administrator reset increments only the authorized target account vers
     assert.match(provisioning, /SET password_hash = crypt\(@password, gen_salt\('bf'\)\),[\s\S]*auth_version = auth_version \+ 1/);
     assert.match(provisioning, /WHERE id = @userId/);
 });
+
+test('25. /api/crypto/hash-password rejects weak ci-routing-check with HTTP 400 and accepts compliant Ci-Routing-Check1! with HTTP 200 via gateway', async (context) => {
+    const { spawn } = require('node:child_process');
+    const yaml = require('js-yaml');
+    const { PASSWORD_POLICY_MESSAGE } = require('../src/shared/password-policy');
+
+    const middlewareRoot = path.resolve(__dirname, '..');
+    const repoRoot = path.resolve(middlewareRoot, '..');
+    const authPort = 14201;
+    const gatewayPort = 14200;
+
+    const envBase = {
+        ...process.env,
+        NODE_ENV: 'test',
+        JWT_SECRET: process.env.JWT_SECRET || 'test-jwt-secret-not-for-production',
+        INTERNAL_API_KEY: process.env.INTERNAL_API_KEY || 'test-internal-key-not-for-production',
+        AUTH_SERVICE_URL: `http://127.0.0.1:${authPort}`
+    };
+
+    const authChild = spawn(process.execPath, [path.join('src', 'services', 'auth-service.js')], {
+        cwd: middlewareRoot,
+        env: { ...envBase, PORT: String(authPort) },
+        stdio: 'ignore'
+    });
+    const gatewayChild = spawn(process.execPath, [path.join('src', 'services', 'api-gateway.js')], {
+        cwd: middlewareRoot,
+        env: { ...envBase, PORT: String(gatewayPort) },
+        stdio: 'ignore'
+    });
+
+    context.after(() => {
+        if (gatewayChild.exitCode === null) gatewayChild.kill('SIGTERM');
+        if (authChild.exitCode === null) authChild.kill('SIGTERM');
+    });
+
+    const waitReady = async (port, child) => {
+        const deadline = Date.now() + Number(process.env.SERVICE_STARTUP_TIMEOUT_MS || 120000);
+        while (Date.now() < deadline) {
+            if (child.exitCode !== null) throw new Error(`Service on ${port} exited with ${child.exitCode}`);
+            try {
+                const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+                if (res.ok) return;
+            } catch {}
+            await new Promise((r) => setTimeout(r, 100));
+        }
+        throw new Error(`Service on ${port} timed out`);
+    };
+
+    await Promise.all([waitReady(authPort, authChild), waitReady(gatewayPort, gatewayChild)]);
+
+    const invalidRes = await fetch(`http://127.0.0.1:${gatewayPort}/api/crypto/hash-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'ci-routing-check' })
+    });
+    assert.equal(invalidRes.status, 400);
+    const invalidBody = await invalidRes.json();
+    assert.equal(invalidBody.error, PASSWORD_POLICY_MESSAGE);
+
+    const validRes = await fetch(`http://127.0.0.1:${gatewayPort}/api/crypto/hash-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'Ci-Routing-Check1!' })
+    });
+    assert.equal(validRes.status, 200);
+    const validBody = await validRes.json();
+    assert.equal(typeof validBody.hash, 'string');
+    assert.match(validBody.hash, /^\$2[aby]\$/);
+    assert.equal(await bcrypt.compare('Ci-Routing-Check1!', validBody.hash), true);
+
+    const openapi = yaml.load(fs.readFileSync(path.join(repoRoot, 'security', 'openapi-ci.yaml'), 'utf8'));
+    const pwSchema = openapi?.paths?.['/api/crypto/hash-password']?.post?.requestBody?.content?.['application/json']?.schema?.properties?.password;
+    assert.equal(pwSchema?.minLength, 8);
+    assert.equal(pwSchema?.maxLength, 128);
+    assert.ok(pwSchema?.pattern, 'OpenAPI hash-password schema must include a complexity pattern');
+    const schemaRegex = new RegExp(pwSchema.pattern);
+    assert.equal(schemaRegex.test('ci-routing-check'), false);
+    assert.equal(schemaRegex.test('Ci-Routing-Check1!'), true);
+});
