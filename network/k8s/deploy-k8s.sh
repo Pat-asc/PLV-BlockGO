@@ -72,7 +72,7 @@ load_public_hosting_file() {
         esac
         if [[ -z "${!key:-}" ]]; then
             printf -v "$key" '%s' "$value"
-            export "$key"
+            export "${key?}"
         fi
     done < "$config_file"
 }
@@ -141,7 +141,9 @@ case "$ACTION" in
 esac
 
 PUBLIC_HOSTING_CONFIG_FILE="${BLOCKGO_PUBLIC_HOSTING_CONFIG_FILE:-./k8s/production-hosting.env}"
-load_public_hosting_file "$PUBLIC_HOSTING_CONFIG_FILE"
+if ! load_public_hosting_file "$PUBLIC_HOSTING_CONFIG_FILE"; then
+    return 1 2>/dev/null || exit 1
+fi
 BLOCKGO_PUBLIC_HOST="${BLOCKGO_PUBLIC_HOST:-}"
 BLOCKGO_PUBLIC_IP="${BLOCKGO_PUBLIC_IP:-}"
 BLOCKGO_PUBLIC_SCHEME="${BLOCKGO_PUBLIC_SCHEME:-https}"
@@ -2672,6 +2674,16 @@ prepare_manifests() {
             return 1
         fi
 
+        if is_true "$DEPLOY_SECONDARY_PEERS"; then
+            sed -i 's/FABRIC_HA_ENABLED: "false"/FABRIC_HA_ENABLED: "true"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
+        else
+            sed -i 's/FABRIC_HA_ENABLED: "true"/FABRIC_HA_ENABLED: "false"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
+        fi
+
+        # GKE pd-standard claims use a 10Gi minimum. Match only the PVC storage
+        # key so container ephemeral-storage limits remain unchanged.
+        sed -E -i 's/(^|[[:space:]{])storage: (2|5)Gi/\1storage: 10Gi/g' "$TMP_K8S_DIR"/*.yaml
+
         sed -i "s/__GKE_ZONE_A__/${GKE_ZONE_A}/g; s/__GKE_ZONE_B__/${GKE_ZONE_B}/g; s/__GKE_ZONE_C__/${GKE_ZONE_C}/g" "$TMP_K8S_DIR"/*.yaml
         if grep -R -q '__GKE_ZONE_[ABC]__' "$TMP_K8S_DIR"; then
             echo "ERROR: One or more GKE zone placeholders were not resolved."
@@ -5031,7 +5043,7 @@ validate_public_tls_secret() {
     fi
 
     local tls_type tls_cert_b64 tls_key_b64 tls_dir cert_file key_file
-    local cert_public_key key_public_key failure=""
+    local cert_public_key key_public_key host_check failure=""
     tls_type="$(kubectl get secret "$BLOCKGO_PUBLIC_TLS_SECRET" -n plv-fabric -o jsonpath='{.type}' 2>/dev/null || true)"
     if [[ "$tls_type" != "kubernetes.io/tls" ]]; then
         echo "ERROR: plv-fabric/${BLOCKGO_PUBLIC_TLS_SECRET} must exist and be a kubernetes.io/tls Secret before changing the public ingress." >&2
@@ -5059,7 +5071,8 @@ validate_public_tls_secret() {
         failure="tls.key is not a valid private key"
     elif ! openssl x509 -in "$cert_file" -noout -checkend 0 >/dev/null 2>&1; then
         failure="the public TLS certificate is expired"
-    elif ! openssl x509 -in "$cert_file" -noout -checkhost "$BLOCKGO_PUBLIC_HOST" >/dev/null 2>&1; then
+    elif ! host_check="$(openssl x509 -in "$cert_file" -noout -checkhost "$BLOCKGO_PUBLIC_HOST" 2>&1)" ||
+         [[ "$host_check" != *"does match certificate"* ]]; then
         failure="the public TLS certificate does not cover ${BLOCKGO_PUBLIC_HOST}"
     else
         cert_public_key="$(openssl x509 -in "$cert_file" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null || true)"
