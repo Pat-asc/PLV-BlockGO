@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import FacultyLoading from "./FacultyLoading";
 import { fetchApprovedFaculties, fetchCurriculums, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend, fetchFacultyAccessControls, blockFaculty, unblockFaculty } from "../../services/api";
 import { pushAssignmentsSharedState } from "../../utils/sharedClientState";
@@ -46,6 +46,7 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   const [blockTarget, setBlockTarget] = useState(null);
   const [blockReason, setBlockReason] = useState("");
   const [blockError, setBlockError] = useState("");
+  const reasonTextareaRef = useRef(null);
   const [updatingAccess, setUpdatingAccess] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState("assignments");
   const [facultyAccessSearch, setFacultyAccessSearch] = useState("");
@@ -425,13 +426,13 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
         </table>
       </div>}
     </section>}
-    <Modal isOpen={blockModalOpen} onClose={() => { if (!updatingAccess) { setBlockModalOpen(false); setBlockTarget(null); setBlockError(""); } }} title="Manage Faculty Access" closeOnBackdrop={!updatingAccess} closeOnEscape={!updatingAccess} panelClassName="max-w-xl">
+    <Modal isOpen={blockModalOpen} onClose={() => { if (!updatingAccess) { setBlockModalOpen(false); setBlockTarget(null); setBlockError(""); } }} title="Manage Faculty Access" closeOnBackdrop={!updatingAccess} closeOnEscape={!updatingAccess} panelClassName="max-w-xl" initialFocusRef={reasonTextareaRef}>
       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
         <div className="flex items-start gap-3"><span className="sa-avatar h-11 w-11"><Icon type="user"/></span><div className="min-w-0"><h4 className="font-bold text-[#003366] dark:text-sky-300">{blockTarget?.fullName || "Faculty member"}</h4><dl className="mt-2 grid gap-1 text-xs text-slate-600 dark:text-slate-300"><div><dt className="inline font-semibold">Faculty ID: </dt><dd className="inline">{blockTarget?.facultyId || "—"}</dd></div><div><dt className="inline font-semibold">Email: </dt><dd className="inline break-all">{blockTarget?.email || "—"}</dd></div><div><dt className="inline font-semibold">Department/Program: </dt><dd className="inline">{blockTarget?.department || chairpersonDepartment || "—"}</dd></div></dl></div></div>
       </div>
       <div className="mt-4 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Current Access: <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${blockTarget?.isBlocked ? "bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"}`}><span aria-hidden="true">●</span>{blockTarget?.isBlocked ? "Blocked" : "Active"}</span></div>
       {!blockTarget?.isBlocked ? <><div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100">Blocking academic access will disable academic functions such as grade encoding and faculty sections, but <strong>Messaging remains available.</strong></div><label className="mt-4 block text-sm font-semibold text-slate-700 dark:text-slate-200">Reason for restriction *
-        <textarea aria-label="Reason for restriction" value={blockReason} onChange={(event) => { setBlockReason(event.target.value); if (blockError) setBlockError(""); }} rows={4} className="mt-2 w-full resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600/20 dark:border-slate-600 dark:bg-slate-800 dark:text-white" placeholder="Enter the reason for restricting this faculty's academic access..." />
+        <textarea ref={reasonTextareaRef} aria-label="Reason for restriction" value={blockReason} onChange={(event) => { setBlockReason(event.target.value); if (blockError) setBlockError(""); }} rows={4} className="mt-2 w-full resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600/20 dark:border-slate-600 dark:bg-slate-800 dark:text-white" placeholder="Enter the reason for restricting this faculty's academic access..." />
       </label></> : <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">Unblocking restores this faculty member's academic portal functions. Messaging access is already available.</p>}
       {blockError && <p role="alert" className="mt-2 text-xs font-semibold text-red-600">{blockError}</p>}
       <div className="mt-5 flex justify-end gap-3"><button type="button" onClick={() => { setBlockModalOpen(false); setBlockTarget(null); setBlockError(""); }} disabled={updatingAccess} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold dark:border-slate-600">Cancel</button><button type="button" onClick={updateFacultyAccess} disabled={(!blockTarget?.isBlocked && !blockReason.trim()) || updatingAccess} className={`rounded-lg px-4 py-2 text-sm font-bold text-white disabled:bg-slate-400 ${blockTarget?.isBlocked ? "bg-emerald-700 hover:bg-emerald-800" : "bg-red-700 hover:bg-red-800"}`}>{updatingAccess ? "Updating…" : blockTarget?.isBlocked ? "Unblock Faculty" : "Block Faculty"}</button></div>

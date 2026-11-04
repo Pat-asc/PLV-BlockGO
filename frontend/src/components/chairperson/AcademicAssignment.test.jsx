@@ -1,6 +1,7 @@
 import React from "react";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
+import userEvent from "@testing-library/user-event";
 import AcademicAssignment from "./AcademicAssignment";
 import { blockFaculty, fetchApprovedFaculties, fetchCurriculums, fetchFacultyAccessControls, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend, unblockFaculty } from "../../services/api";
 jest.mock("../../services/api", () => ({ fetchApprovedFaculties: jest.fn(), fetchCurriculums: jest.fn(), fetchFacultyAccessControls: jest.fn(), fetchFacultyAssignmentOptions: jest.fn(), assignFacultyLoadToBackend: jest.fn(), blockFaculty: jest.fn(), unblockFaculty: jest.fn() }));
@@ -728,4 +729,81 @@ test("filters Faculty access and renders the true zero-Faculty empty state with 
   fetchFacultyAccessControls.mockClear();
   fireEvent.click(within(accessSection).getByRole("button", { name: "Refresh Faculty List" }));
   await waitFor(() => expect(fetchFacultyAccessControls).toHaveBeenCalledTimes(1));
+});
+
+
+const activeFacultyAccess = () => fetchFacultyAccessControls.mockResolvedValue({ faculties: [{
+  facultyUserId: 1, facultyId: "FAC-001", fullName: "Carlos Reyes", email: "carlos.reyes@plv.edu.ph",
+  department: "Bachelor of Science in Information Technology", isBlocked: false, reason: "",
+}] });
+const openManageFacultyAccess = async () => {
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  fireEvent.click(screen.getByRole("tab", { name: "Faculty Access" }));
+  const accessSection = await screen.findByTestId("faculty-access-management");
+  const manageButton = within(accessSection).getByRole("button", { name: "Manage" });
+  manageButton.focus();
+  fireEvent.click(manageButton);
+  const dialog = await screen.findByRole("dialog", { name: "Manage Faculty Access" });
+  return { dialog, manageButton };
+};
+
+test("typing a restriction reason keeps focus in the textarea instead of jumping to the close button", async () => {
+  activeFacultyAccess();
+  const { dialog } = await openManageFacultyAccess();
+  const reasonBox = within(dialog).getByLabelText("Reason for restriction");
+  const closeButton = within(dialog).getByRole("button", { name: "Close Manage Faculty Access" });
+  const blockButton = within(dialog).getByRole("button", { name: "Block Faculty" });
+
+  // Opening an Active faculty's modal places initial focus on the reason field.
+  expect(reasonBox).toHaveFocus();
+  expect(closeButton).not.toHaveFocus();
+  expect(blockButton).toBeDisabled();
+
+  reasonBox.focus();
+  const reason = "Administrative review required";
+  for (const character of reason) {
+    userEvent.type(reasonBox, character, { skipClick: true });
+    expect(reasonBox).toHaveFocus();
+    expect(closeButton).not.toHaveFocus();
+  }
+  expect(reasonBox).toHaveValue(reason);
+  expect(reasonBox).toHaveFocus();
+  expect(blockButton).toBeEnabled();
+});
+
+test("Manage Faculty Access keeps Tab and Shift+Tab inside the modal", async () => {
+  activeFacultyAccess();
+  const { dialog } = await openManageFacultyAccess();
+  const reasonBox = within(dialog).getByLabelText("Reason for restriction");
+  userEvent.type(reasonBox, "Administrative review required", { skipClick: true });
+  const closeButton = within(dialog).getByRole("button", { name: "Close Manage Faculty Access" });
+  const cancelButton = within(dialog).getByRole("button", { name: "Cancel" });
+  const blockButton = within(dialog).getByRole("button", { name: "Block Faculty" });
+
+  expect(reasonBox).toHaveFocus();
+  userEvent.tab();
+  expect(cancelButton).toHaveFocus();
+  userEvent.tab();
+  expect(blockButton).toHaveFocus();
+  userEvent.tab();
+  expect(closeButton).toHaveFocus();
+  userEvent.tab({ shift: true });
+  expect(blockButton).toHaveFocus();
+});
+
+test("Manage Faculty Access closes with the X button and Escape and restores focus to Manage", async () => {
+  activeFacultyAccess();
+  const first = await openManageFacultyAccess();
+  fireEvent.click(within(first.dialog).getByRole("button", { name: "Close Manage Faculty Access" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Faculty Access" })).not.toBeInTheDocument());
+  expect(first.manageButton).toHaveFocus();
+
+  fireEvent.click(first.manageButton);
+  const dialog = await screen.findByRole("dialog", { name: "Manage Faculty Access" });
+  const reasonBox = within(dialog).getByLabelText("Reason for restriction");
+  userEvent.type(reasonBox, "Draft", { skipClick: true });
+  fireEvent.keyDown(reasonBox, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Faculty Access" })).not.toBeInTheDocument());
+  expect(first.manageButton).toHaveFocus();
+  expect(blockFaculty).not.toHaveBeenCalled();
 });
