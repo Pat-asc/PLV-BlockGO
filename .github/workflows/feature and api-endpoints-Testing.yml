@@ -1200,7 +1200,7 @@ jobs:
             --output /tmp/hash-response.json \
             --write-out '%{http_code}' \
             --header 'Content-Type: application/json' \
-            --data '{"password":"ci-routing-check"}' \
+            --data '{"password":"Ci-Routing-Check1!"}' \
             http://127.0.0.1:4000/api/crypto/hash-password)"
 
           if [ "$status" != "200" ]; then
