@@ -47,6 +47,9 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   const [blockReason, setBlockReason] = useState("");
   const [blockError, setBlockError] = useState("");
   const [updatingAccess, setUpdatingAccess] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState("assignments");
+  const [facultyAccessSearch, setFacultyAccessSearch] = useState("");
+  const [facultyAccessStatus, setFacultyAccessStatus] = useState("all");
 
   const [schedules, setSchedules] = useState({});
   const applyAssignmentOptions = useCallback((nextOptions) => {
@@ -125,7 +128,6 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   }, [assignmentOptions.assignments]);
   const departmentFaculty = faculty.filter((person) => (person.department || person.program) === chairpersonDepartment || (person.department || person.program) === program);
   const selectedProfessor = departmentFaculty.find((person) => idOf(person) === professor);
-  const selectedAccess = accessControls.find((item) => String(item.facultyUserId) === String(selectedProfessor?.id));
   const facultyAccessRows = useMemo(() => {
     const map = new Map();
     departmentFaculty.forEach((person) => {
@@ -161,6 +163,17 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     });
     return Array.from(map.values());
   }, [accessControls, chairpersonDepartment, departmentFaculty]);
+  const filteredFacultyAccessRows = useMemo(() => {
+    const queryText = facultyAccessSearch.trim().toLowerCase();
+    return facultyAccessRows.filter((row) => {
+      if (facultyAccessStatus === "active" && row.isBlocked) return false;
+      if (facultyAccessStatus === "blocked" && !row.isBlocked) return false;
+      if (!queryText) return true;
+      return [row.fullName, row.facultyId, row.email, row.department]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(queryText));
+    });
+  }, [facultyAccessRows, facultyAccessSearch, facultyAccessStatus]);
   const programName = availablePrograms.find((item) => item.code === program)?.name || chairpersonDepartment || program;
   const curriculum = curricula.find((item) => item.programCode === program && item.status === "PUBLISHED");
   const canonicalSubjects = assignmentOptions.subjects?.length ? assignmentOptions.subjects : (curriculum?.subjects || []);
@@ -256,27 +269,8 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     setBlockError("");
     setBlockModalOpen(true);
   };
-  const handleUnblockFaculty = async (targetFaculty) => {
-    if (!targetFaculty?.facultyUserId || updatingAccess) return;
-    setUpdatingAccess(true);
-    try {
-      await unblockFaculty(targetFaculty.facultyUserId);
-      await refreshAccessControls();
-      setNotice("Faculty academic access restored.");
-    } catch (error) {
-      setNotice(error?.message || "Faculty access could not be updated.");
-    } finally {
-      setUpdatingAccess(false);
-    }
-  };
   const updateFacultyAccess = async () => {
-    const activeTarget = blockTarget || (selectedProfessor ? {
-      facultyUserId: selectedProfessor.id,
-      facultyId: selectedAccess?.facultyId || selectedProfessor.facultyId || String(selectedProfessor.id || ""),
-      fullName: nameOf(selectedProfessor),
-      email: selectedProfessor.email || selectedAccess?.email || "",
-      isBlocked: Boolean(selectedAccess?.isBlocked),
-    } : null);
+    const activeTarget = blockTarget;
     if (!activeTarget?.facultyUserId || updatingAccess) return;
     const trimmedReason = blockReason.trim();
     if (!activeTarget.isBlocked && !trimmedReason) {
@@ -387,13 +381,18 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
   };
 
   return <div className="subject-assignment">
-    <header className="sa-header"><div><div className="sa-breadcrumb">Academic Management <span>›</span> <strong>Academic Assignment</strong></div><h2>Assign Subjects and Sections to Professors</h2></div></header>
+    <header className="sa-header"><div><div className="sa-breadcrumb">Academic Management <span>›</span> <strong>Faculty Assignments</strong></div><h2>Faculty Assignments</h2><p>Manage subject loads and academic portal access for Faculty in your department.</p></div></header>
+
+    <div className="sa-workspace-tabs" role="tablist" aria-label="Faculty Assignments views">
+      <button type="button" role="tab" aria-selected={workspaceTab === "assignments"} className={workspaceTab === "assignments" ? "active" : ""} onClick={() => setWorkspaceTab("assignments")}><Icon type="book" />Subject Assignments</button>
+      <button type="button" role="tab" aria-selected={workspaceTab === "access"} className={workspaceTab === "access" ? "active" : ""} onClick={() => setWorkspaceTab("access")}><Icon type="user" />Faculty Access</button>
+    </div>
 
     {notice && <div className="sa-info" role="status">{notice}</div>}
+    {workspaceTab === "assignments" ? <div role="tabpanel" aria-label="Subject Assignments">
     <section className="sa-info sa-current-period" aria-label="Current academic period">
       <span>Academic Period</span><strong>{activePeriodLabel}</strong>
     </section>
-    {selectedProfessor ? <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900" aria-label="Faculty Access Control"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-bold text-[#003366] dark:text-sky-200">Faculty Access Control</h3><p className="text-sm text-slate-600 dark:text-slate-300">{selectedAccess?.isBlocked ? `Blocked: ${selectedAccess.reason}` : "Academic access is active."}</p></div><button type="button" onClick={() => { const target = { facultyUserId: selectedProfessor.id, facultyId: selectedAccess?.facultyId || selectedProfessor.facultyId || String(selectedProfessor.id || ""), fullName: nameOf(selectedProfessor), email: selectedProfessor.email || selectedAccess?.email || "", isBlocked: Boolean(selectedAccess?.isBlocked) }; if (target.isBlocked) handleUnblockFaculty(target); else openBlockFacultyModal(target); }} disabled={updatingAccess} className={`rounded-lg px-4 py-2 text-sm font-bold text-white disabled:bg-slate-400 ${selectedAccess?.isBlocked ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-red-700 hover:bg-red-800'}`}>{updatingAccess ? "Updating…" : selectedAccess?.isBlocked ? "Unblock Faculty" : "Block Faculty"}</button></div></section> : null}
     {mode === "manual" && <section className="sa-card sa-assigned" aria-label="Assigned Sections"><div className="sa-assigned-header"><Heading icon="cap" title="Assigned Sections" /><div className="sa-totals"><div><Icon type="book"/><span>Total Assignments<strong>{professorDraft.length}</strong></span></div><div><Icon type="cap"/><span>Total Units<strong>{pendingUnits}</strong></span></div></div></div><p className="sa-assigned-context">{selectedProfessor ? `Showing saved and pending sections for ${nameOf(selectedProfessor)}.` : "Showing all current assignments. Select a professor below to manage their load."}</p><div className="sa-table-scroll"><table><thead><tr><th>Professor</th><th>Subject Code</th><th>Subject Title</th><th>Section</th><th>School Year</th><th>Semester</th><th>Units</th><th>Schedule</th><th>Action</th></tr></thead><tbody>{displayedRows.map((item) => <tr key={`${item.assignmentState}-${item.id || identity(item)}`}><td>{item.facultyName || item.facultyEmail || "Assigned faculty"}</td><td>{item.subjectCode}</td><td>{item.subjectTitle || "Not available"}</td><td>{item.sectionName}</td><td>{item.schoolYear || "—"}</td><td>{terms[item.semesterCode] || item.semester || "—"}</td><td>{item.units === null || item.units === undefined || String(item.units).trim() === "" ? "N/A" : item.units}</td><td>{formatFacultySchedule(item.schedule, item.day)}</td><td>{item.assignmentState === "pending" ? <button type="button" className="sa-remove" aria-label={`Remove ${item.subjectCode} ${item.sectionName}`} onClick={() => setDraft((current) => current.filter((row) => row.id !== item.id))}><Icon type="trash"/></button> : <span className="sa-saved">Saved</span>}</td></tr>)}{!displayedRows.length && <tr><td colSpan="9" className="sa-empty">No assignments yet.</td></tr>}</tbody></table></div>{selectedProfessor && <footer><button type="button" className="sa-clear" disabled={saving || !professorDraft.length} onClick={clearProfessorSelection}>♧ &nbsp; Clear Selection</button><span>{professorDraft.length > 0 ? `${professorDraft.length} pending assignment${professorDraft.length > 1 ? "s" : ""}` : savedRows.length > 0 ? `${savedRows.length} saved assignment${savedRows.length > 1 ? "s" : ""}` : ""}</span><button type="button" className="sa-save" disabled={!professorDraft.length || saving} onClick={save}><Icon type="save"/>{saving ? "Saving…" : "Save Assignments"}</button></footer>}</section>}
     <div className="sa-section-title"><h3>Subject Assigning</h3><p>Select a professor, subject, section, and optional meeting schedule.</p></div>
     <section className="sa-card sa-lookup"><div><Heading title="Professor Lookup" /><div className="sa-search"><Icon type="search"/><input aria-label="Search professors" onFocus={() => setProfessorListOpen(true)} onClick={() => setProfessorListOpen(true)} placeholder="Search professor by name or faculty ID..." value={lookup} onChange={(event) => setLookup(event.target.value)}/><button aria-label="Clear professor search" onClick={() => setLookup("")}>×</button></div><div className="sa-professors">{(professorListOpen || lookup || !selectedProfessor) && (departmentFaculty.filter((person) => `${nameOf(person)} ${idOf(person)}`.toLowerCase().includes(lookup.toLowerCase())).map((person) => <button key={idOf(person)} onClick={() => selectProfessor(person)}>{nameOf(person)} <small>{idOf(person)}</small></button>))}{loading && <p>Loading professors…</p>}{!loading && !departmentFaculty.length && <p>No approved professors available.</p>}</div></div><div className="sa-professor"><span className="sa-avatar">{nameOf(selectedProfessor).split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("") || <Icon/>}</span><div><h3>{nameOf(selectedProfessor) || "Select a professor"}</h3><p>Faculty ID: &nbsp; {professor || "—"}</p><p>Department: &nbsp; {selectedProfessor?.department || selectedProfessor?.program || "—"}</p></div><div className="sa-badge"><Icon type="cap"/><div><strong>{totalUnits} units</strong><small>{rows.length} assignments</small></div></div></div></section>
@@ -401,80 +400,41 @@ export default function AcademicAssignment({ chairpersonDepartment = "" }) {
     {mode === "bulk" ? <div className="sa-bulk-workspace" data-testid="faculty-loading-section"><div className="sa-program"><BoundedSelect label="Academic Program" value={program} onChange={setProgram} options={availablePrograms.map((item) => ({ value: item.code, label: item.name }))} searchable /></div><FacultyLoading key={program} chairpersonDepartment={programName} assignmentMode="bulk" selectedAcademicSectionId={academicSectionFilter === "all" ? null : Number(academicSectionFilter)}/></div> : <>
     <div className="sa-columns" data-testid="assignment-workspace-columns"><section className="sa-card" data-testid="available-subjects-panel"><Heading icon="book" title="Available Subjects" /><div className="sa-filters" data-testid="available-subject-filters"><BoundedSelect label="Academic Program" value={program} onChange={(value) => { setProgram(value); setSubjectCode(""); setAcademicSectionFilter("all"); }} options={availablePrograms.map((item) => ({ value: item.code, label: item.name }))} searchable /><label>Year Level<select value={year} onChange={(event) => { setYear(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{years.map((item) => <option key={item}>{item}</option>)}</select></label><label>Semester<select value={term} onChange={(event) => { setTerm(event.target.value); setSubjectCode(""); setAcademicSectionFilter("all"); }}>{semesterOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label>Section Filter<select aria-label="Section Filter" value={academicSectionFilter} onChange={(event) => setAcademicSectionFilter(event.target.value)}><option value="all">All Sections</option>{sectionFilterOptions.map((item) => <option key={item.academicSectionId} value={String(item.academicSectionId)}>{item.section}</option>)}</select></label></div><div className="sa-search"><Icon type="search"/><input aria-label="Search subjects" placeholder="Search subjects by code or title..." value={query} onChange={(event) => setQuery(event.target.value)}/></div><div className="sa-table-scroll"><table><thead><tr><th></th><th>Subject Code</th><th>Subject Title</th><th>Units</th></tr></thead><tbody>{visibleSubjects.map((item) => <tr key={item.subjectCode} className={subjectCode === item.subjectCode ? "selected" : ""}><td><input type="radio" name="subject" aria-label={`Select ${item.subjectCode}`} checked={subjectCode === item.subjectCode} onChange={() => setSubjectCode(item.subjectCode)}/></td><td><button className="sa-text-button" onClick={() => setSubjectCode(item.subjectCode)}>{item.subjectCode}</button></td><td>{item.subjectTitle}</td><td>{item.units}</td></tr>)}{!visibleSubjects.length && <tr><td colSpan="4" className="sa-empty">{loading ? "Loading subjects…" : !curriculum ? "No published curriculum for this program." : "No subjects match these filters."}</td></tr>}</tbody></table></div><p className="sa-footnote">Showing {visibleSubjects.length} of {subjects.length} subjects</p></section>
     <section className="sa-card" data-testid="available-sections-panel"><Heading title={`Available Sections${subject ? ` for ${subject.subjectCode}` : ""}`} /><div className="sa-table-scroll"><table><thead><tr><th>Section</th><th>Year Level</th><th>Day</th><th>Start Time</th><th>End Time</th><th>Action</th></tr></thead><tbody>{subject && sections.map((section, index) => { const scheduleKey = scheduleKeyFor(section); const schedule = schedules[scheduleKey] || { day: "", startTime: "", endTime: "" }; const updateSchedule = (field, value) => setSchedules((current) => ({ ...current, [scheduleKey]: { ...(current[scheduleKey] || { day: "", startTime: "", endTime: "" }), [field]: value } })); return <tr key={`${section.academicSectionId}-${section.schoolYear}`}><td className="sa-section-name">{section.section}<small>{section.schoolYear} · {section.semester}</small></td><td>{section.yearLevel}</td><td><select className="sa-schedule" aria-label={`Day for ${section.section}`} value={schedule.day} onChange={(event) => updateSchedule("day", event.target.value)}><option value="">Choose day</option>{DAY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></td><td><input className="sa-schedule" type="time" aria-label={`Start time for ${section.section}`} value={schedule.startTime} onChange={(event) => updateSchedule("startTime", event.target.value)}/></td><td><input className="sa-schedule" type="time" aria-label={`End time for ${section.section}`} value={schedule.endTime} onChange={(event) => updateSchedule("endTime", event.target.value)}/></td><td><button type="button" className="sa-assign" disabled={!selectedProfessor || saving || !section.periodMatchesActive} onClick={() => add(section, index)}>＋ Assign</button></td></tr>; })}{(!subject || !sections.length) && <tr><td colSpan="6" className="sa-empty">{!subject ? "No subject selected." : "No enrolled sections match this program, year level, and semester."}</td></tr>}</tbody></table></div><div className="sa-info sa-selected"><span>ⓘ</span><div><strong>Selected Subject: {subject ? `${subject.subjectCode} – ${subject.subjectTitle}` : "None"}</strong></div></div></section></div>
-</>}
-    <section className="sa-card" aria-label="Faculty Access Management" data-testid="faculty-access-management">
-      <div className="sa-assigned-header">
-        <Heading icon="user" title="Faculty Access Management" />
+</>}</div> : <section className="sa-card" role="tabpanel" aria-label="Faculty Access" data-testid="faculty-access-management">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0"><Heading icon="user" title="Faculty Access Management" /><p className="sa-assigned-context">Control academic portal access for faculty in your department. Blocked faculty can still use <strong>Messaging</strong>.</p></div>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{facultyAccessRows.length} Faculty</span>
       </div>
-      <p className="sa-assigned-context">Manage academic portal access for Faculty under your department. Blocked Faculty retain Messaging/Chat access.</p>
-      <div className="sa-table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>Faculty Name</th>
-              <th>Faculty ID</th>
-              <th>Email</th>
-              <th>Department</th>
-              <th>Access Status</th>
-              <th>Block Reason</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {facultyAccessRows.map((row) => (
-              <tr key={String(row.facultyUserId || row.email)}>
-                <td>{row.fullName}</td>
-                <td>{row.facultyId || "—"}</td>
-                <td>{row.email || "—"}</td>
-                <td>{row.department || "—"}</td>
-                <td>
-                  <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-bold ${row.isBlocked ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"}`}>
-                    {row.isBlocked ? "Blocked" : "Active"}
-                  </span>
-                </td>
-                <td>{row.isBlocked ? (row.reason || "—") : "—"}</td>
-                <td>
-                  {row.isBlocked ? (
-                    <button
-                      type="button"
-                      disabled={updatingAccess}
-                      onClick={() => handleUnblockFaculty(row)}
-                      className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-800 disabled:bg-slate-400"
-                    >
-                      Unblock Faculty
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={updatingAccess}
-                      onClick={() => openBlockFacultyModal(row)}
-                      className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-800 disabled:bg-slate-400"
-                    >
-                      Block Faculty
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {!facultyAccessRows.length && (
-              <tr>
-                <td colSpan="7" className="sa-empty">No department faculty accounts found.</td>
-              </tr>
-            )}
-          </tbody>
+      <div className="mt-5 flex flex-wrap items-end gap-3">
+        <label className="min-w-[15rem] flex-1 text-xs font-semibold text-slate-600 dark:text-slate-300">Search faculty
+          <span className="sa-search mt-1"><Icon type="search"/><input aria-label="Search faculty" placeholder="Search faculty..." value={facultyAccessSearch} onChange={(event) => setFacultyAccessSearch(event.target.value)}/>{facultyAccessSearch ? <button type="button" aria-label="Clear faculty search" onClick={() => setFacultyAccessSearch("")}>×</button> : null}</span>
+        </label>
+        <label className="min-w-[10rem] text-xs font-semibold text-slate-600 dark:text-slate-300">Status
+          <select aria-label="Filter faculty access status" value={facultyAccessStatus} onChange={(event) => setFacultyAccessStatus(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-normal dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"><option value="all">All Status</option><option value="active">Active</option><option value="blocked">Blocked</option></select>
+        </label>
+      </div>
+      {facultyAccessRows.length === 0 ? <div className="flex flex-col items-center px-4 py-12 text-center"><span className="sa-icon h-12 w-12"><Icon type="user"/></span><h3 className="mt-4 font-bold text-[#003366] dark:text-sky-300">No faculty accounts are available for this department.</h3><p className="mt-1 max-w-lg text-sm text-slate-500 dark:text-slate-400">Faculty assigned to {chairpersonDepartment || programName || "this department"} will appear here once their accounts are active.</p><button type="button" onClick={refreshAccessControls} className="mt-5 rounded-lg bg-[#003366] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#00264d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Refresh Faculty List</button></div> : filteredFacultyAccessRows.length === 0 ? <p className="sa-empty py-12 text-center">No matching faculty found.</p> : <div className="sa-table-scroll">
+        <table className="sa-access-table">
+          <thead><tr><th>Faculty</th><th>Department</th><th>Access Status</th><th>Action</th></tr></thead>
+          <tbody>{filteredFacultyAccessRows.map((row) => <tr key={String(row.facultyUserId || row.email)}>
+            <td><span className="block font-semibold text-slate-900 dark:text-slate-100">{row.fullName}</span><span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{row.facultyId || "—"} | {row.email || "—"}</span></td>
+            <td>{row.department || "—"}</td>
+            <td><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${row.isBlocked ? "bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"}`}><span aria-hidden="true">●</span>{row.isBlocked ? "Blocked" : "Active"}</span>{row.isBlocked && row.reason ? <span className="mt-1.5 block max-w-xs text-xs text-slate-500 dark:text-slate-400">Reason: {row.reason}</span> : null}</td>
+            <td><button type="button" disabled={updatingAccess} onClick={() => openBlockFacultyModal(row)} className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-[#003366] hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-sky-800 dark:bg-slate-900 dark:text-sky-300 dark:hover:bg-sky-950/40">Manage</button></td>
+          </tr>)}</tbody>
         </table>
+      </div>}
+    </section>}
+    <Modal isOpen={blockModalOpen} onClose={() => { if (!updatingAccess) { setBlockModalOpen(false); setBlockTarget(null); setBlockError(""); } }} title="Manage Faculty Access" closeOnBackdrop={!updatingAccess} closeOnEscape={!updatingAccess} panelClassName="max-w-xl">
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex items-start gap-3"><span className="sa-avatar h-11 w-11"><Icon type="user"/></span><div className="min-w-0"><h4 className="font-bold text-[#003366] dark:text-sky-300">{blockTarget?.fullName || "Faculty member"}</h4><dl className="mt-2 grid gap-1 text-xs text-slate-600 dark:text-slate-300"><div><dt className="inline font-semibold">Faculty ID: </dt><dd className="inline">{blockTarget?.facultyId || "—"}</dd></div><div><dt className="inline font-semibold">Email: </dt><dd className="inline break-all">{blockTarget?.email || "—"}</dd></div><div><dt className="inline font-semibold">Department/Program: </dt><dd className="inline">{blockTarget?.department || chairpersonDepartment || "—"}</dd></div></dl></div></div>
       </div>
-    </section>
-    <Modal isOpen={blockModalOpen} onClose={() => { if (!updatingAccess) { setBlockModalOpen(false); setBlockTarget(null); setBlockError(""); } }} title="Block Faculty Academic Access" description={`Block ${blockTarget?.fullName || nameOf(selectedProfessor)} from academic functions? Chat and logout will remain available.`} closeOnBackdrop={!updatingAccess} closeOnEscape={!updatingAccess}>
-      <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-        <div><strong>Faculty Name:</strong> {blockTarget?.fullName || nameOf(selectedProfessor) || "—"}</div>
-        <div><strong>Faculty ID / Email:</strong> {blockTarget?.facultyId || String(selectedProfessor?.id || "—")} {blockTarget?.email && blockTarget.email !== "—" ? `(${blockTarget.email})` : ""}</div>
-      </div>
-      <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">Reason for blocking
-        <textarea value={blockReason} onChange={(event) => { setBlockReason(event.target.value); if (blockError) setBlockError(""); }} rows={4} className="mt-2 w-full resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600/20 dark:border-slate-600 dark:bg-slate-800 dark:text-white" placeholder="Enter mandatory reason for blocking academic access" />
-      </label>
+      <div className="mt-4 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Current Access: <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${blockTarget?.isBlocked ? "bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"}`}><span aria-hidden="true">●</span>{blockTarget?.isBlocked ? "Blocked" : "Active"}</span></div>
+      {!blockTarget?.isBlocked ? <><div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100">Blocking academic access will disable academic functions such as grade encoding and faculty sections, but <strong>Messaging remains available.</strong></div><label className="mt-4 block text-sm font-semibold text-slate-700 dark:text-slate-200">Reason for restriction *
+        <textarea aria-label="Reason for restriction" value={blockReason} onChange={(event) => { setBlockReason(event.target.value); if (blockError) setBlockError(""); }} rows={4} className="mt-2 w-full resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600/20 dark:border-slate-600 dark:bg-slate-800 dark:text-white" placeholder="Enter the reason for restricting this faculty's academic access..." />
+      </label></> : <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">Unblocking restores this faculty member's academic portal functions. Messaging access is already available.</p>}
       {blockError && <p role="alert" className="mt-2 text-xs font-semibold text-red-600">{blockError}</p>}
-      <div className="mt-4 flex justify-end gap-3"><button type="button" onClick={() => { setBlockModalOpen(false); setBlockTarget(null); setBlockError(""); }} disabled={updatingAccess} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold dark:border-slate-600">Cancel</button><button type="button" onClick={updateFacultyAccess} disabled={!blockReason.trim() || updatingAccess} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white disabled:bg-slate-400">{updatingAccess ? "Blocking…" : "Block Faculty"}</button></div>
+      <div className="mt-5 flex justify-end gap-3"><button type="button" onClick={() => { setBlockModalOpen(false); setBlockTarget(null); setBlockError(""); }} disabled={updatingAccess} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold dark:border-slate-600">Cancel</button><button type="button" onClick={updateFacultyAccess} disabled={(!blockTarget?.isBlocked && !blockReason.trim()) || updatingAccess} className={`rounded-lg px-4 py-2 text-sm font-bold text-white disabled:bg-slate-400 ${blockTarget?.isBlocked ? "bg-emerald-700 hover:bg-emerald-800" : "bg-red-700 hover:bg-red-800"}`}>{updatingAccess ? "Updating…" : blockTarget?.isBlocked ? "Unblock Faculty" : "Block Faculty"}</button></div>
     </Modal>
   </div>;
 }

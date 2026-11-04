@@ -11,7 +11,6 @@ import {
   searchExistingStudentsForEnrollment,
   fetchCrossCurriculumOptions,
   assignCrossCurriculumSubjects,
-  removeNonRegularSubject,
 } from '../../services/api';
 
 jest.mock('../../services/api', () => ({
@@ -169,18 +168,70 @@ test('blocks enrollment clearly when no active academic period exists', async ()
   expect(fetchCurriculums).toHaveBeenCalledWith('PUBLISHED');
 });
 
-test('filters current enrollments by the dynamic Program / Course dropdown', async () => {
+test('uses section and status filters without duplicating the Enrollment Setup program selector', async () => {
   fetchApprovedStudents.mockResolvedValue({ students: [
-    { id: 1, fullname: 'BSIT Student', studentno: '26-0001', department: program },
-    { id: 2, fullname: 'BSA Student', studentno: '26-0002', department: 'Bachelor of Science in Accountancy' },
+    { id: 1, fullname: 'Regular Student', studentno: '26-0001', department: program, section: '1-1' },
+    { id: 2, fullname: 'Irregular Student', studentno: '26-0002', department: program, section: '1-2', isIrregular: true },
   ] });
   render(<StudentEnrollmentManagement programs={[program]} />);
-  await screen.findByText('BSIT Student');
+  await screen.findByText('Regular Student');
   expect(screen.getByTestId('student-enrollment-list')).toHaveClass('w-full', 'min-w-0', '[&_table]:w-full');
-  fireEvent.click(screen.getByRole('button', { name: 'Program / Course' }));
-  fireEvent.click(screen.getByRole('option', { name: 'Bachelor of Science in Accountancy' }));
-  expect(screen.getByText('BSA Student')).toBeInTheDocument();
-  expect(screen.queryByText('BSIT Student')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Program / Course' })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Filter enrollments by section'), { target: { value: '1-2' } });
+  expect(screen.getByText('Irregular Student')).toBeInTheDocument();
+  expect(screen.queryByText('Regular Student')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Filter enrollments by status'), { target: { value: 'Regular' } });
+  expect(screen.getByText('No matching students found.')).toBeInTheDocument();
+});
+
+test('shows Cross-Curriculum actions only for selected students and clears the selection', async () => {
+  fetchApprovedStudents.mockResolvedValue({ students: [
+    { id: 1, fullname: 'First Student', studentno: '26-0001', department: program, section: '1-1' },
+    { id: 2, fullname: 'Second Student', studentno: '26-0002', department: program, section: '1-1' },
+  ] });
+  render(<StudentEnrollmentManagement programs={[program]} />);
+  await screen.findByText('First Student');
+  expect(screen.queryByTestId('student-selection-action-bar')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('open-cross-curriculum-modal')).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText('Select First Student'));
+  fireEvent.click(screen.getByLabelText('Select Second Student'));
+  expect(screen.getByTestId('student-selection-action-bar')).toHaveTextContent('2 students selected');
+  expect(screen.getByTestId('open-cross-curriculum-modal')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+  expect(screen.queryByTestId('student-selection-action-bar')).not.toBeInTheDocument();
+});
+
+test('distinguishes true enrollment emptiness from filtered empty results', async () => {
+  fetchApprovedStudents.mockResolvedValue({ students: [] });
+  const { unmount } = render(<StudentEnrollmentManagement programs={[program]} />);
+  expect(await screen.findByText('No students enrolled yet')).toBeInTheDocument();
+  expect(screen.getByText('0 Students')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Enroll New Student' }));
+  expect(screen.getByText('Manual Student Enrollment')).toBeInTheDocument();
+  unmount();
+
+  fetchApprovedStudents.mockResolvedValue({ students: [{ id: 3, fullname: 'Visible Student', studentno: '26-0003', department: program, section: '1-1' }] });
+  render(<StudentEnrollmentManagement programs={[program]} />);
+  await screen.findByText('Visible Student');
+  fireEvent.change(screen.getByLabelText('Search student enrollments'), { target: { value: 'missing student' } });
+  expect(screen.getByText('No matching students found.')).toBeInTheDocument();
+  expect(screen.queryByText('No students enrolled yet')).not.toBeInTheDocument();
+});
+
+test('renders Regular, Irregular, and Not Sectioned enrollment chips from existing data', async () => {
+  fetchApprovedStudents.mockResolvedValue({ students: [
+    { id: 1, fullname: 'Regular Student', studentno: '26-0001', department: program, yearLevel: '1', section: '1-1' },
+    { id: 2, fullname: 'Irregular Student', studentno: '26-0002', department: program, yearLevel: '2', section: '2-1', isIrregular: true, nonRegularSubjectCount: 2 },
+    { id: 3, fullname: 'Unsectioned Student', studentno: '26-0003', department: program, yearLevel: '1', section: '' },
+  ] });
+  render(<StudentEnrollmentManagement programs={[program]} />);
+  await screen.findByText('Regular Student');
+  expect(screen.getByTestId('student-irregular-badge-1')).toHaveTextContent('Regular');
+  expect(screen.getByTestId('student-irregular-badge-2')).toHaveTextContent('Irregular');
+  expect(screen.getByText('+2 Subjects')).toBeInTheDocument();
+  expect(screen.getByTestId('student-irregular-badge-3')).toHaveTextContent('Not Sectioned');
 });
 
 test('accepts a newly loaded active program without a hardcoded mapping', async () => {
@@ -275,14 +326,14 @@ test('assigns cross-curriculum subjects to multiple selected students and automa
   fetchApprovedStudents
     .mockResolvedValueOnce({
       students: [
-        { id: 1, fullname: 'First Student', studentno: '26-0001', department: program, yearLevel: '1', isIrregular: false },
-        { id: 2, fullname: 'Second Student', studentno: '26-0002', department: program, yearLevel: '1', isIrregular: false },
+        { id: 1, fullname: 'First Student', studentno: '26-0001', department: program, yearLevel: '1', section: '1-1', isIrregular: false },
+        { id: 2, fullname: 'Second Student', studentno: '26-0002', department: program, yearLevel: '1', section: '1-1', isIrregular: false },
       ],
     })
     .mockResolvedValueOnce({
       students: [
-        { id: 1, fullname: 'First Student', studentno: '26-0001', department: program, yearLevel: '1', isIrregular: true },
-        { id: 2, fullname: 'Second Student', studentno: '26-0002', department: program, yearLevel: '1', isIrregular: true },
+        { id: 1, fullname: 'First Student', studentno: '26-0001', department: program, yearLevel: '1', section: '1-1', isIrregular: true },
+        { id: 2, fullname: 'Second Student', studentno: '26-0002', department: program, yearLevel: '1', section: '1-1', isIrregular: true },
       ],
     });
 
