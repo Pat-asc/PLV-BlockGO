@@ -13,6 +13,14 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install --global npm@11.19.1 && \
+    npm pack brace-expansion@5.0.11 undici@6.29.1 --pack-destination /tmp && \
+    rm -rf /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+           /usr/local/lib/node_modules/npm/node_modules/undici && \
+    mkdir -p /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+             /usr/local/lib/node_modules/npm/node_modules/undici && \
+    tar -xzf /tmp/brace-expansion-5.0.11.tgz -C /usr/local/lib/node_modules/npm/node_modules/brace-expansion --strip-components=1 && \
+    tar -xzf /tmp/undici-6.29.1.tgz -C /usr/local/lib/node_modules/npm/node_modules/undici --strip-components=1 && \
+    rm -f /tmp/brace-expansion-5.0.11.tgz /tmp/undici-6.29.1.tgz && \
     npm --version
 
 WORKDIR /app
@@ -60,6 +68,14 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install --global npm@11.19.1 && \
+    npm pack brace-expansion@5.0.11 undici@6.29.1 --pack-destination /tmp && \
+    rm -rf /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+           /usr/local/lib/node_modules/npm/node_modules/undici && \
+    mkdir -p /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+             /usr/local/lib/node_modules/npm/node_modules/undici && \
+    tar -xzf /tmp/brace-expansion-5.0.11.tgz -C /usr/local/lib/node_modules/npm/node_modules/brace-expansion --strip-components=1 && \
+    tar -xzf /tmp/undici-6.29.1.tgz -C /usr/local/lib/node_modules/npm/node_modules/undici --strip-components=1 && \
+    rm -f /tmp/brace-expansion-5.0.11.tgz /tmp/undici-6.29.1.tgz && \
     npm cache clean --force && \
     npm --version
 
@@ -77,6 +93,8 @@ print('runtime msgpack:', msgpack.__version__); \
 print('runtime setuptools:', setuptools.__version__)" && \
     node -e "\
 console.log('npm:', require('/usr/local/lib/node_modules/npm/package.json').version); \
+console.log('brace-expansion:', require('/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json').version); \
+console.log('undici:', require('/usr/local/lib/node_modules/npm/node_modules/undici/package.json').version); \
 console.log('jsrsasign:', require('/app/node_modules/jsrsasign/package.json').version); \
 console.log('fabric-ca-client:', require('/app/node_modules/fabric-ca-client/package.json').version);"
 
