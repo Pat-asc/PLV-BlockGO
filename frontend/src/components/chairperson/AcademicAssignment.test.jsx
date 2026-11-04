@@ -648,7 +648,21 @@ test("keeps schedules subject-specific so an existing BSIT 1-1 load cannot block
   ));
 });
 
-test("renders Faculty Access Management table and requires a non-blank reason to block Faculty", async () => {
+test("renders Subject Assignments and Faculty Access as exclusive internal tabs", async () => {
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  const subjectTab = screen.getByRole("tab", { name: "Subject Assignments" });
+  const accessTab = screen.getByRole("tab", { name: "Faculty Access" });
+  expect(subjectTab).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tabpanel", { name: "Subject Assignments" })).toBeInTheDocument();
+  expect(screen.queryByTestId("faculty-access-management")).not.toBeInTheDocument();
+
+  fireEvent.click(accessTab);
+  expect(accessTab).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByTestId("faculty-access-management")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Subject Assigning" })).not.toBeInTheDocument();
+});
+
+test("renders compact Faculty access rows and requires a non-blank reason to block Faculty", async () => {
   fetchFacultyAccessControls.mockResolvedValue({
     faculties: [{
       facultyUserId: 1,
@@ -661,17 +675,20 @@ test("renders Faculty Access Management table and requires a non-blank reason to
     }],
   });
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  fireEvent.click(screen.getByRole("tab", { name: "Faculty Access" }));
   const accessSection = await screen.findByTestId("faculty-access-management");
-  expect(within(accessSection).getByText("FAC-001")).toBeInTheDocument();
-  expect(within(accessSection).getByText("carlos.reyes@plv.edu.ph")).toBeInTheDocument();
-  expect(within(accessSection).getByText("Active")).toBeInTheDocument();
+  const facultyRow = within(accessSection).getByRole("row", { name: /Carlos Reyes/ });
+  expect(facultyRow).toHaveTextContent("FAC-001 | carlos.reyes@plv.edu.ph");
+  expect(facultyRow).toHaveTextContent("Active");
 
-  fireEvent.click(within(accessSection).getByRole("button", { name: "Block Faculty" }));
-  const dialog = await screen.findByRole("dialog", { name: "Block Faculty Academic Access" });
+  fireEvent.click(within(accessSection).getByRole("button", { name: "Manage" }));
+  const dialog = await screen.findByRole("dialog", { name: "Manage Faculty Access" });
+  expect(dialog).toHaveTextContent("Carlos Reyes");
+  expect(dialog).toHaveTextContent("Messaging remains available");
   const confirmBtn = within(dialog).getByRole("button", { name: "Block Faculty" });
   expect(confirmBtn).toBeDisabled();
 
-  const reasonBox = within(dialog).getByLabelText("Reason for blocking");
+  const reasonBox = within(dialog).getByLabelText("Reason for restriction");
   fireEvent.change(reasonBox, { target: { value: "   " } });
   expect(confirmBtn).toBeDisabled();
 
@@ -680,4 +697,35 @@ test("renders Faculty Access Management table and requires a non-blank reason to
   fireEvent.click(confirmBtn);
 
   await waitFor(() => expect(blockFaculty).toHaveBeenCalledWith(1, "Pending compliance with department syllabus audit."));
+});
+
+test("shows blocked status and reason, then unblocks through the Manage modal", async () => {
+  fetchFacultyAccessControls.mockResolvedValue({ faculties: [{
+    facultyUserId: 1, facultyId: "FAC-001", fullName: "Carlos Reyes", email: "carlos.reyes@plv.edu.ph",
+    department: "Bachelor of Science in Information Technology", isBlocked: true, reason: "Administrative review",
+  }] });
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  fireEvent.click(screen.getByRole("tab", { name: "Faculty Access" }));
+  const accessSection = await screen.findByTestId("faculty-access-management");
+  const facultyRow = within(accessSection).getByRole("row", { name: /Carlos Reyes/ });
+  expect(facultyRow).toHaveTextContent("Blocked");
+  expect(facultyRow).toHaveTextContent("Reason: Administrative review");
+  fireEvent.click(within(accessSection).getByRole("button", { name: "Manage" }));
+  const dialog = await screen.findByRole("dialog", { name: "Manage Faculty Access" });
+  expect(within(dialog).queryByLabelText("Reason for restriction")).not.toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Unblock Faculty" }));
+  await waitFor(() => expect(unblockFaculty).toHaveBeenCalledWith(1));
+});
+
+test("filters Faculty access and renders the true zero-Faculty empty state with refresh", async () => {
+  fetchApprovedFaculties.mockResolvedValue({ faculties: [] });
+  fetchFacultyAccessControls.mockResolvedValue({ faculties: [] });
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  fireEvent.click(screen.getByRole("tab", { name: "Faculty Access" }));
+  const accessSection = await screen.findByTestId("faculty-access-management");
+  expect(within(accessSection).getByText("0 Faculty")).toBeInTheDocument();
+  expect(within(accessSection).getByText("No faculty accounts are available for this department.")).toBeInTheDocument();
+  fetchFacultyAccessControls.mockClear();
+  fireEvent.click(within(accessSection).getByRole("button", { name: "Refresh Faculty List" }));
+  await waitFor(() => expect(fetchFacultyAccessControls).toHaveBeenCalledTimes(1));
 });

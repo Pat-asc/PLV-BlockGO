@@ -33,6 +33,10 @@
 .sa-tabs button{display:flex;align-items:center;justify-content:center;gap:12px;padding:12px 22px;font-weight:700;min-width:24%}
 .sa-tabs button.active{background:#003366;color:#facc15;border-radius:10px;box-shadow:0 1px 2px #0000000d}
 .sa-tabs>span{font-size:12px;color:#64748b;padding:0 15px}
+.sa-workspace-tabs{display:flex;gap:4px;margin-bottom:18px;border-bottom:1px solid #dbe4ef}
+.sa-workspace-tabs button{display:flex;align-items:center;gap:8px;border-bottom:3px solid transparent;padding:10px 16px;color:#64748b;font-weight:700;transition:background-color .15s,color .15s,border-color .15s}
+.sa-workspace-tabs button:hover{background:#f8fafc;color:#003366}
+.sa-workspace-tabs button.active{border-bottom-color:#2563eb;background:#eff6ff;color:#1d4ed8}
 .sa-columns{display:grid;grid-template-columns:minmax(320px,.8fr) minmax(0,1.68fr);gap:24px;align-items:start}
 .sa-columns>.sa-card{min-width:0}
 .sa-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:14px;row-gap:16px;margin-bottom:16px}
@@ -46,6 +50,12 @@
 .subject-assignment table{width:100%;border-collapse:collapse;font-size:13px;text-align:left}
 .subject-assignment th{background:#f1f5f9;padding:12px 14px;font-size:12px;white-space:nowrap;font-weight:700}
 .subject-assignment td{border-bottom:1px solid #eaf0fa;padding:12px 14px}
+.sa-access-table{table-layout:fixed}
+.sa-access-table th:nth-child(1){width:31%}
+.sa-access-table th:nth-child(2){width:29%}
+.sa-access-table th:nth-child(3){width:27%}
+.sa-access-table th:nth-child(4){width:13%}
+.sa-access-table td{vertical-align:top;overflow-wrap:anywhere}
 .subject-assignment .faculty-loading-records-header th{background:#003366;color:#fff}
 .subject-assignment tr.selected{background:#e3f0ff}
 .subject-assignment input[type=radio]{accent-color:#176bff;width:13px;height:13px}
@@ -84,6 +94,10 @@
 .subject-assignment button:focus-visible,.subject-assignment select:focus-visible{outline:2px solid #2e7fff;outline-offset:2px}
 .dark .subject-assignment{color:#e2e8f0}
 .dark .sa-card,.dark .sa-tabs{border-color:#334155;background:#0f172a}
+.dark .sa-workspace-tabs{border-color:#334155}
+.dark .sa-workspace-tabs button{color:#94a3b8}
+.dark .sa-workspace-tabs button:hover{background:#1e293b;color:#bae6fd}
+.dark .sa-workspace-tabs button.active{border-bottom-color:#38bdf8;background:#0c4a6e;color:#e0f2fe}
 .dark .sa-header h2,.dark .sa-section-title h3,.dark .sa-heading h3,.dark .sa-professor h3{color:#7dd3fc}
 .dark .sa-header p,.dark .sa-section-title p,.dark .sa-heading p,.dark .sa-professor p,.dark .sa-assigned-context,.dark .sa-footnote{color:#94a3b8}
 .dark .sa-search,.dark .sa-filters select,.dark .sa-program select,.dark .sa-filters>div:first-child>button,.dark .sa-schedule{border-color:#475569;background:#1e293b;color:#f1f5f9}
@@ -115,6 +129,8 @@
 .sa-save{padding:9px 12px}
 .sa-professor{gap:8px}
 .sa-assigned footer{flex-wrap:wrap}
+.sa-workspace-tabs button{flex:1;justify-content:center;padding:10px 8px}
+.sa-access-table{min-width:640px}
 }
 
 

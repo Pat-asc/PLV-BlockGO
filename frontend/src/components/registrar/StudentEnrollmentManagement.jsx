@@ -28,6 +28,37 @@ const hasPrerequisiteRequirement = (prerequisite) => {
   return Boolean(normalized) && !['none', 'n/a', 'na', '-'].includes(normalized);
 };
 
+const enrollmentDisplayStatus = (student) => {
+  if (!String(student?.section || '').trim()) return 'Not Sectioned';
+  return student?.isIrregular || student?.is_irregular ? 'Irregular' : 'Regular';
+};
+
+const formatYearLevel = (value) => {
+  const year = Number.parseInt(value, 10);
+  if (!Number.isInteger(year)) return 'Year not set';
+  if (year === 1) return '1st Year';
+  if (year === 2) return '2nd Year';
+  if (year === 3) return '3rd Year';
+  return `${year}th Year`;
+};
+
+const crossCurriculumSubjectCount = (student) => {
+  const directCount = [student?.crossCurriculumSubjectCount, student?.nonRegularSubjectCount]
+    .map((value) => Number(value))
+    .find((value) => Number.isInteger(value) && value > 0);
+  if (directCount) return directCount;
+  const collection = student?.crossCurriculumSubjects || student?.nonRegularSubjects;
+  return Array.isArray(collection) && collection.length > 0 ? collection.length : 0;
+};
+
+const EnrollmentUsersIcon = ({ className = 'h-5 w-5' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+  </svg>
+);
+
 const StudentEnrollmentManagement = ({ programs = [] }) => {
   const [form, setForm] = useState({
     department: programs[0] || '',
@@ -48,7 +79,8 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   const [result, setResult] = useState(null);
   const [enrollmentSearch, setEnrollmentSearch] = useState('');
   const [enrollmentMethod, setEnrollmentMethod] = useState('bulk');
-  const [programFilter, setProgramFilter] = useState('');
+  const [sectionFilter, setSectionFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [existingCandidates, setExistingCandidates] = useState([]);
   const [selectedExistingId, setSelectedExistingId] = useState('');
   const [curriculumView, setCurriculumView] = useState(null);
@@ -123,15 +155,19 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   );
   const visibleStudents = useMemo(() => {
     const query = enrollmentSearch.trim().toLowerCase();
-    const programStudents = programFilter ? students.filter((student) => String(student.department || '').toLowerCase() === programFilter.toLowerCase()) : students;
-    if (!query) return programStudents;
-    return programStudents.filter((student) =>
-      [student.fullname, student.firstName, student.middleName, student.lastName, student.studentno, student.email, student.studentEmail, student.department, student.programCode, student.section, student.yearLevel]
+    return students.filter((student) => {
+      if (sectionFilter && String(student.section || '') !== sectionFilter) return false;
+      if (statusFilter && enrollmentDisplayStatus(student) !== statusFilter) return false;
+      if (!query) return true;
+      return [student.fullname, student.firstName, student.middleName, student.lastName, student.studentno, student.email, student.studentEmail, student.department, student.programCode, student.section, student.yearLevel]
         .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(query))
-    );
-  }, [students, enrollmentSearch, programFilter]);
-  const availablePrograms = useMemo(() => [...new Set([...programs, ...students.map((student) => student.department)].filter(Boolean))].sort(), [programs, students]);
+        .some((value) => String(value).toLowerCase().includes(query));
+    });
+  }, [students, enrollmentSearch, sectionFilter, statusFilter]);
+  const availableSections = useMemo(
+    () => [...new Set(students.map((student) => String(student.section || '').trim()).filter(Boolean))].sort(),
+    [students]
+  );
 
   useEffect(() => {
     if (matchingCurricula.some((item) => String(item.curriculumId) === String(form.curriculumId))) return;
@@ -590,30 +626,44 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
       </section>
 
       <section data-testid="student-enrollment-list" className="w-full min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 [&_table]:w-full">
-        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h4 className="text-sm font-bold text-[#003366]">Current Student Enrollments</h4>
-            {selectedStudentIds.length > 0 ? (
-              <p className="text-xs font-semibold text-blue-700">{selectedStudentIds.length} student(s) selected for cross-curriculum assignment</p>
-            ) : null}
+        <div className="border-b border-slate-200 px-4 py-4 dark:border-slate-700 sm:px-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-700 dark:bg-sky-950/60 dark:text-sky-300"><EnrollmentUsersIcon /></span>
+              <div>
+                <h4 className="text-sm font-bold text-[#003366] dark:text-sky-300">Current Student Enrollments</h4>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">View and manage students enrolled for {form.schoolYear && form.semester ? `${form.schoolYear} · ${form.semester}` : 'the active academic period'}</p>
+              </div>
+            </div>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{students.length} {students.length === 1 ? 'Student' : 'Students'}</span>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <button
-              type="button"
-              data-testid="open-cross-curriculum-modal"
-              onClick={() => openCrossCurriculumModal(selectedStudentIds.length ? selectedStudentIds : visibleStudents.slice(0, 1).map((s) => s.id))}
-              disabled={students.length === 0}
-              className="rounded-lg bg-[#003366] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#00264d] disabled:opacity-50"
-            >
-              Add Cross-Curriculum Subjects{selectedStudentIds.length > 0 ? ` (${selectedStudentIds.length})` : ''}
-            </button>
-            <BoundedSelect label="Program / Course" value={programFilter} onChange={setProgramFilter} options={[{ value: '', label: 'All Programs' }, ...availablePrograms.map((program) => ({ value: program, label: program }))]} searchable className="sm:w-64"/>
-            <SearchField value={enrollmentSearch} onChange={setEnrollmentSearch} label="Search student enrollments" placeholder="ID, name, email, program, or section" className="sm:w-72" inputClassName="h-9 text-xs"/>
-            <button type="button" onClick={load} className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700">Refresh</button>
+          <div className="mt-4 flex flex-wrap items-end gap-2">
+            <SearchField value={enrollmentSearch} onChange={setEnrollmentSearch} label="Search student enrollments" placeholder="Search by name or student number..." className="min-w-[15rem] flex-1 sm:max-w-md" inputClassName="h-10 text-xs dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100" />
+            <label className="min-w-[10rem] text-xs font-semibold text-slate-600 dark:text-slate-300">Section
+              <select aria-label="Filter enrollments by section" value={sectionFilter} onChange={(event) => setSectionFilter(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-normal outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                <option value="">All Sections</option>
+                {availableSections.map((section) => <option key={section} value={section}>{section}</option>)}
+              </select>
+            </label>
+            <label className="min-w-[10rem] text-xs font-semibold text-slate-600 dark:text-slate-300">Status
+              <select aria-label="Filter enrollments by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-normal outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                <option value="">All Statuses</option><option value="Regular">Regular</option><option value="Irregular">Irregular</option><option value="Not Sectioned">Not Sectioned</option>
+              </select>
+            </label>
+            <button type="button" onClick={load} className="h-10 rounded-lg border border-blue-200 px-3 text-xs font-semibold text-blue-700 transition hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/50">Refresh</button>
           </div>
+          {selectedStudentIds.length > 0 ? <div data-testid="student-selection-action-bar" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs text-blue-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100">
+            <span className="font-bold">✓ {selectedStudentIds.length} {selectedStudentIds.length === 1 ? 'student' : 'students'} selected</span>
+            <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => setSelectedStudentIds([])} className="rounded-lg px-3 py-2 font-semibold text-blue-700 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-sky-300 dark:hover:bg-sky-900/50">Clear</button><button type="button" data-testid="open-cross-curriculum-modal" onClick={() => openCrossCurriculumModal(selectedStudentIds)} className="rounded-lg bg-[#003366] px-3 py-2 font-bold text-white transition hover:bg-[#00264d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">+ Add Cross-Curriculum Subjects</button></div>
+          </div> : null}
         </div>
-        <div className="w-full overflow-x-auto">
-          <table className="w-full min-w-[960px] text-left text-xs">
+        {loading ? <p className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400">Loading student enrollments...</p> : students.length === 0 ? <div className="flex flex-col items-center px-4 py-12 text-center">
+          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300"><EnrollmentUsersIcon className="h-6 w-6" /></span>
+          <h5 className="mt-4 text-base font-bold text-[#003366] dark:text-sky-300">No students enrolled yet</h5>
+          <p className="mt-1 max-w-lg text-sm text-slate-500 dark:text-slate-400">Students enrolled under {form.department || 'the selected program'} for {form.schoolYear && form.semester ? `${form.schoolYear} · ${form.semester}` : 'the active academic period'} will appear here.</p>
+          <button type="button" onClick={() => setEnrollmentMethod('manual')} className="mt-5 rounded-lg bg-[#003366] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#00264d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Enroll New Student</button>
+        </div> : visibleStudents.length === 0 ? <div className="px-4 py-12 text-center"><h5 className="text-sm font-bold text-slate-700 dark:text-slate-200">No matching students found.</h5><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Try changing the search, section, or status filters.</p></div> : <div className="w-full overflow-x-auto">
+          <table className="w-full min-w-[780px] table-fixed text-left text-xs">
             <thead>
               <tr className="bg-slate-50 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                 <th className="w-10 px-3 py-3">
@@ -630,13 +680,18 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
                 <th className="px-4 py-3">Academic Period</th>
                 <th className="px-4 py-3">Assigned Curriculum</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Cross-Curriculum</th>
               </tr>
             </thead>
             <tbody>
               {visibleStudents.map((student) => {
-                const isIrregular = Boolean(student.isIrregular || student.is_irregular);
+                const displayStatus = enrollmentDisplayStatus(student);
                 const isSelected = selectedStudentIds.includes(Number(student.id));
+                const crossSubjectCount = crossCurriculumSubjectCount(student);
+                const statusClass = displayStatus === 'Irregular'
+                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                  : displayStatus === 'Not Sectioned'
+                  ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300';
                 return (
                   <tr key={student.id} className="border-b border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
                     <td className="px-3 py-3">
@@ -651,11 +706,12 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
                       <span className="block font-semibold text-slate-900 dark:text-slate-100">{student.fullname}</span>
                       <span className="text-xs text-slate-500 dark:text-slate-400">{student.studentno}</span>
                     </td>
-                    <td className="max-w-64 break-words px-4 py-3">
-                      {student.department || 'Unassigned'}
-                      <span className="block text-xs text-slate-500 dark:text-slate-400">Year {student.yearLevel || '—'}</span>
+                    <td className="break-words px-4 py-3">
+                      <span className="font-medium">{student.programCode || student.department || 'Unassigned'}</span>
+                      <span className="text-slate-400"> · </span>
+                      <span>{formatYearLevel(student.yearLevel)}</span>
                     </td>
-                    <td className="px-4 py-3">{student.section || 'Unassigned'}</td>
+                    <td className="px-4 py-3">{student.section || 'Not sectioned'}</td>
                     <td className="px-4 py-3">
                       {student.schoolYear || '—'}
                       <span className="block text-xs text-slate-500 dark:text-slate-400">{student.semester || '—'}</span>
@@ -672,40 +728,20 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <div>{student.enrollmentStatus || student.assignmentStatus || 'Unassigned'}</div>
                       <span
                         data-testid={`student-irregular-badge-${student.id}`}
-                        className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                          isIrregular
-                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                            : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-                        }`}
+                        className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold ${statusClass}`}
                       >
-                        {isIrregular ? 'Irregular' : 'Regular'}
+                        {displayStatus}
                       </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => openCrossCurriculumModal([student.id])}
-                        className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-800 transition hover:bg-blue-100"
-                      >
-                        Cross-Pick Subjects
-                      </button>
+                      {displayStatus === 'Irregular' && crossSubjectCount > 0 ? <span className="mt-1 block text-[10px] font-semibold text-slate-500 dark:text-slate-400">+{crossSubjectCount} {crossSubjectCount === 1 ? 'Subject' : 'Subjects'}</span> : null}
                     </td>
                   </tr>
                 );
               })}
-              {!loading && visibleStudents.length === 0 ? (
-                <tr>
-                  <td colSpan="8" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
-                    {enrollmentSearch.trim() || programFilter ? 'No results found.' : 'No active student enrollment yet.'}
-                  </td>
-                </tr>
-              ) : null}
             </tbody>
           </table>
-        </div>
+        </div>}
       </section>
 
       <Modal
