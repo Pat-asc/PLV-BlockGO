@@ -69,6 +69,11 @@ test('security alert IP trackers are stable, incremental, and start at 100', () 
   assert.match(authService, /pg_advisory_xact_lock\(2026100702\)/);
   assert.match(authService, /INSERT INTO ip_tracker_mappings \(tracker_id, ip_address\)/);
   assert.match(authService, /COALESCE\(MAX\(tracker_id\), 0\) \+ 1/);
+  assert.equal(
+    (authService.match(/\$1::VARCHAR\(100\)/g) || []).length,
+    2,
+    'the reused tracker parameter must have one explicit PostgreSQL type in both query contexts'
+  );
   assert.match(authService, /INSERT INTO security_events[\s\S]*ip_address[\s\S]*VALUES \(\$1, \$2, \$3, \$4/);
 });
 

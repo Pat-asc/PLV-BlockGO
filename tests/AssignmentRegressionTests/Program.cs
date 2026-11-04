@@ -575,8 +575,9 @@ CREATE TEMP TABLE academic_programs(program_id INT PRIMARY KEY,program_code TEXT
 CREATE TEMP TABLE curriculums(curriculum_id INT PRIMARY KEY,program_id INT,status TEXT);
 CREATE TEMP TABLE curriculum_subjects(id SERIAL,curriculum_id INT,subject_code TEXT,prerequisite TEXT,year_level INT,semester TEXT);
 CREATE TEMP TABLE academicsections(id SERIAL PRIMARY KEY,department TEXT,year_level INT,section_num INT,max_capacity INT DEFAULT 40,is_active BOOLEAN DEFAULT TRUE,archived_at TIMESTAMPTZ,archived_by TEXT);
-CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_name TEXT,department TEXT,section TEXT,assignment_status TEXT,student_email TEXT,sex TEXT,curriculum_id BIGINT,batch_year INT,year_level TEXT);
+CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_name TEXT,department TEXT,section TEXT,assignment_status TEXT,student_email TEXT,sex TEXT,curriculum_id BIGINT,batch_year INT,year_level TEXT,is_irregular BOOLEAN NOT NULL DEFAULT FALSE);
 CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,enrollment_state TEXT DEFAULT 'PLANNING',updated_at TIMESTAMPTZ);
+CREATE TEMP TABLE student_non_regular_subjects(non_regular_subject_id BIGSERIAL PRIMARY KEY,student_user_id INT,enrollment_id BIGINT,school_year TEXT,semester TEXT,faculty_section_id INT,status TEXT DEFAULT 'ACTIVE');
 CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_name TEXT,department TEXT);
 CREATE TEMP TABLE adminprofiles(user_id INT PRIMARY KEY,full_name TEXT,department TEXT);
 CREATE TEMP TABLE audit_logs(audit_id BIGSERIAL PRIMARY KEY,user_id INT,actor_role TEXT,action TEXT,entity_type TEXT,entity_id TEXT,description TEXT,timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -585,7 +586,7 @@ CREATE TEMP TABLE academic_periods(academic_period_id BIGSERIAL PRIMARY KEY,scho
 CREATE UNIQUE INDEX ux_academic_period_active ON academic_periods((status)) WHERE status='ACTIVE';
 CREATE TEMP TABLE facultysections(id SERIAL PRIMARY KEY,user_id INT,department TEXT,section TEXT,year_level TEXT,subject TEXT,academic_section_id INT,school_year TEXT,semester TEXT,is_active BOOLEAN DEFAULT TRUE,deactivated_at TIMESTAMPTZ,deactivated_by TEXT,schedule TEXT);
 CREATE UNIQUE INDEX ux_test_facultysections_exact ON facultysections(user_id,academic_section_id,school_year,semester,LOWER(subject)) WHERE is_active=TRUE;
-CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT,student_hash TEXT,student_name TEXT,section TEXT,course TEXT,program TEXT,subject_code TEXT,subject_title TEXT,semester TEXT,school_year TEXT,faculty_id TEXT,professor_name TEXT,date TEXT,ipfs_cid TEXT,term TEXT,note TEXT,units NUMERIC,submitted_by TEXT,recorded_at TIMESTAMPTZ,transaction_id TEXT,transaction_hash TEXT,
+CREATE TEMP TABLE pending_grade_records(id TEXT PRIMARY KEY,assignment_cycle_id TEXT,student_no TEXT,status TEXT,grade TEXT,student_hash TEXT,student_name TEXT,section TEXT,course TEXT,program TEXT,subject_code TEXT,subject_title TEXT,semester TEXT,school_year TEXT,faculty_id TEXT,professor_name TEXT,date TEXT,ipfs_cid TEXT,term TEXT,note TEXT,units NUMERIC,submitted_by TEXT,recorded_at TIMESTAMPTZ,transaction_id TEXT,transaction_hash TEXT,submission_version INT NOT NULL DEFAULT 1,submitted_at TIMESTAMPTZ,returned_by INT,returned_at TIMESTAMPTZ,return_reason TEXT,
     CONSTRAINT unique_grade_entry_assignment_cycle UNIQUE(student_hash,subject_code,school_year,semester,section,assignment_cycle_id,term));
 CREATE TEMP TABLE grade_assignment_cycles(record_id TEXT PRIMARY KEY,assignment_cycle_id TEXT NOT NULL);");
 var firstSavedPeriod = await EncodingPeriodSettingService.SaveAsync(db, System.Text.Json.JsonSerializer.Serialize(new {

@@ -25,6 +25,16 @@ spec:
         matchLabels:
           kubernetes.io/metadata.name: plv-fabric
       podSelector:
+        matchLabels:
+          app: dotnet-operations-service
+    ports:
+    - protocol: TCP
+      port: 5984
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: plv-fabric
+      podSelector:
         matchExpressions:
           - key: app
             operator: In
@@ -34,9 +44,6 @@ spec:
       port: 5984
     - protocol: TCP
       port: 5432
-  # Every ASP.NET workload validates authenticated users against the primary
-  # database. Keep this separate from the CouchDB rule above so these services
-  # receive PostgreSQL access only.
   - from:
     - namespaceSelector:
         matchLabels:
@@ -108,6 +115,19 @@ spec:
     ports:
     - protocol: TCP
       port: 5984
+
+  # Allow the System Administrator monitoring service to use the protected
+  # read-only CouchDB browser.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: plv-fabric
+      podSelector:
+        matchLabels:
+          app: dotnet-operations-service
+    ports:
+    - protocol: TCP
+      port: 5984
   - from:
     - namespaceSelector:
         matchLabels:
@@ -141,6 +161,19 @@ spec:
     - podSelector:
         matchLabels:
           app: peer-department
+    ports:
+    - protocol: TCP
+      port: 5984
+
+  # Allow the System Administrator monitoring service to use the protected
+  # read-only CouchDB browser.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: plv-fabric
+      podSelector:
+        matchLabels:
+          app: dotnet-operations-service
     ports:
     - protocol: TCP
       port: 5984

@@ -33,10 +33,10 @@ async function recordSecurityEvent(req, eventType, severity, attemptedIdentity, 
         if (verifiedIp) {
             await client.query(
                 `INSERT INTO ip_tracker_mappings (tracker_id, ip_address)
-                 SELECT COALESCE(MAX(tracker_id), 0) + 1, $1
+                 SELECT COALESCE(MAX(tracker_id), 0) + 1, $1::VARCHAR(100)
                    FROM ip_tracker_mappings
                  HAVING NOT EXISTS (
-                     SELECT 1 FROM ip_tracker_mappings WHERE ip_address = $1
+                     SELECT 1 FROM ip_tracker_mappings WHERE ip_address = $1::VARCHAR(100)
                  )`,
                 [verifiedIp]
             );

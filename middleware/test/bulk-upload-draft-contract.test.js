@@ -18,5 +18,5 @@ test('Draft bulk upload has no synchronous IPFS or Fabric dependency', () => {
 test('Draft bulk upload leaves explicit submission as a separate endpoint', () => {
     assert.doesNotMatch(bulkUpload, /SubmitSection\(/);
     assert.match(source, /public async Task<IActionResult> SubmitSection\(/);
-    assert.match(source, /SET status = 'SubmittedToChairperson'/);
+    assert.match(source, /SET status = 'SubmittedToRegistrar'/);
 });
