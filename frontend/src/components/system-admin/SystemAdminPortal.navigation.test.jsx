@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import SystemAdminPortal from './SystemAdminPortal';
 
 jest.mock('../../services/api', () => ({ fetchSupportTickets: jest.fn().mockResolvedValue({ data: [] }) }));
@@ -11,8 +11,7 @@ jest.mock('./CouchDbBrowser', () => () => <div>CouchDB view</div>);
 
 test('keeps Data Life Cycle out of primary desktop and mobile navigation', async () => {
   render(<SystemAdminPortal adminData={{ name: 'Admin' }} onLogout={() => {}} />);
-  await act(async () => {});
-  const navigation = screen.getByRole('navigation', { name: 'System administration views' });
+  const navigation = await screen.findByRole('navigation', { name: 'System administration views' });
   expect(within(navigation).queryByRole('button', { name: /Data Life Cycle/i })).not.toBeInTheDocument();
   expect(navigation).toHaveClass('lg:flex');
 
@@ -31,7 +30,7 @@ test('opens the existing Data Life Cycle from Settings and returns to Settings',
   expect(within(settings).getByText(/application, database, and blockchain data move through BlockGo/i)).toBeInTheDocument();
 
   fireEvent.click(within(settings).getByRole('button', { name: 'View Data Life Cycle' }));
-  await waitFor(() => expect(screen.getByText('BlockGo Data Life Cycle')).toBeInTheDocument());
+  expect(await screen.findByText('BlockGo Data Life Cycle')).toBeInTheDocument();
   expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole('button', { name: 'Back to Settings' }));

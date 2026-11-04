@@ -124,9 +124,9 @@ test('backend curriculum metadata overrides stale local assignment display data'
 test('assignment card keeps a responsive single-card layout for narrow screens', async () => {
   render(<FacultyPortal facultyData={{ email: 'faculty@plv.edu.ph', name: 'Faculty Testing one' }} onLogout={() => {}} />);
 
-  const title = await screen.findByText('Introduction to IT');
-  expect(title.parentElement).toHaveClass('break-words');
-  expect(title.closest('article')).toHaveClass('flex', 'h-full', 'flex-col');
+  const card = await screen.findByRole('article', { name: /IT 101.*BSIT 1-1/ });
+  expect(within(card).getByText('Introduction to IT')).toBeInTheDocument();
+  expect(card).toHaveClass('flex', 'h-full', 'flex-col');
 });
 
 test('backend enrollment period overrides a stale SECOND assignment and Save sends FIRST', async () => {
@@ -138,7 +138,7 @@ test('backend enrollment period overrides a stale SECOND assignment and Save sen
     student_id: '26-0001', school_year: '2026-2027', semester: 'FIRST',
     section: 'BSIT 1-1', subject_code: 'IT 101', subject_name: 'Introduction to IT', units: 2,
   })));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit to Chairperson' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit to Registrar' }));
   fireEvent.click(screen.getByRole('button', { name: 'Yes, Submit Final Grades' }));
   await waitFor(() => expect(submitSectionGrades).toHaveBeenCalledWith('BSIT', 'BSIT 1-1 (IT 101)', '2026-2027', 'FIRST', '77'));
 });
@@ -147,7 +147,7 @@ test('legacy Faculty year 2026 resolves to the enrollment year range for Save an
   localStorage.setItem('registrarAssignments', JSON.stringify([{ ...assignment, schoolYear: '2026' }]));
   await openSection();
   fireEvent.change(screen.getAllByPlaceholderText('60-100')[0], { target: { value: '85' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Submit to Chairperson' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit to Registrar' }));
   fireEvent.click(screen.getByRole('button', { name: 'Yes, Submit Final Grades' }));
   await waitFor(() => expect(issueGrade).toHaveBeenCalledWith(expect.objectContaining({
     student_id: '26-0001', school_year: '2026-2027', semester: 'FIRST',
@@ -195,7 +195,7 @@ test('failed Save never submits a section', async () => {
   issueGrade.mockRejectedValue(new Error('Student account was not found'));
   await openSection();
   fireEvent.change(screen.getAllByPlaceholderText('60-100')[0], { target: { value: '85' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Submit to Chairperson' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit to Registrar' }));
   fireEvent.click(screen.getByRole('button', { name: 'Yes, Submit Final Grades' }));
   await waitFor(() => expect(showSystemNotification).toHaveBeenCalledWith(expect.stringContaining('Student account was not found')));
   expect(submitSectionGrades).not.toHaveBeenCalled();
@@ -217,7 +217,7 @@ test('a returned grade retains its note, can be corrected, and resubmits the sam
   fireEvent.click(await screen.findByRole('button', { name: 'View Grades' }));
   expect(screen.getByText('Correct the grade')).toBeInTheDocument();
   fireEvent.change(screen.getAllByPlaceholderText('60-100')[0], { target: { value: '90' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Submit to Chairperson' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit to Registrar' }));
   fireEvent.click(screen.getByRole('button', { name: 'Yes, Submit Final Grades' }));
   await waitFor(() => expect(issueGrade).toHaveBeenCalledWith(expect.objectContaining({ student_id: '26-0001' })));
   await waitFor(() => expect(submitSectionGrades).toHaveBeenCalledWith('BSIT', 'BSIT 1-1 (IT 101)', '2026-2027', 'FIRST', '77'));

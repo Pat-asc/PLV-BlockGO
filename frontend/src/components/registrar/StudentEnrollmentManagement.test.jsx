@@ -89,6 +89,7 @@ test('manually enrolls a student in the selected academic period and curriculum'
 
   await screen.findByText('Juan Dela Cruz');
   await waitFor(() => expect(screen.getByLabelText(/curriculum version/i)).toHaveValue('7'));
+  expect(screen.getByTestId('enrollment-setup-controls')).toHaveClass('md:grid-cols-2', 'xl:grid-cols-4');
 
   expect(screen.getByLabelText(/active academic period/i)).toHaveValue('2026-2027 · FIRST');
   expect(screen.queryByLabelText(/^semester/i)).not.toBeInTheDocument();

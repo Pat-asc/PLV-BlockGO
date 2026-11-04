@@ -72,7 +72,7 @@ load_public_hosting_file() {
         esac
         if [[ -z "${!key:-}" ]]; then
             printf -v "$key" '%s' "$value"
-            export "$key"
+            export "${key?}"
         fi
     done < "$config_file"
 }
@@ -141,7 +141,9 @@ case "$ACTION" in
 esac
 
 PUBLIC_HOSTING_CONFIG_FILE="${BLOCKGO_PUBLIC_HOSTING_CONFIG_FILE:-./k8s/production-hosting.env}"
-load_public_hosting_file "$PUBLIC_HOSTING_CONFIG_FILE"
+if ! load_public_hosting_file "$PUBLIC_HOSTING_CONFIG_FILE"; then
+    return 1 2>/dev/null || exit 1
+fi
 BLOCKGO_PUBLIC_HOST="${BLOCKGO_PUBLIC_HOST:-}"
 BLOCKGO_PUBLIC_IP="${BLOCKGO_PUBLIC_IP:-}"
 BLOCKGO_PUBLIC_SCHEME="${BLOCKGO_PUBLIC_SCHEME:-https}"
@@ -2672,6 +2674,16 @@ prepare_manifests() {
             return 1
         fi
 
+        if is_true "$DEPLOY_SECONDARY_PEERS"; then
+            sed -i 's/FABRIC_HA_ENABLED: "false"/FABRIC_HA_ENABLED: "true"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
+        else
+            sed -i 's/FABRIC_HA_ENABLED: "true"/FABRIC_HA_ENABLED: "false"/' "$TMP_K8S_DIR/08-middleware-api.yaml"
+        fi
+
+        # GKE pd-standard claims use a 10Gi minimum. Match only the PVC storage
+        # key so container ephemeral-storage limits remain unchanged.
+        sed -E -i 's/(^|[[:space:]{])storage: (2|5)Gi/\1storage: 10Gi/g' "$TMP_K8S_DIR"/*.yaml
+
         sed -i "s/__GKE_ZONE_A__/${GKE_ZONE_A}/g; s/__GKE_ZONE_B__/${GKE_ZONE_B}/g; s/__GKE_ZONE_C__/${GKE_ZONE_C}/g" "$TMP_K8S_DIR"/*.yaml
         if grep -R -q '__GKE_ZONE_[ABC]__' "$TMP_K8S_DIR"; then
             echo "ERROR: One or more GKE zone placeholders were not resolved."
@@ -2842,69 +2854,99 @@ setup_gke_cluster() {
     if [[ -n "${GKE_NODE_SERVICE_ACCOUNT:-}" ]]; then
         node_service_account_args+=(--service-account "$GKE_NODE_SERVICE_ACCOUNT")
     fi
-
-    # ============================================================
-    # BLOCKGO GKE COST GUARDRAILS
-    # ============================================================
-    # Production remains spread across three zones, but the regional
-    # node pool is constrained to 4-5 total worker nodes. GKE maxSurge is
-    # per zone, so zero surge avoids exceeding a 12-vCPU quota in 3 zones.
-    # ============================================================
-    local min_total_nodes="${GKE_MIN_TOTAL_NODES:-4}"
-    local max_total_nodes="${GKE_MAX_TOTAL_NODES:-5}"
-    local initial_nodes_per_zone="${GKE_INITIAL_NODES_PER_ZONE:-1}"
-    local machine_type="${GKE_MACHINE_TYPE:-e2-highmem-2}"
+    local min_total_nodes="${GKE_MIN_TOTAL_NODES:-6}"
+    local max_total_nodes="${GKE_MAX_TOTAL_NODES:-6}"
+    local initial_nodes_per_zone="${GKE_INITIAL_NODES_PER_ZONE:-2}"
+    local machine_type="${GKE_MACHINE_TYPE:-n2-custom-2-24576-ext}"
     local vcpu_cost_cap="${GKE_VCPU_COST_CAP:-12}"
-    local vcpu_per_node=""
+    local vcpu_per_node="2"
+    if ! [[ "$min_total_nodes" =~ ^[0-9]+$ &&
+            "$max_total_nodes" =~ ^[0-9]+$ &&
+            "$initial_nodes_per_zone" =~ ^[0-9]+$ &&
+            "$vcpu_cost_cap" =~ ^[0-9]+$ ]]; then
 
-    if ! [[ "$min_total_nodes" =~ ^[0-9]+$ && "$max_total_nodes" =~ ^[0-9]+$ && "$initial_nodes_per_zone" =~ ^[0-9]+$ && "$vcpu_cost_cap" =~ ^[0-9]+$ ]]; then
         echo "ERROR: GKE_MIN_TOTAL_NODES, GKE_MAX_TOTAL_NODES, GKE_INITIAL_NODES_PER_ZONE, and GKE_VCPU_COST_CAP must be whole numbers."
         return 1
     fi
 
-    # Keep each worker at two vCPUs so the six-node maximum stays within the
-    # project's current CPUs (All Regions) quota of 12 and the same value acts
-    # as an intentional compute-cost ceiling even if Google later raises quota.
+    # ============================================================
+    # BLOCKGO PRODUCTION NODE SIZE
+    # ============================================================
+    #
+    # e2-highmem-2:
+    #   2 vCPU
+    #   16 GiB RAM
+    #
+    # 9 nodes:
+    #   18 vCPU
+    #   144 GiB raw RAM
+    #
+    # Distributed across 3 zones:
+    #   asia-east1-a = 3 nodes
+    #   asia-east1-b = 3 nodes
+    #   asia-east1-c = 3 nodes
+    #
+    # ============================================================
+
     case "$machine_type" in
-        e2-highmem-2|e2-standard-2)
-            vcpu_per_node=2
-            ;;
-        *)
-            echo "ERROR: Cost/quota guardrail allows only 2-vCPU node types: e2-highmem-2 or e2-standard-2."
-            echo "Requested machine type: ${machine_type}"
-            echo "BlockGo defaults to e2-highmem-2 (2 vCPU, 16 GiB RAM) to preserve memory while fitting the 12-vCPU project quota."
-            return 1
-            ;;
+    n2-custom-2-24576-ext)
+        vcpu_per_node=2
+        ;;
+    *)
+        echo "ERROR: BlockGo production currently expects:"
+        echo "  n2-custom-2-24576-ext"
+        echo "  2 vCPU / 24 GiB RAM per node"
+        return 1
+        ;;
     esac
-    if (( min_total_nodes < 4 )); then
-        echo "ERROR: Production GKE requires at least 4 total worker nodes."
+    
+        if (( min_total_nodes < 6 )); then
+        echo "ERROR: Production BlockGo requires at least 6 total worker nodes."
         return 1
     fi
-    if (( max_total_nodes > 5 )); then
-        echo "ERROR: Cost guardrail prevents more than 5 GKE worker nodes plus one surge node."
-        echo "Requested maximum: ${max_total_nodes}"
-        echo "Allowed maximum: 5"
+
+    if (( max_total_nodes > 6 )); then
+        echo "ERROR: BlockGo production is capped at 6 worker nodes under the current 12-vCPU quota."
         return 1
     fi
-    if (( min_total_nodes > max_total_nodes )); then
-        echo "ERROR: GKE minimum nodes cannot exceed maximum nodes."
-        return 1
-    fi
-    if (( initial_nodes_per_zone < 1 || initial_nodes_per_zone > 2 )); then
-        echo "ERROR: GKE_INITIAL_NODES_PER_ZONE must be 1 or 2 for this 3-zone, 4-5 node design."
+
+    if (( initial_nodes_per_zone != 2 )); then
+        echo "ERROR: GKE_INITIAL_NODES_PER_ZONE must be 2."
+        echo "2 nodes × 3 zones = 6 nodes total."
         return 1
     fi
 
     local initial_total_nodes=$((initial_nodes_per_zone * 3))
     local initial_total_vcpus=$((initial_total_nodes * vcpu_per_node))
     local maximum_total_vcpus=$((max_total_nodes * vcpu_per_node))
-    if (( initial_total_vcpus > vcpu_cost_cap || maximum_total_vcpus > vcpu_cost_cap )); then
-        echo "ERROR: GKE configuration would exceed the ${vcpu_cost_cap}-vCPU compute cost/quota ceiling."
+
+    if (( initial_total_vcpus > vcpu_cost_cap ||
+        maximum_total_vcpus > vcpu_cost_cap )); then
+
+        echo "ERROR: GKE configuration would exceed the ${vcpu_cost_cap}-vCPU compute ceiling."
         echo "Initial: ${initial_total_nodes} nodes / ${initial_total_vcpus} vCPU"
         echo "Maximum: ${max_total_nodes} nodes / ${maximum_total_vcpus} vCPU"
         return 1
     fi
 
+    echo "======================================"
+    echo "BLOCKGO GKE Production Capacity"
+    echo "======================================"
+    echo "Machine type:           ${machine_type}"
+    echo "Initial nodes/zone:     ${initial_nodes_per_zone}"
+    echo "Initial total nodes:    ${initial_total_nodes}"
+    echo "Minimum total nodes:    ${min_total_nodes}"
+    echo "Maximum total nodes:    ${max_total_nodes}"
+    echo "vCPU per node:          ${vcpu_per_node}"
+    echo "Total vCPU:             ${initial_total_vcpus}"
+
+    if [[ "$machine_type" == "e2-highmem-2" ]]; then
+        echo "RAM per node:           16 GiB"
+        echo "Total raw RAM:          $((initial_total_nodes * 16)) GiB"
+    fi
+
+    echo "vCPU ceiling:           ${vcpu_cost_cap}"
+    echo "======================================"
     echo "======================================"
     echo "BLOCKGO GKE Cost Guardrails"
     echo "======================================"
@@ -2993,8 +3035,10 @@ setup_gke_cluster() {
         --region "$GKE_REGION" \
         --format='value(autoscaling.totalMaxNodeCount)' 2>/dev/null || true)"
 
-    if [[ -n "$actual_max" && "$actual_max" =~ ^[0-9]+$ ]] && (( actual_max > 6 )); then
-        echo "ERROR: Node-pool maximum is ${actual_max}, above the BlockGo cost ceiling of 6."
+    if [[ -n "$actual_max" &&
+        "$actual_max" =~ ^[0-9]+$ ]] &&
+        (( actual_max > 9 )); then
+        echo "ERROR: Node-pool maximum is ${actual_max}, above the BlockGo production ceiling of 9."
         return 1
     fi
     if [[ -n "$actual_min" && -n "$actual_max" ]]; then
@@ -3066,10 +3110,10 @@ verify_required_application_fixes() {
         echo "ERROR: The college grade-equivalent scale is missing from the frontend source."
         return 1
     }
-    grep -q '>Grade</th><th className="px-4 py-3">Equivalent</th>' ../frontend/src/components/student/StudentHistoricalGrades.jsx || {
-        echo "ERROR: The distinct Grade and Equivalent columns are missing from the student grade view."
+    if ! grep -q '>Final Grade</th>' ../frontend/src/components/student/StudentHistoricalGrades.jsx ||        ! grep -q '>Equivalent</th>' ../frontend/src/components/student/StudentHistoricalGrades.jsx; then
+        echo "ERROR: The distinct Final Grade and Equivalent columns are missing from the student grade view."
         return 1
-    }
+    fi
     grep -q 'displayTransactionDate' ../frontend/src/components/student/StudentBlockchainTransactions.jsx || {
         echo "ERROR: The defensive transaction-date formatter is missing from the frontend source."
         return 1
@@ -3078,7 +3122,7 @@ verify_required_application_fixes() {
         echo "ERROR: Fabric timestamp normalization is missing from the client-app source."
         return 1
     }
-    grep -q 'if (rawAverage >= 84) return 2.00' ../client-app/Controllers/GradeController.cs || {
+    grep -q 'if (grade >= 84m) return 2m;' ../client-app/Controllers/StudentController.cs || {
         echo "ERROR: The college grade-equivalent scale is missing from the client-app source."
         return 1
     }
@@ -3190,6 +3234,14 @@ verify_required_application_fixes() {
     }
     grep -q 'GF_USERS_DEFAULT_THEME' ../monitoring/observability-stack.yaml || {
         echo "ERROR: Grafana light-mode configuration is missing."
+        return 1
+    }
+    grep -Fq "parsed.searchParams.set('kiosk', '')" ../frontend/src/components/system-admin/GrafanaObservability.jsx || {
+        echo "ERROR: Grafana kiosk-mode URL handling is missing from the frontend."
+        return 1
+    }
+    grep -Fq "parsed.searchParams.set('theme', normalizedTheme(theme))" ../frontend/src/components/system-admin/GrafanaObservability.jsx || {
+        echo "ERROR: Dynamic Grafana theme handling is missing from the frontend."
         return 1
     }
     grep -q 'sessionStorage' ../frontend/src/services/authSession.js || {
@@ -3966,7 +4018,12 @@ verify_deployed_application_revision() {
         "faculty-chaincode|plv-annex-campus|faculty-chaincode" \
         "department-chaincode|plv-pubad-campus|department-chaincode"; do
         IFS='|' read -r deployment namespace image_name <<< "$deployment_entry"
-        expected_image="${image_repository}${image_name}:${image_tag}"
+        local expected_deployment_tag="$image_tag"
+        if [[ "$PROFILE" == "production" && "$image_name" == "frontend" && -n "${PRODUCTION_FRONTEND_IMAGE_TAG:-}" ]]; then
+            expected_deployment_tag="$PRODUCTION_FRONTEND_IMAGE_TAG"
+        fi
+
+        expected_image="${image_repository}${image_name}:${expected_deployment_tag}"
         deployed_image="$(kubectl get deployment "$deployment" -n "$namespace" -o jsonpath='{.spec.template.spec.containers[0].image}')"
         if [[ "$deployed_image" != "$expected_image" ]]; then
             echo "ERROR: ${namespace}/${deployment} uses ${deployed_image}, expected ${expected_image}."
@@ -3985,7 +4042,8 @@ verify_deployed_application_revision() {
          grep -R -q 'Permanently delete every message' /usr/share/nginx/html/static/js && \
          grep -R -q 'five-Registrar limit has been reached' /usr/share/nginx/html/static/js && \
          grep -R -q 'Delete Registrar' /usr/share/nginx/html/static/js && \
-         grep -R -q 'kiosk&theme=light' /usr/share/nginx/html/static/js && \
+         grep -R -q 'blockgo-kubernetes-memory' /usr/share/nginx/html/static/js && \
+         grep -R -q 'Grafana Observability' /usr/share/nginx/html/static/js && \
          grep -R -q 'blockgo.auth.token' /usr/share/nginx/html/static/js && \
          grep -R -q '/department-admin' /usr/share/nginx/html/static/js && \
          ! grep -R -q 'New Login Tab' /usr/share/nginx/html/static/js && \
@@ -4032,21 +4090,21 @@ verify_deployed_application_revision() {
 
 bootstrap_application_accounts() {
     local job_name="blockgo-app-bootstrap"
-    local bootstrap_resources="          resources:
-            requests:
-              memory: 128Mi
-              cpu: 10m
-            limits:
-              memory: 192Mi
-              cpu: 50m"
+    local bootstrap_resources="        resources:
+          requests:
+            memory: 128Mi
+            cpu: 10m
+          limits:
+            memory: 192Mi
+            cpu: 50m"
 
     if [[ "$PROFILE" == "local" ]]; then
         # Do not impose a RAM request/limit on the local bootstrap helper.
-        bootstrap_resources="          resources:
-            requests:
-              cpu: 10m
-            limits:
-              cpu: 50m"
+        bootstrap_resources="        resources:
+          requests:
+            cpu: 10m
+          limits:
+            cpu: 50m"
     fi
 
     echo "Bootstrapping application administrator accounts..."
@@ -4985,7 +5043,7 @@ validate_public_tls_secret() {
     fi
 
     local tls_type tls_cert_b64 tls_key_b64 tls_dir cert_file key_file
-    local cert_public_key key_public_key failure=""
+    local cert_public_key key_public_key host_check failure=""
     tls_type="$(kubectl get secret "$BLOCKGO_PUBLIC_TLS_SECRET" -n plv-fabric -o jsonpath='{.type}' 2>/dev/null || true)"
     if [[ "$tls_type" != "kubernetes.io/tls" ]]; then
         echo "ERROR: plv-fabric/${BLOCKGO_PUBLIC_TLS_SECRET} must exist and be a kubernetes.io/tls Secret before changing the public ingress." >&2
@@ -5013,7 +5071,8 @@ validate_public_tls_secret() {
         failure="tls.key is not a valid private key"
     elif ! openssl x509 -in "$cert_file" -noout -checkend 0 >/dev/null 2>&1; then
         failure="the public TLS certificate is expired"
-    elif ! openssl x509 -in "$cert_file" -noout -checkhost "$BLOCKGO_PUBLIC_HOST" >/dev/null 2>&1; then
+    elif ! host_check="$(openssl x509 -in "$cert_file" -noout -checkhost "$BLOCKGO_PUBLIC_HOST" 2>&1)" ||
+         [[ "$host_check" != *"does match certificate"* ]]; then
         failure="the public TLS certificate does not cover ${BLOCKGO_PUBLIC_HOST}"
     else
         cert_public_key="$(openssl x509 -in "$cert_file" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null || true)"

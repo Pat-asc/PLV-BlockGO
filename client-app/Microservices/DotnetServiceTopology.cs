@@ -2,11 +2,6 @@ using Yarp.ReverseProxy.Configuration;
 using Yarp.ReverseProxy.Transforms;
 
 namespace Client_app.Microservices;
-
-/// <summary>
-/// Defines the independently deployed ASP.NET service boundaries while keeping
-/// the existing public URLs stable behind dotnet-api-gateway.
-/// </summary>
 public static class DotnetServiceTopology
 {
     public const string Gateway = "gateway";

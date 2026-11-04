@@ -540,6 +540,7 @@ try
     }
 
     app.UseAuthentication();
+    app.UseMiddleware<FacultyAccessControlMiddleware>();
     app.UseAuthorization();
     app.MapGet("/health", () => Results.Ok(new
     {

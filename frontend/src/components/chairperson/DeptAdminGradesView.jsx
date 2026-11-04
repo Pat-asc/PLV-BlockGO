@@ -1664,11 +1664,13 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                                     selectedSection={selectedReviewSection} 
                                     activeTerm={activeEncodingTerm}
                                     sourceView={activeChairTab}
+                                    observerOnly
                                     onApprove={handleBulkApprove} 
                                     onSendToRegistrar={handleSendToRegistrar}
                                     onSendBack={(notes) => handleBulkReturn(notes)} 
                                     onViewIpfs={handleViewIpfs}
                                     onRetryArchive={['PENDING', 'FAILED'].includes(selectedReviewSection.ipfsArchiveStatus) ? handleRetryArchive : null}
+                                    onBack={() => setSelectedReviewSection(null)}
                                     onClose={() => setSelectedReviewSection(null)}
                                 />
                             )}

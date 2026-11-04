@@ -5,6 +5,7 @@ namespace Client_app.Services;
 public static class ChairpersonReviewScopeService
 {
     public static bool IsSubmittedToChairperson(string? status) =>
+        string.Equals(status?.Trim(), "SubmittedToRegistrar", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(status?.Trim(), "SubmittedToChairperson", StringComparison.OrdinalIgnoreCase);
 
     public static async Task<HashSet<string>> GetCurrentSubmittedRecordIdsAsync(
@@ -12,7 +13,7 @@ public static class ChairpersonReviewScopeService
         CancellationToken cancellationToken = default)
     {
         return await GetCurrentRecordIdsAsync(connection, activeTerm, activeSemester,
-            new[] { "submittedtochairperson" }, cancellationToken);
+            new[] { "submittedtoregistrar", "submittedtochairperson" }, cancellationToken);
     }
 
     public static async Task<HashSet<string>> GetCurrentVisibleRecordIdsAsync(
@@ -20,7 +21,7 @@ public static class ChairpersonReviewScopeService
         CancellationToken cancellationToken = default)
     {
         return await GetCurrentRecordIdsAsync(connection, activeTerm, activeSemester,
-            new[] { "submittedtochairperson", "returned", "chairpersonapproved", "departmentapproved" }, cancellationToken);
+            new[] { "submittedtoregistrar", "submittedtochairperson", "returned", "chairpersonapproved", "departmentapproved" }, cancellationToken);
     }
 
     public static async Task<HashSet<string>> GetCurrentFinalizedRecordIdsAsync(

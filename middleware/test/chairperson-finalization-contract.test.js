@@ -97,25 +97,23 @@ test('approval remains an intermediate Chairperson-only transition', () => {
   assert.doesNotMatch(ledger, /approve-grade\/:id', \[[^\]]*registrar/);
 });
 
-test('Chairperson handoff is idempotent and is the only transition into the Registrar queue', () => {
+test('Faculty submission enters the Registrar queue directly while legacy rows remain compatible', () => {
   const controller = read('client-app', 'Controllers', 'GradeController.cs');
   const queueScope = read('client-app', 'Services', 'RegistrarFinalizationScopeService.cs');
-  const handoff = controller.slice(
-    controller.indexOf('[HttpPost("send-to-registrar")]'),
-    controller.indexOf('[HttpPost("finalize")]')
+  const submission = controller.slice(
+    controller.indexOf('[HttpPost("submit-section")]'),
+    controller.indexOf('public async Task<IActionResult> CorrectGrade')
   );
   const finalization = controller.slice(
     controller.indexOf('[HttpPost("finalize")]'),
     controller.indexOf('[HttpGet("finalization-queue")]')
   );
 
-  assert.match(handoff, /Authorize\(Roles = "department_admin"\)/);
-  assert.match(handoff, /ChairpersonApproved/);
-  assert.match(handoff, /DepartmentApproved/);
-  assert.match(handoff, /idempotent = unsentCount == 0/);
-  assert.doesNotMatch(handoff, /FinalizeApprovedGradesAsync|FinalizeGradeAsync|SubmitGradeAsync/);
-  assert.match(queueScope, /WHERE LOWER\(TRIM\(pgr\.status\)\) = 'departmentapproved'/);
-  assert.doesNotMatch(queueScope, /IN \('chairpersonapproved', 'departmentapproved'\)/);
+  assert.match(submission, /SET status = 'SubmittedToRegistrar'/);
+  assert.doesNotMatch(submission, /SET status = 'SubmittedToChairperson'/);
+  assert.doesNotMatch(submission, /FinalizeApprovedGradesAsync|FinalizeGradeAsync|SubmitGradeAsync/);
+  assert.match(queueScope, /IN \('submittedtoregistrar', 'departmentapproved'\)/);
+  assert.doesNotMatch(queueScope, /'submittedtochairperson'|'chairpersonapproved'/);
   assert.doesNotMatch(finalization, /SET status = 'DepartmentApproved'/);
 });
 

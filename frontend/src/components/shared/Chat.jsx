@@ -600,6 +600,15 @@ const Chat = ({
       window.dispatchEvent(new CustomEvent('blockgo:grade-returned', { detail: payload }));
     });
 
+    conn.on('FacultyAccessChanged', (payload) => {
+      window.dispatchEvent(new CustomEvent('blockgo:faculty-access-changed', {
+        detail: {
+          isBlocked: Boolean(payload?.IsBlocked ?? payload?.isBlocked),
+          reason: payload?.Reason ?? payload?.reason ?? ''
+        }
+      }));
+    });
+
     conn.on('TransactionRecorded', (payload) => {
       window.dispatchEvent(new CustomEvent('blockgo:transaction-recorded', { detail: payload }));
     });

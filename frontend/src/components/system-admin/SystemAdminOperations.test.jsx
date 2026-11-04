@@ -95,3 +95,36 @@ test('System Monitoring displays incremental IP tracker numbers without exposing
   expect(screen.getByText('IP Tracker')).toBeInTheDocument();
   expect(screen.queryByText('10.9.7.26')).not.toBeInTheDocument();
 });
+
+test('System Monitoring shows persisted successful login totals and identity metadata', async () => {
+  fetchSystemMonitoringSummary.mockResolvedValue({
+    status: 'healthy', generatedAt: '2026-10-14T08:00:00Z', services: [], alerts: [],
+    runtime: { uptimeSeconds: 120 }, infrastructure: { source: 'runtime' },
+    loginActivity: {
+      available: true, successfulToday: 5, uniqueUsersToday: 4,
+      recent: [{ auditId: 91, userId: 7, user: 'Faculty One', role: 'faculty', occurredAt: '2026-10-14T07:45:00Z' }],
+    },
+  });
+
+  render(<SystemMonitoring />);
+
+  expect(await screen.findByText('Recent Login Activity')).toBeInTheDocument();
+  expect(screen.getByText('Successful Logins Today')).toBeInTheDocument();
+  expect(screen.getByText('5')).toBeInTheDocument();
+  expect(screen.getByText('Faculty One')).toBeInTheDocument();
+  expect(screen.getByText('Faculty')).toBeInTheDocument();
+  expect(screen.getByText('Successful')).toBeInTheDocument();
+});
+
+test('System Monitoring refresh reads login activity without creating a login event', async () => {
+  fetchSystemMonitoringSummary.mockResolvedValue({
+    status: 'healthy', services: [], alerts: [], runtime: {}, infrastructure: { source: 'runtime' },
+    loginActivity: { available: true, successfulToday: 0, uniqueUsersToday: 0, recent: [] },
+  });
+  render(<SystemMonitoring />);
+
+  expect(await screen.findByText('No successful login events have been recorded.')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await waitFor(() => expect(fetchSystemMonitoringSummary).toHaveBeenCalledTimes(2));
+  expect(screen.getByText('No successful login events have been recorded.')).toBeInTheDocument();
+});

@@ -14,6 +14,7 @@ public static class FacultyBulkAssignmentService
         int FacultyUserId,
         string FacultyEmail,
         string FacultyName,
+        string FacultyHomeDepartment,
         string Program,
         string ProgramCode,
         string Section,
@@ -23,7 +24,8 @@ public static class FacultyBulkAssignmentService
         string SchoolYear,
         string Semester,
         string Schedule,
-        bool AlreadyAssigned)
+        bool AlreadyAssigned,
+        bool IsCrossDepartment)
     {
         public string AssignmentCycleId => Id.ToString();
     }
@@ -108,7 +110,8 @@ public static class FacultyBulkAssignmentService
         NpgsqlConnection connection,
         BulkFacultyAssignmentItemRequest request,
         Func<string, CancellationToken, Task<bool>> canManageProgram,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowCrossDepartmentFaculty = false)
     {
         if (request.FacultyUserId <= 0) throw new ArgumentException("Faculty not found: a valid facultyUserId is required.");
         if (request.AcademicSectionId <= 0) throw new ArgumentException("Academic section not found: a valid academicSectionId is required.");
@@ -225,25 +228,29 @@ public static class FacultyBulkAssignmentService
 
             string facultyEmail;
             string facultyName;
+            string facultyHomeDepartment;
             await using (var faculty = new NpgsqlCommand(@"
-                SELECT u.email, fp.full_name
+                SELECT u.email, fp.full_name, COALESCE(fp.department, '')
                 FROM users u
                 JOIN facultyprofiles fp ON fp.user_id = u.id
                 WHERE u.id = @facultyUserId
                   AND LOWER(u.role) = 'faculty'
                   AND LOWER(u.status) = 'approved'
                   AND u.is_active = TRUE
-                  AND LOWER(fp.department) IN (LOWER(@programCode), LOWER(@programName))
+                  AND (@allowCrossDepartmentFaculty = TRUE OR
+                       LOWER(fp.department) IN (LOWER(@programCode), LOWER(@programName)))
                 FOR UPDATE OF u;", connection, transaction))
             {
                 faculty.Parameters.AddWithValue("facultyUserId", request.FacultyUserId);
                 faculty.Parameters.AddWithValue("programCode", programCode);
                 faculty.Parameters.AddWithValue("programName", programName);
+                faculty.Parameters.AddWithValue("allowCrossDepartmentFaculty", allowCrossDepartmentFaculty);
                 await using var reader = await faculty.ExecuteReaderAsync(cancellationToken);
                 if (!await reader.ReadAsync(cancellationToken))
-                    throw new ArgumentException("Faculty not found in the selected academic program, or the account is inactive.");
+                    throw new ArgumentException("Faculty not found in the selected academic program, the account is inactive, or this actor cannot make cross-department assignments.");
                 facultyEmail = reader.GetString(0);
                 facultyName = reader.GetString(1);
+                facultyHomeDepartment = reader.GetString(2);
             }
 
             var sectionLabel = $"{programCode} {yearLevel}-{sectionNumber}";
@@ -270,9 +277,10 @@ public static class FacultyBulkAssignmentService
                     var existingSchedule = existingReader.GetString(1);
                     await existingReader.CloseAsync();
                     await transaction.CommitAsync(cancellationToken);
-                    return new SavedAssignment(existingId, request.FacultyUserId, facultyEmail, facultyName,
+                    return new SavedAssignment(existingId, request.FacultyUserId, facultyEmail, facultyName, facultyHomeDepartment,
                         programName, programCode, sectionLabel, yearLevel, subjectCode,
-                        request.AcademicSectionId, schoolYear, semester, existingSchedule, true);
+                        request.AcademicSectionId, schoolYear, semester, existingSchedule, true,
+                        !FacultyDepartmentMatches(facultyHomeDepartment, programCode, programName));
                 }
             }
 
@@ -353,9 +361,10 @@ public static class FacultyBulkAssignmentService
 
             await transaction.CommitAsync(cancellationToken);
             return new SavedAssignment(
-                Convert.ToInt32(insertedId), request.FacultyUserId, facultyEmail, facultyName,
+                Convert.ToInt32(insertedId), request.FacultyUserId, facultyEmail, facultyName, facultyHomeDepartment,
                 programName, programCode, sectionLabel, yearLevel, subjectCode,
-                request.AcademicSectionId, schoolYear, semester, schedule, alreadyAssigned);
+                request.AcademicSectionId, schoolYear, semester, schedule, alreadyAssigned,
+                !FacultyDepartmentMatches(facultyHomeDepartment, programCode, programName));
         }
         catch
         {
@@ -398,4 +407,8 @@ public static class FacultyBulkAssignmentService
 
     private static string NormalizeSectionLabel(string? value) =>
         Regex.Replace((value ?? string.Empty).Trim().ToLowerInvariant(), @"\s+", string.Empty);
+
+    private static bool FacultyDepartmentMatches(string department, string programCode, string programName) =>
+        string.Equals(department.Trim(), programCode.Trim(), StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(department.Trim(), programName.Trim(), StringComparison.OrdinalIgnoreCase);
 }

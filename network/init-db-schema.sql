@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS studentprofiles (
     address TEXT,
     student_email VARCHAR(255),
     batch_year INTEGER,
+    is_irregular BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -359,6 +360,49 @@ CREATE TABLE IF NOT EXISTS student_enrollments (
     enrolled_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (student_user_id, school_year, semester)
+);
+
+-- See migration 029 for the production upgrade path.
+CREATE TABLE IF NOT EXISTS faculty_access_controls (
+    faculty_user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    department VARCHAR(255) NOT NULL,
+    is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+    block_reason TEXT,
+    blocked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    blocked_at TIMESTAMP WITH TIME ZONE,
+    unblocked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    unblocked_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_faculty_access_block_reason CHECK (NOT is_blocked OR NULLIF(BTRIM(block_reason), '') IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS faculty_access_events (
+    event_id BIGSERIAL PRIMARY KEY,
+    faculty_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    department VARCHAR(255) NOT NULL,
+    action VARCHAR(20) NOT NULL CHECK (action IN ('BLOCKED', 'UNBLOCKED')),
+    reason TEXT,
+    acted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    acted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS student_non_regular_subjects (
+    non_regular_subject_id BIGSERIAL PRIMARY KEY,
+    student_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    enrollment_id BIGINT NOT NULL REFERENCES student_enrollments(enrollment_id) ON DELETE CASCADE,
+    school_year VARCHAR(20) NOT NULL,
+    semester VARCHAR(20) NOT NULL CHECK (semester IN ('FIRST', 'SECOND', 'MIDYEAR')),
+    source_program_id INTEGER NOT NULL REFERENCES academic_programs(program_id) ON DELETE RESTRICT,
+    source_curriculum_id BIGINT NOT NULL REFERENCES curriculums(curriculum_id) ON DELETE RESTRICT,
+    subject_id BIGINT NOT NULL REFERENCES curriculum_subjects(subject_id) ON DELETE RESTRICT,
+    subject_code VARCHAR(80) NOT NULL,
+    faculty_section_id INTEGER REFERENCES facultysections(id) ON DELETE SET NULL,
+    classification VARCHAR(30) NOT NULL DEFAULT 'NON_REGULAR' CHECK (classification = 'NON_REGULAR'),
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'DROPPED')),
+    added_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    added_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    override_reason TEXT,
+    CONSTRAINT uq_non_regular_student_subject_period UNIQUE (student_user_id, school_year, semester, subject_id)
 );
 
 CREATE TABLE IF NOT EXISTS nstp_options (

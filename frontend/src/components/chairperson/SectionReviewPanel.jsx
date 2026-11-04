@@ -4,6 +4,7 @@ import { getGradeEquivalent } from "../../utils/gradingHelpers";
 import Modal from "../../services/Modal";
 import StatusBadge from "../shared/StatusBadge";
 import GradeVersionHistory from "../shared/GradeVersionHistory";
+import BackButton from "../shared/BackButton";
 
 const getEncodingTermLabel = (term = "") =>
   String(term || "").toLowerCase() === "finals" ? "Finals" : "Midterm";
@@ -58,6 +59,7 @@ function SectionReviewPanel({
   onRetryArchive,
   onClose,
   onBack,
+  observerOnly = false,
 }) {
   const [draftNotes, setDraftNotes] = useState({});
   const [approveConfirmationOpen, setApproveConfirmationOpen] = useState(false);
@@ -149,9 +151,9 @@ function SectionReviewPanel({
   }, { passed: 0, failed: 0, d: 0, ud: 0, w: 0, inc: 0, flagged: 0 }), [rows]);
   const reviewStatus = selectedSection?.reviewStatus || "pending";
   const alreadySent = Boolean(selectedSection?.sentToRegistrar);
-  const canReturn = (reviewStatus === "submitted" || reviewStatus === "approved") && !alreadySent;
-  const canApprove = reviewStatus === "submitted";
-  const showHandoff = reviewStatus === "approved";
+  const canReturn = !observerOnly && (reviewStatus === "submitted" || reviewStatus === "approved") && !alreadySent;
+  const canApprove = !observerOnly && reviewStatus === "submitted";
+  const showHandoff = !observerOnly && reviewStatus === "approved";
   const finalized = reviewStatus === "forwarded";
 
   const confirmApprove = async () => {
@@ -206,6 +208,10 @@ function SectionReviewPanel({
     if (!busy) (onClose || onBack)?.();
   }, [busy, onBack, onClose]);
 
+  const requestBack = useCallback(() => {
+    if (!busy) (onBack || onClose)?.();
+  }, [busy, onBack, onClose]);
+
   return (
     <>
       <Modal
@@ -220,6 +226,14 @@ function SectionReviewPanel({
         {selectedSection ? (
           <div className="flex min-h-0 flex-1 flex-col" data-testid="section-review-modal-content" data-source-view={sourceView || ""}>
             <div className="shrink-0 space-y-3">
+              <div className="flex items-center border-b border-slate-200 pb-3 dark:border-slate-700">
+                <BackButton
+                  onClick={requestBack}
+                  label="Back to Sections"
+                  disabled={busy}
+                  className="-ml-2 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-sky-300"
+                />
+              </div>
               <div className="grid grid-cols-2 gap-2 lg:grid-cols-6">
                 {metadataItems(selectedSection, activeTerm).map(([label, value]) => (
                   <div key={label} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
@@ -238,6 +252,7 @@ function SectionReviewPanel({
                   <span key={label} className="rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300"><span>{label}</span> <strong>{count}</strong></span>
                 ))}
               </div>
+              {observerOnly && !finalized ? <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200">Department visibility only. The Registrar owns return and finalization decisions for this submission.</p> : null}
               {String(activeTerm).toLowerCase() === "finals" ? <p className="text-xs text-amber-800 dark:text-amber-300">Highlighted names are in the Dean&apos;s List grade range. Official eligibility still depends on all semester subjects.</p> : null}
             </div>
 

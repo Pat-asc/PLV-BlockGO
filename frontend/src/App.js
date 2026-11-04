@@ -3,7 +3,7 @@ import "./assets/style.css";
 import "./assets/App.css";   
 import "./assets/systemTheme.css";
 import Login from "./components/shared/Login";
-import { fetchUserProfile } from './services/api';
+import { fetchFacultyAccessStatus, fetchUserProfile } from './services/api';
 import StudentPortal from './components/student/StudentPortal';
 import FacultyPortal from './components/faculty/FacultyPortal';
 import DeptAdminGradesView from './components/chairperson/DeptAdminGradesView';
@@ -39,6 +39,7 @@ function AppContent() {
   const [chatUnreadTotal, setChatUnreadTotal] = useState(0);
   const [latestChatNotice, setLatestChatNotice] = useState(null);
   const [chatAutoOpenTarget, setChatAutoOpenTarget] = useState(null);
+  const [facultyAccess, setFacultyAccess] = useState({ isBlocked: false, reason: '' });
   const [systemTheme, setSystemTheme] = useState(readSystemTheme);
   const { addNotification } = useNotification();
   const location = useLocation();
@@ -254,6 +255,37 @@ function AppContent() {
     addNotification(`New registration request from ${name} (${role})`, 'success');
   }, [addNotification, user?.role]);
 
+  useEffect(() => {
+    if (normalizeAppRole(user?.role) !== 'faculty') {
+      setFacultyAccess({ isBlocked: false, reason: '' });
+      return undefined;
+    }
+    let active = true;
+    fetchFacultyAccessStatus()
+      .then((response) => {
+        if (active) setFacultyAccess({
+          isBlocked: Boolean(response?.isBlocked ?? response?.data?.isBlocked),
+          reason: response?.reason ?? response?.data?.reason ?? ''
+        });
+      })
+      .catch((error) => {
+        if (error?.data?.code === 'FACULTY_BLOCKED' && active) {
+          setFacultyAccess({ isBlocked: true, reason: error.data.reason || '' });
+        }
+      });
+    const handleAccessChanged = (event) => {
+      setFacultyAccess({
+        isBlocked: Boolean(event.detail?.isBlocked),
+        reason: event.detail?.reason || ''
+      });
+    };
+    window.addEventListener('blockgo:faculty-access-changed', handleAccessChanged);
+    return () => {
+      active = false;
+      window.removeEventListener('blockgo:faculty-access-changed', handleAccessChanged);
+    };
+  }, [user?.email, user?.role]);
+
   const handleSupportNotice = useCallback((notice) => {
     const message = notice?.displayMessage || notice?.DisplayMessage;
     if (message) addNotification(message, 'notice');
@@ -296,7 +328,21 @@ function AppContent() {
           {currentUserRole === "student" ? (
             <StudentPortal studentData={user} onLogout={handleLogout} />
           ) : currentUserRole === "faculty" ? (
-            <FacultyPortal facultyData={user} onLogout={handleLogout} />
+            facultyAccess.isBlocked ? (
+              <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 dark:bg-slate-950">
+                <section className="w-full max-w-xl rounded-2xl border border-amber-200 bg-white p-7 text-center shadow-lg dark:border-amber-800 dark:bg-slate-900">
+                  <p className="text-xs font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">Faculty access restricted</p>
+                  <h1 className="mt-3 text-2xl font-bold text-[#003366] dark:text-sky-200">Academic functions are currently blocked</h1>
+                  <p className="mt-5 text-sm leading-6 text-slate-700 dark:text-slate-200">You are currently blocked on the system because of the following reason:</p>
+                  <p className="mt-3 rounded-xl bg-amber-50 p-4 font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">{facultyAccess.reason || 'No public reason was provided.'}</p>
+                  <p className="mt-4 text-sm text-slate-600 dark:text-slate-300">Please see the Chairperson to resolve your issue. Chat remains available.</p>
+                  <div className="mt-6 flex justify-center gap-3">
+                    <button type="button" onClick={() => setIsChatOpen(true)} className="rounded-lg bg-[#003366] px-5 py-2.5 text-sm font-bold text-white hover:bg-[#004b8f]">Open Chat</button>
+                    <button type="button" onClick={handleLogout} className="rounded-lg border border-slate-300 px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Logout</button>
+                  </div>
+                </section>
+              </main>
+            ) : <FacultyPortal facultyData={user} onLogout={handleLogout} />
           ) : currentUserRole === "department_admin" ? (
             <div style={{ position: 'relative', width: '100%', minHeight: '100vh', backgroundColor: '#f0f2f5' }}>
               <DeptAdminGradesView loggedInEmail={user.email ?? ''} loggedInName={user.name ?? ''} userRole={currentUserRole} department={user.department ?? ''} onLogout={handleLogout} />

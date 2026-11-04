@@ -148,7 +148,7 @@ peer_exec_at() {
     local tls_host_override="${PEER_TLS_HOST_OVERRIDE-$peer_host}"
     shift 2
 
-    MSYS_NO_PATHCONV=1 kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- env \
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- env \
         CORE_PEER_TLS_ENABLED=true \
         CORE_PEER_TLS_ROOTCERT_FILE="$REMOTE_DIR/$org/peer-tls-ca.crt" \
         CORE_PEER_TLS_SERVERHOSTOVERRIDE="$tls_host_override" \
@@ -165,10 +165,10 @@ peer_exec() {
 }
 
 stage_cli_files() {
-    kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- \
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- \
         sh -c "rm -rf '$REMOTE_DIR' && mkdir -p '$REMOTE_DIR'" >/dev/null
 
-    kubectl cp \
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl cp \
         ./crypto-config-final-v2/ordererOrganizations/capstone.com/orderers/orderer.capstone.com/tls/ca.crt \
         "$CLI_NAMESPACE/$CLI_POD:$REMOTE_DIR/orderer-tls-ca.crt" -c cli >/dev/null
 
@@ -185,13 +185,13 @@ stage_cli_files() {
         }
         require_file "$peer_ca"
 
-        kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- \
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- \
             mkdir -p "$REMOTE_DIR/$org" >/dev/null
-        kubectl cp "$admin_msp" \
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl cp "$admin_msp" \
             "$CLI_NAMESPACE/$CLI_POD:$REMOTE_DIR/$org/admin-msp" -c cli >/dev/null
-        kubectl cp "$peer_ca" \
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl cp "$peer_ca" \
             "$CLI_NAMESPACE/$CLI_POD:$REMOTE_DIR/$org/peer-tls-ca.crt" -c cli >/dev/null
-        kubectl cp "${PACKAGE_FILES[$org]}" \
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl cp "${PACKAGE_FILES[$org]}" \
             "$CLI_NAMESPACE/$CLI_POD:$REMOTE_DIR/$org.tar.gz" -c cli >/dev/null
 
         service_ip="$(kubectl get service "${ORG_PEER_SERVICE[$org]}" -n "$namespace" -o jsonpath='{.spec.clusterIP}')"
@@ -199,7 +199,7 @@ stage_cli_files() {
             echo "ERROR: Could not resolve ClusterIP for ${ORG_PEER_SERVICE[$org]} in $namespace." >&2
             return 1
         }
-        kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- sh -c \
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- sh -c \
             "grep -Fq '${ORG_PEER_HOST[$org]}' /etc/hosts || printf '\n%s %s\n' '$service_ip' '${ORG_PEER_HOST[$org]}' >> /etc/hosts"
 
         if [[ "$PROFILE" == "production" && "${DEPLOY_SECONDARY_PEERS:-false}" == "true" ]]; then
@@ -208,7 +208,7 @@ stage_cli_files() {
                 echo "ERROR: Could not resolve secondary peer service for $org." >&2
                 return 1
             }
-            kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- sh -c \
+            MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- sh -c \
                 "grep -Fq '${ORG_SECONDARY_PEER_HOST[$org]}' /etc/hosts || printf '\n%s %s\n' '$service_ip' '${ORG_SECONDARY_PEER_HOST[$org]}' >> /etc/hosts"
         fi
     done

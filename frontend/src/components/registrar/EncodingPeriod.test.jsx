@@ -84,7 +84,7 @@ test('Save Schedule sends the selected academic period and preserves the schedul
   };
   expect(fetchAcademicPeriodOptions).toHaveBeenCalledTimes(1);
   expect(JSON.parse(updateSystemSetting.mock.calls[0][1])).toMatchObject(expected);
-  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · Summer')).toBeInTheDocument());
+  expect(await screen.findByText('Current Active Academic Period: 2026-2027 · Summer')).toBeInTheDocument();
   expect(year).toHaveValue('2026-2027');
   expect(screen.getByLabelText('Semester')).toHaveValue('Summer');
   expect(JSON.parse(localStorage.getItem('encodingPeriod'))).toMatchObject(expected);
@@ -179,7 +179,7 @@ test('uses the backend-normalized value when the active period changes during sa
   render(<EncodingPeriod />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Save Schedule' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Save Schedule' }));
-  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2027-2028 · 2nd Semester')).toBeInTheDocument());
+  expect(await screen.findByText('Current Active Academic Period: 2027-2028 · 2nd Semester')).toBeInTheDocument();
   expect(screen.getByLabelText('School Year')).toHaveValue('2027-2028');
   expect(screen.getByLabelText('Semester')).toHaveValue('2nd Semester');
   expect(JSON.parse(localStorage.getItem('encodingPeriod'))).toMatchObject({
@@ -277,18 +277,18 @@ test('Save Schedule switches MIDYEAR to FIRST and shows it after reload without 
   });
 
   const view = render(<EncodingPeriod onResetEncodingSeason={onResetEncodingSeason} />);
-  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · Summer')).toBeInTheDocument());
+  expect(await screen.findByText('Current Active Academic Period: 2026-2027 · Summer')).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Semester'), { target: { value: '1st Semester' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save Schedule' }));
   await waitFor(() => expect(updateSystemSetting).toHaveBeenCalled());
   expect(JSON.parse(updateSystemSetting.mock.calls[0][1]).semester).toBe('1st Semester');
   expect(active).toEqual(first);
-  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · 1st Semester')).toBeInTheDocument());
+  expect(await screen.findByText('Current Active Academic Period: 2026-2027 · 1st Semester')).toBeInTheDocument();
   expect(screen.getByLabelText('Semester')).toHaveValue('1st Semester');
   expect(onResetEncodingSeason).not.toHaveBeenCalled();
   view.unmount();
   render(<EncodingPeriod onResetEncodingSeason={onResetEncodingSeason} />);
-  await waitFor(() => expect(screen.getByText('Current Active Academic Period: 2026-2027 · 1st Semester')).toBeInTheDocument());
+  expect(await screen.findByText('Current Active Academic Period: 2026-2027 · 1st Semester')).toBeInTheDocument();
   expect(screen.getByLabelText('Semester')).toHaveValue('1st Semester');
 });
 
@@ -340,7 +340,7 @@ test('reopens a historical tuple using the returned active context', async () =>
   fireEvent.change(screen.getByLabelText('End Date'), { target: { value: '2026-01-30' } });
   fireEvent.click(screen.getByRole('button', { name: 'Reset Encoding Season' }));
 
-  await waitFor(() => expect(screen.getByText(/Current Active Academic Period: 2025-2026.*1st Semester/)).toBeInTheDocument());
+  expect(await screen.findByText(/Current Active Academic Period: 2025-2026.*1st Semester/)).toBeInTheDocument();
   expect(screen.getAllByText('Finals').length).toBeGreaterThan(0);
   expect(screen.getAllByText('Jan 5, 2026').length).toBeGreaterThan(0);
   expect(JSON.parse(localStorage.getItem('encodingPeriod'))).toEqual({

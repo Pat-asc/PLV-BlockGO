@@ -31,11 +31,12 @@ const submittedSection = {
   },
 };
 
-function ReviewHarness() {
+function ReviewHarness({ viewMode = 'forReview', reviewStatus = 'submitted' }) {
   const [selected, setSelected] = useState(null);
+  const workflowSection = { ...submittedSection, reviewStatus };
   return <>
-    <FacultyStatusTable rows={[submittedSection]} viewMode="forReview" selectedReviewKey={selected?.reviewKey} onSelectSection={setSelected} />
-    <SectionReviewPanel selectedSection={selected} sourceView="forReview" activeTerm="midterm" onClose={() => setSelected(null)} onSendBack={jest.fn()} onApprove={jest.fn()} onSendToRegistrar={jest.fn()} />
+    <FacultyStatusTable rows={[workflowSection]} viewMode={viewMode} selectedReviewKey={selected?.reviewKey} onSelectSection={setSelected} />
+    <SectionReviewPanel selectedSection={selected} sourceView={viewMode} activeTerm="midterm" onBack={() => setSelected(null)} onClose={() => setSelected(null)} onSendBack={jest.fn()} onApprove={jest.fn()} onSendToRegistrar={jest.fn()} />
   </>;
 }
 
@@ -44,15 +45,43 @@ test('a workload action opens one centered modal instead of an inline collapsibl
   expect(screen.queryByRole('dialog', { name: 'Review Encoded Grades' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Review Encoded' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Review Section' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Review Grades' })).not.toBeInTheDocument();
 
-  const trigger = screen.getByRole('button', { name: 'Review Grades' });
-  trigger.focus();
-  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole('button', { name: 'View Sections' }));
+  const facultySections = screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ });
+  fireEvent.click(within(facultySections).getByRole('button', { name: 'Review Grades' }));
 
   expect(screen.getByRole('dialog', { name: 'Review Encoded Grades' })).toHaveClass('max-w-6xl', 'max-h-[92vh]', 'dark:bg-slate-900');
+  expect(screen.getByRole('button', { name: 'Back to Sections' })).toHaveClass('dark:text-slate-300');
+  expect(screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Back to Sections' }));
+  expect(screen.queryByRole('dialog', { name: 'Review Encoded Grades' })).not.toBeInTheDocument();
+  expect(within(screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ })).getByText('IT 101')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Review Grades' }));
   fireEvent.click(screen.getByRole('button', { name: 'Close Review Encoded Grades' }));
   expect(screen.queryByRole('dialog', { name: 'Review Encoded Grades' })).not.toBeInTheDocument();
-  expect(trigger).toHaveFocus();
+  expect(screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ })).toBeInTheDocument();
+});
+
+test.each([
+  ['forReview', 'submitted', 'Review Grades', 'Grade Review'],
+  ['returned', 'returned', 'View Review', 'Returned Grades'],
+  ['approved', 'approved', 'View Review', 'Approved Grades'],
+  ['forwarded', 'forwarded', 'View Details', 'Finalized Grades'],
+])('%s detail Back returns to the same Faculty section list and preserves the workflow', (viewMode, reviewStatus, action, heading) => {
+  render(<ReviewHarness viewMode={viewMode} reviewStatus={reviewStatus} />);
+  fireEvent.click(screen.getByRole('button', { name: 'View Sections' }));
+  const facultySections = screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ });
+  fireEvent.click(within(facultySections).getByRole('button', { name: action }));
+
+  expect(screen.getByTestId('section-review-modal-content')).toHaveAttribute('data-source-view', viewMode);
+  fireEvent.click(screen.getByRole('button', { name: 'Back to Sections' }));
+
+  expect(screen.queryByRole('dialog', { name: 'Review Encoded Grades' })).not.toBeInTheDocument();
+  const restoredSections = screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ });
+  expect(within(restoredSections).getByRole('button', { name: action })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument();
 });
 
 test('the modal shows metadata, Student-ID-aligned tables, mismatch count, and internal scrolling', () => {

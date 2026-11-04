@@ -114,5 +114,21 @@ namespace BlockGo.Models
 
         [JsonPropertyName("assignment_cycle_id")]
         public string AssignmentCycleId { get; set; } = string.Empty;
+
+        [JsonPropertyName("current_grade")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? CurrentGrade { get; set; }
+
+        [JsonPropertyName("reference_grade")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReferenceGrade { get; set; }
+
+        [JsonPropertyName("integrity_status")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? IntegrityStatus { get; set; }
+
+        [JsonPropertyName("reference_source")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReferenceSource { get; set; }
     }
 }

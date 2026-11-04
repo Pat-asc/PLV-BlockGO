@@ -235,7 +235,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h3 className="text-sm font-bold text-[#003366]">Enrollment Setup</h3>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div data-testid="enrollment-setup-controls" className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="text-xs font-semibold text-slate-700">Academic Program
             <select value={form.department} onChange={(event) => updateField('department', event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-normal">
               {programs.map((program) => <option key={program} value={program}>{program}</option>)}

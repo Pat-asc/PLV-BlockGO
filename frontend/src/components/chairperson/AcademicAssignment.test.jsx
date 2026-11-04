@@ -2,8 +2,8 @@ import React from "react";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import AcademicAssignment from "./AcademicAssignment";
-import { fetchApprovedFaculties, fetchCurriculums, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend } from "../../services/api";
-jest.mock("../../services/api", () => ({ fetchApprovedFaculties: jest.fn(), fetchCurriculums: jest.fn(), fetchFacultyAssignmentOptions: jest.fn(), assignFacultyLoadToBackend: jest.fn() }));
+import { blockFaculty, fetchApprovedFaculties, fetchCurriculums, fetchFacultyAccessControls, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend, unblockFaculty } from "../../services/api";
+jest.mock("../../services/api", () => ({ fetchApprovedFaculties: jest.fn(), fetchCurriculums: jest.fn(), fetchFacultyAccessControls: jest.fn(), fetchFacultyAssignmentOptions: jest.fn(), assignFacultyLoadToBackend: jest.fn(), blockFaculty: jest.fn(), unblockFaculty: jest.fn() }));
 jest.mock("../../utils/sharedClientState", () => ({ pushAssignmentsSharedState: jest.fn() }));
 jest.mock("./FacultyLoading", () => ({
   __esModule: true,
@@ -20,6 +20,9 @@ beforeEach(() => {
     schoolYears: ["2026-2027"], enrollmentPeriods: [],
     activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
   });
+  fetchFacultyAccessControls.mockResolvedValue({ faculties: [{ facultyUserId: 1, isBlocked: false }] });
+  blockFaculty.mockResolvedValue({ status: "Success" });
+  unblockFaculty.mockResolvedValue({ status: "Success" });
   assignFacultyLoadToBackend.mockResolvedValue({ status: "Success", assignment: { id: 77, academicSectionId: 31 } });
   localStorage.setItem("studentSections", JSON.stringify([{ program: "Bachelor of Science in Information Technology", yearLevel: "3rd Year", section: "IT 3A", schoolYear: "2026", semester: "2nd Semester", students: [] }]));
 });
@@ -104,7 +107,7 @@ test.each([
 
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
 
-  const row = (await screen.findByText(subjectCode)).closest("tr");
+  const row = await screen.findByRole("row", { name: new RegExp(subjectCode) });
   expect(within(row).getByText(String(units))).toBeInTheDocument();
   expect(within(row).queryByText("0")).not.toBeInTheDocument();
 });
@@ -122,7 +125,7 @@ test("same subject in two sections retains both assignments and the same authori
 
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
 
-  const rows = (await screen.findAllByText("IT 201")).map((cell) => cell.closest("tr"));
+  const rows = await screen.findAllByRole("row", { name: /IT 201/ });
   expect(rows).toHaveLength(2);
   expect(rows.map((row) => within(row).getByText("3"))).toHaveLength(2);
   expect(screen.getByText("BSIT 2-1")).toBeInTheDocument();
@@ -139,7 +142,7 @@ test("legacy unresolved saved assignment displays N/A rather than fabricated uni
 
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
 
-  const row = (await screen.findByText("LEG 101")).closest("tr");
+  const row = await screen.findByRole("row", { name: /LEG 101/ });
   expect(within(row).getByText("Not available")).toBeInTheDocument();
   expect(within(row).getByText("N/A")).toBeInTheDocument();
   expect(within(row).queryByText("0")).not.toBeInTheDocument();
@@ -199,6 +202,31 @@ test("renders Assigned Sections before Subject Assigning", async () => {
   const assigned = screen.getByRole("heading", { name: "Assigned Sections" });
   const assigning = screen.getByRole("heading", { name: "Subject Assigning" });
   expect(assigned.compareDocumentPosition(assigning) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("keeps the manual assignment workspace responsive with a 2x2 filter group and internal section scrolling", async () => {
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await screen.findByRole("button", { name: /Carlos Reyes/ });
+
+  expect(screen.getByTestId("assignment-workspace-columns")).toHaveClass("sa-columns");
+  expect(screen.getByTestId("available-subjects-panel")).toHaveClass("sa-card");
+  expect(screen.getByTestId("available-sections-panel")).toHaveClass("sa-card");
+  const filters = screen.getByTestId("available-subject-filters");
+  expect(filters).toHaveClass("sa-filters");
+  const programFilter = within(filters).getByRole("button", { name: "Academic Program" });
+  const nativeFilters = within(filters).getAllByRole("combobox");
+  expect(programFilter).toBeInTheDocument();
+  expect(nativeFilters).toHaveLength(3);
+  expect([programFilter, ...nativeFilters]).toHaveLength(4);
+});
+
+test("visually separates the Faculty Loading workspace without changing its modal workflow", async () => {
+  render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
+  await screen.findByRole("button", { name: /Carlos Reyes/ });
+
+  fireEvent.click(screen.getByRole("button", { name: "Bulk Assignment" }));
+  expect(screen.getByTestId("faculty-loading-section")).toHaveClass("sa-bulk-workspace");
+  expect(screen.getByText("Bulk import")).toBeInTheDocument();
 });
 
 test("shows the authoritative period and explicit period columns", async () => {
