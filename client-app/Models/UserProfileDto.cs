@@ -26,6 +26,9 @@ namespace Client_app.Models
         public string? Semester { get; set; }
         public string? EnrollmentStatus { get; set; }
         public string? FacultyType { get; set; }
+        public string? FacultyId { get; set; }
+        public bool IsBlocked { get; set; }
+        public string? BlockReason { get; set; }
         public List<string>? EnrolledSubjects { get; set; }
     }
 }

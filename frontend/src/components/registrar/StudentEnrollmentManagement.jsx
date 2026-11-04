@@ -13,12 +13,20 @@ import {
   registrarBulkEnrollStudents,
   registrarBulkUpdateStudents,
   searchExistingStudentsForEnrollment,
+  fetchCrossCurriculumOptions,
+  assignCrossCurriculumSubjects,
+  removeNonRegularSubject,
 } from '../../services/api';
 import { buildCsvContent, downloadCsvFile } from '../../utils/studentSectioningHelpers';
 import { downloadTemplateButtonClass } from '../shared/downloadButtonStyles';
 import { normalizeStudentNameFields } from '../../utils/studentName';
 
 const normalizeProgramIdentity = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const hasPrerequisiteRequirement = (prerequisite) => {
+  const normalized = String(prerequisite || '').trim().toLowerCase();
+  return Boolean(normalized) && !['none', 'n/a', 'na', '-'].includes(normalized);
+};
 
 const StudentEnrollmentManagement = ({ programs = [] }) => {
   const [form, setForm] = useState({
@@ -45,6 +53,19 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   const [selectedExistingId, setSelectedExistingId] = useState('');
   const [curriculumView, setCurriculumView] = useState(null);
   const [curriculumLoading, setCurriculumLoading] = useState(false);
+
+  // Cross-curriculum subject assignment state (single & bulk students)
+  const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+  const [crossModalOpen, setCrossModalOpen] = useState(false);
+  const [crossOptionsLoading, setCrossOptionsLoading] = useState(false);
+  const [crossOptionsError, setCrossOptionsError] = useState('');
+  const [crossOptions, setCrossOptions] = useState([]);
+  const [crossStudentContexts, setCrossStudentContexts] = useState([]);
+  const [sourceProgramCode, setSourceProgramCode] = useState('');
+  const [sourceCurriculumId, setSourceCurriculumId] = useState('');
+  const [subjectSelections, setSubjectSelections] = useState({});
+  const [crossAssigning, setCrossAssigning] = useState(false);
+  const [crossResult, setCrossResult] = useState(null);
 
   const loadCandidates = useCallback(async (search = '') => {
     try {
@@ -219,6 +240,249 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
     }
   };
 
+  const loadCrossCurriculumData = useCallback(async (targetIds) => {
+    if (typeof fetchCrossCurriculumOptions !== 'function') return;
+    setCrossOptionsLoading(true);
+    setCrossOptionsError('');
+    try {
+      const response = await fetchCrossCurriculumOptions(targetIds);
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      setCrossOptions(rows);
+      setCrossStudentContexts(Array.isArray(response?.students) ? response.students : []);
+    } catch (error) {
+      setCrossOptionsError(error.message || 'Unable to load cross-curriculum subject options.');
+    } finally {
+      setCrossOptionsLoading(false);
+    }
+  }, []);
+
+  const openCrossCurriculumModal = useCallback(async (initialStudentIds = []) => {
+    const normalizedIds = initialStudentIds
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0);
+    setSelectedStudentIds(normalizedIds);
+    setSourceProgramCode('');
+    setSourceCurriculumId('');
+    setSubjectSelections({});
+    setCrossResult(null);
+    setCrossModalOpen(true);
+    await loadCrossCurriculumData(normalizedIds);
+  }, [loadCrossCurriculumData]);
+
+  const toggleStudentSelection = (studentId) => {
+    const numericId = Number(studentId);
+    setSelectedStudentIds((current) =>
+      current.includes(numericId)
+        ? current.filter((item) => item !== numericId)
+        : [...current, numericId]
+    );
+  };
+
+  const toggleSelectAllVisible = () => {
+    const visibleIds = visibleStudents.map((student) => Number(student.id)).filter((id) => id > 0);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedStudentIds.includes(id));
+    if (allSelected) {
+      setSelectedStudentIds((current) => current.filter((id) => !visibleIds.includes(id)));
+    } else {
+      setSelectedStudentIds((current) => [...new Set([...current, ...visibleIds])]);
+    }
+  };
+
+  const selectedStudentObjects = useMemo(
+    () => students.filter((student) => selectedStudentIds.includes(Number(student.id))),
+    [students, selectedStudentIds]
+  );
+
+  const crossSourcePrograms = useMemo(() => {
+    const map = new Map();
+    crossOptions.forEach((row) => {
+      const key = row.programCode || row.programName;
+      if (key && !map.has(key)) {
+        map.set(key, {
+          programId: row.programId,
+          programCode: row.programCode || key,
+          programName: row.programName || key,
+        });
+      }
+    });
+    return Array.from(map.values());
+  }, [crossOptions]);
+
+  useEffect(() => {
+    if (!crossSourcePrograms.length) return;
+    if (crossSourcePrograms.some((program) => program.programCode === sourceProgramCode)) return;
+    const selectedHomePrograms = new Set(
+      selectedStudentObjects.map((student) => normalizeProgramIdentity(student.programCode || student.department))
+    );
+    const differentProgram = crossSourcePrograms.find(
+      (program) => !selectedHomePrograms.has(normalizeProgramIdentity(program.programCode)) &&
+        !selectedHomePrograms.has(normalizeProgramIdentity(program.programName))
+    );
+    setSourceProgramCode((differentProgram || crossSourcePrograms[0]).programCode);
+  }, [crossSourcePrograms, sourceProgramCode, selectedStudentObjects]);
+
+  const crossCurriculumsForProgram = useMemo(() => {
+    const map = new Map();
+    crossOptions
+      .filter((row) => !sourceProgramCode || row.programCode === sourceProgramCode || row.programName === sourceProgramCode)
+      .forEach((row) => {
+        const key = String(row.curriculumId);
+        if (!map.has(key)) {
+          map.set(key, {
+            curriculumId: String(row.curriculumId),
+            curriculumName: row.curriculumName,
+            curriculumVersion: row.curriculumVersion,
+            programCode: row.programCode,
+            programName: row.programName,
+          });
+        }
+      });
+    return Array.from(map.values());
+  }, [crossOptions, sourceProgramCode]);
+
+  useEffect(() => {
+    if (crossCurriculumsForProgram.some((item) => item.curriculumId === String(sourceCurriculumId))) return;
+    setSourceCurriculumId(crossCurriculumsForProgram[0]?.curriculumId || '');
+  }, [crossCurriculumsForProgram, sourceCurriculumId]);
+
+  const crossSubjectsForCurriculum = useMemo(() => {
+    const map = new Map();
+    crossOptions
+      .filter((row) => String(row.curriculumId) === String(sourceCurriculumId))
+      .forEach((row) => {
+        const key = String(row.subjectId);
+        if (!map.has(key)) {
+          map.set(key, {
+            subjectId: Number(row.subjectId),
+            subjectCode: row.subjectCode,
+            subjectTitle: row.subjectTitle,
+            units: row.units,
+            prerequisite: row.prerequisite || '',
+            yearLevel: row.yearLevel,
+            semester: row.semester,
+            programCode: row.programCode,
+            programName: row.programName,
+            curriculumId: row.curriculumId,
+            curriculumName: row.curriculumName,
+            curriculumVersion: row.curriculumVersion,
+            teachingSections: [],
+          });
+        }
+        if (row.facultySectionId) {
+          const entry = map.get(key);
+          if (!entry.teachingSections.some((sec) => sec.facultySectionId === Number(row.facultySectionId))) {
+            entry.teachingSections.push({
+              facultySectionId: Number(row.facultySectionId),
+              section: row.section || 'Section',
+              schedule: row.schedule || '',
+              facultyName: row.facultyName || 'Assigned Faculty',
+            });
+          }
+        }
+      });
+    return Array.from(map.values());
+  }, [crossOptions, sourceCurriculumId]);
+
+  const toggleCrossSubject = (subject) => {
+    const key = String(subject.subjectId);
+    setSubjectSelections((current) => {
+      if (current[key]) {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      }
+      return {
+        ...current,
+        [key]: {
+          subjectId: subject.subjectId,
+          subjectCode: subject.subjectCode,
+          subjectTitle: subject.subjectTitle,
+          prerequisite: subject.prerequisite || '',
+          sourceProgramCode: subject.programCode,
+          sourceProgramName: subject.programName,
+          sourceCurriculumName: subject.curriculumName,
+          sourceCurriculumVersion: subject.curriculumVersion,
+          facultySectionId: subject.teachingSections[0]?.facultySectionId || '',
+          overrideReason: '',
+        },
+      };
+    });
+  };
+
+  const updateCrossSubjectField = (subjectId, field, value) => {
+    const key = String(subjectId);
+    setSubjectSelections((current) => ({
+      ...current,
+      [key]: {
+        ...current[key],
+        [field]: value,
+      },
+    }));
+  };
+
+  const selectedCrossSubjectList = useMemo(
+    () => Object.values(subjectSelections),
+    [subjectSelections]
+  );
+
+  const handleAssignCrossCurriculumSubjects = async () => {
+    if (selectedStudentIds.length === 0) {
+      setCrossOptionsError('Select at least one student.');
+      return;
+    }
+    if (selectedCrossSubjectList.length === 0) {
+      setCrossOptionsError('Select at least one cross-curriculum subject.');
+      return;
+    }
+    for (const item of selectedCrossSubjectList) {
+      if (!item.facultySectionId) {
+        setCrossOptionsError(`Select a valid current-period Faculty teaching section for ${item.subjectCode}.`);
+        return;
+      }
+      if (hasPrerequisiteRequirement(item.prerequisite) && !String(item.overrideReason || '').trim()) {
+        setCrossOptionsError(`${item.subjectCode} requires prerequisite '${item.prerequisite}'. Enter a Prerequisite Override Reason.`);
+        return;
+      }
+    }
+
+    setCrossAssigning(true);
+    setCrossOptionsError('');
+    setCrossResult(null);
+    try {
+      const payload = selectedCrossSubjectList.map((item) => ({
+        subjectId: Number(item.subjectId),
+        facultySectionId: Number(item.facultySectionId),
+        overrideReason: String(item.overrideReason || '').trim() || undefined,
+      }));
+      const response = await assignCrossCurriculumSubjects(selectedStudentIds, payload);
+      setCrossResult(response);
+      if (response?.assignedCount > 0 || response?.status === 'Success') {
+        setSubjectSelections({});
+        await load();
+        await loadCrossCurriculumData(selectedStudentIds);
+      }
+    } catch (error) {
+      setCrossOptionsError(error.message || 'Cross-curriculum subject assignment failed.');
+    } finally {
+      setCrossAssigning(false);
+    }
+  };
+
+  const handleRemoveCrossSubject = async (studentId, subjectId) => {
+    if (typeof removeNonRegularSubject !== 'function') return;
+    setCrossAssigning(true);
+    setCrossOptionsError('');
+    try {
+      await removeNonRegularSubject(studentId, subjectId);
+      await load();
+      await loadCrossCurriculumData(selectedStudentIds);
+    } catch (error) {
+      setCrossOptionsError(error.message || 'Unable to remove cross-curriculum subject.');
+    } finally {
+      setCrossAssigning(false);
+    }
+  };
+
   const downloadTemplate = () => {
     downloadCsvFile(buildCsvContent([
       ['First Name', 'Last Name', 'Middle Name', 'Sex', 'Birthdate', 'Email Address', 'Contact Number', 'Home Address'],
@@ -303,7 +567,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
               <label className="text-[10px] font-semibold text-slate-700">Sex <span className="text-red-500"> *</span><select required value={manualForm.sex} onChange={(event) => setManualForm((current) => ({ ...current, sex: event.target.value }))} className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-3 text-xs font-normal"><option value="">Select sex</option><option value="Male">Male</option><option value="Female">Female</option></select></label>
               <label className="text-[10px] font-semibold text-slate-700 md:col-span-2 xl:col-span-3">Home Address <span className="text-red-500">*</span><textarea required value={manualForm.homeAddress} onChange={(event) => setManualForm((current) => ({ ...current, homeAddress: event.target.value }))} placeholder="Enter complete home address" rows="2" className="mt-1 w-full resize-none rounded-lg border border-slate-300 px-3 py-2 text-xs font-normal outline-none focus:border-blue-600" /></label>
             </div>
-            
+
             <div className="mt-4 flex justify-end gap-2 border-t border-slate-100 p-4"><button type="button" onClick={() => setManualForm(emptyManualForm)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-slate-600">Cancel</button><button disabled={saving || loading} className="rounded-lg bg-[#003366] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : '♙  Save Student'}</button></div>
           </div>
         </form> : <form onSubmit={enrollSelectedExistingStudent} className="space-y-4 pt-4">
@@ -326,8 +590,122 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
       </section>
 
       <section data-testid="student-enrollment-list" className="w-full min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 [&_table]:w-full">
-        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between"><h4 className="text-sm font-bold text-[#003366]">Current Student Enrollments</h4><div className="flex flex-col gap-2 sm:flex-row"><BoundedSelect label="Program / Course" value={programFilter} onChange={setProgramFilter} options={[{ value: '', label: 'All Programs' }, ...availablePrograms.map((program) => ({ value: program, label: program }))]} searchable className="sm:w-64"/><SearchField value={enrollmentSearch} onChange={setEnrollmentSearch} label="Search student enrollments" placeholder="ID, name, email, program, or section" className="sm:w-72" inputClassName="h-9 text-xs"/><button type="button" onClick={load} className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700">Refresh</button></div></div>
-        <div className="w-full overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead><tr className="bg-slate-50 text-slate-600 dark:bg-slate-800 dark:text-slate-300"><th className="px-4 py-3">Student</th><th className="px-4 py-3">Program / Year Level</th><th className="px-4 py-3">Section</th><th className="px-4 py-3">Academic Period</th><th className="px-4 py-3">Assigned Curriculum</th><th className="px-4 py-3">Status</th></tr></thead><tbody>{visibleStudents.map((student) => <tr key={student.id} className="border-b border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"><td className="px-4 py-3"><span className="block font-semibold text-slate-900 dark:text-slate-100">{student.fullname}</span><span className="text-xs text-slate-500 dark:text-slate-400">{student.studentno}</span></td><td className="max-w-64 break-words px-4 py-3">{student.department || 'Unassigned'}<span className="block text-xs text-slate-500 dark:text-slate-400">Year {student.yearLevel || '—'}</span></td><td className="px-4 py-3">{student.section || 'Unassigned'}</td><td className="px-4 py-3">{student.schoolYear || '—'}<span className="block text-xs text-slate-500 dark:text-slate-400">{student.semester || '—'}</span></td><td className="px-4 py-3">{student.curriculumId ? <div><p className="font-semibold text-slate-900 dark:text-slate-100">{student.curriculumName || 'Assigned curriculum'}</p><p className="text-xs text-slate-500 dark:text-slate-400">Version: {student.curriculumVersion || '—'}</p><button type="button" onClick={() => handleViewCurriculum(student)} className="mt-2 rounded-lg border border-[#003366] px-3 py-1.5 font-semibold text-[#003366] transition hover:bg-[#003366] hover:text-white dark:border-sky-300 dark:text-sky-300 dark:hover:bg-sky-300 dark:hover:text-slate-950">View Curriculum</button></div> : <span className="font-medium text-slate-500 dark:text-slate-400">Not assigned</span>}</td><td className="px-4 py-3">{student.enrollmentStatus || student.assignmentStatus || 'Unassigned'}</td></tr>)}{!loading && visibleStudents.length === 0 ? <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">{enrollmentSearch.trim() || programFilter ? 'No results found.' : 'No active student enrollment yet.'}</td></tr> : null}</tbody></table></div>
+        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h4 className="text-sm font-bold text-[#003366]">Current Student Enrollments</h4>
+            {selectedStudentIds.length > 0 ? (
+              <p className="text-xs font-semibold text-blue-700">{selectedStudentIds.length} student(s) selected for cross-curriculum assignment</p>
+            ) : null}
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              data-testid="open-cross-curriculum-modal"
+              onClick={() => openCrossCurriculumModal(selectedStudentIds.length ? selectedStudentIds : visibleStudents.slice(0, 1).map((s) => s.id))}
+              disabled={students.length === 0}
+              className="rounded-lg bg-[#003366] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#00264d] disabled:opacity-50"
+            >
+              Add Cross-Curriculum Subjects{selectedStudentIds.length > 0 ? ` (${selectedStudentIds.length})` : ''}
+            </button>
+            <BoundedSelect label="Program / Course" value={programFilter} onChange={setProgramFilter} options={[{ value: '', label: 'All Programs' }, ...availablePrograms.map((program) => ({ value: program, label: program }))]} searchable className="sm:w-64"/>
+            <SearchField value={enrollmentSearch} onChange={setEnrollmentSearch} label="Search student enrollments" placeholder="ID, name, email, program, or section" className="sm:w-72" inputClassName="h-9 text-xs"/>
+            <button type="button" onClick={load} className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700">Refresh</button>
+          </div>
+        </div>
+        <div className="w-full overflow-x-auto">
+          <table className="w-full min-w-[960px] text-left text-xs">
+            <thead>
+              <tr className="bg-slate-50 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                <th className="w-10 px-3 py-3">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible students"
+                    checked={visibleStudents.length > 0 && visibleStudents.every((s) => selectedStudentIds.includes(Number(s.id)))}
+                    onChange={toggleSelectAllVisible}
+                  />
+                </th>
+                <th className="px-4 py-3">Student</th>
+                <th className="px-4 py-3">Program / Year Level</th>
+                <th className="px-4 py-3">Section</th>
+                <th className="px-4 py-3">Academic Period</th>
+                <th className="px-4 py-3">Assigned Curriculum</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Cross-Curriculum</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleStudents.map((student) => {
+                const isIrregular = Boolean(student.isIrregular || student.is_irregular);
+                const isSelected = selectedStudentIds.includes(Number(student.id));
+                return (
+                  <tr key={student.id} className="border-b border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${student.fullname}`}
+                        checked={isSelected}
+                        onChange={() => toggleStudentSelection(student.id)}
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="block font-semibold text-slate-900 dark:text-slate-100">{student.fullname}</span>
+                      <span className="text-xs text-slate-500 dark:text-slate-400">{student.studentno}</span>
+                    </td>
+                    <td className="max-w-64 break-words px-4 py-3">
+                      {student.department || 'Unassigned'}
+                      <span className="block text-xs text-slate-500 dark:text-slate-400">Year {student.yearLevel || '—'}</span>
+                    </td>
+                    <td className="px-4 py-3">{student.section || 'Unassigned'}</td>
+                    <td className="px-4 py-3">
+                      {student.schoolYear || '—'}
+                      <span className="block text-xs text-slate-500 dark:text-slate-400">{student.semester || '—'}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {student.curriculumId ? (
+                        <div>
+                          <p className="font-semibold text-slate-900 dark:text-slate-100">{student.curriculumName || 'Assigned curriculum'}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Version: {student.curriculumVersion || '—'}</p>
+                          <button type="button" onClick={() => handleViewCurriculum(student)} className="mt-2 rounded-lg border border-[#003366] px-3 py-1.5 font-semibold text-[#003366] transition hover:bg-[#003366] hover:text-white dark:border-sky-300 dark:text-sky-300 dark:hover:bg-sky-300 dark:hover:text-slate-950">View Curriculum</button>
+                        </div>
+                      ) : (
+                        <span className="font-medium text-slate-500 dark:text-slate-400">Not assigned</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div>{student.enrollmentStatus || student.assignmentStatus || 'Unassigned'}</div>
+                      <span
+                        data-testid={`student-irregular-badge-${student.id}`}
+                        className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          isIrregular
+                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                            : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                        }`}
+                      >
+                        {isIrregular ? 'Irregular' : 'Regular'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => openCrossCurriculumModal([student.id])}
+                        className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-800 transition hover:bg-blue-100"
+                      >
+                        Cross-Pick Subjects
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!loading && visibleStudents.length === 0 ? (
+                <tr>
+                  <td colSpan="8" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
+                    {enrollmentSearch.trim() || programFilter ? 'No results found.' : 'No active student enrollment yet.'}
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <Modal
@@ -339,6 +717,296 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
         bodyClassName="min-h-0 flex-1 overflow-y-auto pr-1"
       >
         {curriculumView?.error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300">{curriculumView.error}</div> : <CurriculumViewer curricula={curriculumView?.curriculum ? [curriculumView.curriculum] : []} currentYear={Number.parseInt(curriculumView?.student?.yearLevel, 10) || 0} loading={curriculumLoading} emptyMessage="No curriculum assigned" showInternalMetadata />}
+      </Modal>
+
+      <Modal
+        isOpen={crossModalOpen}
+        onClose={() => { if (!crossAssigning) setCrossModalOpen(false); }}
+        title="Add Cross-Curriculum Subjects"
+        description="Assign subjects from another Chairperson's published curriculum to one or multiple enrolled students. Valid assignments automatically mark the student as Irregular while preserving their home program."
+        panelClassName="flex max-h-[92vh] max-w-5xl flex-col overflow-hidden p-4 sm:p-6"
+        bodyClassName="min-h-0 flex-1 overflow-y-auto space-y-4 pr-1"
+      >
+        <div className="space-y-4" data-testid="cross-curriculum-modal-body">
+          {/* Step 1: Selected Students & Active Period */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h5 className="text-xs font-bold uppercase tracking-wide text-[#003366] dark:text-sky-300">
+                1. Selected Student(s) ({selectedStudentObjects.length})
+              </h5>
+              <span className="rounded bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm dark:bg-slate-900 dark:text-slate-200">
+                Active Period: {form.schoolYear && form.semester ? `${form.schoolYear} · ${form.semester}` : 'Current Period'}
+              </span>
+            </div>
+            {selectedStudentObjects.length === 0 ? (
+              <p className="mt-2 text-xs text-amber-800">Select at least one student below.</p>
+            ) : (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {selectedStudentObjects.map((student) => (
+                  <span key={student.id} className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-slate-800 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+                    <span>{student.studentno} · {student.fullname}</span>
+                    <span className="text-[10px] text-slate-500">({student.department || 'Home Program'})</span>
+                  </span>
+                ))}
+              </div>
+            )}
+            <details className="mt-2 text-xs">
+              <summary className="cursor-pointer font-semibold text-blue-700 dark:text-sky-300">
+                Select / Deselect Multiple Students ({students.length} enrolled)
+              </summary>
+              <div className="mt-2 grid max-h-36 gap-1.5 overflow-y-auto rounded border border-slate-200 bg-white p-2 sm:grid-cols-2 dark:border-slate-700 dark:bg-slate-900">
+                {students.map((student) => (
+                  <label key={`modal-student-${student.id}`} className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={selectedStudentIds.includes(Number(student.id))}
+                      onChange={async () => {
+                        const id = Number(student.id);
+                        const next = selectedStudentIds.includes(id)
+                          ? selectedStudentIds.filter((item) => item !== id)
+                          : [...selectedStudentIds, id];
+                        setSelectedStudentIds(next);
+                        await loadCrossCurriculumData(next);
+                      }}
+                    />
+                    <span>{student.studentno} · {student.fullname} ({student.department})</span>
+                  </label>
+                ))}
+              </div>
+            </details>
+          </div>
+
+          {/* Step 2 & 3: Source Program / Department & Published Curriculum */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+              2. Source Program / Department
+              <select
+                aria-label="Source Program / Department"
+                value={sourceProgramCode}
+                onChange={(event) => {
+                  setSourceProgramCode(event.target.value);
+                  setSourceCurriculumId('');
+                }}
+                className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-normal dark:border-slate-600 dark:bg-slate-800"
+              >
+                {crossSourcePrograms.length === 0 ? <option value="">No published programs available</option> : null}
+                {crossSourcePrograms.map((program) => (
+                  <option key={program.programCode} value={program.programCode}>
+                    {program.programCode} — {program.programName}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+              3. Source Published Curriculum
+              <select
+                aria-label="Source Published Curriculum"
+                value={sourceCurriculumId}
+                onChange={(event) => setSourceCurriculumId(event.target.value)}
+                className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-normal dark:border-slate-600 dark:bg-slate-800"
+              >
+                {crossCurriculumsForProgram.length === 0 ? <option value="">No published curriculum available</option> : null}
+                {crossCurriculumsForProgram.map((curriculum) => (
+                  <option key={curriculum.curriculumId} value={curriculum.curriculumId}>
+                    {curriculum.curriculumVersion} · {curriculum.curriculumName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {/* Step 4: Select One or Multiple Subjects */}
+          <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+            <h5 className="text-xs font-bold uppercase tracking-wide text-[#003366] dark:text-sky-300">
+              4. Select Cross-Curriculum Subject(s) & Teaching Assignment
+            </h5>
+            {crossOptionsLoading ? (
+              <p className="mt-2 text-xs text-slate-500">Loading published cross-curriculum subjects...</p>
+            ) : crossSubjectsForCurriculum.length === 0 ? (
+              <p className="mt-2 text-xs text-slate-500">No subjects found in this curriculum for the active semester.</p>
+            ) : (
+              <div className="mt-2 space-y-2">
+                {crossSubjectsForCurriculum.map((subject) => {
+                  const selected = Boolean(subjectSelections[String(subject.subjectId)]);
+                  const currentSelection = subjectSelections[String(subject.subjectId)] || {};
+                  const needsOverrideReason = hasPrerequisiteRequirement(subject.prerequisite);
+                  return (
+                    <div
+                      key={subject.subjectId}
+                      className={`rounded-lg border p-3 text-xs ${
+                        selected
+                          ? 'border-blue-400 bg-blue-50/40 dark:border-sky-500 dark:bg-sky-950/30'
+                          : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-100">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select subject ${subject.subjectCode}`}
+                            checked={selected}
+                            onChange={() => toggleCrossSubject(subject)}
+                          />
+                          <span>{subject.subjectCode} — {subject.subjectTitle}</span>
+                          <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-normal text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            {subject.units} units · Year {subject.yearLevel}
+                          </span>
+                        </label>
+                        {needsOverrideReason ? (
+                          <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                            Prerequisite: {subject.prerequisite}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-emerald-700">No prerequisite</span>
+                        )}
+                      </div>
+
+                      {selected ? (
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                            Current-Period Faculty Teaching Section *
+                            <select
+                              aria-label={`Teaching section for ${subject.subjectCode}`}
+                              value={currentSelection.facultySectionId || ''}
+                              onChange={(event) => updateCrossSubjectField(subject.subjectId, 'facultySectionId', event.target.value)}
+                              className="mt-1 h-9 w-full rounded-lg border border-slate-300 bg-white px-2 text-xs font-normal dark:border-slate-600 dark:bg-slate-800"
+                            >
+                              <option value="">Select teaching section</option>
+                              {subject.teachingSections.map((sec) => (
+                                <option key={sec.facultySectionId} value={sec.facultySectionId}>
+                                  {sec.section} · {sec.facultyName}{sec.schedule ? ` (${sec.schedule})` : ''}
+                                </option>
+                              ))}
+                            </select>
+                            {subject.teachingSections.length === 0 ? (
+                              <span className="mt-1 block text-[11px] text-red-600">
+                                No active Faculty teaching section exists for {subject.subjectCode} in the current period.
+                              </span>
+                            ) : null}
+                          </label>
+
+                          {needsOverrideReason ? (
+                            <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                              Prerequisite Override Reason ({subject.prerequisite}) *
+                              <input
+                                type="text"
+                                aria-label={`Override reason for ${subject.subjectCode}`}
+                                value={currentSelection.overrideReason || ''}
+                                onChange={(event) => updateCrossSubjectField(subject.subjectId, 'overrideReason', event.target.value)}
+                                placeholder="Mandatory reason for prerequisite override"
+                                className="mt-1 h-9 w-full rounded-lg border border-slate-300 bg-white px-2 text-xs font-normal dark:border-slate-600 dark:bg-slate-800"
+                              />
+                            </label>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Step 5: Review Selection Summary */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-800" data-testid="cross-curriculum-review-summary">
+            <h5 className="font-bold uppercase tracking-wide text-[#003366] dark:text-sky-300">
+              5. Review Selection Summary
+            </h5>
+            <p className="mt-1 text-slate-600 dark:text-slate-300">
+              Students: <strong>{selectedStudentObjects.length}</strong> · Subjects Selected: <strong>{selectedCrossSubjectList.length}</strong> · Auto-Irregular: <strong>Enabled</strong>
+            </p>
+            {selectedCrossSubjectList.length > 0 ? (
+              <ul className="mt-2 list-disc pl-5 text-slate-700 dark:text-slate-200">
+                {selectedCrossSubjectList.map((item) => (
+                  <li key={`review-${item.subjectId}`}>
+                    <strong>{item.subjectCode}</strong> ({item.subjectTitle}) — Source: {item.sourceProgramCode} ({item.sourceCurriculumVersion})
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+
+          {/* Existing Cross-Curriculum Subjects for Single Student */}
+          {crossStudentContexts.some((ctx) => Array.isArray(ctx.existing) && ctx.existing.length > 0) ? (
+            <div className="rounded-lg border border-slate-200 p-3 text-xs dark:border-slate-700">
+              <h5 className="font-bold uppercase tracking-wide text-slate-700 dark:text-slate-200">
+                Existing Active Cross-Curriculum Subjects
+              </h5>
+              <div className="mt-2 space-y-1.5">
+                {crossStudentContexts.flatMap((ctx) =>
+                  (ctx.existing || []).map((item) => (
+                    <div key={`${ctx.id}-${item.subjectId}`} className="flex items-center justify-between rounded border border-slate-200 bg-white px-3 py-1.5 dark:border-slate-700 dark:bg-slate-900">
+                      <span>
+                        <strong>{ctx.studentNo}</strong> · {item.subjectCode} ({item.subjectTitle}) — {item.programCode} · {item.section}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={crossAssigning}
+                        onClick={() => handleRemoveCrossSubject(ctx.id, item.subjectId)}
+                        className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-100"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : null}
+
+          {crossOptionsError ? (
+            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">
+              {crossOptionsError}
+            </div>
+          ) : null}
+
+          {crossResult ? (
+            <div
+              data-testid="cross-curriculum-result"
+              className={`rounded-lg border p-3 text-xs ${
+                crossResult.status === 'Error'
+                  ? 'border-red-200 bg-red-50 text-red-800'
+                  : crossResult.status === 'PartialSuccess'
+                  ? 'border-amber-200 bg-amber-50 text-amber-900'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+              }`}
+            >
+              <p className="font-bold">{crossResult.message || crossResult.status}</p>
+              {Array.isArray(crossResult.results) && crossResult.results.length > 0 ? (
+                <ul className="mt-2 list-disc pl-5">
+                  {crossResult.results.map((item) => (
+                    <li key={`res-${item.studentUserId}`}>
+                      {item.studentNo || `Student #${item.studentUserId}`} ({item.studentName || item.homeProgram}):{' '}
+                      {item.success
+                        ? `Assigned ${item.assignedCount} subject(s) · Marked Irregular`
+                        : item.error || 'Validation failed'}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+            <button
+              type="button"
+              disabled={crossAssigning}
+              onClick={() => setCrossModalOpen(false)}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-slate-700 dark:border-slate-600 dark:text-slate-200"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              disabled={crossAssigning || selectedStudentIds.length === 0 || selectedCrossSubjectList.length === 0}
+              onClick={handleAssignCrossCurriculumSubjects}
+              className="rounded-lg bg-[#003366] px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+            >
+              {crossAssigning ? 'Assigning…' : 'Assign Cross-Curriculum Subjects'}
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

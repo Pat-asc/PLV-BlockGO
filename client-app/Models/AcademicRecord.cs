@@ -130,5 +130,28 @@ namespace BlockGo.Models
         [JsonPropertyName("reference_source")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? ReferenceSource { get; set; }
+
+        [JsonPropertyName("submission_version")]
+        public int SubmissionVersion { get; set; } = 1;
+
+        [JsonPropertyName("submitted_at")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SubmittedAt { get; set; }
+
+        [JsonPropertyName("returned_at")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReturnedAt { get; set; }
+
+        [JsonPropertyName("return_reason")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReturnReason { get; set; }
+
+        [JsonPropertyName("before_grade")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? BeforeGrade { get; set; }
+
+        [JsonPropertyName("submitted_grade")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SubmittedGrade { get; set; }
     }
 }

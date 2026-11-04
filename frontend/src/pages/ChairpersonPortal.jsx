@@ -410,7 +410,7 @@ function ChairpersonPortal({ onLogout, allGrades = {} }) {
                   <h2 className="text-2xl font-bold text-[#003366]">
                     Chairperson Review Dashboard
                   </h2>
-                  
+
                 </div>
 
                 <ChairpersonOverview metrics={metrics} />
@@ -424,6 +424,7 @@ function ChairpersonPortal({ onLogout, allGrades = {} }) {
                 <SectionReviewPanel
                   selectedSection={selectedSection}
                   activeTerm={activeTerm}
+                  observerOnly
                   onSendBack={(note) => updateReviewStatus("returned", note)}
                   onApprove={(note) => updateReviewStatus("approved", note)}
                   onFinalize={(note) =>
@@ -442,6 +443,7 @@ function ChairpersonPortal({ onLogout, allGrades = {} }) {
                 <SectionReviewPanel
                   selectedSection={selectedSection}
                   activeTerm={activeTerm}
+                  observerOnly
                   onSendBack={(note) => updateReviewStatus("returned", note)}
                   onApprove={(note) => updateReviewStatus("approved", note)}
                   onFinalize={(note) =>

@@ -158,3 +158,63 @@ test('successful Registrar handoff updates the modal state and prevents another 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Send to Registrar' })).toBeDisabled());
   expect(screen.getByText('Sent to Registrar')).toBeInTheDocument();
 });
+
+test('observerOnly Chairperson mode hides approval buttons and displays Before/After submission snapshots', () => {
+  const observerSection = {
+    ...submittedSection,
+    submissionVersion: 2,
+    submittedAt: '2026-10-15T10:30:00Z',
+    grades: {
+      '26-0001': {
+        recordId: 'grade-1',
+        midterm: '91.50',
+        beforeMidterm: '89.00',
+        submittedMidterm: '91.50',
+        submissionVersion: 2,
+        submittedAt: '2026-10-15T10:30:00Z',
+        workflowStatus: 'SubmittedToRegistrar',
+        standing: 'active',
+        integrityStatus: 'MATCH',
+      },
+      '26-0002': {
+        recordId: 'grade-2',
+        midterm: '84',
+        beforeMidterm: '84',
+        submittedMidterm: '84',
+        submissionVersion: 2,
+        submittedAt: '2026-10-15T10:30:00Z',
+        workflowStatus: 'SubmittedToRegistrar',
+        standing: 'active',
+        integrityStatus: 'MATCH',
+      },
+    },
+  };
+
+  render(
+    <SectionReviewPanel
+      selectedSection={observerSection}
+      activeTerm="midterm"
+      observerOnly
+      onClose={jest.fn()}
+      onSendBack={jest.fn()}
+      onApprove={jest.fn()}
+      onSendToRegistrar={jest.fn()}
+    />
+  );
+
+  expect(screen.queryByRole('button', { name: 'Approve Section' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Return for Correction' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Send to Registrar' })).not.toBeInTheDocument();
+
+  const monitoringBar = screen.getByTestId('chairperson-monitoring-actions');
+  expect(within(monitoringBar).getByText(/Submission Version: v2/i)).toBeInTheDocument();
+  expect(within(monitoringBar).getByRole('button', { name: 'View Submission' })).toBeInTheDocument();
+  expect(within(monitoringBar).getByRole('button', { name: 'View Before/After' })).toBeInTheDocument();
+  expect(within(monitoringBar).getByRole('button', { name: 'View History' })).toBeInTheDocument();
+
+  fireEvent.click(within(monitoringBar).getByRole('button', { name: 'View Before/After' }));
+  const beforeAfterTable = screen.getByTestId('chairperson-before-after-table');
+  expect(within(beforeAfterTable).getByText('89.00')).toBeInTheDocument();
+  expect(within(beforeAfterTable).getByText('91.50')).toBeInTheDocument();
+  expect(within(beforeAfterTable).getAllByText('v2').length).toBeGreaterThan(0);
+});

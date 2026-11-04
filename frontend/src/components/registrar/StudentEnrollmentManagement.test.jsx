@@ -9,6 +9,9 @@ import {
   enrollExistingStudent,
   registrarBulkEnrollStudents,
   searchExistingStudentsForEnrollment,
+  fetchCrossCurriculumOptions,
+  assignCrossCurriculumSubjects,
+  removeNonRegularSubject,
 } from '../../services/api';
 
 jest.mock('../../services/api', () => ({
@@ -20,6 +23,9 @@ jest.mock('../../services/api', () => ({
   registrarBulkEnrollStudents: jest.fn(),
   registrarBulkUpdateStudents: jest.fn(),
   searchExistingStudentsForEnrollment: jest.fn(),
+  fetchCrossCurriculumOptions: jest.fn(),
+  assignCrossCurriculumSubjects: jest.fn(),
+  removeNonRegularSubject: jest.fn(),
 }));
 
 const program = 'Bachelor of Science in Information Technology';
@@ -82,6 +88,42 @@ beforeEach(() => {
     { id: 78, studentNo: '25-0043', fullName: 'Already Enrolled', email: 'enrolled@plv.edu.ph', alreadyEnrolled: true },
   ] });
   enrollExistingStudent.mockResolvedValue({ status: 'Success', message: 'Existing Student enrolled.' });
+  fetchCrossCurriculumOptions.mockResolvedValue({
+    status: 'Success',
+    activeAcademicPeriod: { schoolYear: '2026-2027', semester: 'FIRST' },
+    data: [{
+      programId: 2,
+      programCode: 'BSBA',
+      programName: 'Bachelor of Science in Business Administration',
+      curriculumId: 12,
+      curriculumName: 'BSBA Curriculum 2026',
+      curriculumVersion: 'BSBA-2026',
+      subjectId: 205,
+      subjectCode: 'BA101',
+      subjectTitle: 'Principles of Management',
+      units: 3,
+      prerequisite: '',
+      yearLevel: 1,
+      semester: 'FIRST',
+      facultySectionId: 55,
+      section: 'BSBA 1-1',
+      schedule: 'MWF 08:00-09:00',
+      facultyName: 'Prof. Santos',
+    }],
+    students: [],
+  });
+  assignCrossCurriculumSubjects.mockResolvedValue({
+    status: 'Success',
+    totalStudents: 2,
+    succeededStudents: 2,
+    failedStudents: 0,
+    assignedCount: 2,
+    message: 'Assigned 2 cross-curriculum subject(s) across 2 student(s) and automatically marked them Irregular.',
+    results: [
+      { studentUserId: 1, studentNo: '26-0001', studentName: 'First Student', homeProgram: program, success: true, assignedCount: 1, isIrregular: true, autoMarkedIrregular: true },
+      { studentUserId: 2, studentNo: '26-0002', studentName: 'Second Student', homeProgram: program, success: true, assignedCount: 1, isIrregular: true, autoMarkedIrregular: true },
+    ],
+  });
 });
 
 test('manually enrolls a student in the selected academic period and curriculum', async () => {
@@ -227,4 +269,46 @@ test('keeps curriculum data isolated for students with different assignments', a
   expect(await screen.findByText('Second-only subject')).toBeInTheDocument();
   expect(screen.queryByText('First-only subject')).not.toBeInTheDocument();
   expect(fetchCurriculum.mock.calls.map(([id]) => id)).toEqual([7, 8]);
+});
+
+test('assigns cross-curriculum subjects to multiple selected students and automatically marks them Irregular', async () => {
+  fetchApprovedStudents
+    .mockResolvedValueOnce({
+      students: [
+        { id: 1, fullname: 'First Student', studentno: '26-0001', department: program, yearLevel: '1', isIrregular: false },
+        { id: 2, fullname: 'Second Student', studentno: '26-0002', department: program, yearLevel: '1', isIrregular: false },
+      ],
+    })
+    .mockResolvedValueOnce({
+      students: [
+        { id: 1, fullname: 'First Student', studentno: '26-0001', department: program, yearLevel: '1', isIrregular: true },
+        { id: 2, fullname: 'Second Student', studentno: '26-0002', department: program, yearLevel: '1', isIrregular: true },
+      ],
+    });
+
+  render(<StudentEnrollmentManagement programs={[program]} />);
+  await screen.findByText('First Student');
+  expect(screen.getByTestId('student-irregular-badge-1')).toHaveTextContent('Regular');
+  expect(screen.getByTestId('student-irregular-badge-2')).toHaveTextContent('Regular');
+
+  fireEvent.click(screen.getByLabelText('Select First Student'));
+  fireEvent.click(screen.getByLabelText('Select Second Student'));
+  fireEvent.click(screen.getByTestId('open-cross-curriculum-modal'));
+
+  const modal = await screen.findByRole('dialog', { name: /add cross-curriculum subjects/i });
+  await waitFor(() => expect(fetchCrossCurriculumOptions).toHaveBeenCalledWith([1, 2]));
+  expect(within(modal).getByLabelText('Source Program / Department')).toHaveValue('BSBA');
+  expect(within(modal).getByLabelText('Source Published Curriculum')).toHaveValue('12');
+
+  fireEvent.click(within(modal).getByLabelText('Select subject BA101'));
+  expect(within(modal).getByLabelText('Teaching section for BA101')).toHaveValue('55');
+
+  fireEvent.click(within(modal).getByRole('button', { name: /^Assign Cross-Curriculum Subjects$/i }));
+  await waitFor(() => expect(assignCrossCurriculumSubjects).toHaveBeenCalledWith([1, 2], [
+    { subjectId: 205, facultySectionId: 55, overrideReason: undefined },
+  ]));
+
+  expect(await within(modal).findByTestId('cross-curriculum-result')).toHaveTextContent(/automatically marked them Irregular/i);
+  await waitFor(() => expect(screen.getByTestId('student-irregular-badge-1')).toHaveTextContent('Irregular'));
+  expect(screen.getByTestId('student-irregular-badge-2')).toHaveTextContent('Irregular');
 });

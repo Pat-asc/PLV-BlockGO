@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import "./assets/style.css"; 
-import "./assets/App.css";   
+import "./assets/style.css";
+import "./assets/App.css";
 import "./assets/systemTheme.css";
 import Login from "./components/shared/Login";
 import { fetchFacultyAccessStatus, fetchUserProfile } from './services/api';
@@ -124,10 +124,19 @@ function AppContent() {
           semester: fetchedUser.semester,
           enrollmentStatus: fetchedUser.enrollmentStatus,
           enrolledSubjects: fetchedUser.enrolledSubjects,
+          facultyId: fetchedUser.facultyId,
           facultyType: fetchedUser.facultyType,
           Classification: fetchedUser.facultyType || fetchedUser.classification,
+          isBlocked: Boolean(fetchedUser.isBlocked),
+          blockReason: fetchedUser.blockReason || '',
           status: fetchedUser.status
         });
+        if (appRole === 'faculty' && fetchedUser.isBlocked) {
+          setFacultyAccess({
+            isBlocked: true,
+            reason: fetchedUser.blockReason || ''
+          });
+        }
         navigate(routeForRole(appRole), { replace: true });
       } else {
         throw new Error("Failed to load user profile.");
@@ -329,17 +338,20 @@ function AppContent() {
             <StudentPortal studentData={user} onLogout={handleLogout} />
           ) : currentUserRole === "faculty" ? (
             facultyAccess.isBlocked ? (
-              <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 dark:bg-slate-950">
+              <main data-testid="blocked-faculty-portal" className="flex min-h-screen flex-col items-center justify-center bg-slate-100 px-4 dark:bg-slate-950">
                 <section className="w-full max-w-xl rounded-2xl border border-amber-200 bg-white p-7 text-center shadow-lg dark:border-amber-800 dark:bg-slate-900">
                   <p className="text-xs font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">Faculty access restricted</p>
                   <h1 className="mt-3 text-2xl font-bold text-[#003366] dark:text-sky-200">Academic functions are currently blocked</h1>
-                  <p className="mt-5 text-sm leading-6 text-slate-700 dark:text-slate-200">You are currently blocked on the system because of the following reason:</p>
-                  <p className="mt-3 rounded-xl bg-amber-50 p-4 font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">{facultyAccess.reason || 'No public reason was provided.'}</p>
-                  <p className="mt-4 text-sm text-slate-600 dark:text-slate-300">Please see the Chairperson to resolve your issue. Chat remains available.</p>
-                  <div className="mt-6 flex justify-center gap-3">
-                    <button type="button" onClick={() => setIsChatOpen(true)} className="rounded-lg bg-[#003366] px-5 py-2.5 text-sm font-bold text-white hover:bg-[#004b8f]">Open Chat</button>
-                    <button type="button" onClick={handleLogout} className="rounded-lg border border-slate-300 px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Logout</button>
+                  <p className="mt-4 text-sm leading-6 text-slate-700 dark:text-slate-200">Your academic access has been temporarily restricted by your Chairperson.</p>
+                  <div className="mt-4 rounded-xl bg-amber-50 p-4 text-left dark:bg-amber-950/40">
+                    <p className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">Reason:</p>
+                    <p data-testid="blocked-faculty-reason" className="mt-1 font-semibold text-amber-900 dark:text-amber-200">{facultyAccess.reason || 'No public reason was provided.'}</p>
                   </div>
+                  <p className="mt-4 text-sm text-slate-600 dark:text-slate-300">You may still use Messaging. Please see the Chairperson to resolve your issue.</p>
+                  <nav aria-label="Restricted Faculty Navigation" className="mt-6 flex flex-wrap justify-center gap-3">
+                    <button type="button" onClick={() => setIsChatOpen(true)} className="rounded-lg bg-[#003366] px-5 py-2.5 text-sm font-bold text-white hover:bg-[#004b8f]">Messaging / Chat</button>
+                    <button type="button" onClick={handleLogout} className="rounded-lg border border-slate-300 px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Logout</button>
+                  </nav>
                 </section>
               </main>
             ) : <FacultyPortal facultyData={user} onLogout={handleLogout} />

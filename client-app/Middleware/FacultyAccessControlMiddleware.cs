@@ -67,10 +67,11 @@ public sealed class FacultyAccessControlMiddleware
         }), context.RequestAborted);
     }
 
-    private static bool IsAllowedPath(PathString path) =>
+    public static bool IsAllowedPath(PathString path) =>
         path.StartsWithSegments("/chatHub") ||
         path.StartsWithSegments("/api/chatHub") ||
         path.StartsWithSegments("/api/Auth/faculty/access-status") ||
+        path.StartsWithSegments("/api/Auth/user-profile") ||
         path.StartsWithSegments("/health") ||
         path.StartsWithSegments("/api/ready");
 }

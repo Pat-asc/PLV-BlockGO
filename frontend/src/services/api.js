@@ -26,7 +26,7 @@ export const getChatHubUrl = () => {
 const fetchWithAuth = async (endpoint, options = {}) => {
     const token = getAuthToken();
     const baseUrl = getBaseUrl(endpoint);
-    
+
     const headers = { ...options.headers };
     if (!(options.body instanceof FormData) && !headers['Content-Type']) {
         headers['Content-Type'] = 'application/json';
@@ -112,29 +112,23 @@ const getBackendHealthUrl = () => {
     return `${getBaseUrl('/backend/health')}/backend/health`;
 };
 
-// ==================== MIDDLEWARE API - LOGIN & AUTH ====================
-// These endpoints point to middleware.js running on port 4000
-// Middleware uses role-based wallet routing (registrar/5990, faculty/6990, department/7990)
 
 export const login = (credentials) => {
-    // Middleware expects: { username: string, password: string }
-    // Frontend passes: { username: email, password: password }
-    // /api/login is served by middleware on port 4000
     const loginPayload = {
         username: credentials.username || credentials.email,
         password: credentials.password
     };
     console.log('[Login] POST /api/login with payload:', { username: loginPayload.username });
-    return fetchPublic('/login', { 
-        method: 'POST', 
-        body: JSON.stringify(loginPayload) 
+    return fetchPublic('/login', {
+        method: 'POST',
+        body: JSON.stringify(loginPayload)
     });
 };
 
 export const forgotPassword = (email) => {
-    return fetchPublic('/forgot-password', { 
-        method: 'POST', 
-        body: JSON.stringify({ email }) 
+    return fetchPublic('/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email })
     });
 };
 
@@ -665,6 +659,31 @@ export const assignNonRegularSubjects = async (studentUserId, selections) =>
         method: 'POST',
         body: JSON.stringify({ selections })
     });
+export const fetchCrossCurriculumOptions = async (studentIds = []) => {
+    const ids = Array.isArray(studentIds) ? studentIds.filter(Boolean).join(',') : String(studentIds || '');
+    const query = ids ? `?studentIds=${encodeURIComponent(ids)}` : '';
+    return fetchWithAuth(`/Auth/cross-curriculum/options${query}`);
+};
+export const assignCrossCurriculumSubjects = async (studentUserIds, selections) => {
+    const ids = Array.isArray(studentUserIds) ? studentUserIds : [studentUserIds];
+    return fetchWithAuth('/Auth/students/cross-curriculum-subjects', {
+        method: 'POST',
+        body: JSON.stringify({
+            studentUserIds: ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0),
+            selections
+        })
+    });
+};
+export const removeNonRegularSubject = async (studentUserId, subjectId) =>
+    fetchWithAuth(`/Auth/students/${encodeURIComponent(studentUserId)}/non-regular-subjects/${encodeURIComponent(subjectId)}`, {
+        method: 'DELETE'
+    });
+export const fetchGradeSubmissionSnapshots = async (params = {}) => {
+    const query = new URLSearchParams(
+        Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== '')
+    ).toString();
+    return fetchWithAuth(`/Grades/submission-snapshots${query ? `?${query}` : ''}`);
+};
 
 export const fetchFacultyAccessStatus = async () => fetchWithAuth('/Auth/faculty/access-status');
 export const fetchFacultyAccessControls = async () => fetchWithAuth('/Auth/faculty/access-controls');
@@ -853,7 +872,7 @@ export const batchUploadStudents = async (file, defaultDepartment = '', mode = '
 
     return await fetchWithAuth(`/Auth/students/bulk-upload`, {
         method: 'POST',
-        body: formData 
+        body: formData
     });
 };
 
@@ -928,7 +947,7 @@ export const uploadToIpfs = async (file) => {
 
     return await fetchWithAuth(`/Grades/upload-ipfs`, {
         method: 'POST',
-        body: formData 
+        body: formData
     });
 };
 
@@ -1078,7 +1097,7 @@ export const downloadGradingSheet = async (facultySectionId, suggestedName = 'Fa
     const baseUrl = getBaseUrl('/GradeTemplate');
     const token = getAuthToken();
     const endpoint = `/GradeTemplate/faculty-section/${encodeURIComponent(facultySectionId)}/download?format=${encodeURIComponent(normalizedFormat)}`;
-    
+
     const response = await fetch(`${baseUrl}${endpoint}`, {
         method: 'GET',
         headers: {

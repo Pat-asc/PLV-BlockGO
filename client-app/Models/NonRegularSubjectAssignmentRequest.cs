@@ -2,6 +2,7 @@ namespace Client_app.Models;
 
 public sealed class NonRegularSubjectAssignmentRequest
 {
+    public List<int> StudentUserIds { get; set; } = new();
     public List<NonRegularSubjectSelection> Selections { get; set; } = new();
 }
 
