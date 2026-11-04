@@ -755,7 +755,7 @@ test("typing a restriction reason keeps focus in the textarea instead of jumping
   const blockButton = within(dialog).getByRole("button", { name: "Block Faculty" });
 
   // Opening an Active faculty's modal places initial focus on the reason field.
-  expect(document.activeElement).toBe(reasonBox);
+  expect(reasonBox).toHaveFocus();
   expect(closeButton).not.toHaveFocus();
   expect(blockButton).toBeDisabled();
 
@@ -763,11 +763,11 @@ test("typing a restriction reason keeps focus in the textarea instead of jumping
   const reason = "Administrative review required";
   for (const character of reason) {
     userEvent.type(reasonBox, character, { skipClick: true });
-    expect(document.activeElement).toBe(reasonBox);
+    expect(reasonBox).toHaveFocus();
     expect(closeButton).not.toHaveFocus();
   }
   expect(reasonBox).toHaveValue(reason);
-  expect(document.activeElement).toBe(reasonBox);
+  expect(reasonBox).toHaveFocus();
   expect(blockButton).toBeEnabled();
 });
 
@@ -777,14 +777,18 @@ test("Manage Faculty Access keeps Tab and Shift+Tab inside the modal", async () 
   const reasonBox = within(dialog).getByLabelText("Reason for restriction");
   userEvent.type(reasonBox, "Administrative review required", { skipClick: true });
   const closeButton = within(dialog).getByRole("button", { name: "Close Manage Faculty Access" });
+  const cancelButton = within(dialog).getByRole("button", { name: "Cancel" });
   const blockButton = within(dialog).getByRole("button", { name: "Block Faculty" });
 
-  blockButton.focus();
+  expect(reasonBox).toHaveFocus();
+  userEvent.tab();
+  expect(cancelButton).toHaveFocus();
+  userEvent.tab();
+  expect(blockButton).toHaveFocus();
   userEvent.tab();
   expect(closeButton).toHaveFocus();
   userEvent.tab({ shift: true });
   expect(blockButton).toHaveFocus();
-  expect(dialog.contains(document.activeElement)).toBe(true);
 });
 
 test("Manage Faculty Access closes with the X button and Escape and restores focus to Manage", async () => {
@@ -798,7 +802,7 @@ test("Manage Faculty Access closes with the X button and Escape and restores foc
   const dialog = await screen.findByRole("dialog", { name: "Manage Faculty Access" });
   const reasonBox = within(dialog).getByLabelText("Reason for restriction");
   userEvent.type(reasonBox, "Draft", { skipClick: true });
-  fireEvent.keyDown(document.activeElement, { key: "Escape" });
+  fireEvent.keyDown(reasonBox, { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Faculty Access" })).not.toBeInTheDocument());
   expect(first.manageButton).toHaveFocus();
   expect(blockFaculty).not.toHaveBeenCalled();

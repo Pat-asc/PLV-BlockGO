@@ -41,6 +41,7 @@ test('parent re-renders with a new inline onClose do not move focus out of a fie
     for (const character of 'Administrative review required') {
         userEvent.type(notes, character, { skipClick: true });
         expect(notes).toHaveFocus();
+        expect(closeButton).not.toHaveFocus();
     }
     expect(notes).toHaveValue('Administrative review required');
 });
@@ -57,9 +58,8 @@ test('initialFocusRef is focused once on open, and Escape still uses the latest 
     userEvent.type(notes, 'abc', { skipClick: true });
     expect(notes).toHaveFocus();
 
-    fireEvent.keyDown(document.activeElement, { key: 'Escape' });
+    fireEvent.keyDown(notes, { key: 'Escape' });
     expect(onClosed).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(opener).toHaveFocus();
 });
-
