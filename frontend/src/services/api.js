@@ -612,6 +612,13 @@ export const enrollExistingStudent = async (studentId, enrollment) =>
         body: JSON.stringify(enrollment),
     });
 
+export const promoteStudentEnrollments = async (students) => {
+    return await fetchWithAuth('/Auth/students/promote', {
+        method: 'POST',
+        body: JSON.stringify({ students }),
+    });
+};
+
 export const fetchEnrolledStudentSubjects = async (studentId, schoolYear, semester) =>
     fetchWithAuth(`/Auth/students/${encodeURIComponent(studentId)}/assigned-subjects?schoolYear=${encodeURIComponent(schoolYear)}&semester=${encodeURIComponent(semester)}`);
 

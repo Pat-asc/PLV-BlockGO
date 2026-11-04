@@ -78,3 +78,16 @@ test('approved-student scope closes the Registrar-or-Chairperson predicate befor
 
   assert.match(action, /AND \(@isRegistrar OR EXISTS \([\s\S]*LOWER\(COALESCE\(prog\.program_name, sp\.department\)\)\)\)\)\s*ORDER BY sp\.full_name/);
 });
+
+test('student promotion remains a Registrar-only transactional enrollment operation', () => {
+  const controller = read('client-app', 'Controllers', 'AuthController.cs');
+  const action = actionBetween(controller, '[HttpPost("students/promote")]', '[HttpDelete("sections/{id:int}/students/{studentId}")]');
+
+  assert.match(action, /Authorize\(Roles = "registrar"\)/);
+  assert.match(action, /BeginTransactionAsync/);
+  assert.match(action, /FOR UPDATE OF u, enrollment/);
+  assert.match(action, /UpsertStudentEnrollmentAsync/);
+  assert.match(action, /STUDENT_PROMOTED/);
+  assert.match(action, /CommitAsync/);
+  assert.match(action, /SafeNotifyAcademicDataChangedAsync\("students_promoted"/);
+});
