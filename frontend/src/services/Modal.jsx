@@ -19,26 +19,42 @@ const Modal = ({
     closeOnEscape = true,
     panelClassName = '',
     bodyClassName = '',
+    initialFocusRef,
 }) => {
     const dialogRef = useRef(null);
     const previouslyFocusedRef = useRef(null);
+    // Keep the latest callbacks/options in refs so the open effect below does
+    // not re-run (and re-focus the first control) when a parent re-renders
+    // with a new inline onClose or a changed closeOnEscape value.
+    const onCloseRef = useRef(onClose);
+    const closeOnEscapeRef = useRef(closeOnEscape);
+    const initialFocusRefRef = useRef(initialFocusRef);
     const titleId = useId();
     const descriptionId = useId();
 
     useEffect(() => {
+        onCloseRef.current = onClose;
+        closeOnEscapeRef.current = closeOnEscape;
+        initialFocusRefRef.current = initialFocusRef;
+    });
+
+    useEffect(() => {
         if (!isOpen) return undefined;
 
+        // Initial focus runs only when the dialog transitions from closed to open.
         previouslyFocusedRef.current = document.activeElement;
         const dialog = dialogRef.current;
+        const preferred = initialFocusRefRef.current?.current;
         const focusable = dialog?.querySelectorAll(FOCUSABLE_SELECTOR);
-        (focusable?.[0] || dialog)?.focus();
+        const initialTarget = preferred && dialog?.contains(preferred) ? preferred : (focusable?.[0] || dialog);
+        initialTarget?.focus();
 
         const handleKeyDown = (event) => {
             const openDialogs = Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]'));
             if (openDialogs[openDialogs.length - 1] !== dialog) return;
-            if (event.key === 'Escape' && closeOnEscape) {
+            if (event.key === 'Escape' && closeOnEscapeRef.current) {
                 event.preventDefault();
-                onClose?.();
+                onCloseRef.current?.();
                 return;
             }
             if (event.key !== 'Tab' || !dialog) return;
@@ -68,7 +84,7 @@ const Modal = ({
             document.body.style.overflow = previousOverflow;
             previouslyFocusedRef.current?.focus?.();
         };
-    }, [closeOnEscape, isOpen, onClose]);
+    }, [isOpen]);
 
     if (!isOpen) return null;
 
