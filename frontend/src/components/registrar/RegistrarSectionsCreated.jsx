@@ -13,7 +13,11 @@ import {
   parseStudentIdSpreadsheet,
   syncSectionedStudentsToStorage,
 } from "../../utils/studentSectioningHelpers";
-import { syncSectioningBatchesToBackend } from "../../utils/registrarSectioningBackendSync";
+import {
+  getNextAcademicSchoolYear,
+  persistPromotedBatchesToBackend,
+  syncSectioningBatchesToBackend,
+} from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
 import { deleteAcademicSection, fetchDepartmentSections, fetchNextStudentId } from "../../services/api";
 
@@ -125,6 +129,7 @@ function RegistrarSectionsCreated() {
   const [studentIdLoading, setStudentIdLoading] = useState(false);
   const [studentIdError, setStudentIdError] = useState("");
   const [changedDepartments, setChangedDepartments] = useState(() => new Set());
+  const [promoting, setPromoting] = useState(false);
 
   const persistBatches = (nextBatches) => {
     setBatches(nextBatches);
@@ -647,6 +652,16 @@ function RegistrarSectionsCreated() {
     const targetBatches = [];
 
     rolloverBatches.forEach((sourceBatch) => {
+      const sourceSchoolYear = sourceBatch.schoolYear ||
+        (/^\d{4}$/.test(String(sourceBatch.batchYear || ""))
+          ? `${sourceBatch.batchYear}-${Number(sourceBatch.batchYear) + 1}`
+          : "");
+      let targetSchoolYear;
+      try {
+        targetSchoolYear = getNextAcademicSchoolYear(sourceSchoolYear);
+      } catch (error) {
+        throw new Error(`${sourceBatch.program}: ${error.message}`);
+      }
       const promotedStudents = [];
       const promotedSectionsByCode = new Map();
       const graduatingReviewList = [];
@@ -697,6 +712,10 @@ function RegistrarSectionsCreated() {
           semester: TARGET_SEMESTER,
           originBatchYear: sourceBatch.batchYear,
           promotedFromBatchKey: sourceBatch.key,
+          sourceSchoolYear,
+          sourceSemester: sourceBatch.semester,
+          sourceYearLevel: student.yearLevel,
+          originSectionCode: student.sectionCode || "",
           promotedAt: new Date().toISOString(),
         });
       });
@@ -708,9 +727,10 @@ function RegistrarSectionsCreated() {
       const createdAt = new Date().toISOString();
       targetBatches.push({
         id: Number(`${createdAt.replace(/\D/g, "").slice(0, 13)}${targetBatches.length}`),
-        key: [sourceBatch.program, sourceBatch.batchYear, TARGET_SEMESTER, "promotion"].join("|"),
+        key: [sourceBatch.program, targetSchoolYear, TARGET_SEMESTER, "promotion"].join("|"),
         program: sourceBatch.program,
         batchYear: sourceBatch.batchYear,
+        schoolYear: targetSchoolYear,
         semester: TARGET_SEMESTER,
         submittedTo: `${sourceBatch.program} Chairperson`,
         fileName: "Academic year promoted section list",
@@ -763,11 +783,24 @@ function RegistrarSectionsCreated() {
       };
     });
 
+    setPromoting(true);
+    try {
+      const result = await persistPromotedBatchesToBackend(targetBatches);
+      if (Number(result?.promotedCount) !== allPromotedStudents.length) {
+        throw new Error("The server did not confirm every promoted student.");
+      }
+    } catch (error) {
+      showSystemNotification(`Promotion was not saved: ${error.message || "Please retry."}`);
+      setPromoting(false);
+      return;
+    }
+
     persistBatches(nextBatches);
     setGraduatingStudents(nextGraduatingStudents);
     setIrregularAssignments(nextIrregularAssignments);
     localStorage.setItem(GRADUATING_STUDENTS_KEY, JSON.stringify(nextGraduatingStudents));
     localStorage.setItem(IRREGULAR_SUBJECTS_KEY, JSON.stringify(nextIrregularAssignments));
+    setPromoting(false);
     showSystemNotification(`${allPromotedStudents.length} students promoted successfully.`);
   };
 
@@ -793,9 +826,10 @@ function RegistrarSectionsCreated() {
             <button
               type="button"
               onClick={handlePromoteStudents}
+              disabled={promoting}
               className="rounded-xl bg-[#003366] px-5 py-3 text-sm font-semibold text-white hover:bg-[#00264d]"
             >
-              Promote Academic Year
+              {promoting ? "Promoting..." : "Promote Academic Year"}
             </button>
           </div>
         </div>

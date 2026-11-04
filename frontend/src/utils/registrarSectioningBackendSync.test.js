@@ -3,13 +3,7 @@ import {
   persistPromotedBatchesToBackend,
   syncSectioningBatchToBackend,
 } from './registrarSectioningBackendSync';
-import {
-  assignStudentsToSection,
-  batchEnrollStudentsToSection,
-  createSection,
-  fetchDepartmentSections,
-  promoteStudentEnrollments,
-} from '../services/api';
+import { assignStudentsToSection, batchEnrollStudentsToSection, createSection, fetchDepartmentSections, promoteStudentEnrollments } from '../services/api';
 
 jest.mock('../services/api', () => ({
   assignStudentsToSection: jest.fn(),
