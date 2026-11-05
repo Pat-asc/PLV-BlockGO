@@ -131,6 +131,9 @@ jobs:
           require_file middleware/package-lock.json
           require_file middleware/Dockerfile
 
+          require_file security/schemathesis_hooks.py
+          require_file security/test_schemathesis_hooks.py
+
           require_file chaincode/go.mod
           require_file chaincode/go.sum
 
@@ -1259,6 +1262,11 @@ jobs:
             exit 1
           fi
 
+      - name: Verify repository Schemathesis failure filter
+        run: |
+          set -euo pipefail
+          python3 -m unittest security.test_schemathesis_hooks
+
       - name: Schemathesis API property / fuzz tests
         id: schemathesis
         continue-on-error: true
@@ -1266,6 +1274,8 @@ jobs:
         with:
           schema: ${{ steps.schema.outputs.path }}
           base-url: http://127.0.0.1:4000
+          version: 4.33.1
+          hooks: security.schemathesis_hooks
           checks: all
           max-examples: 50
           wait-for-schema: 30

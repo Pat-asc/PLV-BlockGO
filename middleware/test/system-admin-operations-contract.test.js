@@ -15,6 +15,7 @@ const supportTicketModels = fs.readFileSync(
 const monitoringController = fs.readFileSync(path.join(repositoryRoot, 'client-app', 'Controllers', 'SystemMonitoringController.cs'), 'utf8');
 const grafanaSessionService = fs.readFileSync(path.join(repositoryRoot, 'client-app', 'Services', 'GrafanaSessionTokenService.cs'), 'utf8');
 const authService = fs.readFileSync(path.join(repositoryRoot, 'middleware', 'src', 'services', 'auth-service.js'), 'utf8');
+const securityEventRecorder = fs.readFileSync(path.join(repositoryRoot, 'middleware', 'src', 'shared', 'security-event-recorder.js'), 'utf8');
 const ipTrackerMigration = fs.readFileSync(path.join(repositoryRoot, 'migrations', '026_ip_tracker_mappings.sql'), 'utf8');
 const auditLogService = fs.readFileSync(path.join(repositoryRoot, 'client-app', 'Services', 'AuditLogService.cs'), 'utf8');
 const ledgerService = fs.readFileSync(path.join(repositoryRoot, 'middleware', 'src', 'services', 'ledger-service.js'), 'utf8');
@@ -67,15 +68,16 @@ test('security alerts expose the persisted client IP without converting tracker 
   assert.match(ipTrackerMigration, /ip_address VARCHAR\(100\) NOT NULL UNIQUE/);
   assert.match(ipTrackerMigration, /ORDER BY MIN\(security_event_id\), ip_address/);
   assert.doesNotMatch(ipTrackerMigration, /UPDATE\s+security_events|ALTER\s+TABLE\s+security_events/i);
-  assert.match(authService, /pg_advisory_xact_lock\(2026100702\)/);
-  assert.match(authService, /INSERT INTO ip_tracker_mappings \(tracker_id, ip_address\)/);
-  assert.match(authService, /COALESCE\(MAX\(tracker_id\), 0\) \+ 1/);
+  assert.match(authService, /createSecurityEventRecorder\(\{ dbWrite, logger \}\)/);
+  assert.match(securityEventRecorder, /pg_advisory_xact_lock\(2026100702\)/);
+  assert.match(securityEventRecorder, /INSERT INTO ip_tracker_mappings \(tracker_id, ip_address\)/);
+  assert.match(securityEventRecorder, /COALESCE\(MAX\(tracker_id\), 0\) \+ 1/);
   assert.equal(
-    (authService.match(/\$1::VARCHAR\(100\)/g) || []).length,
+    (securityEventRecorder.match(/\$1::VARCHAR\(100\)/g) || []).length,
     2,
     'the reused tracker parameter must have one explicit PostgreSQL type in both query contexts'
   );
-  assert.match(authService, /INSERT INTO security_events[\s\S]*ip_address[\s\S]*VALUES \(\$1, \$2, \$3, \$4/);
+  assert.match(securityEventRecorder, /INSERT INTO security_events[\s\S]*ip_address[\s\S]*VALUES \(\$1, \$2, \$3, \$4/);
 });
 
 test('Grafana proxy uses restart-safe signed cookies and remains restricted to System Administrators', () => {

@@ -28,3 +28,10 @@ scanning begins.
 Protected operations are scanned anonymously in this CI profile. They must reject
 the request with HTTP 401 or 403 before any Fabric mutation is attempted. Public
 authentication and settings-read inputs run against a disposable PostgreSQL database.
+
+Schemathesis is pinned to 4.33.1 and loads `security.schemathesis_hooks`. The hook
+keeps every check enabled and drops only the `ST202` positive-acceptance failure for
+`POST /api/reset-password` when an unissued six-digit code receives the exact
+documented HTTP 400 invalid-or-expired response. Method, path, failure type, status,
+or response-body changes remain scanner failures. The hook predicate is verified by
+`python3 -m unittest security.test_schemathesis_hooks` before each scanner run.

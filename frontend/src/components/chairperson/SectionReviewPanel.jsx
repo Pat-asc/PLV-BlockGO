@@ -329,7 +329,7 @@ function SectionReviewPanel({
               {String(activeTerm).toLowerCase() === "finals" ? <p className="text-xs text-amber-800 dark:text-amber-300">Highlighted names are in the Dean&apos;s List grade range. Official eligibility still depends on all semester subjects.</p> : null}
             </div>
 
-            <div className="mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1" data-testid="review-scroll-region">
+            <div className="mt-3 min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-1" data-testid="review-scroll-region">
               <div className="mb-3 flex flex-col gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-sky-900 dark:bg-sky-950/40 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-bold text-blue-900 dark:text-sky-200">Attached Grading Sheet</p>
@@ -346,25 +346,25 @@ function SectionReviewPanel({
               </div>
 
               {observerOnly && monitoringView === "beforeAfter" ? (
-                <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700" data-testid="chairperson-before-after-panel">
-                  <div className="w-full overflow-x-auto" data-testid="chairperson-before-after-scroll">
-                    <div className="w-full min-w-[860px]" data-testid="chairperson-before-after-canvas">
-                      <div className="w-full bg-[#003366] px-4 py-3 text-white dark:bg-sky-900" data-testid="chairperson-before-after-header">
+                <div className="box-border min-w-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700" data-testid="chairperson-before-after-panel">
+                  <div className="w-full min-w-0 overflow-x-auto overflow-y-hidden" data-testid="chairperson-before-after-scroll">
+                    <div className="box-border w-full min-w-[960px]" data-testid="chairperson-before-after-canvas">
+                      <div className="box-border w-full bg-[#003366] px-4 py-3 text-white dark:bg-sky-900" data-testid="chairperson-before-after-header">
                         <h4 className="font-bold">Before vs. After Submission Snapshot (Read-Only Audit)</h4>
                         <p className="text-xs text-blue-100">Compares the pre-submission grade snapshot (Before Value) against the immutable Faculty-submitted snapshot (Submitted Value).</p>
                       </div>
-                      <table className="w-full table-fixed text-sm" data-testid="chairperson-before-after-table">
+                      <table className="box-border w-full table-fixed border-collapse text-sm" data-testid="chairperson-before-after-table">
                     <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200">
                       <tr>
-                        <th className="w-36 px-3 py-2">Faculty</th>
-                        <th className="w-36 px-3 py-2">Subject</th>
-                        <th className="w-28 px-3 py-2">Section</th>
-                        <th className="w-44 px-3 py-2">Student</th>
-                        <th className="w-28 px-3 py-2">Before Value</th>
-                        <th className="w-28 px-3 py-2">Submitted Value</th>
-                        <th className="w-28 px-3 py-2">Submission Version</th>
-                        <th className="w-40 px-3 py-2">Submitted Timestamp</th>
-                        <th className="w-32 px-3 py-2">Current Status</th>
+                        <th className="box-border w-[12%] px-3 py-2">Faculty</th>
+                        <th className="box-border w-[10%] px-3 py-2">Subject</th>
+                        <th className="box-border w-[9%] px-3 py-2">Section</th>
+                        <th className="box-border w-[17%] px-3 py-2">Student</th>
+                        <th className="box-border w-[9%] px-3 py-2">Before Value</th>
+                        <th className="box-border w-[10%] px-3 py-2">Submitted Value</th>
+                        <th className="box-border w-[9%] px-3 py-2">Submission Version</th>
+                        <th className="box-border w-[14%] px-3 py-2">Submitted Timestamp</th>
+                        <th className="box-border w-[10%] px-3 py-2">Current Status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -398,23 +398,23 @@ function SectionReviewPanel({
                   </div>
                 </div>
               ) : observerOnly && monitoringView === "history" ? (
-                <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700" data-testid="chairperson-history-panel">
-                  <div className="w-full overflow-x-auto">
-                    <div className="w-full min-w-[760px]">
-                      <div className="w-full bg-slate-700 px-4 py-3 text-white dark:bg-slate-800">
+                <div className="box-border min-w-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700" data-testid="chairperson-history-panel">
+                  <div className="w-full min-w-0 overflow-x-auto overflow-y-hidden" data-testid="chairperson-history-scroll">
+                    <div className="box-border w-full min-w-[880px]" data-testid="chairperson-history-canvas">
+                      <div className="box-border w-full bg-slate-700 px-4 py-3 text-white dark:bg-slate-800" data-testid="chairperson-history-header">
                         <h4 className="font-bold">Submission & Ledger Version History</h4>
                         <p className="text-xs text-slate-200">Read-only audit history of Faculty submissions and finalized ledger versions.</p>
                       </div>
-                      <table className="w-full table-fixed text-sm" data-testid="chairperson-history-table">
+                      <table className="box-border w-full table-fixed border-collapse text-sm" data-testid="chairperson-history-table">
                     <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200">
                       <tr>
-                        <th className="w-28 px-3 py-2">Student ID</th>
-                        <th className="w-44 px-3 py-2">Student</th>
-                        <th className="w-28 px-3 py-2">Before Value</th>
-                        <th className="w-28 px-3 py-2">Submitted Value</th>
-                        <th className="w-28 px-3 py-2">Submission Version</th>
-                        <th className="w-40 px-3 py-2">Submitted Timestamp</th>
-                        <th className="w-32 px-3 py-2">Ledger History</th>
+                        <th className="box-border w-[13%] px-3 py-2">Student ID</th>
+                        <th className="box-border w-[20%] px-3 py-2">Student</th>
+                        <th className="box-border w-[11%] px-3 py-2">Before Value</th>
+                        <th className="box-border w-[12%] px-3 py-2">Submitted Value</th>
+                        <th className="box-border w-[11%] px-3 py-2">Submission Version</th>
+                        <th className="box-border w-[18%] px-3 py-2">Submitted Timestamp</th>
+                        <th className="box-border w-[15%] px-3 py-2">Ledger History</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -442,23 +442,23 @@ function SectionReviewPanel({
                 </div>
               ) : (
                 <div className="grid min-w-0 gap-4 lg:grid-cols-2" data-testid="grade-comparison-grid">
-                  <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
-                    <div className="w-full overflow-x-auto">
-                      <div className="w-full min-w-[620px]">
-                        <h4 className="w-full bg-[#003366] px-4 py-3 font-bold text-white dark:bg-sky-900">Current / Submitted</h4>
-                        <table className="w-full table-fixed text-sm">
-                      <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">{getEncodingTermLabel(activeTerm)}</th><th className="w-28 px-3 py-2">Status</th><th className="w-32 px-3 py-2">Ledger History</th></tr></thead>
+                  <div className="box-border min-w-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div className="w-full min-w-0 overflow-x-auto overflow-y-hidden" data-testid="chairperson-submission-scroll">
+                      <div className="box-border w-full min-w-[640px]" data-testid="chairperson-submission-canvas">
+                        <h4 className="box-border w-full bg-[#003366] px-4 py-3 font-bold text-white dark:bg-sky-900">Current / Submitted</h4>
+                        <table className="box-border w-full table-fixed border-collapse text-sm">
+                      <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="box-border w-[16%] px-3 py-2">Student ID</th><th className="box-border w-[30%] px-3 py-2">Student</th><th className="box-border w-[14%] px-3 py-2">{getEncodingTermLabel(activeTerm)}</th><th className="box-border w-[18%] px-3 py-2">Status</th><th className="box-border w-[22%] px-3 py-2">Ledger History</th></tr></thead>
                       <tbody>{rows.map((row) => <tr key={`current-${row.id}`} data-mismatch={row.mismatch ? "true" : "false"} className={`border-t border-slate-200 dark:border-slate-700 ${row.mismatch ? 'bg-red-50 dark:bg-red-950/30' : row.flagged ? 'bg-amber-50 dark:bg-amber-950/20' : ''}`}><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium"><span data-deans-list-candidate={row.isDeansListCandidate ? "true" : "false"} className={row.isDeansListCandidate ? "rounded bg-amber-200 px-1.5 py-0.5 font-bold text-amber-950 ring-1 ring-amber-400" : ""}>{row.name}</span></td><td className={`px-3 py-2 font-bold ${row.mismatch ? 'text-red-700 dark:text-red-300' : ''}`}>{row.currentGrade}</td><td className="break-words px-3 py-2 capitalize">{String(row.status).replaceAll('_', ' ')}</td><td className="px-3 py-2">{finalized && row.recordId ? <GradeVersionHistory recordId={row.recordId} allowCorrection /> : <span className="text-xs text-slate-400">Not yet finalized</span>}</td></tr>)}</tbody>
                         </table>
                       </div>
                     </div>
                   </div>
-                  <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
-                    <div className="w-full overflow-x-auto">
-                      <div className="w-full min-w-[520px]">
-                        <h4 className="w-full bg-slate-700 px-4 py-3 font-bold text-white dark:bg-slate-800">Comparison / Reference</h4>
-                        <table className="w-full table-fixed text-sm">
-                      <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">Reference</th><th className="w-28 px-3 py-2">Standing</th></tr></thead>
+                  <div className="box-border min-w-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div className="w-full min-w-0 overflow-x-auto overflow-y-hidden" data-testid="chairperson-reference-scroll">
+                      <div className="box-border w-full min-w-[520px]" data-testid="chairperson-reference-canvas">
+                        <h4 className="box-border w-full bg-slate-700 px-4 py-3 font-bold text-white dark:bg-slate-800">Comparison / Reference</h4>
+                        <table className="box-border w-full table-fixed border-collapse text-sm">
+                      <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="box-border w-[18%] px-3 py-2">Student ID</th><th className="box-border w-[36%] px-3 py-2">Student</th><th className="box-border w-[18%] px-3 py-2">Reference</th><th className="box-border w-[28%] px-3 py-2">Standing</th></tr></thead>
                       <tbody>{rows.map((row) => <tr key={`reference-${row.id}`} data-mismatch={row.mismatch ? "true" : "false"} className={`border-t border-slate-200 dark:border-slate-700 ${row.mismatch ? 'bg-red-50 dark:bg-red-950/30' : ''}`}><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium"><span data-deans-list-candidate={row.isDeansListCandidate ? "true" : "false"} className={row.isDeansListCandidate ? "rounded bg-amber-200 px-1.5 py-0.5 font-bold text-amber-950 ring-1 ring-amber-400" : ""}>{row.name}</span></td><td className={`px-3 py-2 font-bold ${row.mismatch ? 'text-red-700 dark:text-red-300' : ''}`}>{row.referenceGrade}</td><td className="break-words px-3 py-2 capitalize">{String(row.standing).replaceAll('_', ' ')}</td></tr>)}</tbody>
                         </table>
                       </div>

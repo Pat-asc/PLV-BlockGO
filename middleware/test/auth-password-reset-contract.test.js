@@ -85,6 +85,15 @@ function harness({ role = 'student', status = 'APPROVED', active = true, exists 
     return { account, service, state, advance: (milliseconds) => { clock += milliseconds; } };
 }
 
+async function assertInvalidOrExpiredReset(promise) {
+    await assert.rejects(promise, (error) => {
+        assert.ok(error instanceof PasswordResetError);
+        assert.equal(error.status, 400);
+        assert.equal(error.message, 'The verification code is invalid or expired.');
+        return true;
+    });
+}
+
 test('1. Student can request SMTP reset', async () => {
     const h = harness({ role: 'student' });
     const result = await h.service.requestEmailReset({ email: h.account.email, requestedIp: '192.0.2.1' });
@@ -124,20 +133,39 @@ test('8. Unapproved Faculty receives generic response and no token', async () =>
 
 test('9. Verification code expires after ten minutes', async () => {
     const h = harness(); await h.service.requestEmailReset({ email: h.account.email }); h.advance(CODE_TTL_MS + 1);
-    await assert.rejects(h.service.resetPassword({ email: h.account.email, code: '123456', newPassword: 'NewPassword1!' }), PasswordResetError);
+    await assertInvalidOrExpiredReset(h.service.resetPassword({ email: h.account.email, code: '123456', newPassword: 'NewPassword1!' }));
 });
 
 test('10. Verification code is single-use', async () => {
     const h = harness(); await h.service.requestEmailReset({ email: h.account.email });
     await h.service.resetPassword({ email: h.account.email, code: '123456', newPassword: 'NewPassword1!' });
-    await assert.rejects(h.service.resetPassword({ email: h.account.email, code: '123456', newPassword: 'AnotherPassword1!' }), PasswordResetError);
+    await assertInvalidOrExpiredReset(h.service.resetPassword({ email: h.account.email, code: '123456', newPassword: 'AnotherPassword1!' }));
 });
 
 test('11. Wrong code cannot reset the password', async () => {
     const h = harness(); const original = h.account.password_hash;
     await h.service.requestEmailReset({ email: h.account.email });
-    await assert.rejects(h.service.resetPassword({ email: h.account.email, code: '654321', newPassword: 'NewPassword1!' }), PasswordResetError);
+    await assertInvalidOrExpiredReset(h.service.resetPassword({ email: h.account.email, code: '654321', newPassword: 'NewPassword1!' }));
     assert.equal(h.account.password_hash, original);
+});
+
+test('11a. Schema-valid nonexistent reset code keeps the exact generic business rejection', async () => {
+    const h = harness({ exists: false });
+    await assertInvalidOrExpiredReset(h.service.resetPassword({
+        email: 'nonexistent-reset-account@plv.edu.ph',
+        code: '123456',
+        newPassword: 'NewPassword1!'
+    }));
+});
+
+test('11b. Invalid reset-code format is rejected before database access', async () => {
+    const h = harness();
+    await assertInvalidOrExpiredReset(h.service.resetPassword({
+        email: h.account.email,
+        code: '12345x',
+        newPassword: 'NewPassword1!'
+    }));
+    assert.equal(h.state.tokens.length, 0);
 });
 
 test('12. Five failed verification attempts revoke the code', async () => {
