@@ -98,14 +98,14 @@ export function SystemDialogProvider({ children }) {
         description={options.message}
       >
         {dialog?.kind === 'prompt' ? (
-          <label className="block text-sm font-semibold text-slate-700">
+          <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
             {options.inputLabel}
             <textarea
               autoFocus
               value={inputValue}
               onChange={(event) => setInputValue(event.target.value)}
               rows={4}
-              className="mt-2 w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal text-slate-900 outline-none focus:border-[#003366] focus:ring-2 focus:ring-blue-100"
+              className="mt-2 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-900 outline-none focus:border-[#003366] focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-400 dark:focus:ring-sky-900"
             />
           </label>
         ) : null}
@@ -113,7 +113,7 @@ export function SystemDialogProvider({ children }) {
           <button
             type="button"
             onClick={cancel}
-            className="min-h-11 rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] focus-visible:ring-offset-2"
+            className="min-h-11 rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] focus-visible:ring-offset-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:focus-visible:ring-sky-400 dark:focus-visible:ring-offset-slate-900"
           >
             {options.cancelLabel || 'Cancel'}
           </button>
@@ -121,7 +121,7 @@ export function SystemDialogProvider({ children }) {
             type="button"
             onClick={confirm}
             disabled={dialog?.kind === 'prompt' && options.required !== false && !inputValue.trim()}
-            className={`min-h-11 rounded-lg px-5 py-2.5 text-sm font-bold text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${destructive ? 'bg-red-700 hover:bg-red-800 focus-visible:ring-red-700' : 'bg-[#003366] hover:bg-[#004b8f] focus-visible:ring-[#003366]'}`}
+            className={`min-h-11 rounded-lg px-5 py-2.5 text-sm font-bold text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:text-slate-100 disabled:opacity-100 dark:disabled:bg-slate-700 dark:disabled:text-slate-300 ${destructive ? 'bg-red-700 hover:bg-red-800 focus-visible:ring-red-700' : 'bg-[#003366] hover:bg-[#004b8f] focus-visible:ring-[#003366]'}`}
           >
             {options.confirmLabel || 'Confirm'}
           </button>

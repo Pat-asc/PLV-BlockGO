@@ -346,12 +346,14 @@ function SectionReviewPanel({
               </div>
 
               {observerOnly && monitoringView === "beforeAfter" ? (
-                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700" data-testid="chairperson-before-after-panel">
-                  <div className="bg-[#003366] px-4 py-3 text-white dark:bg-sky-900">
-                    <h4 className="font-bold">Before vs. After Submission Snapshot (Read-Only Audit)</h4>
-                    <p className="text-xs text-blue-100">Compares the pre-submission grade snapshot (Before Value) against the immutable Faculty-submitted snapshot (Submitted Value).</p>
-                  </div>
-                  <table className="min-w-[860px] w-full table-fixed text-sm" data-testid="chairperson-before-after-table">
+                <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700" data-testid="chairperson-before-after-panel">
+                  <div className="w-full overflow-x-auto" data-testid="chairperson-before-after-scroll">
+                    <div className="w-full min-w-[860px]" data-testid="chairperson-before-after-canvas">
+                      <div className="w-full bg-[#003366] px-4 py-3 text-white dark:bg-sky-900" data-testid="chairperson-before-after-header">
+                        <h4 className="font-bold">Before vs. After Submission Snapshot (Read-Only Audit)</h4>
+                        <p className="text-xs text-blue-100">Compares the pre-submission grade snapshot (Before Value) against the immutable Faculty-submitted snapshot (Submitted Value).</p>
+                      </div>
+                      <table className="w-full table-fixed text-sm" data-testid="chairperson-before-after-table">
                     <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200">
                       <tr>
                         <th className="w-36 px-3 py-2">Faculty</th>
@@ -391,15 +393,19 @@ function SectionReviewPanel({
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                      </table>
+                    </div>
+                  </div>
                 </div>
               ) : observerOnly && monitoringView === "history" ? (
-                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700" data-testid="chairperson-history-panel">
-                  <div className="bg-slate-700 px-4 py-3 text-white dark:bg-slate-800">
-                    <h4 className="font-bold">Submission & Ledger Version History</h4>
-                    <p className="text-xs text-slate-200">Read-only audit history of Faculty submissions and finalized ledger versions.</p>
-                  </div>
-                  <table className="min-w-[760px] w-full table-fixed text-sm" data-testid="chairperson-history-table">
+                <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700" data-testid="chairperson-history-panel">
+                  <div className="w-full overflow-x-auto">
+                    <div className="w-full min-w-[760px]">
+                      <div className="w-full bg-slate-700 px-4 py-3 text-white dark:bg-slate-800">
+                        <h4 className="font-bold">Submission & Ledger Version History</h4>
+                        <p className="text-xs text-slate-200">Read-only audit history of Faculty submissions and finalized ledger versions.</p>
+                      </div>
+                      <table className="w-full table-fixed text-sm" data-testid="chairperson-history-table">
                     <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200">
                       <tr>
                         <th className="w-28 px-3 py-2">Student ID</th>
@@ -430,23 +436,33 @@ function SectionReviewPanel({
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                      </table>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <div className="grid min-w-0 gap-4 lg:grid-cols-2" data-testid="grade-comparison-grid">
-                  <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
-                    <h4 className="sticky left-0 top-0 bg-[#003366] px-4 py-3 font-bold text-white dark:bg-sky-900">Current / Submitted</h4>
-                    <table className="min-w-[620px] table-fixed text-sm">
+                  <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div className="w-full overflow-x-auto">
+                      <div className="w-full min-w-[620px]">
+                        <h4 className="w-full bg-[#003366] px-4 py-3 font-bold text-white dark:bg-sky-900">Current / Submitted</h4>
+                        <table className="w-full table-fixed text-sm">
                       <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">{getEncodingTermLabel(activeTerm)}</th><th className="w-28 px-3 py-2">Status</th><th className="w-32 px-3 py-2">Ledger History</th></tr></thead>
                       <tbody>{rows.map((row) => <tr key={`current-${row.id}`} data-mismatch={row.mismatch ? "true" : "false"} className={`border-t border-slate-200 dark:border-slate-700 ${row.mismatch ? 'bg-red-50 dark:bg-red-950/30' : row.flagged ? 'bg-amber-50 dark:bg-amber-950/20' : ''}`}><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium"><span data-deans-list-candidate={row.isDeansListCandidate ? "true" : "false"} className={row.isDeansListCandidate ? "rounded bg-amber-200 px-1.5 py-0.5 font-bold text-amber-950 ring-1 ring-amber-400" : ""}>{row.name}</span></td><td className={`px-3 py-2 font-bold ${row.mismatch ? 'text-red-700 dark:text-red-300' : ''}`}>{row.currentGrade}</td><td className="break-words px-3 py-2 capitalize">{String(row.status).replaceAll('_', ' ')}</td><td className="px-3 py-2">{finalized && row.recordId ? <GradeVersionHistory recordId={row.recordId} allowCorrection /> : <span className="text-xs text-slate-400">Not yet finalized</span>}</td></tr>)}</tbody>
-                    </table>
+                        </table>
+                      </div>
+                    </div>
                   </div>
-                  <div className="min-w-0 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
-                    <h4 className="sticky left-0 top-0 bg-slate-700 px-4 py-3 font-bold text-white dark:bg-slate-800">Comparison / Reference</h4>
-                    <table className="min-w-[520px] table-fixed text-sm">
+                  <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div className="w-full overflow-x-auto">
+                      <div className="w-full min-w-[520px]">
+                        <h4 className="w-full bg-slate-700 px-4 py-3 font-bold text-white dark:bg-slate-800">Comparison / Reference</h4>
+                        <table className="w-full table-fixed text-sm">
                       <thead className="bg-slate-100 text-left text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="w-28 px-3 py-2">Student ID</th><th className="w-48 px-3 py-2">Student</th><th className="w-24 px-3 py-2">Reference</th><th className="w-28 px-3 py-2">Standing</th></tr></thead>
                       <tbody>{rows.map((row) => <tr key={`reference-${row.id}`} data-mismatch={row.mismatch ? "true" : "false"} className={`border-t border-slate-200 dark:border-slate-700 ${row.mismatch ? 'bg-red-50 dark:bg-red-950/30' : ''}`}><td className="break-words px-3 py-2 font-mono text-xs">{row.id}</td><td className="break-words px-3 py-2 font-medium"><span data-deans-list-candidate={row.isDeansListCandidate ? "true" : "false"} className={row.isDeansListCandidate ? "rounded bg-amber-200 px-1.5 py-0.5 font-bold text-amber-950 ring-1 ring-amber-400" : ""}>{row.name}</span></td><td className={`px-3 py-2 font-bold ${row.mismatch ? 'text-red-700 dark:text-red-300' : ''}`}>{row.referenceGrade}</td><td className="break-words px-3 py-2 capitalize">{String(row.standing).replaceAll('_', ' ')}</td></tr>)}</tbody>
-                    </table>
+                        </table>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}

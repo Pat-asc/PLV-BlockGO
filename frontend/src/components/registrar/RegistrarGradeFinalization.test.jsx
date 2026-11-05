@@ -62,9 +62,14 @@ test('renders the exact approved queue and sends one section request despite rep
   expect(screen.getAllByText('89.875')).toHaveLength(2);
 
   fireEvent.click(screen.getByRole('button', { name: 'Review Grades' }));
-  expect(within(screen.getByRole('dialog')).getAllByText('90.00')).toHaveLength(2);
-  expect(within(screen.getByRole('dialog')).getAllByText('91.25')).toHaveLength(2);
-  const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve and Finalize' });
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getAllByText('90.00')).toHaveLength(2);
+  expect(within(dialog).getAllByText('91.25')).toHaveLength(2);
+  expect(within(dialog).getByTestId('registrar-reference-comparison-canvas')).toHaveClass('w-full', 'min-w-[520px]');
+  expect(within(dialog).getByTestId('registrar-submitted-comparison-canvas')).toHaveClass('w-full', 'min-w-[520px]');
+  expect(within(dialog).getByRole('heading', { name: 'Reference / Previous Grade Data' })).toHaveClass('w-full', 'text-white');
+  expect(within(dialog).getByRole('heading', { name: 'Currently Submitted Grade Data' })).toHaveClass('w-full', 'text-white', 'dark:bg-sky-900');
+  const confirm = within(dialog).getByRole('button', { name: 'Approve and Finalize' });
   fireEvent.click(confirm);
   fireEvent.click(confirm);
   expect(finalizeApprovedGrades).toHaveBeenCalledTimes(1);

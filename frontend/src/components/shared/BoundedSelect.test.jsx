@@ -36,3 +36,27 @@ test('forwards bounded search text and prevents disabled duplicate choices', () 
   fireEvent.click(duplicate);
   expect(onChange).not.toHaveBeenCalled();
 });
+
+test('provides explicit readable dark, selected, active, focus, and disabled states', () => {
+  render(<BoundedSelect label="Program" value="BSIT" onChange={() => {}} options={[
+    { value: 'BSIT', label: 'Information Technology' },
+    { value: 'BSCS', label: 'Computer Science' },
+    { value: 'BSIS', label: 'Information Systems', disabled: true },
+  ]} />);
+
+  const trigger = screen.getByRole('button', { name: 'Program' });
+  expect(trigger).toHaveClass('dark:bg-slate-800', 'dark:text-slate-100', 'focus-visible:ring-2', 'dark:focus-visible:ring-sky-900');
+  fireEvent.click(trigger);
+
+  const selected = screen.getByRole('option', { name: 'Information Technology' });
+  expect(selected).toHaveAttribute('aria-selected', 'true');
+  expect(selected).toHaveClass('font-bold', 'dark:bg-sky-950', 'dark:text-sky-300');
+
+  const active = screen.getByRole('option', { name: 'Computer Science' });
+  fireEvent.mouseEnter(active);
+  expect(active).toHaveClass('dark:bg-sky-950', 'dark:text-sky-100');
+
+  const disabled = screen.getByRole('option', { name: 'Information Systems' });
+  expect(disabled).toBeDisabled();
+  expect(disabled).toHaveClass('dark:disabled:bg-slate-800', 'dark:disabled:text-slate-500');
+});

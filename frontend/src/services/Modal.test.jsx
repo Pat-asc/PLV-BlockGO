@@ -63,3 +63,21 @@ test('initialFocusRef is focused once on open, and Escape still uses the latest 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(opener).toHaveFocus();
 });
+
+test('default dialog shell is viewport-bounded and width-safe on small screens', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Harness' });
+    expect(dialog).toHaveClass(
+        'box-border',
+        'min-w-0',
+        'w-full',
+        'max-w-lg',
+        'max-h-[calc(100dvh-1rem)]',
+        'overflow-y-auto',
+        'dark:bg-slate-900',
+        'dark:text-slate-100',
+    );
+    expect(screen.getByRole('heading', { name: 'Harness' })).toHaveClass('min-w-0', 'break-words');
+});

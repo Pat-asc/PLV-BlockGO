@@ -1,6 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { requestSystemConfirmation, SystemDialogProvider } from './SystemDialogContext';
+import { requestSystemConfirmation, requestSystemPrompt, SystemDialogProvider } from './SystemDialogContext';
 
 function ConfirmationHarness({ onConfirmed }) {
   const requestDelete = async () => {
@@ -14,6 +14,10 @@ function ConfirmationHarness({ onConfirmed }) {
   };
 
   return <button type="button" onClick={requestDelete}>Delete student</button>;
+}
+
+function PromptHarness() {
+  return <button type="button" onClick={() => requestSystemPrompt({ title: 'Return Grades', inputLabel: 'Reason' })}>Return grades</button>;
 }
 
 test('confirmation cancel performs no action and returns focus to its trigger', async () => {
@@ -51,4 +55,20 @@ test('Escape safely cancels confirmation and restores focus', async () => {
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(onConfirmed).not.toHaveBeenCalled();
   await waitFor(() => expect(trigger).toHaveFocus());
+});
+
+test('required prompt keeps its disabled action readable in both themes', async () => {
+  render(<SystemDialogProvider><PromptHarness /></SystemDialogProvider>);
+  fireEvent.click(screen.getByRole('button', { name: /return grades/i }));
+
+  const confirm = await screen.findByRole('button', { name: /continue/i });
+  expect(confirm).toBeDisabled();
+  expect(confirm).toHaveClass(
+    'disabled:bg-slate-400',
+    'disabled:text-slate-100',
+    'disabled:opacity-100',
+    'dark:disabled:bg-slate-700',
+    'dark:disabled:text-slate-300',
+  );
+  expect(screen.getByLabelText('Reason')).toHaveClass('dark:bg-slate-800', 'dark:text-slate-100');
 });

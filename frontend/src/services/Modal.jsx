@@ -31,6 +31,12 @@ const Modal = ({
     const initialFocusRefRef = useRef(initialFocusRef);
     const titleId = useId();
     const descriptionId = useId();
+    // Default dialogs are bounded to the viewport. Consumers that provide a custom
+    // panel layout retain ownership of overflow so absolute menus/popovers are not
+    // unexpectedly clipped by the shared shell.
+    const responsivePanelClasses = panelClassName
+        ? ''
+        : 'max-h-[calc(100dvh-1rem)] overflow-y-auto';
 
     useEffect(() => {
         onCloseRef.current = onClose;
@@ -90,7 +96,7 @@ const Modal = ({
 
     return (
         <div 
-            className="fixed inset-0 z-[1001] flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm"
+            className="fixed inset-0 z-[1001] flex items-center justify-center bg-black bg-opacity-50 p-2 backdrop-blur-sm sm:p-4"
             onMouseDown={(event) => {
                 if (closeOnBackdrop && event.target === event.currentTarget) onClose?.();
             }}
@@ -103,10 +109,10 @@ const Modal = ({
                 aria-labelledby={titleId}
                 aria-describedby={description ? descriptionId : undefined}
                 tabIndex={-1}
-                className={`relative mx-4 w-full rounded-xl bg-white p-6 text-slate-900 shadow-2xl outline-none focus-visible:ring-2 focus-visible:ring-[#f4c430] dark:bg-slate-900 dark:text-slate-100 ${panelClassName || 'max-w-lg'}`}
+                className={`relative box-border min-w-0 w-full rounded-xl bg-white p-4 text-slate-900 shadow-2xl outline-none focus-visible:ring-2 focus-visible:ring-[#f4c430] dark:bg-slate-900 dark:text-slate-100 sm:p-6 ${responsivePanelClasses} ${panelClassName || 'max-w-lg'}`}
             >
-                <div className="mb-4 flex shrink-0 items-center justify-between border-b border-slate-200 pb-4 dark:border-slate-700">
-                    <h3 id={titleId} className="text-xl font-bold text-[#003366] dark:text-sky-300">{title}</h3>
+                <div className="mb-4 flex w-full min-w-0 shrink-0 items-center justify-between gap-3 border-b border-slate-200 pb-4 dark:border-slate-700">
+                    <h3 id={titleId} className="min-w-0 break-words text-xl font-bold text-[#003366] dark:text-sky-300">{title}</h3>
                     <button 
                         type="button"
                         onClick={onClose} 
@@ -117,7 +123,7 @@ const Modal = ({
                     </button>
                 </div>
                 {description ? <p id={descriptionId} className="mb-5 whitespace-pre-line text-sm leading-6 text-slate-600 dark:text-slate-300">{description}</p> : null}
-                <div className={bodyClassName}>{children}</div>
+                <div className={`min-w-0 ${bodyClassName}`}>{children}</div>
             </div>
         </div>
     );

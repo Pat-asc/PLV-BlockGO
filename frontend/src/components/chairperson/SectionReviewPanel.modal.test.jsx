@@ -213,7 +213,13 @@ test('observerOnly Chairperson mode hides approval buttons and displays Before/A
   expect(within(monitoringBar).getByRole('button', { name: 'View History' })).toBeInTheDocument();
 
   fireEvent.click(within(monitoringBar).getByRole('button', { name: 'View Before/After' }));
+  expect(screen.getByTestId('chairperson-before-after-panel')).toHaveClass('overflow-hidden', 'rounded-lg');
+  expect(screen.getByTestId('chairperson-before-after-scroll')).toHaveClass('w-full', 'overflow-x-auto');
+  expect(screen.getByTestId('chairperson-before-after-canvas')).toHaveClass('w-full', 'min-w-[860px]');
+  expect(screen.getByTestId('chairperson-before-after-header')).toHaveClass('w-full', 'text-white', 'dark:bg-sky-900');
   const beforeAfterTable = screen.getByTestId('chairperson-before-after-table');
+  expect(beforeAfterTable).toHaveClass('w-full');
+  expect(beforeAfterTable).not.toHaveClass('min-w-[860px]');
   expect(within(beforeAfterTable).getByText('89.00')).toBeInTheDocument();
   expect(within(beforeAfterTable).getByText('91.50')).toBeInTheDocument();
   expect(within(beforeAfterTable).getAllByText('v2').length).toBeGreaterThan(0);

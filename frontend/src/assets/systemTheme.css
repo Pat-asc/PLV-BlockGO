@@ -43,7 +43,11 @@
   color: #e2e8f0;
 }
 
-:where(.system-theme-surface[data-system-theme='dark']) .blockgo-text-size-control button { color: #e2e8f0; }
+:where(.system-theme-surface[data-system-theme='dark']) .blockgo-text-size-control button:not(.is-active) { color: #e2e8f0; }
+:where(.system-theme-surface[data-system-theme='dark']) .blockgo-text-size-control button:is(:hover, :focus-visible, .is-active) {
+  background: #003366;
+  color: #fff;
+}
 :where(.system-theme-surface[data-system-theme='dark']) :is(.bg-blue-50, .bg-blue-100) { background-color: #102a56; }
 :where(.system-theme-surface[data-system-theme='dark']) :is(.bg-emerald-50, .bg-emerald-100, .bg-green-50, .bg-green-100) { background-color: #052e2b; }
 :where(.system-theme-surface[data-system-theme='dark']) :is(.bg-amber-50, .bg-amber-100, .bg-yellow-50, .bg-yellow-100) { background-color: #422006; }

@@ -40,10 +40,10 @@ const SettingsMenu = ({ children, title = 'Settings', description = 'Adjust your
         <span className="hidden sm:inline">Settings</span>
       </button>
       {open ? (
-        <div role="dialog" aria-label="Settings" className="fixed inset-x-4 top-20 z-[1300] max-h-[calc(100vh-6rem)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 text-slate-800 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-[calc(100%+0.5rem)] sm:w-[min(24rem,calc(100vw-2rem))]">
+        <div role="dialog" aria-label="Settings" className="fixed inset-x-4 top-20 z-[1300] max-h-[calc(100vh-6rem)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 text-slate-800 shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 sm:absolute sm:inset-x-auto sm:right-0 sm:top-[calc(100%+0.5rem)] sm:w-[min(24rem,calc(100vw-2rem))]">
           <div className="mb-4 flex items-start justify-between gap-3">
-            <div><p className="font-bold text-[#003366]">{title}</p><p className="text-xs text-slate-500">{description}</p></div>
-            <button type="button" onClick={() => setOpen(false)} aria-label="Close settings" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800">
+            <div><p className="font-bold text-[#003366] dark:text-sky-300">{title}</p><p className="text-xs text-slate-500 dark:text-slate-400">{description}</p></div>
+            <button type="button" onClick={() => setOpen(false)} aria-label="Close settings" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100">
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M6 6l12 12M18 6 6 18" /></svg>
             </button>
           </div>
