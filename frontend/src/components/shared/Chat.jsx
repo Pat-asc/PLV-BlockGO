@@ -119,6 +119,7 @@ const normalizeMessage = (payload) => {
     attachmentMime: valueOf(payload, 'attachmentMime', 'AttachmentMime'),
     attachmentSizeBytes: valueOf(payload, 'attachmentSizeBytes', 'AttachmentSizeBytes'),
     attachmentDataBase64: valueOf(payload, 'attachmentDataBase64', 'AttachmentDataBase64'),
+    senderName: valueOf(payload, 'senderName', 'SenderName'),
     receivedAt: valueOf(payload, 'receivedAt', 'ReceivedAt') || Date.now(),
   };
 
@@ -288,6 +289,10 @@ const Chat = ({
   const historyTargetRef = useRef('');
   const isOpenRef = useRef(isOpen);
   const seenRequestRef = useRef({});
+  const notifiedMessageIdsRef = useRef(new Set());
+  const notifiedMessageOrderRef = useRef([]);
+  const imagePreviewTriggerRef = useRef(null);
+  const imagePreviewCloseRef = useRef(null);
   const typingHideTimersRef = useRef({});
   const typingStopTimersRef = useRef({});
   const typingLastSentRef = useRef({});
@@ -333,6 +338,40 @@ const Chat = ({
       return next;
     });
   }, []);
+
+  const rememberNotifiedMessage = useCallback((messageId) => {
+    const key = String(messageId || '');
+    if (!key || notifiedMessageIdsRef.current.has(key)) return false;
+    notifiedMessageIdsRef.current.add(key);
+    notifiedMessageOrderRef.current.push(key);
+    if (notifiedMessageOrderRef.current.length > 500) {
+      notifiedMessageIdsRef.current.delete(notifiedMessageOrderRef.current.shift());
+    }
+    return true;
+  }, []);
+
+  const openImagePreview = useCallback((event, preview) => {
+    imagePreviewTriggerRef.current = event.currentTarget;
+    setImagePreview(preview);
+  }, []);
+
+  const closeImagePreview = useCallback(() => setImagePreview(null), []);
+
+  useEffect(() => {
+    if (!imagePreview) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    imagePreviewCloseRef.current?.focus();
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') closeImagePreview();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      imagePreviewTriggerRef.current?.focus();
+    };
+  }, [closeImagePreview, imagePreview]);
 
   const loadConversationStates = useCallback(async (activeConnection) => {
     if (!activeConnection) return;
@@ -515,11 +554,14 @@ const Chat = ({
         );
       }
 
-      if (normalized.sender !== userEmail) {
+      if (normalized.sender !== userEmail && !isConversationReadable(otherUser) && rememberNotifiedMessage(normalized.id)) {
         onIncomingMessage?.({
+          id: normalized.id,
           from: otherUser,
+          senderName: normalized.senderName,
           message: normalized.message,
           attachmentName: normalized.attachmentName,
+          attachmentMime: normalized.attachmentMime,
           sentAt: normalized.sentAt || normalized.timestamp,
         });
       }
@@ -795,7 +837,7 @@ const Chat = ({
       setConnection(null);
       conn.stop();
     };
-  }, [userEmail, userRole, onIncomingMessage, onRegistrationRequest, onSupportNotice, isConversationReadable, markConversationSeen, applyConversationState, loadConversationStates, loadGroupChatData]);
+  }, [userEmail, userRole, onIncomingMessage, onRegistrationRequest, onSupportNotice, isConversationReadable, markConversationSeen, applyConversationState, loadConversationStates, loadGroupChatData, rememberNotifiedMessage]);
 
   // Load history when selected user changes
   useEffect(() => {
@@ -1634,7 +1676,7 @@ const Chat = ({
                     <div className="mb-2">
                       <button
                         type="button"
-                        onClick={() => setImagePreview({ src: imageSrc, name: msg.attachmentName })}
+                        onClick={(event) => openImagePreview(event, { src: imageSrc, name: msg.attachmentName })}
                         className="block overflow-hidden rounded-xl border border-white/20 bg-black/5 text-left transition hover:opacity-90"
                         title="Open image preview"
                       >
@@ -1850,25 +1892,32 @@ const Chat = ({
 
       {imagePreview && createPortal(
         <div
-          className="fixed inset-0 z-[2100] flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setImagePreview(null)}
+          className="fixed inset-0 z-[2100] grid place-items-center overflow-hidden bg-black/80 p-2 sm:p-4"
+          onClick={closeImagePreview}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Image preview"
         >
-          <div className="relative flex max-h-full max-w-5xl flex-col items-center" onClick={(e) => e.stopPropagation()}>
+          <div data-testid="chat-image-lightbox" className="relative grid h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-6xl grid-rows-[minmax(0,1fr)_auto] place-items-center overflow-hidden sm:h-[calc(100dvh-2rem)] sm:w-[calc(100vw-2rem)]" onClick={(e) => e.stopPropagation()}>
             <button
+              ref={imagePreviewCloseRef}
               type="button"
-              onClick={() => setImagePreview(null)}
-              className="absolute -right-3 -top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white text-xl font-bold text-slate-700 shadow-lg transition hover:bg-slate-100"
+              onClick={closeImagePreview}
+              className="absolute right-1 top-1 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl font-bold text-slate-700 shadow-lg transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-black/80 sm:right-2 sm:top-2"
               title="Close image preview"
+              aria-label="Close image preview"
             >
-              x
+              ×
             </button>
-            <img
-              src={imagePreview.src}
-              alt={imagePreview.name || 'Image preview'}
-              className="mx-auto block max-h-[86vh] max-w-[92vw] rounded-xl object-contain shadow-2xl"
-            />
+            <div className="flex h-full w-full min-h-0 items-center justify-center overflow-hidden px-1 pb-2 pt-12 sm:px-6 sm:pb-3 sm:pt-14">
+              <img
+                src={imagePreview.src}
+                alt={imagePreview.name || 'Image preview'}
+                className="chat-image-preview block h-auto max-h-full w-auto max-w-full rounded-xl object-contain shadow-2xl"
+              />
+            </div>
             {imagePreview.name && (
-              <div className="mt-3 max-w-[92vw] truncate text-center text-sm font-semibold text-white">
+              <div className="max-w-full truncate px-4 pb-1 text-center text-sm font-semibold text-white">
                 {imagePreview.name}
               </div>
             )}
@@ -1934,7 +1983,7 @@ const Chat = ({
                       {isImage ? (
                         <button
                           type="button"
-                          onClick={() => setImagePreview({ src: imageSrc, name: msg.attachmentName })}
+                          onClick={(event) => openImagePreview(event, { src: imageSrc, name: msg.attachmentName })}
                           className="block overflow-hidden rounded-xl border border-white/20 bg-black/5 text-left transition hover:opacity-90"
                           title="Open image preview"
                         >

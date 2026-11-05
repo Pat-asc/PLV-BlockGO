@@ -72,7 +72,7 @@ test('System Monitoring renders the backend-provided service availability result
   expect(screen.getByText('HTTP 200')).toBeInTheDocument();
 });
 
-test('System Monitoring displays incremental IP tracker numbers without exposing raw addresses', async () => {
+test('System Monitoring displays the actual API-provided client IP unchanged', async () => {
   fetchSystemMonitoringSummary.mockResolvedValue({
     status: 'warning',
     generatedAt: '2026-09-25T00:00:00Z',
@@ -82,7 +82,7 @@ test('System Monitoring displays incremental IP tracker numbers without exposing
       name: 'LOGIN RATE LIMITED',
       severity: 'warning',
       component: 'access-control',
-      ipTracker: '100.0.0.1',
+      ipAddress: '203.0.113.54',
       summary: 'registrar@plv.edu.ph: Login attempt was rate limited.',
     }],
     runtime: { uptimeSeconds: 120 },
@@ -91,9 +91,21 @@ test('System Monitoring displays incremental IP tracker numbers without exposing
 
   render(<SystemMonitoring activeView="alerts" />);
 
-  expect(await screen.findByText('100.0.0.1')).toBeInTheDocument();
-  expect(screen.getByText('IP Tracker')).toBeInTheDocument();
-  expect(screen.queryByText('10.9.7.26')).not.toBeInTheDocument();
+  expect(await screen.findByText('203.0.113.54')).toBeInTheDocument();
+  expect(screen.getByText('IP Address')).toBeInTheDocument();
+  expect(screen.queryByText('100.0.0.1')).not.toBeInTheDocument();
+});
+
+test('System Monitoring does not fabricate an address when the client IP is unavailable', async () => {
+  fetchSystemMonitoringSummary.mockResolvedValue({
+    status: 'warning', services: [], runtime: {}, infrastructure: { source: 'runtime' },
+    alerts: [{ eventId: 45, name: 'FAILED LOGIN', severity: 'warning', component: 'access-control', ipAddress: null, summary: 'Unknown client.' }],
+  });
+
+  render(<SystemMonitoring activeView="alerts" />);
+
+  expect(await screen.findByText('—')).toBeInTheDocument();
+  expect(screen.queryByText(/100\.0\.0\./)).not.toBeInTheDocument();
 });
 
 test('System Monitoring shows persisted successful login totals and identity metadata', async () => {

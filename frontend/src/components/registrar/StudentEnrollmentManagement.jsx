@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import SearchField from '../shared/SearchField';
 import BoundedSelect from '../shared/BoundedSelect';
 import CurriculumViewer from '../shared/CurriculumViewer';
@@ -20,6 +20,7 @@ import {
 import { buildCsvContent, downloadCsvFile } from '../../utils/studentSectioningHelpers';
 import { downloadTemplateButtonClass } from '../shared/downloadButtonStyles';
 import { normalizeStudentNameFields } from '../../utils/studentName';
+import { showSystemNotification } from '../../services/NotificationContext';
 
 const normalizeProgramIdentity = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -69,6 +70,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
     nstpOption: '',
   });
   const [file, setFile] = useState(null);
+  const fileInputRef = useRef(null);
   const [students, setStudents] = useState([]);
   const [curricula, setCurricula] = useState([]);
   const [nstpOptions, setNstpOptions] = useState([]);
@@ -197,20 +199,29 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
     nstpOption: form.nstpOption || undefined,
   });
 
+  const publishResult = useCallback((nextResult) => {
+    setResult(nextResult);
+    const isError = nextResult?.status === 'Error';
+    const type = isError ? 'error' : Number(nextResult?.failed || 0) > 0 ? 'warning' : 'success';
+    showSystemNotification(nextResult?.message || (isError ? 'The enrollment action failed.' : 'The enrollment action completed.'), type);
+  }, []);
+
   const upload = async (mode) => {
     const validationError = validateContext();
-    if (validationError) return setResult({ status: 'Error', message: validationError });
-    if (!file) return setResult({ status: 'Error', message: 'Choose a CSV file first.' });
+    if (validationError) return publishResult({ status: 'Error', message: validationError });
+    if (!file) return publishResult({ status: 'Error', message: 'Choose a CSV file first.' });
 
     setSaving(true); setResult(null);
     try {
       const response = mode === 'update'
         ? await registrarBulkUpdateStudents(file, form.department, enrollmentPayload())
         : await registrarBulkEnrollStudents(file, form.department, enrollmentPayload());
-      setResult(response);
+      publishResult(response);
       await load();
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (error) {
-      setResult({ status: 'Error', message: error.message || 'Enrollment upload failed.' });
+      publishResult({ status: 'Error', message: error.message || 'Enrollment upload failed.' });
     } finally {
       setSaving(false);
     }
@@ -219,7 +230,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   const enrollManualStudent = async (event) => {
     event.preventDefault();
     const validationError = validateContext();
-    if (validationError) return setResult({ status: 'Error', message: validationError });
+    if (validationError) return publishResult({ status: 'Error', message: validationError });
     setSaving(true); setResult(null);
     try {
       const normalizedName = normalizeStudentNameFields(manualForm);
@@ -229,11 +240,11 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
       ]);
       const manualFile = new File([csv], 'manual-student-enrollment.csv', { type: 'text/csv' });
       const response = await registrarBulkEnrollStudents(manualFile, form.department, enrollmentPayload());
-      setResult(response);
+      publishResult(response);
       setManualForm(emptyManualForm);
       await load();
     } catch (error) {
-      setResult({ status: 'Error', message: error.message || 'Student enrollment failed.' });
+      publishResult({ status: 'Error', message: error.message || 'Student enrollment failed.' });
     } finally {
       setSaving(false);
     }
@@ -242,8 +253,8 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
   const enrollSelectedExistingStudent = async (event) => {
     event.preventDefault();
     const validationError = validateContext();
-    if (validationError) return setResult({ status: 'Error', message: validationError });
-    if (!selectedExistingId) return setResult({ status: 'Error', message: 'Select an existing Student account.' });
+    if (validationError) return publishResult({ status: 'Error', message: validationError });
+    if (!selectedExistingId) return publishResult({ status: 'Error', message: 'Select an existing Student account.' });
     setSaving(true); setResult(null);
     try {
       const response = await enrollExistingStudent(selectedExistingId, {
@@ -252,11 +263,11 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
         curriculumId: form.curriculumId ? Number(form.curriculumId) : undefined,
         nstpOption: form.nstpOption || undefined,
       });
-      setResult(response);
+      publishResult(response);
       setSelectedExistingId('');
       await load();
     } catch (error) {
-      setResult({ status: 'Error', message: error.message || 'Existing Student enrollment failed.' });
+      publishResult({ status: 'Error', message: error.message || 'Existing Student enrollment failed.' });
     } finally {
       setSaving(false);
     }
@@ -580,12 +591,12 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
           <label className="mt-4 flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-blue-300 bg-blue-50/30 p-4 text-center text-xs font-semibold text-blue-700">
             <span>Drag and drop your file here, or click to browse</span>
             <span className="mt-1 text-[10px] font-normal text-slate-500">Accepted file type: CSV (less than 10 MB)</span>
-            <input type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] || null)} className="sr-only" />
+            <input ref={fileInputRef} aria-label="Enrollment CSV file" type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] || null)} className="sr-only" />
             {file ? <span className="mt-2 text-emerald-700">{file.name}</span> : null}
           </label>
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="button" onClick={downloadTemplate} className={downloadTemplateButtonClass}>Download Template</button>
-            <button type="button" disabled={saving} onClick={() => upload('enroll')} className="rounded-xl bg-[#003366] px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Upload & Prepare'}</button>
+            <button type="button" disabled={saving} onClick={() => upload('enroll')} className="h-10 rounded-xl bg-[#003366] px-5 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Upload & Prepare'}</button>
           </div>
         </div> : enrollmentMethod === 'manual' ? <form onSubmit={enrollManualStudent} className="pt-4">
           <div className="mb-4 flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-lg text-blue-700">♙</span><div><h5 className="text-sm font-bold text-[#003366]">Manual Student Enrollment</h5></div></div>
@@ -638,19 +649,19 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{students.length} {students.length === 1 ? 'Student' : 'Students'}</span>
           </div>
           <div className="mt-4 flex flex-wrap items-end gap-2">
-            <SearchField value={enrollmentSearch} onChange={setEnrollmentSearch} label="Search student enrollments" placeholder="Search by name or student number..." className="min-w-[15rem] flex-1 sm:max-w-md" inputClassName="h-10 text-xs dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100" />
-            <label className="min-w-[10rem] text-xs font-semibold text-slate-600 dark:text-slate-300">Section
+            <SearchField value={enrollmentSearch} onChange={setEnrollmentSearch} label="Search student enrollments" placeholder="Search by name or student number..." className="w-full min-w-0 flex-1 sm:min-w-[15rem] sm:max-w-md" inputClassName="h-10 text-xs dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100" />
+            <label className="w-full text-xs font-semibold text-slate-600 dark:text-slate-300 sm:w-auto sm:min-w-[10rem]">Section
               <select aria-label="Filter enrollments by section" value={sectionFilter} onChange={(event) => setSectionFilter(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-normal outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
                 <option value="">All Sections</option>
                 {availableSections.map((section) => <option key={section} value={section}>{section}</option>)}
               </select>
             </label>
-            <label className="min-w-[10rem] text-xs font-semibold text-slate-600 dark:text-slate-300">Status
+            <label className="w-full text-xs font-semibold text-slate-600 dark:text-slate-300 sm:w-auto sm:min-w-[10rem]">Status
               <select aria-label="Filter enrollments by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-normal outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
                 <option value="">All Statuses</option><option value="Regular">Regular</option><option value="Irregular">Irregular</option><option value="Not Sectioned">Not Sectioned</option>
               </select>
             </label>
-            <button type="button" onClick={load} className="h-10 rounded-lg border border-blue-200 px-3 text-xs font-semibold text-blue-700 transition hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/50">Refresh</button>
+            <button type="button" onClick={load} className="h-10 w-full rounded-lg border border-blue-200 px-4 text-xs font-semibold text-blue-700 transition hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/50 sm:w-auto">Refresh</button>
           </div>
           {selectedStudentIds.length > 0 ? <div data-testid="student-selection-action-bar" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs text-blue-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100">
             <span className="font-bold">✓ {selectedStudentIds.length} {selectedStudentIds.length === 1 ? 'student' : 'students'} selected</span>
