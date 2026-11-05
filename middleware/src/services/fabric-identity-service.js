@@ -5,12 +5,15 @@ const { requestJson } = require('../shared/internal-http');
 const createLogger = require('../shared/logger');
 const { normalizeAuthRole } = require('../shared/roles');
 const { createServiceApp, installErrorHandler, listen } = require('../shared/service-app');
+const { getPools } = require('../shared/database');
 const { adminUser, cacheStats, enrollIdentity, ensureAdminEnrolled, registerIdentity, registrationPayload } = require('../fabric/ca-manager');
 const { checkWallets, getWallet } = require('../fabric/wallet-manager');
+const { REGISTRAR_SERVICE_LABEL, REGISTRAR_MSP_ID, ensureRegistrarServiceIdentity } = require('../fabric/registrar-service-identity');
 
 const serviceName = 'fabric-identity-service';
 const logger = createLogger(serviceName);
 const { app, metrics } = createServiceApp(serviceName, logger);
+const { read: dbRead } = getPools();
 const authenticate = authenticateJWT();
 
 async function invalidateLedgerIdentity(username) {
@@ -23,35 +26,124 @@ async function invalidateLedgerIdentity(username) {
     }
 }
 
-async function forceUpdateAndEnroll(username, password, role) {
+async function forceUpdateAndEnroll(username, password, role, academicScope = {}) {
     const config = await ensureAdminEnrolled(role);
     const wallet = await getWallet(config.role);
     const user = await adminUser(config, wallet);
     await config.client.newIdentityService().update(username, {
-        type: registrationPayload(username, password, role).role,
+        type: registrationPayload(username, password, role, academicScope).role,
         secret: password,
         max_enrollments: -1,
-        attrs: registrationPayload(username, password, role).attrs
+        attrs: registrationPayload(username, password, role, academicScope).attrs
     }, user);
     return enrollIdentity(username, password, role);
 }
 
+async function refreshExistingIdentity(username, role, academicScope = {}) {
+    const normalized = normalizeAuthRole(role);
+    const config = await ensureAdminEnrolled(normalized);
+    const wallet = await getWallet(config.role);
+    const existing = await wallet.get(username);
+
+    if (!existing) {
+        throw new Error(`Fabric identity '${username}' is missing from the ${normalized} wallet.`);
+    }
+
+    if (existing.type !== 'X.509' || existing.mspId !== config.mspId) {
+        throw new Error(`Fabric identity '${username}' has an unexpected MSP or identity type; refusing automatic refresh.`);
+    }
+
+    const registrar = await adminUser(config, wallet);
+    const payload = registrationPayload(username, '', normalized, academicScope);
+
+    // Update CA-side authorization attributes without changing the
+    // existing user's enrollment secret.
+    await config.client.newIdentityService().update(username, {
+        type: payload.role,
+        max_enrollments: -1,
+        attrs: payload.attrs
+    }, registrar);
+
+    // Authenticate the refresh with the existing Fabric certificate/key.
+    // This avoids assuming that the application password is also the
+    // Fabric CA enrollment secret.
+    const provider = wallet.getProviderRegistry().getProvider(existing.type);
+    const currentUser = await provider.getUserContext(existing, username);
+
+    const attrReqs = payload.attrs.map(({ name }) => ({
+        name,
+        optional: false
+    }));
+
+    const reenrollment = await config.client.reenroll(currentUser, attrReqs);
+
+    await wallet.put(username, {
+        credentials: {
+            certificate: reenrollment.certificate,
+            privateKey: reenrollment.key.toBytes()
+        },
+        mspId: config.mspId,
+        type: 'X.509'
+    });
+
+    return {
+        wallet,
+        identity: await wallet.get(username),
+        config
+    };
+}
+
+async function authoritativeAcademicScope(username, role) {
+    const normalized = normalizeAuthRole(role);
+    if (normalized === 'faculty') {
+        const result = await dbRead.query(`SELECT fp.department,
+            COALESCE(array_agg(DISTINCT fs.section) FILTER (WHERE fs.is_active = TRUE), '{}') AS sections
+            FROM users u JOIN facultyprofiles fp ON fp.user_id = u.id
+            LEFT JOIN facultysections fs ON fs.user_id = u.id
+            WHERE LOWER(u.email) = LOWER($1) GROUP BY fp.department`, [username]);
+        return result.rows.length ? { department: result.rows[0].department, sections: result.rows[0].sections } : {};
+    }
+    if (normalized === 'department_admin') {
+        const result = await dbRead.query(`SELECT ap.department FROM users u JOIN adminprofiles ap ON ap.user_id = u.id
+            WHERE LOWER(u.email) = LOWER($1) LIMIT 1`, [username]);
+        return result.rows.length ? { department: result.rows[0].department } : {};
+    }
+    return {};
+}
+
 async function ensureIdentity(username, password, role) {
     const normalized = normalizeAuthRole(role);
+    const academicScope = await authoritativeAcademicScope(username, normalized);
     const wallet = await getWallet(normalized);
     const existing = await wallet.get(username);
-    if (existing) return { created: false, mspId: existing.mspId };
+    if (existing) {
+        if (normalized === 'faculty' || normalized === 'department_admin') {
+            const refreshed = await refreshExistingIdentity(
+                username,
+                normalized,
+                academicScope
+            );
+            await invalidateLedgerIdentity(username);
+            return {
+                created: false,
+                refreshed: true,
+                mspId: refreshed.identity.mspId
+            };
+        }
+
+        return { created: false, mspId: existing.mspId };
+    }
     try {
         const enrolled = await enrollIdentity(username, password, normalized);
         return { created: true, mspId: enrolled.identity.mspId };
     } catch (firstError) {
-        await registerIdentity(username, password, normalized);
+        await registerIdentity(username, password, normalized, academicScope);
         try {
             const enrolled = await enrollIdentity(username, password, normalized);
             return { created: true, mspId: enrolled.identity.mspId };
         } catch (enrollmentError) {
             logger.warn({ username, role: normalized, err: enrollmentError }, 'Existing CA identity secret is stale; updating it for wallet recovery');
-            const enrolled = await forceUpdateAndEnroll(username, password, normalized);
+            const enrolled = await forceUpdateAndEnroll(username, password, normalized, academicScope);
             return { created: true, mspId: enrolled.identity.mspId };
         }
     }
@@ -68,7 +160,8 @@ app.post('/internal/identities/bootstrap-registrar', requireInternalKey, async (
     const { username, password } = req.body || {};
     if (!username || !password) return res.status(400).json({ error: 'username and password are required.' });
     const result = await ensureIdentity(username, password, 'registrar');
-    res.json({ status: 'success', ...result });
+    const serviceIdentity = await ensureRegistrarServiceIdentity(process.env.BOOTSTRAP_REGISTRAR_PASS);
+    res.json({ status: 'success', ...result, serviceIdentity });
 });
 
 app.post('/api/fabric/register-user', authenticate, requireRegistrarOrInternal, async (req, res) => {
@@ -98,7 +191,8 @@ app.post('/api/register', authenticate, requireRegistrarOrInternal, async (req, 
     const { username, password } = req.body || {};
     const role = normalizeAuthRole(req.body?.role);
     if (!username || !password || !role) return res.status(400).json({ error: 'username, password, and role are required.' });
-    const secret = await registerIdentity(username, password, role);
+    const academicScope = await authoritativeAcademicScope(username, role);
+    const secret = await registerIdentity(username, password, role, academicScope);
     res.status(201).json({ status: 'success', secret });
 });
 
@@ -128,8 +222,12 @@ app.delete('/api/wallet/:username', authenticate, requireRegistrarOrInternal, as
 app.get('/api/ready', async (req, res) => {
     try {
         const wallets = await checkWallets();
+        const registrarWallet = await getWallet('registrar');
+        const registrarServiceIdentity = await registrarWallet.get(REGISTRAR_SERVICE_LABEL);
+        if (!registrarServiceIdentity || registrarServiceIdentity.mspId !== REGISTRAR_MSP_ID)
+            throw new Error(`Registrar Fabric service identity '${REGISTRAR_SERVICE_LABEL}' is unavailable in the Registrar wallet.`);
         metrics.setGauge('blockgo_ca_config_cache_entries', cacheStats().entries, 'Fabric CA configuration cache entries.');
-        res.json({ status: 'ready', wallets });
+        res.json({ status: 'ready', wallets, registrarServiceIdentity: 'present' });
     } catch (error) {
         res.status(503).json({ status: 'not_ready', error: error.message });
     }
@@ -137,3 +235,20 @@ app.get('/api/ready', async (req, res) => {
 
 installErrorHandler(app, logger);
 listen(app, serviceName, 4002, logger);
+
+async function bootstrapRegistrarServiceIdentityAtStartup() {
+    try {
+        const result = await ensureRegistrarServiceIdentity(process.env.BOOTSTRAP_REGISTRAR_PASS);
+        logger.info({ identity: REGISTRAR_SERVICE_LABEL, mspId: result.mspId, created: result.created }, 'Registrar Fabric service identity is available');
+    } catch (error) {
+        logger.error({ identity: REGISTRAR_SERVICE_LABEL, reason: error.message }, 'Registrar Fabric service identity bootstrap failed; readiness will remain unavailable until repaired');
+        const transportReason = `${error.message} ${error.cause?.message || ''}`;
+        if (/ECONN|EAI_AGAIN|ENET|unavailable|refused|timed out/i.test(transportReason)) {
+            // Startup repair retries only transport failures; a stale CA secret or
+            // wrong MSP requires operator attention and is never reset here.
+            const timer = setTimeout(bootstrapRegistrarServiceIdentityAtStartup, 30000);
+            timer.unref();
+        }
+    }
+}
+bootstrapRegistrarServiceIdentityAtStartup();

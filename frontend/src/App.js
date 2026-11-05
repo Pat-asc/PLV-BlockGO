@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import "./assets/style.css"; 
-import "./assets/App.css";   
+import "./assets/style.css";
+import "./assets/App.css";
+import "./assets/systemTheme.css";
 import Login from "./components/shared/Login";
-import { fetchUserProfile } from './services/api';
+import { fetchFacultyAccessStatus, fetchUserProfile } from './services/api';
 import StudentPortal from './components/student/StudentPortal';
 import FacultyPortal from './components/faculty/FacultyPortal';
 import DeptAdminGradesView from './components/chairperson/DeptAdminGradesView';
@@ -14,15 +15,20 @@ import { getLocalDevUser } from './utils/localDevAuth';
 import {
   clearAuthSession,
   decodeAuthToken,
+  isAuthTokenExpired,
   migrateLegacyAuthSession,
   normalizeSessionRole,
   roleForRoute,
   routeForRole,
   setAuthSession,
+  subscribeToAuthSessionEvents,
 } from './services/authSession';
 
 import { BrowserRouter as Router, useLocation, useNavigate } from 'react-router-dom';
 import { NotificationProvider, useNotification } from './services/NotificationContext';
+import { requestSystemConfirmation, SystemDialogProvider } from './services/SystemDialogContext';
+import { readSystemTheme, SYSTEM_THEME_CHANGED_EVENT, THEME_STORAGE_KEY } from './services/themePreference';
+import { applyTextSize, readTextSize } from './services/textSizePreference';
 
 const normalizeAppRole = normalizeSessionRole;
 
@@ -33,13 +39,37 @@ function AppContent() {
   const [chatUnreadTotal, setChatUnreadTotal] = useState(0);
   const [latestChatNotice, setLatestChatNotice] = useState(null);
   const [chatAutoOpenTarget, setChatAutoOpenTarget] = useState(null);
+  const [facultyAccess, setFacultyAccess] = useState({ isBlocked: false, reason: '' });
+  const [systemTheme, setSystemTheme] = useState(readSystemTheme);
   const { addNotification } = useNotification();
   const location = useLocation();
   const navigate = useNavigate();
   const restorationStarted = useRef(false);
 
+  useEffect(() => { applyTextSize(readTextSize()); }, []);
+
+  useEffect(() => {
+    const handleThemeChange = (event) => setSystemTheme(event.detail?.theme || readSystemTheme());
+    const handleStorage = (event) => {
+      if (event.key === THEME_STORAGE_KEY) setSystemTheme(readSystemTheme());
+    };
+    window.addEventListener(SYSTEM_THEME_CHANGED_EVENT, handleThemeChange);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(SYSTEM_THEME_CHANGED_EVENT, handleThemeChange);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (user) document.documentElement.dataset.blockgoPortalTheme = systemTheme;
+    else delete document.documentElement.dataset.blockgoPortalTheme;
+    return () => { delete document.documentElement.dataset.blockgoPortalTheme; };
+  }, [systemTheme, user]);
+
   const handleLoginSuccess = useCallback(async (token) => {
     try {
+      if (isAuthTokenExpired(token)) throw new Error('This sign-in session has expired. Please sign in again.');
       const payload = decodeAuthToken(token);
       const localDevUser = getLocalDevUser(payload);
       if (localDevUser) {
@@ -94,10 +124,19 @@ function AppContent() {
           semester: fetchedUser.semester,
           enrollmentStatus: fetchedUser.enrollmentStatus,
           enrolledSubjects: fetchedUser.enrolledSubjects,
+          facultyId: fetchedUser.facultyId,
           facultyType: fetchedUser.facultyType,
           Classification: fetchedUser.facultyType || fetchedUser.classification,
+          isBlocked: Boolean(fetchedUser.isBlocked),
+          blockReason: fetchedUser.blockReason || '',
           status: fetchedUser.status
         });
+        if (appRole === 'faculty' && fetchedUser.isBlocked) {
+          setFacultyAccess({
+            isBlocked: true,
+            reason: fetchedUser.blockReason || ''
+          });
+        }
         navigate(routeForRole(appRole), { replace: true });
       } else {
         throw new Error("Failed to load user profile.");
@@ -112,6 +151,35 @@ function AppContent() {
       setIsRestoringSession(false);
     }
   }, [navigate]);
+
+  const endLocalSession = useCallback(() => {
+    clearAuthSession();
+    setUser(null);
+    setChatUnreadTotal(0);
+    setLatestChatNotice(null);
+    setChatAutoOpenTarget(null);
+    navigate('/login', { replace: true });
+  }, [navigate]);
+
+  useEffect(() => subscribeToAuthSessionEvents(endLocalSession), [endLocalSession]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const token = migrateLegacyAuthSession();
+    if (!token) return undefined;
+    const expiresAt = Number(decodeAuthToken(token).exp || 0) * 1000;
+    if (!expiresAt) return undefined;
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) {
+      clearAuthSession({ broadcast: true, reason: 'expired' });
+      return undefined;
+    }
+    const timeout = window.setTimeout(
+      () => clearAuthSession({ broadcast: true, reason: 'expired' }),
+      Math.min(remaining, 2_147_000_000)
+    );
+    return () => window.clearTimeout(timeout);
+  }, [user]);
 
   useEffect(() => {
     if (restorationStarted.current) return undefined;
@@ -138,17 +206,19 @@ function AppContent() {
     if (currentRouteRole !== userRole) navigate(routeForRole(userRole), { replace: true });
   }, [isRestoringSession, location.pathname, navigate, user]);
 
-  const handleLogout = () => {
-    clearAuthSession();
-    setUser(null);
-    setChatUnreadTotal(0);
-    setLatestChatNotice(null);
-    setChatAutoOpenTarget(null);
-    navigate('/login', { replace: true });
+  const handleLogout = async () => {
+    const confirmed = await requestSystemConfirmation({
+      title: 'Logout',
+      message: 'Are you sure you want to log out of your account?',
+      confirmLabel: 'Log Out',
+      tone: 'destructive',
+    });
+    if (!confirmed) return;
+    clearAuthSession({ broadcast: true, reason: 'manual_logout' });
   };
 
   const handleNginxFailover = useCallback((nextOrigin) => {
-    clearAuthSession();
+    clearAuthSession({ broadcast: true, reason: 'failover' });
     setUser(null);
     setChatUnreadTotal(0);
     setLatestChatNotice(null);
@@ -168,10 +238,10 @@ function AppContent() {
     setChatUnreadTotal(totalUnread);
   }, []);
 
-  const handleIncomingMessage = useCallback(({ from, message, attachmentName }) => {
-    const senderName = from ? from.split('@')[0] : 'A user';
-    const chatPreview = message || (attachmentName ? `Sent ${attachmentName}` : 'Sent an attachment');
-    const isRegistrar = normalizeAppRole(user?.role).includes('registrar');
+  const handleIncomingMessage = useCallback(({ id, from, senderName: suppliedSenderName, message, attachmentName, attachmentMime, type }) => {
+    if (!from || from === user?.email) return;
+    const senderName = suppliedSenderName || from.split('@')[0] || 'A user';
+    const chatPreview = message || (attachmentMime?.startsWith('image/') ? 'Sent an image' : attachmentName ? 'Sent an attachment' : 'Sent an attachment');
 
     setLatestChatNotice({
       from: senderName,
@@ -179,11 +249,16 @@ function AppContent() {
       receivedAt: new Date().toISOString(),
     });
 
-    if (isRegistrar && from) {
+    addNotification(chatPreview.length > 110 ? `${chatPreview.slice(0, 107)}...` : chatPreview, 'info', {
+      title: `New message · ${senderName}`,
+      eventKey: `chat|${id || `${from}|${chatPreview}`}`,
+      duration: 10000,
+      onClick: type === 'group_message' || type === 'group_invitation' ? undefined : () => {
       setIsChatOpen(true);
       setChatAutoOpenTarget({ email: from, nonce: Date.now() });
-    }
-  }, [user?.role]);
+      },
+    });
+  }, [addNotification, user?.email]);
 
   const handleRegistrationRequest = useCallback((request) => {
     const isRegistrar = normalizeAppRole(user?.role).includes('registrar');
@@ -194,10 +269,62 @@ function AppContent() {
     addNotification(`New registration request from ${name} (${role})`, 'success');
   }, [addNotification, user?.role]);
 
+  useEffect(() => {
+    if (normalizeAppRole(user?.role) !== 'faculty') {
+      setFacultyAccess({ isBlocked: false, reason: '' });
+      return undefined;
+    }
+    let active = true;
+    fetchFacultyAccessStatus()
+      .then((response) => {
+        if (active) setFacultyAccess({
+          isBlocked: Boolean(response?.isBlocked ?? response?.data?.isBlocked),
+          reason: response?.reason ?? response?.data?.reason ?? ''
+        });
+      })
+      .catch((error) => {
+        if (error?.data?.code === 'FACULTY_BLOCKED' && active) {
+          setFacultyAccess({ isBlocked: true, reason: error.data.reason || '' });
+        }
+      });
+    const handleAccessChanged = (event) => {
+      setFacultyAccess({
+        isBlocked: Boolean(event.detail?.isBlocked),
+        reason: event.detail?.reason || ''
+      });
+    };
+    window.addEventListener('blockgo:faculty-access-changed', handleAccessChanged);
+    return () => {
+      active = false;
+      window.removeEventListener('blockgo:faculty-access-changed', handleAccessChanged);
+    };
+  }, [user?.email, user?.role]);
+
   const handleSupportNotice = useCallback((notice) => {
     const message = notice?.displayMessage || notice?.DisplayMessage;
     if (message) addNotification(message, 'notice');
   }, [addNotification]);
+
+  useEffect(() => {
+    const handleGradeReleased = (event) => {
+      if (normalizeAppRole(user?.role) !== 'student') return;
+      const payload = event.detail || {};
+      addNotification(payload.Message || payload.message || 'Your finalized grades are now available in the Student Portal.', 'notice');
+    };
+    const handleGradeReturned = (event) => {
+      if (normalizeAppRole(user?.role) !== 'faculty') return;
+      const payload = event.detail || {};
+      const note = payload.Note || payload.note;
+      addNotification(note ? `A grade was returned for correction: ${note}` : 'A grade was returned for correction.', 'notice');
+    };
+
+    window.addEventListener('blockgo:grade-released', handleGradeReleased);
+    window.addEventListener('blockgo:grade-returned', handleGradeReturned);
+    return () => {
+      window.removeEventListener('blockgo:grade-released', handleGradeReleased);
+      window.removeEventListener('blockgo:grade-returned', handleGradeReturned);
+    };
+  }, [addNotification, user?.role]);
 
   const currentUserRole = normalizeAppRole(user?.role);
   const canUseChat = ['student', 'faculty', 'department_admin', 'registrar', 'system_admin'].includes(currentUserRole);
@@ -210,49 +337,29 @@ function AppContent() {
         <Login onLogin={handleLoginSuccess} />
       ) : (
         <>
-          {/* Floating Chat Button */}
-          {canUseChat && !isChatOpen && (
-            <div className="group fixed bottom-5 right-5 z-[1000]">
-              <button
-                type="button"
-                aria-label="Open Chat"
-                title="Open Chat"
-                onClick={() => setIsChatOpen(true)}
-                className="flex h-11 w-11 items-center justify-start overflow-hidden rounded-full bg-[#003366] text-white shadow-lg transition-[width,background-color,box-shadow] duration-200 ease-out hover:w-32 hover:bg-[#004b8f] hover:shadow-xl focus-visible:w-32 focus-visible:bg-[#004b8f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-              >
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3 1.7-5.1A7 7 0 0 1 3 12V8a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" />
-                    <path d="M8 10h.01M12 10h.01M16 10h.01" />
-                  </svg>
-                </span>
-                <span className="whitespace-nowrap pr-4 text-sm font-bold opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-                  Open Chat
-                </span>
-              </button>
-              {chatUnreadTotal > 0 && (
-                <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white shadow">
-                  {chatUnreadTotal > 9 ? '9+' : chatUnreadTotal}
-                </span>
-              )}
-            </div>
-          )}
-          {canUseChat && <Chat
-            userEmail={user.email}
-            userRole={currentUserRole}
-            isOpen={isChatOpen}
-            onClose={() => setIsChatOpen(false)}
-            onUnreadChange={handleUnreadChange}
-            onIncomingMessage={handleIncomingMessage}
-            onRegistrationRequest={handleRegistrationRequest}
-            onSupportNotice={handleSupportNotice}
-            autoOpenTarget={chatAutoOpenTarget}
-          />}
-
+          <div data-testid="authenticated-portal-theme" className={`system-theme-surface ${systemTheme === 'dark' ? 'dark' : ''}`} data-system-theme={systemTheme}>
+          <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
           {currentUserRole === "student" ? (
             <StudentPortal studentData={user} onLogout={handleLogout} />
           ) : currentUserRole === "faculty" ? (
-            <FacultyPortal facultyData={user} onLogout={handleLogout} />
+            facultyAccess.isBlocked ? (
+              <main data-testid="blocked-faculty-portal" className="flex min-h-screen flex-col items-center justify-center bg-slate-100 px-4 dark:bg-slate-950">
+                <section className="w-full max-w-xl rounded-2xl border border-amber-200 bg-white p-7 text-center shadow-lg dark:border-amber-800 dark:bg-slate-900">
+                  <p className="text-xs font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">Faculty access restricted</p>
+                  <h1 className="mt-3 text-2xl font-bold text-[#003366] dark:text-sky-200">Academic functions are currently blocked</h1>
+                  <p className="mt-4 text-sm leading-6 text-slate-700 dark:text-slate-200">Your academic access has been temporarily restricted by your Chairperson.</p>
+                  <div className="mt-4 rounded-xl bg-amber-50 p-4 text-left dark:bg-amber-950/40">
+                    <p className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">Reason:</p>
+                    <p data-testid="blocked-faculty-reason" className="mt-1 font-semibold text-amber-900 dark:text-amber-200">{facultyAccess.reason || 'No public reason was provided.'}</p>
+                  </div>
+                  <p className="mt-4 text-sm text-slate-600 dark:text-slate-300">You may still use Messaging. Please see the Chairperson to resolve your issue.</p>
+                  <nav aria-label="Restricted Faculty Navigation" className="mt-6 flex flex-wrap justify-center gap-3">
+                    <button type="button" onClick={() => setIsChatOpen(true)} className="rounded-lg bg-[#003366] px-5 py-2.5 text-sm font-bold text-white hover:bg-[#004b8f]">Messaging / Chat</button>
+                    <button type="button" onClick={handleLogout} className="rounded-lg border border-slate-300 px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Logout</button>
+                  </nav>
+                </section>
+              </main>
+            ) : <FacultyPortal facultyData={user} onLogout={handleLogout} />
           ) : currentUserRole === "department_admin" ? (
             <div style={{ position: 'relative', width: '100%', minHeight: '100vh', backgroundColor: '#f0f2f5' }}>
               <DeptAdminGradesView loggedInEmail={user.email ?? ''} loggedInName={user.name ?? ''} userRole={currentUserRole} department={user.department ?? ''} onLogout={handleLogout} />
@@ -271,6 +378,7 @@ function AppContent() {
           ) : currentUserRole === "system_admin" ? (
             <SystemAdminPortal
               adminData={user}
+              systemTheme={systemTheme}
               onLogout={handleLogout}
               chatUnreadCount={chatUnreadTotal}
               onOpenChat={() => setIsChatOpen(true)}
@@ -282,8 +390,42 @@ function AppContent() {
               </div>
             </div>
           )}
+          </div>
+          </div>
+          {canUseChat && !isChatOpen && (
+            <div data-testid="chat-launcher-wrapper" className="group fixed bottom-5 right-5 z-[1000] border-0 bg-transparent shadow-none">
+              <button
+                type="button"
+                aria-label="Open Chat"
+                title="Open Chat"
+                onClick={() => setIsChatOpen(true)}
+                className="flex h-11 w-11 items-center justify-start overflow-hidden rounded-full bg-[#003366] text-white shadow-lg transition-[width,background-color,box-shadow] duration-200 ease-out hover:w-32 hover:bg-[#004b8f] hover:shadow-xl focus-visible:w-32 focus-visible:bg-[#004b8f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              >
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3 1.7-5.1A7 7 0 0 1 3 12V8a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" />
+                    <path d="M8 10h.01M12 10h.01M16 10h.01" />
+                  </svg>
+                </span>
+                <span className="whitespace-nowrap pr-4 text-sm font-bold opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">Open Chat</span>
+              </button>
+              {chatUnreadTotal > 0 && <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white shadow">{chatUnreadTotal > 9 ? '9+' : chatUnreadTotal}</span>}
+            </div>
+          )}
         </>
       )}
+      {user && canUseChat && <Chat
+        userEmail={user.email}
+        userRole={currentUserRole}
+        systemTheme={systemTheme}
+        isOpen={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        onUnreadChange={handleUnreadChange}
+        onIncomingMessage={handleIncomingMessage}
+        onRegistrationRequest={handleRegistrationRequest}
+        onSupportNotice={handleSupportNotice}
+        autoOpenTarget={chatAutoOpenTarget}
+      />}
     </div>
   );
 }
@@ -291,9 +433,11 @@ function AppContent() {
 function App() {
   return (
     <NotificationProvider>
-      <Router>
-        <AppContent />
-      </Router>
+      <SystemDialogProvider>
+        <Router>
+          <AppContent />
+        </Router>
+      </SystemDialogProvider>
     </NotificationProvider>
   );
 }

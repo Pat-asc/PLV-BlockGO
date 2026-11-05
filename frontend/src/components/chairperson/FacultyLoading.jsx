@@ -1,27 +1,25 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { showSystemNotification } from '../../services/NotificationContext';
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AVAILABLE_YEAR_LEVELS,
-  STUDENT_BATCHES_KEY,
-  getDefaultSectionName,
   parseCsvRows,
   parseStudentIdSpreadsheet,
 } from "../../utils/studentSectioningHelpers";
 import {
   assignFacultyLoadToBackend,
+  bulkAssignFacultyLoads,
   fetchApprovedFaculties,
+  fetchFacultyAssignmentOptions,
+  unassignFacultySection,
 } from "../../services/api";
 import { downloadTemplateButtonClass } from "../shared/downloadButtonStyles";
 import { pushAssignmentsSharedState } from "../../utils/sharedClientState";
+import { reconcileActiveAssignmentCache } from "../../utils/facultyAssignmentState";
+import { DAY_OPTIONS, formatFacultySchedule } from "../../utils/facultySchedule";
+import Modal from "../../services/Modal";
 
 const SEMESTER_OPTIONS = ["1st Semester", "2nd Semester", "Summer"];
-const DAY_OPTIONS = [
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
+export { DAY_OPTIONS } from "../../utils/facultySchedule";
 
 const normalizeText = (value = "") => String(value).trim().toLowerCase();
 const normalizeHeader = (value = "") =>
@@ -38,8 +36,8 @@ const getFacultyDepartment = (faculty = {}) =>
   faculty.department || faculty.program || "";
 const buildFacultyLoadingKey = (item = {}) =>
   [
-    normalizeText(item.facultyId || item.id),
-    normalizeText(item.sectionName || item.section),
+    normalizeText(item.facultyUserId || item.facultyId),
+    normalizeText(item.academicSectionId || item.sectionName || item.section),
     normalizeText(item.schoolYear),
     normalizeText(item.semester),
     normalizeText(item.subjectCode || item.subject),
@@ -54,6 +52,10 @@ const getCsvRowValue = (row = {}, acceptedHeaders = []) => {
 
   return "";
 };
+export const FACULTY_LOADING_CSV_TEMPLATE =
+  "Faculty Name,Subject Title,Subject Code,Section,School Year,Semester,Units,Day,Time\n" +
+  "Juan Dela Cruz,Introduction to Computing,IT 101,BSIT 1-1,2026-2027,1st Semester,3,Monday,7:00 AM - 9:00 AM\n" +
+  "Maria Santos,Computer Programming 1,IT 102,BSIT 1-2,2026-2027,1st Semester,3,Tuesday,10:00 AM - 12:00 PM";
 const mapFacultyLoadingRows = (csvText = "") => {
   const rows = parseCsvRows(csvText);
 
@@ -75,16 +77,7 @@ const mapFacultyLoadingRows = (csvText = "") => {
   return { headers, rows: mappedRows };
 };
 
-const syncFacultyLoadToBackend = (assignment) => {
-  assignFacultyLoadToBackend(assignment).catch((error) => {
-    console.warn(
-      "Backend faculty load assignment failed; local assignment was still saved.",
-      error
-    );
-  });
-};
-
-function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) {
+function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", selectedAcademicSectionId = null }) {
   const [selectedFacultyId, setSelectedFacultyId] = useState("");
   const [selectedYearLevel, setSelectedYearLevel] = useState("1st Year");
   const [selectedSectionName, setSelectedSectionName] = useState("");
@@ -100,101 +93,80 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
   const [facultyLoadingPreview, setFacultyLoadingPreview] = useState([]);
   const [facultyLoadingErrors, setFacultyLoadingErrors] = useState([]);
   const [facultyLoadingSummary, setFacultyLoadingSummary] = useState(null);
+  const [facultyLoadingPreviewOpen, setFacultyLoadingPreviewOpen] = useState(false);
   const [approvedFaculties, setApprovedFaculties] = useState([]);
+  const [assignmentOptions, setAssignmentOptions] = useState({ sections: [], subjects: [], schoolYears: [] });
+  const [isBulkSaving, setIsBulkSaving] = useState(false);
 
-  const [savedAssignments, setSavedAssignments] = useState(() => {
-    const saved = localStorage.getItem("registrarAssignments");
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [savedAssignments, setSavedAssignments] = useState([]);
+
+  const loadAssignmentOptions = useCallback(async (confirmedAssignments = []) => {
+    if (!chairpersonDepartment) return;
+    const fetchedResponse = await fetchFacultyAssignmentOptions(chairpersonDepartment);
+    const response = fetchedResponse
+      ? { ...fetchedResponse, assignments: [...(fetchedResponse.assignments || [])] }
+      : {};
+    const returnedIds = new Set((response.assignments || []).map((item) => String(item.id)));
+    const missingConfirmed = confirmedAssignments.filter((item) => !returnedIds.has(String(item.id)));
+    if (missingConfirmed.length) response.assignments = [...(response.assignments || []), ...missingConfirmed];
+    setAssignmentOptions({
+      ...response,
+      sections: response.sections || [],
+      subjects: response.subjects || [],
+      schoolYears: response.schoolYears || [],
+      assignments: response.assignments || [],
+    });
+    const reconciled = reconcileActiveAssignmentCache(response, chairpersonDepartment);
+    setSavedAssignments(reconciled.assignments);
+    if (reconciled.changed) await pushAssignmentsSharedState();
+  }, [chairpersonDepartment]);
 
   useEffect(() => {
-    const handleSharedStateChanged = (event) => {
-      const keys = event.detail?.keys || [];
-      if (!keys.includes("registrarAssignments")) return;
-
-      try {
-        const saved = localStorage.getItem("registrarAssignments");
-        setSavedAssignments(saved ? JSON.parse(saved) : []);
-      } catch (error) {
-        console.warn("Failed to refresh assignments from shared state.", error);
-      }
+    let active = true;
+    loadAssignmentOptions().catch((error) => {
+      if (active) setFacultyLoadingErrors([error.message || "Unable to load authoritative assignment options."]);
+    });
+    const handleAcademicDataChanged = () => loadAssignmentOptions().catch((error) =>
+      setFacultyLoadingErrors([error.message || "Unable to refresh current assignments."]));
+    window.addEventListener("blockgo:academic-data-changed", handleAcademicDataChanged);
+    return () => {
+      active = false;
+      window.removeEventListener("blockgo:academic-data-changed", handleAcademicDataChanged);
     };
+  }, [loadAssignmentOptions]);
 
-    window.addEventListener(
-      "blockgo:shared-client-state-changed",
-      handleSharedStateChanged
+  const activePeriod = assignmentOptions.activeAcademicPeriod;
+  const sectionOptions = (assignmentOptions.sections || []).flatMap((section) => {
+    const enrolledPeriods = (assignmentOptions.enrollmentPeriods || []).filter(
+      (period) => String(period.academicSectionId) === String(section.id)
     );
-
-    return () =>
-      window.removeEventListener(
-        "blockgo:shared-client-state-changed",
-        handleSharedStateChanged
-      );
-  }, []);
-
-  const studentSections =
-    JSON.parse(localStorage.getItem("studentSections")) || [];
-  const studentBatches =
-    JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY)) || [];
-
-  const createdSections = studentBatches
-    .filter((batch) => batch.status !== "Promoted")
-    .flatMap((batch) =>
-      (batch.sectionPlans || []).map((section) => {
-        const sectionName =
-          section.sectionName ||
-          getDefaultSectionName(batch.program, section.sectionCode);
-        const yearLevel = section.yearLevel || "";
-
-        return {
-          key: [
-            batch.program,
-            yearLevel,
-            sectionName,
-            batch.batchYear,
-            batch.semester || "",
-          ].join("|"),
-          program: batch.program,
-          yearLevel,
-          section: sectionName,
-          schoolYear: batch.batchYear,
-          semester: batch.semester || "",
-          students: (batch.students || [])
-            .filter(
-              (student) =>
-                student.sectionCode === section.sectionCode &&
-                (student.yearLevel || yearLevel) === yearLevel
-            )
-            .map((student) => ({
-              studentId: student.studentId,
-              sex: student.sex || "",
-              firstName: student.firstName || "",
-              lastName: student.lastName || "",
-              middleInitial: student.middleInitial || "",
-              studentType: student.studentType || "Regular",
-              remarks: student.remarks || "",
-              repeatedSubjects: student.repeatedSubjects || "",
-              irregularSubjects: student.irregularSubjects || [],
-            })),
-        };
-      })
-    );
-  const sectionOptions = [
-    ...studentSections,
-    ...createdSections.filter(
-      (createdSection) =>
-        !studentSections.some(
-          (section) =>
-            section.program === createdSection.program &&
-            section.yearLevel === createdSection.yearLevel &&
-            section.section === createdSection.section &&
-            section.schoolYear === createdSection.schoolYear &&
-            (section.semester || "") === (createdSection.semester || "")
-        )
-    ),
-  ];
+    const periods = enrolledPeriods.length ? enrolledPeriods : activePeriod ? [activePeriod] : [];
+    return periods.map((period) => ({
+      key: `${section.id}|${period.schoolYear}|${period.semester}`,
+      academicSectionId: section.id,
+      program: section.department,
+      yearLevel: `${section.yearLevel}${Number(section.yearLevel) === 1 ? "st" : Number(section.yearLevel) === 2 ? "nd" : Number(section.yearLevel) === 3 ? "rd" : "th"} Year`,
+      section: `${section.programCode} ${section.section}`,
+      schoolYear: period.schoolYear,
+      semester: period.semester,
+      periodMatchesActive:
+        period.schoolYear === activePeriod?.schoolYear && period.semester === activePeriod?.semester,
+      students: [],
+    }));
+  });
 
   const selectedProgram = chairpersonDepartment;
+  const facultyLoadingGroups = useMemo(() => {
+    const groups = new Map();
+    facultyLoadingPreview.forEach((item) => {
+      const facultyKey = String(item.facultyUserId || item.facultyId || item.facultyEmail || item.id);
+      if (!groups.has(facultyKey)) {
+        groups.set(facultyKey, { facultyKey, facultyName: item.facultyName || item.facultyEmail || "Assigned faculty", rows: [] });
+      }
+      groups.get(facultyKey).rows.push(item);
+    });
+    return [...groups.values()];
+  }, [facultyLoadingPreview]);
 
   useEffect(() => {
     const loadApprovedFaculty = async () => {
@@ -211,12 +183,20 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     loadApprovedFaculty();
   }, []);
 
-  const filteredFaculty = approvedFaculties.filter(
-    (faculty) => getFacultyDepartment(faculty) === selectedProgram
+  const programAliases = new Set([
+    normalizeText(selectedProgram),
+    ...assignmentOptions.sections.flatMap((section) => [
+      normalizeText(section.programCode),
+      normalizeText(section.department),
+    ]),
+  ]);
+  const filteredFaculty = approvedFaculties.filter((faculty) =>
+    programAliases.has(normalizeText(getFacultyDepartment(faculty)))
   );
 
   const filteredSections = sectionOptions.filter(
     (section) =>
+      section.periodMatchesActive &&
       section.program === selectedProgram &&
       section.yearLevel === selectedYearLevel
   );
@@ -226,10 +206,9 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
   );
 
   const selectedSection = filteredSections.find(
-    (section) => section.section === selectedSectionName
+    (section) => section.key === selectedSectionName
   );
 
-  const selectedSectionStudents = selectedSection?.students || [];
   const selectedDaysText = scheduleDay;
 
   const resetForm = () => {
@@ -245,7 +224,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     setSelectedFile(null);
   };
 
-  const handleDistributeSectionToFaculty = () => {
+  const handleDistributeSectionToFaculty = async () => {
     if (
       !selectedProgram ||
       !selectedFacultyId ||
@@ -255,45 +234,55 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       !units.trim() ||
       !semester.trim()
     ) {
-      alert("Please complete the required fields.");
+      showSystemNotification("Please complete the required fields.");
       return;
     }
 
     if (!selectedSection) {
-      alert("Selected section was not found.");
+      showSystemNotification("Selected section was not found.");
+      return;
+    }
+
+    if (!selectedSection.periodMatchesActive || normalizeSemesterCode(semester) !== selectedSection.semester) {
+      showSystemNotification(
+        `Section enrollment belongs to ${selectedSection.schoolYear} ${selectedSection.semester}. ` +
+        "Choose a section and semester in the active academic period."
+      );
       return;
     }
 
     if (!selectedFaculty) {
-      alert("Selected faculty was not found.");
+      showSystemNotification("Selected faculty was not found.");
       return;
     }
 
     if (selectedFile && !selectedFile.name.toLowerCase().endsWith(".csv")) {
-      alert("Please upload the section roster in CSV format.");
+      showSystemNotification("Please upload the section roster in CSV format.");
       return;
     }
 
-    const saveAssignment = (rosterStudents, rosterFileName = "Created section roster") => {
+    const saveAssignment = async () => {
       const alreadyExists = savedAssignments.some(
         (item) =>
           String(item.facultyId) === String(selectedFacultyId) &&
-          item.sectionName === selectedSectionName &&
+          item.academicSectionId === selectedSection.academicSectionId &&
           item.schoolYear === selectedSection.schoolYear &&
           normalizeText(item.semester) === normalizeText(semester) &&
           normalizeText(item.subjectCode) === normalizeText(subjectCode)
       );
 
       if (alreadyExists) {
-        alert("This faculty section distribution already exists.");
+        showSystemNotification("This faculty section distribution already exists.");
         return;
       }
 
       const newAssignment = {
-        id: Date.now(),
+        id: null,
         facultyId: selectedFacultyId,
+        facultyEmail: selectedFaculty.email,
         facultyName: getFacultyDisplayName(selectedFaculty),
         program: selectedProgram,
+        academicSectionId: selectedSection.academicSectionId,
         sectionName: selectedSection.section,
         yearLevel: selectedSection.yearLevel,
         subjectCode: subjectCode.trim(),
@@ -305,31 +294,40 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
         schoolYear: selectedSection.schoolYear,
         semester: semester.trim(),
         loadMode: "Manual Section Distribution",
-        rosterFileName,
-        rosterStudents,
+        rosterFileName: "Canonical enrollment roster",
+        rosterStudents: [],
         uploadedAt: new Date().toISOString(),
       };
 
-      const updatedAssignments = [...savedAssignments, newAssignment];
+      let serverResult;
+      try {
+        serverResult = await assignFacultyLoadToBackend(newAssignment);
+      } catch (error) {
+        showSystemNotification(error.message || "The server rejected this faculty assignment.");
+        return;
+      }
+      const savedAssignment = {
+        ...newAssignment,
+        id: serverResult.assignment?.id,
+        facultySectionId: serverResult.assignment?.id,
+        facultyAssignmentId: serverResult.assignment?.id,
+        assignmentCycleId: serverResult.assignment?.assignmentCycleId || String(serverResult.assignment?.id || ""),
+        academicSectionId: serverResult.assignment?.academicSectionId,
+      };
+      const updatedAssignments = [...savedAssignments, savedAssignment];
       setSavedAssignments(updatedAssignments);
       localStorage.setItem(
         "registrarAssignments",
         JSON.stringify(updatedAssignments)
       );
-      pushAssignmentsSharedState();
-      syncFacultyLoadToBackend(newAssignment);
-
-      alert("Section distributed to faculty successfully.");
+      await pushAssignmentsSharedState();
+      await loadAssignmentOptions([savedAssignment]);
+      showSystemNotification("Section distributed to faculty successfully.");
       resetForm();
     };
 
     if (!selectedFile) {
-      if (!selectedSectionStudents.length) {
-        alert("Selected section has no students to distribute.");
-        return;
-      }
-
-      saveAssignment(selectedSectionStudents);
+      await saveAssignment();
       return;
     }
 
@@ -339,31 +337,54 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       const text = event.target?.result;
 
       if (!text) {
-        alert("Unable to read the uploaded CSV file.");
+        showSystemNotification("Unable to read the uploaded CSV file.");
         return;
       }
 
       const parsedStudents = parseStudentIdSpreadsheet(text);
 
       if (!parsedStudents.length) {
-        alert(
+        showSystemNotification(
           "The section CSV must contain Student ID, Sex, Last Name, First Name, and Middle Initial columns with valid rows."
         );
         return;
       }
 
-      saveAssignment(parsedStudents, selectedFile.name);
+      saveAssignment();
     };
 
     reader.readAsText(selectedFile);
   };
 
-  const findSectionByName = (sectionName = "") =>
-    sectionOptions.find(
-      (section) =>
-        section.program === selectedProgram &&
-        section.section.toLowerCase() === sectionName.trim().toLowerCase()
-    );
+  const findBulkSectionsByName = (sectionName = "") => {
+    const requestedName = normalizeText(sectionName).replace(/\s+/g, "");
+    const programAliases = new Set([
+      selectedProgram,
+      assignmentOptions.program?.code,
+      assignmentOptions.program?.name,
+    ].filter(Boolean).map(normalizeText));
+    return assignmentOptions.sections.filter((section) => {
+      const belongsToProgram = [section.department, section.programCode]
+        .filter(Boolean)
+        .some((value) => programAliases.has(normalizeText(value)));
+      const canonicalName = normalizeText(`${section.programCode} ${section.section}`).replace(/\s+/g, "");
+      const shortName = normalizeText(section.section).replace(/\s+/g, "");
+      return belongsToProgram && (requestedName === canonicalName || requestedName === shortName);
+    });
+  };
+
+  const normalizeSemesterCode = (value = "") => {
+    const normalized = normalizeText(value).replace(/[_-]+/g, " ");
+    if (["first", "1", "1st", "first semester", "1st semester"].includes(normalized)) return "FIRST";
+    if (["second", "2", "2nd", "second semester", "2nd semester"].includes(normalized)) return "SECOND";
+    if (["midyear", "mid year", "summer"].includes(normalized)) return "MIDYEAR";
+    return "";
+  };
+
+  const formatYearLevel = (value) => {
+    const number = Number(value);
+    return `${number}${number === 1 ? "st" : number === 2 ? "nd" : number === 3 ? "rd" : "th"} Year`;
+  };
 
   const findFacultyForLoadingRow = (row = {}) => {
     const facultyId = getCsvRowValue(row, ["faculty id", "id", "faculty email", "email", "prof email"]);
@@ -382,7 +403,9 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     if (facultyId) {
       return (
         filteredFaculty.find(
-          (item) => normalizeText(getFacultyKey(item)) === normalizeText(facultyId)
+          (item) =>
+            normalizeText(getFacultyKey(item)) === normalizeText(facultyId) ||
+            normalizeText(item.email) === normalizeText(facultyId)
         ) || null
       );
     }
@@ -403,20 +426,26 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     const previewRows = [];
     const errors = [];
     const duplicateKeys = new Set();
-    const knownSections = filteredSections.map((section) => section.section).sort();
+    const knownSections = assignmentOptions.sections
+      .map((section) => `${section.programCode} ${section.section}`)
+      .sort();
     const hasFacultyIdentifierColumn = headers.some(h => ["faculty id", "id", "faculty email", "email", "prof email", "faculty name", "faculty", "name", "full name", "professor", "instructor", "teacher", "prof name", "prof"].includes(h));
     const hasSubjectCodeColumn = headers.some(h => ["subject code", "course code", "code", "course", "subj code", "subj"].includes(h));
-    const hasSectionColumn = headers.some(h => ["section", "section name", "class section", "sec", "section num"].includes(h));
+    const hasSectionColumn = headers.some(h => ["section", "section name", "section_name"].includes(h));
+    const hasSchoolYearColumn = headers.some(h => ["school year", "academic year", "schoolyear"].includes(h));
+    const hasSemesterColumn = headers.some(h => ["semester", "term"].includes(h));
 
     if (
       !hasFacultyIdentifierColumn ||
       !hasSubjectCodeColumn ||
-      !hasSectionColumn
+      !hasSectionColumn ||
+      !hasSchoolYearColumn ||
+      !hasSemesterColumn
     ) {
       return {
         previewRows,
         errors: [
-          "Missing required CSV headers. Please ensure columns exist for: Faculty (ID, Email, or Name), Subject Code, and Section.",
+          "Missing required CSV headers. Please ensure columns exist for: Faculty (ID, Email, or Name), Subject Code, Section, School Year, and Semester.",
         ],
         summary: {
           totalRows: rows.length,
@@ -442,8 +471,9 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       const facultyId = getCsvRowValue(row, ["faculty id", "id", "faculty email", "email", "prof email"]);
       const rowSubjectCode = getCsvRowValue(row, ["subject code", "course code", "code", "course", "subj code", "subj"]);
       const rowSubjectTitle = getCsvRowValue(row, ["subject title", "subject name", "subject", "descriptive title", "description"]) || rowSubjectCode;
-      const sectionName = getCsvRowValue(row, ["section", "section name", "class section", "sec", "section num"]);
-      const rowSemester = getCsvRowValue(row, ["semester", "term"]) || semester || "2nd Semester";
+      const rowSectionName = getCsvRowValue(row, ["section", "section name", "section_name"]);
+      const rowSchoolYear = getCsvRowValue(row, ["school year", "academic year", "schoolyear"]);
+      const rowSemester = getCsvRowValue(row, ["semester", "term"]);
       const rowUnits = getCsvRowValue(row, ["units", "credit", "credits"]) || "3";
       const rowDay = getCsvRowValue(row, ["day", "days"]);
       const rowTime = getCsvRowValue(row, ["time", "schedule", "sched"]);
@@ -451,14 +481,20 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       if (
         !(facultyId || facultyName) ||
         !rowSubjectCode ||
-        !sectionName
+        !rowSectionName ||
+        !rowSchoolYear ||
+        !rowSemester
       ) {
         errors.push(`Row ${rowNumber}: missing required loading fields.`);
         return;
       }
 
       const faculty = findFacultyForLoadingRow(row);
-      const section = findSectionByName(sectionName);
+      const namedSections = findBulkSectionsByName(rowSectionName);
+      const contextualSections = selectedAcademicSectionId
+        ? namedSections.filter((item) => Number(item.id) === Number(selectedAcademicSectionId))
+        : namedSections;
+      const section = contextualSections.length === 1 ? contextualSections[0] : null;
 
       if (!faculty) {
         const facultyLabel = facultyId || facultyName;
@@ -468,23 +504,75 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
         return;
       }
 
+      if (!section && selectedAcademicSectionId && namedSections.length) {
+        errors.push(`Row ${rowNumber}: Section "${rowSectionName}" does not match the section selected in Academic Assignment.`);
+        return;
+      }
+
+      if (!section && contextualSections.length > 1) {
+        errors.push(`Row ${rowNumber}: Section "${rowSectionName}" is ambiguous. Use its full displayed name, for example BSIT 1-1.`);
+        return;
+      }
+
       if (!section) {
         const availableSectionText = knownSections.length
           ? ` Available sections: ${knownSections.slice(0, 8).join(", ")}${
               knownSections.length > 8 ? ", ..." : ""
             }.`
-          : " No sections are currently available in this department/year.";
+          : " No sections are currently available in this academic program.";
         errors.push(
-          `Row ${rowNumber}: section "${sectionName}" does not exist in the system.${availableSectionText}`
+          `Row ${rowNumber}: Section "${rowSectionName}" does not exist in the selected program.${availableSectionText}`
         );
         return;
       }
 
+      const semesterCode = normalizeSemesterCode(rowSemester);
+      if (!semesterCode) {
+        errors.push(`Row ${rowNumber}: semester must be First, Second, or Midyear.`);
+        return;
+      }
+
+      if (!/^\d{4}-\d{4}$/.test(rowSchoolYear)) {
+        errors.push(`Row ${rowNumber}: school year must use YYYY-YYYY.`);
+        return;
+      }
+
+      if (!activePeriod || rowSchoolYear !== activePeriod.schoolYear || semesterCode !== activePeriod.semester) {
+        errors.push(`Row ${rowNumber}: assignment period does not match the active academic period.`);
+        return;
+      }
+      const conflictingEnrollment = (assignmentOptions.enrollmentPeriods || []).find(
+        (period) => String(period.academicSectionId) === String(section.id) &&
+          (period.schoolYear !== activePeriod.schoolYear || period.semester !== activePeriod.semester)
+      );
+      if (conflictingEnrollment) {
+        errors.push(
+          `Row ${rowNumber}: section enrollment belongs to ${conflictingEnrollment.schoolYear} ` +
+          `${conflictingEnrollment.semester}; active period is ${activePeriod.schoolYear} ${activePeriod.semester}.`
+        );
+        return;
+      }
+
+      const subject = assignmentOptions.subjects.find(
+        (item) =>
+          normalizeText(item.subjectCode) === normalizeText(rowSubjectCode) &&
+          Number(item.yearLevel) === Number(section.yearLevel) &&
+          normalizeSemesterCode(item.semester) === semesterCode
+      );
+      if (!subject) {
+        errors.push(`Row ${rowNumber}: subject "${rowSubjectCode}" is not in the published curriculum for this section and semester.`);
+        return;
+      }
+
+      const canonicalSectionName = `${section.programCode} ${section.section}`;
+
       const duplicateKey = buildFacultyLoadingKey({
-        facultyId: getFacultyKey(faculty),
-        sectionName: section.section,
-        schoolYear: section.schoolYear,
-        semester: rowSemester,
+        facultyUserId: getFacultyKey(faculty),
+        facultyEmail: faculty.email,
+        academicSectionId: section.id,
+        sectionName: canonicalSectionName,
+        schoolYear: rowSchoolYear,
+        semester: semesterCode,
         subjectCode: rowSubjectCode,
       });
       const existingAssignment = savedAssignments.find(
@@ -498,22 +586,25 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
 
       duplicateKeys.add(duplicateKey);
       previewRows.push({
-        id: `${rowNumber}-${getFacultyKey(faculty)}-${section.section}-${rowSubjectCode}`,
+        id: `${rowNumber}-${getFacultyKey(faculty)}-${section.id}-${rowSubjectCode}`,
         facultyId: getFacultyKey(faculty),
+        facultyUserId: Number(getFacultyKey(faculty)),
+        facultyEmail: faculty.email,
         facultyName: getFacultyDisplayName(faculty),
         program: selectedProgram,
-        sectionName: section.section,
-        yearLevel: section.yearLevel,
+        sectionName: canonicalSectionName,
+        academicSectionId: section.id,
+        yearLevel: formatYearLevel(section.yearLevel),
         subjectCode: rowSubjectCode.trim(),
-        subjectTitle: rowSubjectTitle.trim(),
+        subjectTitle: subject.subjectTitle || rowSubjectTitle.trim(),
         units: rowUnits.trim(),
         schedule: rowTime.trim(),
         day: rowDay.trim(),
-        schoolYear: section.schoolYear,
-        semester: rowSemester.trim(),
+        schoolYear: rowSchoolYear.trim(),
+        semester: semesterCode,
         loadMode: "Faculty Loading",
         rosterFileName: "Created section roster",
-        rosterStudents: section.students || [],
+        rosterStudents: [],
         existingAssignmentId: existingAssignment?.id || null,
       });
     });
@@ -530,11 +621,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
   };
 
   const handleDownloadFacultyLoadingTemplate = () => {
-    const template =
-      "Faculty Name,Subject Title,Subject Code,Section,Units,Semester,Day,Time\n" +
-      "Juan Dela Cruz,Introduction to Computing,IT 101,BSIT 1-1,3,2nd Semester,Monday,7:00 AM - 9:00 AM\n" +
-      "Maria Santos,Computer Programming 1,IT 102,BSIT 1-2,3,2nd Semester,Tuesday,10:00 AM - 12:00 PM";
-    const blob = new Blob([template], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob([FACULTY_LOADING_CSV_TEMPLATE], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
 
@@ -548,17 +635,17 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
 
   const handleImportFacultyLoading = () => {
     if (!selectedProgram) {
-      alert("No department selected for faculty loading.");
+      showSystemNotification("No department selected for faculty loading.");
       return;
     }
 
     if (!facultyLoadingFile) {
-      alert("Please choose a faculty loading CSV file.");
+      showSystemNotification("Please choose a faculty loading CSV file.");
       return;
     }
 
     if (!facultyLoadingFile.name.toLowerCase().endsWith(".csv")) {
-      alert("Please upload a CSV file.");
+      showSystemNotification("Please upload a CSV file.");
       return;
     }
 
@@ -575,9 +662,10 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       setFacultyLoadingPreview(previewRows);
       setFacultyLoadingErrors(errors);
       setFacultyLoadingSummary(summary);
+      setFacultyLoadingPreviewOpen(true);
 
       if (!previewRows.length) {
-        alert(
+        showSystemNotification(
           `No valid faculty loading rows found.${
             errors.length ? `\n\n${errors.slice(0, 5).join("\n")}` : ""
           }`
@@ -586,7 +674,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
       }
 
       if (errors.length) {
-        alert(
+        showSystemNotification(
           `Faculty loading preview ready.\nAccepted: ${summary.acceptedRows}\nRejected: ${summary.rejectedRows}\n\nFirst issues:\n${errors
             .slice(0, 5)
             .join("\n")}`
@@ -597,51 +685,109 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     reader.readAsText(facultyLoadingFile);
   };
 
-  const handleConfirmFacultyLoading = () => {
-    if (!facultyLoadingPreview.length) {
-      alert("No faculty loading preview to distribute.");
+  const handleConfirmFacultyLoading = async () => {
+    if (!facultyLoadingPreview.length || isBulkSaving) {
+      showSystemNotification("No faculty loading preview to distribute.");
       return;
     }
+    setIsBulkSaving(true);
+    try {
+      const response = await bulkAssignFacultyLoads(facultyLoadingPreview, { selectedAcademicSectionId });
+      const resultByClientId = new Map(
+        (response.results || []).map((result) => [String(result.clientId), result])
+      );
+      const importedAssignments = [];
+      const failedAssignments = [];
 
-    const timestamp = Date.now();
-    const importedAssignments = facultyLoadingPreview.map((item, index) => ({
-      ...item,
-      id: item.existingAssignmentId || timestamp + index,
-      uploadedAt: new Date().toISOString(),
-    }));
-    const assignmentMap = new Map(
-      savedAssignments.map((item) => [buildFacultyLoadingKey(item), item])
-    );
+      facultyLoadingPreview.forEach((item) => {
+        const result = resultByClientId.get(String(item.id));
+        if (!result?.success || !result.assignment) {
+          failedAssignments.push({
+            ...item,
+            error: result?.error || "The backend did not return a result for this assignment.",
+          });
+          return;
+        }
 
-    importedAssignments.forEach((item) => {
-      assignmentMap.set(buildFacultyLoadingKey(item), item);
-    });
+        importedAssignments.push({
+          ...item,
+          id: result.assignment.id,
+          facultySectionId: result.assignment.id,
+          facultyAssignmentId: result.assignment.id,
+          assignmentCycleId: result.assignment.assignmentCycleId,
+          facultyId: result.assignment.facultyUserId,
+          facultyUserId: result.assignment.facultyUserId,
+          facultyEmail: result.assignment.facultyEmail,
+          facultyName: result.assignment.facultyName,
+          program: result.assignment.program,
+          sectionName: result.assignment.section,
+          yearLevel: formatYearLevel(result.assignment.yearLevel),
+          subjectCode: result.assignment.subjectCode,
+          academicSectionId: result.assignment.academicSectionId,
+          schoolYear: result.assignment.schoolYear,
+          semester: result.assignment.semester,
+          rosterStudents: [],
+          uploadedAt: new Date().toISOString(),
+        });
+      });
 
-    const updatedAssignments = Array.from(assignmentMap.values());
+      if (importedAssignments.length) {
+        const assignmentMap = new Map(
+          savedAssignments.map((item) => [buildFacultyLoadingKey(item), item])
+        );
+        importedAssignments.forEach((item) => assignmentMap.set(buildFacultyLoadingKey(item), item));
+        const updatedAssignments = Array.from(assignmentMap.values());
+        setSavedAssignments(updatedAssignments);
+        localStorage.setItem("registrarAssignments", JSON.stringify(updatedAssignments));
+        await pushAssignmentsSharedState();
+        await loadAssignmentOptions(importedAssignments);
+      }
 
-    setSavedAssignments(updatedAssignments);
-    localStorage.setItem("registrarAssignments", JSON.stringify(updatedAssignments));
-    pushAssignmentsSharedState();
-    importedAssignments.forEach(syncFacultyLoadToBackend);
-    setFacultyLoadingFile(null);
-    setFacultyLoadingPreview([]);
-    setFacultyLoadingErrors([]);
-    setFacultyLoadingSummary(null);
-    alert(
-      `${importedAssignments.length} faculty loading assignment${
-        importedAssignments.length === 1 ? "" : "s"
-      } distributed.`
-    );
+      setFacultyLoadingPreview(failedAssignments);
+      setFacultyLoadingErrors(failedAssignments.map((item) => `${item.facultyName} / ${item.subjectCode} / ${item.sectionName}: ${item.error}`));
+      setFacultyLoadingSummary({
+        totalRows: facultyLoadingPreview.length,
+        acceptedRows: importedAssignments.length,
+        rejectedRows: failedAssignments.length,
+      });
+      if (!failedAssignments.length) {
+        setFacultyLoadingFile(null);
+        setFacultyLoadingPreviewOpen(false);
+      }
+      showSystemNotification(
+        failedAssignments.length
+          ? `${importedAssignments.length} saved; ${failedAssignments.length} remain pending. Review each row's backend error.`
+          : `${importedAssignments.length} faculty loading assignment${importedAssignments.length === 1 ? "" : "s"} distributed.`
+      );
+    } catch (error) {
+      setFacultyLoadingPreview((items) => items.map((item) => ({ ...item, error: error.message || "Bulk assignment failed." })));
+      setFacultyLoadingErrors([error.message || "Bulk assignment failed."]);
+      showSystemNotification(error.message || "Bulk assignment failed.");
+    } finally {
+      setIsBulkSaving(false);
+    }
   };
 
-  const handleDeleteAssignment = (id) => {
+  const handleDeleteAssignment = async (item) => {
+    if (!item.id || !item.facultyEmail) {
+      showSystemNotification("This legacy browser-only record has no authoritative server assignment ID and cannot be removed here.");
+      return;
+    }
+    try {
+      await unassignFacultySection(item.facultyEmail, item.id);
+    } catch (error) {
+      showSystemNotification(error.message || "The assignment could not be removed.");
+      return;
+    }
+    const id = item.id;
     const updatedAssignments = savedAssignments.filter((item) => item.id !== id);
     setSavedAssignments(updatedAssignments);
     localStorage.setItem(
       "registrarAssignments",
       JSON.stringify(updatedAssignments)
     );
-    pushAssignmentsSharedState();
+    await pushAssignmentsSharedState();
+    await loadAssignmentOptions();
   };
 
   const assignmentRows = useMemo(
@@ -659,13 +805,20 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
     (assignment) => assignment.loadMode !== "Faculty Loading"
   ).length;
 
-  return (
-    <div className="space-y-6">
+  const clearFacultyLoadingPreview = () => {
+    setFacultyLoadingPreview([]);
+    setFacultyLoadingErrors([]);
+    setFacultyLoadingSummary(null);
+    setFacultyLoadingPreviewOpen(false);
+  };
 
-      <section hidden={assignmentMode === "manual"} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+  return (
+    <div className="space-y-8" data-testid="faculty-loading-workspace">
+
+      <section hidden={assignmentMode === "manual"} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-6" data-testid="faculty-loading-upload-panel">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h3 className="text-xl font-bold text-[#003366]">Faculty Loading</h3>
+            <h3 className="text-xl font-bold text-[#003366] dark:text-sky-300">Faculty Loading</h3>
             
           </div>
           <button
@@ -680,25 +833,27 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
         <div className="mt-8 grid grid-cols-1 gap-4 xl:grid-cols-[1fr_auto] xl:items-end">
           <div>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-              <label className="shrink-0 text-base font-semibold text-slate-700">
+              <label className="shrink-0 text-base font-semibold text-slate-700 dark:text-slate-200">
                 Upload Loading CSV
               </label>
               <input
                 type="file"
+                aria-label="Faculty loading CSV"
                 accept=".csv"
                 onChange={(event) => {
                   setFacultyLoadingFile(event.target.files?.[0] || null);
                   setFacultyLoadingPreview([]);
                   setFacultyLoadingErrors([]);
                   setFacultyLoadingSummary(null);
+                  setFacultyLoadingPreviewOpen(false);
                 }}
-                className="block w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-500 file:mr-10 file:border-0 file:border-r file:border-solid file:border-slate-300 file:bg-transparent file:pr-4 file:text-sm file:font-semibold file:text-slate-500"
+                className="block w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-500 file:mr-10 file:border-0 file:border-r file:border-solid file:border-slate-300 file:bg-transparent file:pr-4 file:text-sm file:font-semibold file:text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:file:border-slate-600 dark:file:text-slate-300"
               />
             </div>
             <p className="mt-2 text-sm text-slate-500">
               {facultyLoadingFile
                 ? `Selected file: ${facultyLoadingFile.name}`
-                : "Required columns: Faculty ID or Faculty Name, plus Subject Title, Subject Code, and Section. Optional: Units, Semester, Day, Time."}
+                : "Required columns: Faculty ID, Email, or Name; Subject Code; Section; School Year; and Semester. Optional: Subject Title, Units, Day, and Time."}
             </p>
           </div>
 
@@ -711,16 +866,20 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
           </button>
         </div>
 
-        {(facultyLoadingPreview.length > 0 || facultyLoadingErrors.length > 0) ? (
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <Modal
+          isOpen={facultyLoadingPreviewOpen}
+          onClose={() => { if (!isBulkSaving) setFacultyLoadingPreviewOpen(false); }}
+          title="Faculty Loading Preview"
+          closeOnBackdrop={!isBulkSaving}
+          closeOnEscape={!isBulkSaving}
+          panelClassName="flex max-h-[90vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6"
+          bodyClassName="min-h-0 flex-1 overflow-y-auto pr-1"
+        >
+          <div className="space-y-4 text-slate-700 dark:text-slate-200">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h4 className="text-lg font-bold text-[#003366]">
-                  Faculty Loading Preview
-                </h4>
-                
                 {facultyLoadingSummary ? (
-                  <p className="mt-2 text-sm font-medium text-slate-700">
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
                     Processed {facultyLoadingSummary.totalRows} row
                     {facultyLoadingSummary.totalRows === 1 ? "" : "s"}:{" "}
                     {facultyLoadingSummary.acceptedRows} accepted,{" "}
@@ -731,22 +890,19 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setFacultyLoadingPreview([]);
-                    setFacultyLoadingErrors([]);
-                    setFacultyLoadingSummary(null);
-                  }}
-                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  onClick={clearFacultyLoadingPreview}
+                  disabled={isBulkSaving || (!facultyLoadingPreview.length && !facultyLoadingErrors.length)}
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                 >
-                  Clear Preview
+                  Clear Selection
                 </button>
                 <button
                   type="button"
                   onClick={handleConfirmFacultyLoading}
-                  disabled={!facultyLoadingPreview.length}
+                  disabled={!facultyLoadingPreview.length || isBulkSaving}
                   className="rounded-xl bg-[#003366] px-4 py-2 text-sm font-semibold text-white hover:bg-[#00264d] disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
-                  Assign Sections
+                  {isBulkSaving ? "Assigning..." : "Save Assignments"}
                 </button>
               </div>
             </div>
@@ -769,8 +925,8 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
               </div>
             ) : null}
 
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full bg-white">
+            <div className="max-h-[58vh] overflow-auto rounded-xl border border-slate-200 dark:border-slate-700" data-testid="faculty-loading-preview-scroll-area">
+              <table className="min-w-[920px] bg-white dark:bg-slate-900">
                 <thead>
                   <tr className="bg-[#003366] text-white">
                     <th className="px-4 py-3 text-left text-sm">Faculty</th>
@@ -779,13 +935,14 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
                     <th className="px-4 py-3 text-left text-sm">Units</th>
                     <th className="px-4 py-3 text-left text-sm">Semester</th>
                     <th className="px-4 py-3 text-left text-sm">Schedule</th>
+                    <th className="px-4 py-3 text-left text-sm">Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {facultyLoadingPreview.length ? (
-                    facultyLoadingPreview.map((item) => (
-                      <tr key={item.id} className="border-b">
-                        <td className="px-4 py-3">{item.facultyName}</td>
+                  {facultyLoadingGroups.length ? (
+                    facultyLoadingGroups.flatMap((facultyGroup) => facultyGroup.rows.map((item, rowIndex) => (
+                      <tr key={item.id} data-faculty-group={facultyGroup.facultyKey} className="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                        {rowIndex === 0 ? <td rowSpan={facultyGroup.rows.length} className="border-r border-slate-200 bg-slate-50 px-4 py-3 align-top font-bold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"><span className="block">{facultyGroup.facultyName}</span><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">{facultyGroup.rows.length} section assignment{facultyGroup.rows.length === 1 ? "" : "s"}</span></td> : null}
                         <td className="px-4 py-3">
                           {item.subjectCode} - {item.subjectTitle}
                         </td>
@@ -793,14 +950,20 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
                         <td className="px-4 py-3">{item.units || "--"}</td>
                         <td className="px-4 py-3">{item.semester || "--"}</td>
                         <td className="px-4 py-3">
-                          {[item.day, item.schedule].filter(Boolean).join(" | ") ||
-                            "--"}
+                          {formatFacultySchedule(item.schedule, item.day)}
+                        </td>
+                        <td className="px-4 py-3">
+                          {item.error ? (
+                            <span className="font-medium text-red-700" role="alert">Pending — {item.error}</span>
+                          ) : (
+                            <span className="font-medium text-amber-700">Pending</span>
+                          )}
                         </td>
                       </tr>
-                    ))
+                    )))
                   ) : (
                     <tr>
-                      <td colSpan="6" className="py-6 text-center text-slate-500">
+                      <td colSpan="7" className="py-6 text-center text-slate-500">
                         No valid rows to preview.
                       </td>
                     </tr>
@@ -809,7 +972,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
               </table>
             </div>
           </div>
-        ) : null}
+        </Modal>
       </section>
 
       <div hidden={assignmentMode === "bulk"} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -872,11 +1035,8 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
               <option value="">Choose section</option>
               {filteredSections.length ? (
                 filteredSections.map((section, index) => (
-                  <option
-                    key={`${section.section}-${section.schoolYear}-${index}`}
-                    value={section.section}
-                  >
-                    {section.section} - {section.yearLevel}
+                  <option key={`${section.key}-${index}`} value={section.key}>
+                    {section.section} - {section.yearLevel} - {section.schoolYear} {section.semester}
                   </option>
                 ))
               ) : (
@@ -996,28 +1156,28 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
         </button>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-6" data-testid="distributed-faculty-loading-panel">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h3 className="text-lg font-bold text-[#003366]">
+            <h3 className="text-lg font-bold text-[#003366] dark:text-sky-300">
               Distributed Faculty Loading Records
             </h3>
             
           </div>
           <div className="flex flex-wrap gap-2 text-sm font-semibold">
-            <span className="rounded-full bg-blue-50 px-3 py-1 text-[#003366]">
+            <span className="rounded-full bg-blue-50 px-3 py-1 text-[#003366] dark:bg-sky-950/50 dark:text-sky-300">
               Faculty Loading: {automaticLoadCount}
             </span>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
               Manual Distribution: {manualLoadCount}
             </span>
           </div>
         </div>
 
-        <div className="mt-4 overflow-x-auto">
-          <table className="min-w-full">
-            <thead>
-              <tr className="bg-[#003366] text-white">
+        <div className="mt-5 max-w-full overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+          <table className="faculty-loading-records-table min-w-[1180px]" data-testid="distributed-faculty-loading-table">
+            <thead className="sticky top-0 z-10">
+              <tr className="faculty-loading-records-header bg-[#003366] text-white dark:bg-sky-900" data-testid="distributed-faculty-loading-header">
                 <th className="px-4 py-3 text-left text-sm">Mode</th>
                 <th className="px-4 py-3 text-left text-sm">Faculty</th>
                 <th className="px-4 py-3 text-left text-sm">Section</th>
@@ -1036,7 +1196,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
             <tbody>
               {assignmentRows.length > 0 ? (
                 assignmentRows.map((item) => (
-                  <tr key={item.id} className="border-b">
+                  <tr key={item.id} className="border-b border-slate-200 dark:border-slate-700 dark:text-slate-200">
                     <td className="px-4 py-3">
                       <span
                         className={`rounded-full px-3 py-1 text-xs font-semibold ${
@@ -1062,11 +1222,11 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all" }) 
                     <td className="px-4 py-3">{item.units || "--"}</td>
                     <td className="px-4 py-3">{item.semester || "--"}</td>
                     <td className="px-4 py-3">{item.date || "--"}</td>
-                    <td className="px-4 py-3">{item.schedule || "--"}</td>
+                    <td className="px-4 py-3">{formatFacultySchedule(item.schedule, item.day)}</td>
                     <td className="px-4 py-3">{item.day || "--"}</td>
                     <td className="px-4 py-3">
                       <button
-                        onClick={() => handleDeleteAssignment(item.id)}
+                        onClick={() => handleDeleteAssignment(item)}
                         className="rounded-lg border border-red-200 px-3 py-1 text-sm font-medium text-red-600 hover:bg-red-50"
                       >
                         Remove

@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Client_app.Services;
+using BlockGo.Services;
 using Npgsql;
 using System;
 using System.Collections.Generic;
@@ -21,38 +23,55 @@ namespace Client_app.Controllers
         }
 
         [HttpGet("overview")]
-        public async Task<IActionResult> GetSystemOverview()
+        public async Task<IActionResult> GetSystemOverview(
+            [FromQuery] string? schoolYear,
+            [FromQuery] string? semester,
+            [FromQuery] string? term,
+            [FromQuery] string? department,
+            [FromQuery] string? program,
+            CancellationToken cancellationToken)
         {
             try
             {
                 using var conn = new NpgsqlConnection(_connectionString);
-                await conn.OpenAsync();
+                await conn.OpenAsync(cancellationToken);
+                var configured = await GradeEncodingPeriodService.GetConfiguredAsync(conn, cancellationToken);
+                var activePeriod = await EncodingPeriodSettingService.ResolveActiveEnrollmentPeriodAsync(
+                    conn, cancellationToken: cancellationToken);
+                if (activePeriod is null)
+                    return Conflict(new { status = "Error", message = "No authoritative active academic period is configured." });
 
-                var deptStats = new List<object>();
+                var normalizedYear = string.IsNullOrWhiteSpace(schoolYear)
+                    ? activePeriod.Value.SchoolYear
+                    : GradeAcademicPeriod.SchoolYear(schoolYear);
+                var normalizedSemester = string.IsNullOrWhiteSpace(semester)
+                    ? activePeriod.Value.Semester
+                    : GradeAcademicPeriod.Semester(semester);
+                if (normalizedYear is null || normalizedSemester is null)
+                    return BadRequest(new { status = "Error", message = "A valid school year and semester are required." });
 
-                using var cmd = new NpgsqlCommand(@"
-                    SELECT 
-                        fp.department,
-                        COUNT(DISTINCT fp.user_id) as TotalFaculty,
-                        (SELECT COUNT(*) FROM pending_grade_records pgr WHERE pgr.course = fp.department AND pgr.status IN ('Finalized', 'DepartmentApproved', 'Issued')) as EncodedGrades,
-                        (SELECT COUNT(*) FROM pending_grade_records pgr WHERE pgr.course = fp.department AND pgr.status = 'DepartmentApproved') as PendingApproval
-                    FROM FacultyProfiles fp
-                    WHERE fp.department IS NOT NULL AND fp.department != 'Unassigned'
-                    GROUP BY fp.department", conn);
-                
-                using var reader = await cmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
+                var requestedTerm = term?.Trim().ToLowerInvariant();
+                if (!string.IsNullOrWhiteSpace(requestedTerm) && requestedTerm is not ("midterm" or "midterms" or "final" or "finals"))
+                    return BadRequest(new { status = "Error", message = "Term must be midterm or finals." });
+                var normalizedTerm = string.IsNullOrWhiteSpace(requestedTerm)
+                    ? configured.Term
+                    : GradeAcademicTerm.Normalize(requestedTerm);
+                if (normalizedTerm is not (GradeAcademicTerm.Midterm or GradeAcademicTerm.Finals))
+                    return BadRequest(new { status = "Error", message = "Term must be midterm or finals." });
+
+                var counts = await RegistrarWorkflowOverviewService.GetAsync(
+                    conn, normalizedYear, normalizedSemester, normalizedTerm,
+                    department, program, cancellationToken);
+                return Ok(new
                 {
-                    deptStats.Add(new
-                    {
-                        Department = reader.GetString(0),
-                        TotalFaculty = reader.GetInt64(1),
-                        EncodedGrades = reader.GetInt64(2),
-                        PendingApproval = reader.GetInt64(3)
-                    });
-                }
-
-                return Ok(deptStats);
+                    status = "Success",
+                    filters = new { schoolYear = normalizedYear, semester = normalizedSemester, term = normalizedTerm, department, program },
+                    counts
+                });
+            }
+            catch (GradeEncodingPeriodException ex)
+            {
+                return Conflict(new { status = "Error", message = ex.Message });
             }
             catch (Exception ex)
             {

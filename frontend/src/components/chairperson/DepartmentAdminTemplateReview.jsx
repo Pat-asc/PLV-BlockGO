@@ -1,6 +1,9 @@
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useState, useEffect, useCallback } from 'react';
 import plvlogo from '../assets/plvlogo.png';
 import { fetchDepartmentTemplates, reviewTemplate } from '../../services/api';
+import BackButton from '../shared/BackButton';
 
 const DepartmentAdminTemplateReview = ({ adminData, onLogout }) => {
   const [templates, setTemplates] = useState([]);
@@ -36,19 +39,19 @@ const DepartmentAdminTemplateReview = ({ adminData, onLogout }) => {
   }, [fetchTemplates]);
 
   const handleReview = async (id, status) => {
-    if (!window.confirm(`Are you sure you want to ${status.toLowerCase()} this grading template?`)) return;
+    if (!await requestSystemConfirmation(`Are you sure you want to ${status.toLowerCase()} this grading template?`)) return;
     
     try {
       const data = await reviewTemplate(id, status);
       if (data.status === "Success") {
-        alert(`Template successfully ${status.toLowerCase()}.`);
+        showSystemNotification(`Template successfully ${status.toLowerCase()}.`);
         setActiveTemplate(null);
         fetchTemplates(); // Refresh the list
       } else {
-        alert(`Error: ${data.message}`);
+        showSystemNotification(`Error: ${data.message}`);
       }
     } catch (error) {
-      alert(`Network error: ${error.message}`);
+      showSystemNotification(`Network error: ${error.message}`);
     }
   };
 
@@ -187,7 +190,7 @@ const DepartmentAdminTemplateReview = ({ adminData, onLogout }) => {
       ) : (
         /* ── TEMPLATE DETAILS VIEW ── */
         <div className="grading-view">
-          <button className="back-btn" onClick={() => setActiveTemplate(null)}>← Back to Templates</button>
+          <BackButton onClick={() => setActiveTemplate(null)} label="Back to Templates" className="mb-4" />
 
           <div className="table-container">
             <div className="table-header-custom">

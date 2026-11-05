@@ -1,0 +1,244 @@
+import React, { useState } from 'react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import FacultyStatusTable from '../faculty/FacultyStatusTable';
+import SectionReviewPanel from './SectionReviewPanel';
+
+const submittedSection = {
+  reviewKey: 'faculty|bsit-1-1|it-101|midterm',
+  facultyId: 'faculty@plv.edu.ph',
+  facultyName: 'Dennis Andes',
+  sectionName: 'BSIT 1-1',
+  subjectCode: 'IT 101',
+  subjectTitle: 'Introduction to Computing',
+  schoolYear: '2026-2027',
+  semester: 'First Semester',
+  term: 'midterm',
+  reviewStatus: 'submitted',
+  totalStudents: 2,
+  encodedCount: 2,
+  progress: 100,
+  students: [
+    { studentId: '26-0002', fullName: 'Second Student' },
+    { studentId: '26-0001', fullName: 'First Student' },
+  ],
+  grades: {
+    '26-0001': { recordId: 'grade-1', midterm: '91.50', standing: 'active', integrityStatus: 'MATCH' },
+    '26-0002': { recordId: 'grade-2', midterm: '84', standing: 'active', integrityStatus: 'MISMATCH' },
+  },
+  referenceGrades: {
+    '26-0001': { grade: '91.50' },
+    '26-0002': { grade: '82' },
+  },
+};
+
+function ReviewHarness({ viewMode = 'forReview', reviewStatus = 'submitted' }) {
+  const [selected, setSelected] = useState(null);
+  const workflowSection = { ...submittedSection, reviewStatus };
+  return <>
+    <FacultyStatusTable rows={[workflowSection]} viewMode={viewMode} selectedReviewKey={selected?.reviewKey} onSelectSection={setSelected} />
+    <SectionReviewPanel selectedSection={selected} sourceView={viewMode} activeTerm="midterm" onBack={() => setSelected(null)} onClose={() => setSelected(null)} onSendBack={jest.fn()} onApprove={jest.fn()} onSendToRegistrar={jest.fn()} />
+  </>;
+}
+
+test('a workload action opens one centered modal instead of an inline collapsible review', () => {
+  render(<ReviewHarness />);
+  expect(screen.queryByRole('dialog', { name: 'Review Encoded Grades' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Review Encoded' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Review Section' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Review Grades' })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'View Sections' }));
+  const facultySections = screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ });
+  fireEvent.click(within(facultySections).getByRole('button', { name: 'Review Grades' }));
+
+  expect(screen.getByRole('dialog', { name: 'Review Encoded Grades' })).toHaveClass('max-w-6xl', 'max-h-[92vh]', 'dark:bg-slate-900');
+  expect(screen.getByRole('button', { name: 'Back to Sections' })).toHaveClass('dark:text-slate-300');
+  expect(screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Back to Sections' }));
+  expect(screen.queryByRole('dialog', { name: 'Review Encoded Grades' })).not.toBeInTheDocument();
+  expect(within(screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ })).getByText('IT 101')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Review Grades' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Close Review Encoded Grades' }));
+  expect(screen.queryByRole('dialog', { name: 'Review Encoded Grades' })).not.toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ })).toBeInTheDocument();
+});
+
+test.each([
+  ['forReview', 'submitted', 'Review Grades', 'Grade Review'],
+  ['returned', 'returned', 'View Review', 'Returned Grades'],
+  ['approved', 'approved', 'View Review', 'Approved Grades'],
+  ['forwarded', 'forwarded', 'View Details', 'Finalized Grades'],
+])('%s detail Back returns to the same Faculty section list and preserves the workflow', (viewMode, reviewStatus, action, heading) => {
+  render(<ReviewHarness viewMode={viewMode} reviewStatus={reviewStatus} />);
+  fireEvent.click(screen.getByRole('button', { name: 'View Sections' }));
+  const facultySections = screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ });
+  fireEvent.click(within(facultySections).getByRole('button', { name: action }));
+
+  expect(screen.getByTestId('section-review-modal-content')).toHaveAttribute('data-source-view', viewMode);
+  fireEvent.click(screen.getByRole('button', { name: 'Back to Sections' }));
+
+  expect(screen.queryByRole('dialog', { name: 'Review Encoded Grades' })).not.toBeInTheDocument();
+  const restoredSections = screen.getByRole('dialog', { name: /Dennis Andes.*Encoded Sections/ });
+  expect(within(restoredSections).getByRole('button', { name: action })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument();
+});
+
+test('the modal shows metadata, Student-ID-aligned tables, mismatch count, and internal scrolling', () => {
+  render(<SectionReviewPanel selectedSection={submittedSection} sourceView="forReview" activeTerm="midterm" onClose={jest.fn()} onSendBack={jest.fn()} onApprove={jest.fn()} />);
+
+  expect(screen.getByTitle('Dennis Andes')).toBeInTheDocument();
+  expect(screen.getByTitle('BSIT 1-1')).toBeInTheDocument();
+  expect(screen.getByTitle('IT 101 — Introduction to Computing')).toBeInTheDocument();
+  expect(screen.getByTitle('Midterm')).toBeInTheDocument();
+  expect(screen.getByText('1 Difference Detected')).toBeInTheDocument();
+  const tables = screen.getAllByRole('table');
+  expect(within(tables[0]).getAllByRole('row')[1]).toHaveTextContent('26-0001');
+  expect(within(tables[1]).getAllByRole('row')[1]).toHaveTextContent('26-0001');
+  expect(within(tables[0]).getAllByRole('row')[2]).toHaveAttribute('data-mismatch', 'true');
+  expect(within(tables[1]).getAllByRole('row')[2]).toHaveAttribute('data-mismatch', 'true');
+  expect(screen.getByTestId('grade-comparison-grid')).toHaveClass('lg:grid-cols-2');
+  expect(screen.getByTestId('review-scroll-region')).toHaveClass('overflow-x-hidden', 'overflow-y-auto');
+  expect(screen.getByTestId('chairperson-submission-scroll')).toHaveClass('overflow-x-auto', 'overflow-y-hidden');
+  expect(screen.getByTestId('chairperson-reference-scroll')).toHaveClass('overflow-x-auto', 'overflow-y-hidden');
+  expect(screen.getByTestId('review-modal-footer')).not.toBe(screen.getByTestId('review-scroll-region'));
+});
+
+test('return remarks and confirmation stay inside the modal and duplicate submission is prevented', async () => {
+  let resolveReturn;
+  const onSendBack = jest.fn(() => new Promise((resolve) => { resolveReturn = resolve; }));
+  render(<SectionReviewPanel selectedSection={submittedSection} activeTerm="midterm" onClose={jest.fn()} onSendBack={onSendBack} onApprove={jest.fn()} />);
+
+  const returnButton = screen.getByRole('button', { name: 'Return for Correction' });
+  expect(returnButton).toBeDisabled();
+  const remarks = screen.getByRole('textbox', { name: 'Correction remarks' });
+  remarks.focus();
+  fireEvent.change(remarks, { target: { value: 'Please correct the encoded midterm grade before resubmitting.' } });
+  expect(remarks).toHaveFocus();
+  expect(screen.getByRole('dialog', { name: 'Review Encoded Grades' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+  fireEvent.click(returnButton);
+  const confirmation = screen.getByRole('dialog', { name: 'Return Grades to Faculty' });
+  const confirm = within(confirmation).getByRole('button', { name: 'Confirm Return' });
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+  expect(onSendBack).toHaveBeenCalledTimes(1);
+  expect(onSendBack).toHaveBeenCalledWith('Please correct the encoded midterm grade before resubmitting.');
+  expect(within(confirmation).getByRole('button', { name: 'Returning...' })).toBeDisabled();
+  resolveReturn();
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Return Grades to Faculty' })).not.toBeInTheDocument());
+});
+
+test('returned and finalized reviews are view-only and do not expose invalid workflow actions', () => {
+  const { rerender } = render(<SectionReviewPanel selectedSection={{ ...submittedSection, reviewStatus: 'returned', reviewNote: 'Correct the student grade' }} activeTerm="midterm" onClose={jest.fn()} onSendBack={jest.fn()} onApprove={jest.fn()} onSendToRegistrar={jest.fn()} />);
+  expect(screen.getByText(/Correct the student grade/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Return for Correction' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Approve Section' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Send to Registrar' })).not.toBeInTheDocument();
+
+  rerender(<SectionReviewPanel selectedSection={{ ...submittedSection, reviewKey: 'finalized', reviewStatus: 'forwarded' }} activeTerm="midterm" onClose={jest.fn()} onSendBack={jest.fn()} onApprove={jest.fn()} onSendToRegistrar={jest.fn()} />);
+  expect(screen.queryByRole('button', { name: 'Return for Correction' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Approve Section' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Send to Registrar' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Close Review Encoded Grades' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+});
+
+test('successful Registrar handoff updates the modal state and prevents another send', async () => {
+  const onSend = jest.fn();
+  function ApprovedHarness() {
+    const [section, setSection] = useState({ ...submittedSection, reviewStatus: 'approved', canSendToRegistrar: true });
+    return <SectionReviewPanel selectedSection={section} activeTerm="midterm" onClose={jest.fn()} onSendBack={jest.fn()} onApprove={jest.fn()} onSendToRegistrar={async () => {
+      onSend();
+      setSection((current) => ({ ...current, canSendToRegistrar: false, sentToRegistrar: true }));
+    }} />;
+  }
+  render(<ApprovedHarness />);
+  fireEvent.click(screen.getByRole('button', { name: 'Send to Registrar' }));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Send to Registrar' })).getByRole('button', { name: 'Send to Registrar' }));
+  await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Send to Registrar' })).toBeDisabled());
+  expect(screen.getByText('Sent to Registrar')).toBeInTheDocument();
+});
+
+test('observerOnly Chairperson mode hides approval buttons and displays Before/After submission snapshots', () => {
+  const observerSection = {
+    ...submittedSection,
+    submissionVersion: 2,
+    submittedAt: '2026-10-15T10:30:00Z',
+    grades: {
+      '26-0001': {
+        recordId: 'grade-1',
+        midterm: '91.50',
+        beforeMidterm: '89.00',
+        submittedMidterm: '91.50',
+        submissionVersion: 2,
+        submittedAt: '2026-10-15T10:30:00Z',
+        workflowStatus: 'SubmittedToRegistrar',
+        standing: 'active',
+        integrityStatus: 'MATCH',
+      },
+      '26-0002': {
+        recordId: 'grade-2',
+        midterm: '84',
+        beforeMidterm: '84',
+        submittedMidterm: '84',
+        submissionVersion: 2,
+        submittedAt: '2026-10-15T10:30:00Z',
+        workflowStatus: 'SubmittedToRegistrar',
+        standing: 'active',
+        integrityStatus: 'MATCH',
+      },
+    },
+  };
+
+  render(
+    <SectionReviewPanel
+      selectedSection={observerSection}
+      activeTerm="midterm"
+      observerOnly
+      onClose={jest.fn()}
+      onSendBack={jest.fn()}
+      onApprove={jest.fn()}
+      onSendToRegistrar={jest.fn()}
+    />
+  );
+
+  expect(screen.queryByRole('button', { name: 'Approve Section' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Return for Correction' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Send to Registrar' })).not.toBeInTheDocument();
+
+  const monitoringBar = screen.getByTestId('chairperson-monitoring-actions');
+  expect(within(monitoringBar).getByText(/Submission Version: v2/i)).toBeInTheDocument();
+  expect(within(monitoringBar).getByRole('button', { name: 'View Submission' })).toBeInTheDocument();
+  expect(within(monitoringBar).getByRole('button', { name: 'View Before/After' })).toBeInTheDocument();
+  expect(within(monitoringBar).getByRole('button', { name: 'View History' })).toBeInTheDocument();
+
+  fireEvent.click(within(monitoringBar).getByRole('button', { name: 'View Before/After' }));
+  expect(screen.getByTestId('chairperson-before-after-panel')).toHaveClass('overflow-hidden', 'rounded-lg');
+  expect(screen.getByTestId('review-scroll-region')).toHaveClass('overflow-x-hidden');
+  const snapshotScroll = screen.getByTestId('chairperson-before-after-scroll');
+  expect(snapshotScroll).toHaveClass('w-full', 'min-w-0', 'overflow-x-auto', 'overflow-y-hidden');
+  expect(snapshotScroll).toHaveProperty('scrollLeft', 0);
+  const snapshotCanvas = within(snapshotScroll).getByTestId('chairperson-before-after-canvas');
+  expect(snapshotCanvas).toHaveAttribute('class', 'box-border w-full min-w-[960px]');
+  expect(within(snapshotCanvas).getByTestId('chairperson-before-after-header')).toHaveClass('box-border', 'w-full', 'text-white', 'dark:bg-sky-900');
+  const beforeAfterTable = within(snapshotCanvas).getByTestId('chairperson-before-after-table');
+  expect(beforeAfterTable).toHaveClass('box-border', 'w-full', 'table-fixed', 'border-collapse');
+  expect(within(beforeAfterTable).getByRole('columnheader', { name: 'Before Value' })).toBeInTheDocument();
+  expect(within(beforeAfterTable).getByRole('columnheader', { name: 'Submitted Value' })).toBeInTheDocument();
+  const columnCount = within(beforeAfterTable).getAllByRole('columnheader').length;
+  for (const row of within(beforeAfterTable).getAllByRole('row').slice(1)) {
+    expect(within(row).getAllByRole('cell')).toHaveLength(columnCount);
+  }
+  expect(within(beforeAfterTable).getByText('89.00')).toBeInTheDocument();
+  expect(within(beforeAfterTable).getByText('91.50')).toBeInTheDocument();
+  expect(within(beforeAfterTable).getAllByText('v2').length).toBeGreaterThan(0);
+
+  fireEvent.click(within(monitoringBar).getByRole('button', { name: 'View History' }));
+  expect(screen.getByTestId('chairperson-history-scroll')).toHaveClass('overflow-x-auto', 'overflow-y-hidden');
+  const historyCanvas = within(screen.getByTestId('chairperson-history-scroll')).getByTestId('chairperson-history-canvas');
+  expect(historyCanvas).toHaveAttribute('class', 'box-border w-full min-w-[880px]');
+  expect(within(historyCanvas).getByTestId('chairperson-history-header')).toHaveClass('box-border', 'w-full');
+  expect(within(historyCanvas).getByTestId('chairperson-history-table')).toHaveClass('box-border', 'w-full', 'border-collapse');
+});

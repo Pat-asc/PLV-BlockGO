@@ -1,0 +1,112 @@
+apiVersion: v1
+items:
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"annotations":{},"name":"allow-dotnet-auth-to-postgres","namespace":"plv-main-campus"},"spec":{"ingress":[{"from":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"plv-fabric"}},"podSelector":{"matchExpressions":[{"key":"app","operator":"In","values":["dotnet-auth-service","dotnet-api-gateway"]}]}}],"ports":[{"port":5432,"protocol":"TCP"}]}],"podSelector":{"matchLabels":{"app":"postgres-primary"}},"policyTypes":["Ingress"]}}
+    creationTimestamp: "2026-09-14T18:45:05Z"
+    generation: 1
+    name: allow-dotnet-auth-to-postgres
+    namespace: plv-main-campus
+    resourceVersion: "1789411505983071020"
+    uid: 9e963e9a-270a-4601-81f4-b9b65fe5c2f4
+  spec:
+    ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: plv-fabric
+        podSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - dotnet-auth-service
+            - dotnet-api-gateway
+      ports:
+      - port: 5432
+        protocol: TCP
+    podSelector:
+      matchLabels:
+        app: postgres-primary
+    policyTypes:
+    - Ingress
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"annotations":{},"name":"firewall-main-dbs","namespace":"plv-main-campus"},"spec":{"ingress":[{"from":[{"podSelector":{"matchLabels":{"app":"peer-registrar"}}}],"ports":[{"port":5984,"protocol":"TCP"}]},{"from":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"plv-fabric"}},"podSelector":{"matchExpressions":[{"key":"app","operator":"In","values":["auth-service","settings-service","fabric-identity-service","ledger-service","client-app","plv-client-app"]}]}}],"ports":[{"port":5984,"protocol":"TCP"},{"port":5432,"protocol":"TCP"}]},{"from":[{"podSelector":{"matchLabels":{"app":"postgres-exporter"}}}],"ports":[{"port":5432,"protocol":"TCP"}]},{"from":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"plv-annex-campus"}},"podSelector":{"matchLabels":{"app":"postgres-replica-annex"}}},{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"plv-pubad-campus"}},"podSelector":{"matchLabels":{"app":"postgres-replica-pubad"}}}],"ports":[{"port":5432,"protocol":"TCP"}]}],"podSelector":{"matchExpressions":[{"key":"app","operator":"In","values":["couchdb-registrar","couchdb-wallet-registrar","postgres-primary"]}]},"policyTypes":["Ingress"]}}
+    creationTimestamp: "2026-09-14T16:02:20Z"
+    generation: 1
+    name: firewall-main-dbs
+    namespace: plv-main-campus
+    resourceVersion: "1789401740228783001"
+    uid: 3095d858-da77-4e3a-80fd-2e35a243a3bb
+  spec:
+    ingress:
+    - from:
+      - podSelector:
+          matchLabels:
+            app: peer-registrar
+      ports:
+      - port: 5984
+        protocol: TCP
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: plv-fabric
+        podSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - auth-service
+            - settings-service
+            - fabric-identity-service
+            - ledger-service
+            - client-app
+            - plv-client-app
+      ports:
+      - port: 5984
+        protocol: TCP
+      - port: 5432
+        protocol: TCP
+    - from:
+      - podSelector:
+          matchLabels:
+            app: postgres-exporter
+      ports:
+      - port: 5432
+        protocol: TCP
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: plv-annex-campus
+        podSelector:
+          matchLabels:
+            app: postgres-replica-annex
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: plv-pubad-campus
+        podSelector:
+          matchLabels:
+            app: postgres-replica-pubad
+      ports:
+      - port: 5432
+        protocol: TCP
+    podSelector:
+      matchExpressions:
+      - key: app
+        operator: In
+        values:
+        - couchdb-registrar
+        - couchdb-wallet-registrar
+        - postgres-primary
+    policyTypes:
+    - Ingress
+kind: List
+metadata:
+  resourceVersion: ""

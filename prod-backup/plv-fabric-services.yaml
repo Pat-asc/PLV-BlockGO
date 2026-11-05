@@ -1,0 +1,861 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"alloy","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":12345,"targetPort":"http"}],"selector":{"app":"alloy"}}}
+    creationTimestamp: "2026-09-14T15:20:05Z"
+    name: alloy
+    namespace: plv-fabric
+    resourceVersion: "1789399205925951023"
+    uid: 458373fb-44b0-4fa1-99df-38b182b84607
+  spec:
+    clusterIP: 34.118.233.161
+    clusterIPs:
+    - 34.118.233.161
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 12345
+      protocol: TCP
+      targetPort: http
+    selector:
+      app: alloy
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"auth-service"},"name":"auth-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"api","port":4001,"targetPort":4001}],"selector":{"app":"auth-service"}}}
+    creationTimestamp: "2026-09-14T16:01:49Z"
+    labels:
+      app: auth-service
+    name: auth-service
+    namespace: plv-fabric
+    resourceVersion: "1789401709304815011"
+    uid: 217fcb29-6cd2-4f58-8ee3-62e62434d31b
+  spec:
+    clusterIP: 34.118.231.236
+    clusterIPs:
+    - 34.118.231.236
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: api
+      port: 4001
+      protocol: TCP
+      targetPort: 4001
+    selector:
+      app: auth-service
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress": true}'
+      cloud.google.com/neg-status: '{"network_endpoint_groups":{"5000":"k8s1-05b21db7-plv-fabric-client-app-service-5000-491219d9"},"zones":["asia-east1-a","asia-east1-b","asia-east1-c"]}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{"cloud.google.com/neg":"{\"ingress\": true}"},"labels":{"app":"dotnet-api-gateway","compatibility":"client-app"},"name":"client-app-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":5000,"protocol":"TCP","targetPort":5000}],"selector":{"app":"dotnet-api-gateway"}}}
+    creationTimestamp: "2026-09-14T16:01:53Z"
+    labels:
+      app: dotnet-api-gateway
+      compatibility: client-app
+    name: client-app-service
+    namespace: plv-fabric
+    resourceVersion: "1789401736392831007"
+    uid: 9d7d1d28-1aaf-4d4b-83ac-25e71d1812eb
+  spec:
+    clusterIP: 34.118.229.68
+    clusterIPs:
+    - 34.118.229.68
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 5000
+      protocol: TCP
+      targetPort: 5000
+    selector:
+      app: dotnet-api-gateway
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"dotnet-academic-service"},"name":"dotnet-academic-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":5102,"targetPort":5102}],"selector":{"app":"dotnet-academic-service"}}}
+    creationTimestamp: "2026-09-14T16:01:55Z"
+    labels:
+      app: dotnet-academic-service
+    name: dotnet-academic-service
+    namespace: plv-fabric
+    resourceVersion: "1789401715483487014"
+    uid: 64d95fbb-b1c6-41d1-bd57-b8d69caaec58
+  spec:
+    clusterIP: 34.118.228.240
+    clusterIPs:
+    - 34.118.228.240
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 5102
+      protocol: TCP
+      targetPort: 5102
+    selector:
+      app: dotnet-academic-service
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"dotnet-api-gateway"},"name":"dotnet-api-gateway","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":5000,"protocol":"TCP","targetPort":5000}],"selector":{"app":"dotnet-api-gateway"}}}
+    creationTimestamp: "2026-09-14T16:01:54Z"
+    labels:
+      app: dotnet-api-gateway
+    name: dotnet-api-gateway
+    namespace: plv-fabric
+    resourceVersion: "1789401714239647002"
+    uid: baf49331-7a1c-4d69-a623-5b133f62ec89
+  spec:
+    clusterIP: 34.118.225.242
+    clusterIPs:
+    - 34.118.225.242
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 5000
+      protocol: TCP
+      targetPort: 5000
+    selector:
+      app: dotnet-api-gateway
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"dotnet-auth-service"},"name":"dotnet-auth-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":5101,"targetPort":5101}],"selector":{"app":"dotnet-auth-service"}}}
+    creationTimestamp: "2026-09-14T16:01:54Z"
+    labels:
+      app: dotnet-auth-service
+    name: dotnet-auth-service
+    namespace: plv-fabric
+    resourceVersion: "1789401714893743009"
+    uid: 5c504dbe-2959-4b7b-8251-7ddc53b319e4
+  spec:
+    clusterIP: 34.118.228.24
+    clusterIPs:
+    - 34.118.228.24
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 5101
+      protocol: TCP
+      targetPort: 5101
+    selector:
+      app: dotnet-auth-service
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"dotnet-grade-service"},"name":"dotnet-grade-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":5103,"targetPort":5103}],"selector":{"app":"dotnet-grade-service"}}}
+    creationTimestamp: "2026-09-14T16:01:56Z"
+    labels:
+      app: dotnet-grade-service
+    name: dotnet-grade-service
+    namespace: plv-fabric
+    resourceVersion: "1789401716086495008"
+    uid: 6ca7d723-1518-4ec1-9713-7be87e81dc63
+  spec:
+    clusterIP: 34.118.233.238
+    clusterIPs:
+    - 34.118.233.238
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 5103
+      protocol: TCP
+      targetPort: 5103
+    selector:
+      app: dotnet-grade-service
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"dotnet-operations-service"},"name":"dotnet-operations-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":5104,"targetPort":5104}],"selector":{"app":"dotnet-operations-service"}}}
+    creationTimestamp: "2026-09-14T16:01:56Z"
+    labels:
+      app: dotnet-operations-service
+    name: dotnet-operations-service
+    namespace: plv-fabric
+    resourceVersion: "1789401716712159023"
+    uid: 96be0bc2-4701-4822-9f23-403a624c14cf
+  spec:
+    clusterIP: 34.118.232.217
+    clusterIPs:
+    - 34.118.232.217
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 5104
+      protocol: TCP
+      targetPort: 5104
+    selector:
+      app: dotnet-operations-service
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"dotnet-realtime-service"},"name":"dotnet-realtime-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":5105,"targetPort":5105}],"selector":{"app":"dotnet-realtime-service"},"sessionAffinity":"ClientIP","sessionAffinityConfig":{"clientIP":{"timeoutSeconds":10800}}}}
+    creationTimestamp: "2026-09-14T16:01:57Z"
+    labels:
+      app: dotnet-realtime-service
+    name: dotnet-realtime-service
+    namespace: plv-fabric
+    resourceVersion: "1789401717276127024"
+    uid: ab1b2242-17dc-4f30-99ad-42b9403e0d32
+  spec:
+    clusterIP: 34.118.229.223
+    clusterIPs:
+    - 34.118.229.223
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 5105
+      protocol: TCP
+      targetPort: 5105
+    selector:
+      app: dotnet-realtime-service
+    sessionAffinity: ClientIP
+    sessionAffinityConfig:
+      clientIP:
+        timeoutSeconds: 10800
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"fabric-identity-service"},"name":"fabric-identity-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"api","port":4002,"targetPort":4002}],"selector":{"app":"fabric-identity-service"}}}
+    creationTimestamp: "2026-09-14T16:01:49Z"
+    labels:
+      app: fabric-identity-service
+    name: fabric-identity-service
+    namespace: plv-fabric
+    resourceVersion: "1789401709926047016"
+    uid: bac81850-3636-4096-a0f0-70152b781f44
+  spec:
+    clusterIP: 34.118.238.120
+    clusterIPs:
+    - 34.118.238.120
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: api
+      port: 4002
+      protocol: TCP
+      targetPort: 4002
+    selector:
+      app: fabric-identity-service
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress": true}'
+      cloud.google.com/neg-status: '{"network_endpoint_groups":{"80":"k8s1-05b21db7-plv-fabric-frontend-service-80-e1a9675b"},"zones":["asia-east1-a","asia-east1-b","asia-east1-c"]}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{"cloud.google.com/neg":"{\"ingress\": true}"},"labels":{"app":"frontend"},"name":"frontend-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":80,"protocol":"TCP","targetPort":80}],"selector":{"app":"frontend"},"type":"ClusterIP"}}
+    creationTimestamp: "2026-09-14T16:01:58Z"
+    labels:
+      app: frontend
+    name: frontend-service
+    namespace: plv-fabric
+    resourceVersion: "1789401736495119022"
+    uid: e2e5f0a2-e5ca-4aee-8273-4a81ec2b5bf9
+  spec:
+    clusterIP: 34.118.229.200
+    clusterIPs:
+    - 34.118.229.200
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 80
+    selector:
+      app: frontend
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"grade-upload-service"},"name":"grade-upload-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"api","port":4004,"targetPort":4004}],"selector":{"app":"grade-upload-service"}}}
+    creationTimestamp: "2026-09-14T16:01:51Z"
+    labels:
+      app: grade-upload-service
+    name: grade-upload-service
+    namespace: plv-fabric
+    resourceVersion: "1789401711436863020"
+    uid: bcd3a6fb-0b13-4300-96d1-92d8ad5e48fe
+  spec:
+    clusterIP: 34.118.225.129
+    clusterIPs:
+    - 34.118.225.129
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: api
+      port: 4004
+      protocol: TCP
+      targetPort: 4004
+    selector:
+      app: grade-upload-service
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"grafana","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":3000,"targetPort":"http"}],"selector":{"app":"grafana"},"type":"ClusterIP"}}
+    creationTimestamp: "2026-09-14T15:20:07Z"
+    name: grafana
+    namespace: plv-fabric
+    resourceVersion: "1789399207129135002"
+    uid: 876cd49d-4117-4a10-a0cb-b1915eddce3b
+  spec:
+    clusterIP: 34.118.236.171
+    clusterIPs:
+    - 34.118.236.171
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 3000
+      protocol: TCP
+      targetPort: http
+    selector:
+      app: grafana
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"ipfs-node"},"name":"ipfs-api","namespace":"plv-fabric"},"spec":{"ports":[{"name":"api","port":5001,"protocol":"TCP","targetPort":5001}],"selector":{"app":"ipfs-node"},"type":"ClusterIP"}}
+    creationTimestamp: "2026-09-14T15:59:07Z"
+    labels:
+      app: ipfs-node
+    name: ipfs-api
+    namespace: plv-fabric
+    resourceVersion: "1789401547259119015"
+    uid: cd467ba9-eb4e-4601-834a-a2cb8912949d
+  spec:
+    clusterIP: 34.118.232.249
+    clusterIPs:
+    - 34.118.232.249
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: api
+      port: 5001
+      protocol: TCP
+      targetPort: 5001
+    selector:
+      app: ipfs-node
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress": true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{"cloud.google.com/neg":"{\"ingress\": true}"},"labels":{"app":"ipfs-node"},"name":"ipfs-gateway","namespace":"plv-fabric"},"spec":{"ports":[{"name":"gateway","port":8080,"protocol":"TCP","targetPort":8080}],"selector":{"app":"ipfs-node"},"type":"ClusterIP"}}
+    creationTimestamp: "2026-09-14T15:59:07Z"
+    labels:
+      app: ipfs-node
+    name: ipfs-gateway
+    namespace: plv-fabric
+    resourceVersion: "1789401547659503013"
+    uid: bec07fb2-cad5-4bfa-ab0e-b477d6c81c7f
+  spec:
+    clusterIP: 34.118.230.1
+    clusterIPs:
+    - 34.118.230.1
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: gateway
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    selector:
+      app: ipfs-node
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"ipfs-ha-api","namespace":"plv-fabric"},"spec":{"ports":[{"name":"api","port":5001,"targetPort":5001}],"selector":{"app":"ipfs-ha-router"}}}
+    creationTimestamp: "2026-09-14T15:59:12Z"
+    name: ipfs-ha-api
+    namespace: plv-fabric
+    resourceVersion: "1789401552418655022"
+    uid: 99f57092-aad8-4f89-8e0f-d383a9d7f231
+  spec:
+    clusterIP: 34.118.237.246
+    clusterIPs:
+    - 34.118.237.246
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: api
+      port: 5001
+      protocol: TCP
+      targetPort: 5001
+    selector:
+      app: ipfs-ha-router
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      cloud.google.com/neg-status: '{"network_endpoint_groups":{"8080":"k8s1-05b21db7-plv-fabric-ipfs-ha-gateway-8080-1f803e82"},"zones":["asia-east1-a","asia-east1-b","asia-east1-c"]}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"ipfs-ha-gateway","namespace":"plv-fabric"},"spec":{"ports":[{"name":"gateway","port":8080,"targetPort":8080}],"selector":{"app":"ipfs-ha-router"}}}
+    creationTimestamp: "2026-09-14T15:59:12Z"
+    name: ipfs-ha-gateway
+    namespace: plv-fabric
+    resourceVersion: "1789401552772575016"
+    uid: c7ec0678-e3fa-4c16-8f46-d8a9997412f4
+  spec:
+    clusterIP: 34.118.237.189
+    clusterIPs:
+    - 34.118.237.189
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: gateway
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    selector:
+      app: ipfs-ha-router
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"ipfs-node"},"name":"ipfs-headless","namespace":"plv-fabric"},"spec":{"clusterIP":"None","ports":[{"name":"swarm","port":4001,"protocol":"TCP","targetPort":4001},{"name":"api","port":5001,"protocol":"TCP","targetPort":5001},{"name":"gateway","port":8080,"protocol":"TCP","targetPort":8080}],"selector":{"app":"ipfs-node"}}}
+    creationTimestamp: "2026-09-14T15:59:06Z"
+    labels:
+      app: ipfs-node
+    name: ipfs-headless
+    namespace: plv-fabric
+    resourceVersion: "1789401546789695002"
+    uid: d41a08aa-b44a-4427-a923-7b9bcc5f2e63
+  spec:
+    clusterIP: None
+    clusterIPs:
+    - None
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: swarm
+      port: 4001
+      protocol: TCP
+      targetPort: 4001
+    - name: api
+      port: 5001
+      protocol: TCP
+      targetPort: 5001
+    - name: gateway
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    selector:
+      app: ipfs-node
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"kube-state-metrics","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":8080,"targetPort":"http"}],"selector":{"app":"kube-state-metrics"}}}
+    creationTimestamp: "2026-09-14T15:20:02Z"
+    name: kube-state-metrics
+    namespace: plv-fabric
+    resourceVersion: "1789399202178399017"
+    uid: d20a98fe-1f34-4403-8b5c-ef11ee0137eb
+  spec:
+    clusterIP: 34.118.236.178
+    clusterIPs:
+    - 34.118.236.178
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+      targetPort: http
+    selector:
+      app: kube-state-metrics
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"ledger-service"},"name":"ledger-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"api","port":4003,"targetPort":4003}],"selector":{"app":"ledger-service"}}}
+    creationTimestamp: "2026-09-14T16:01:50Z"
+    labels:
+      app: ledger-service
+    name: ledger-service
+    namespace: plv-fabric
+    resourceVersion: "1789401710820751000"
+    uid: 811c2fdc-4f49-4c6c-a3be-98e8e3160246
+  spec:
+    clusterIP: 34.118.227.104
+    clusterIPs:
+    - 34.118.227.104
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: api
+      port: 4003
+      protocol: TCP
+      targetPort: 4003
+    selector:
+      app: ledger-service
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"loki","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":3100,"targetPort":"http"}],"selector":{"app":"loki"}}}
+    creationTimestamp: "2026-09-14T15:20:04Z"
+    name: loki
+    namespace: plv-fabric
+    resourceVersion: "1789399204267983023"
+    uid: 5063aad9-2e4d-49ad-9c48-67ae7f069bce
+  spec:
+    clusterIP: 34.118.238.11
+    clusterIPs:
+    - 34.118.238.11
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 3100
+      protocol: TCP
+      targetPort: http
+    selector:
+      app: loki
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"middleware","namespace":"plv-fabric"},"spec":{"ports":[{"name":"api","port":4000,"targetPort":4000}],"selector":{"app":"middleware-api"}}}
+    creationTimestamp: "2026-09-14T16:01:48Z"
+    name: middleware
+    namespace: plv-fabric
+    resourceVersion: "1789401708638255001"
+    uid: 32f658ef-b955-4cb8-9ca8-5eceee3736c1
+  spec:
+    clusterIP: 34.118.230.179
+    clusterIPs:
+    - 34.118.230.179
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: api
+      port: 4000
+      protocol: TCP
+      targetPort: 4000
+    selector:
+      app: middleware-api
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress": true}'
+      cloud.google.com/neg-status: '{"network_endpoint_groups":{"4000":"k8s1-05b21db7-plv-fabric-middleware-api-4000-ddc7491f"},"zones":["asia-east1-a","asia-east1-b","asia-east1-c"]}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{"cloud.google.com/neg":"{\"ingress\": true}"},"labels":{"app":"middleware-api"},"name":"middleware-api","namespace":"plv-fabric"},"spec":{"ports":[{"name":"api","port":4000,"targetPort":4000}],"selector":{"app":"middleware-api"}}}
+    creationTimestamp: "2026-09-14T16:01:48Z"
+    labels:
+      app: middleware-api
+    name: middleware-api
+    namespace: plv-fabric
+    resourceVersion: "1789401736445919000"
+    uid: ccc2aceb-36cc-4aef-81ad-df5ee29ce77d
+  spec:
+    clusterIP: 34.118.236.141
+    clusterIPs:
+    - 34.118.236.141
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: api
+      port: 4000
+      protocol: TCP
+      targetPort: 4000
+    selector:
+      app: middleware-api
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"prometheus","namespace":"plv-fabric"},"spec":{"ports":[{"name":"http","port":9090,"targetPort":"http"}],"selector":{"app":"prometheus"}}}
+    creationTimestamp: "2026-09-14T15:20:00Z"
+    name: prometheus
+    namespace: plv-fabric
+    resourceVersion: "1789399200748063010"
+    uid: 3d83b304-5249-4780-bf56-751c0578dc97
+  spec:
+    clusterIP: 34.118.230.160
+    clusterIPs:
+    - 34.118.230.160
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 9090
+      protocol: TCP
+      targetPort: http
+    selector:
+      app: prometheus
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"redis-master","namespace":"plv-fabric"},"spec":{"ports":[{"name":"redis","port":6379,"protocol":"TCP","targetPort":6379}],"selector":{"app":"redis-master"}}}
+    creationTimestamp: "2026-09-14T15:18:27Z"
+    name: redis-master
+    namespace: plv-fabric
+    resourceVersion: "1789399107522255023"
+    uid: 873ff70f-2cad-459d-8fa7-f633e348f990
+  spec:
+    clusterIP: 34.118.228.136
+    clusterIPs:
+    - 34.118.228.136
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: redis
+      port: 6379
+      protocol: TCP
+      targetPort: 6379
+    selector:
+      app: redis-master
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      cloud.google.com/neg: '{"ingress":true}'
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"settings-service"},"name":"settings-service","namespace":"plv-fabric"},"spec":{"ports":[{"name":"api","port":4005,"targetPort":4005}],"selector":{"app":"settings-service"}}}
+    creationTimestamp: "2026-09-14T16:01:52Z"
+    labels:
+      app: settings-service
+    name: settings-service
+    namespace: plv-fabric
+    resourceVersion: "1789401712329871018"
+    uid: f2fed065-91b2-4009-ac20-045a41cbcc53
+  spec:
+    clusterIP: 34.118.233.172
+    clusterIPs:
+    - 34.118.233.172
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: api
+      port: 4005
+      protocol: TCP
+      targetPort: 4005
+    selector:
+      app: settings-service
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+kind: List
+metadata:
+  resourceVersion: ""

@@ -10,7 +10,7 @@ spec:
   storageClassName: fabric-storage
   resources:
     requests:
-      storage: 20Gi
+      storage: 10Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -43,8 +43,8 @@ spec:
         ports:
         - containerPort: 7050
           name: orderer
-        - containerPort: 7051
-          name: metrics
+        - containerPort: 7053
+          name: admin
         - containerPort: 9443
           name: operations
         env:
@@ -94,8 +94,9 @@ spec:
           value: "[/var/hyperledger/orderer/tls/ca.crt]"
         resources:
           requests:
-            cpu: "250m"
-            memory: "512Mi"
+            cpu: "150m"
+            memory: "256Mi"
+          limits: {cpu: 500m, memory: 768Mi}
         volumeMounts:
         - name: orderer-storage
           mountPath: /var/hyperledger/production
@@ -176,9 +177,6 @@ spec:
   - port: 7050
     targetPort: 7050
     name: orderer
-  - port: 7051
-    targetPort: 7051
-    name: cluster
   - port: 7053
     targetPort: 7053
     name: admin

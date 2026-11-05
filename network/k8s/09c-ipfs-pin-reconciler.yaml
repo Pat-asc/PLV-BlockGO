@@ -82,6 +82,7 @@ spec:
                 cpu: 5m
                 memory: 16Mi
               limits:
+                cpu: 100m
                 memory: 96Mi
             volumeMounts:
             - name: scripts

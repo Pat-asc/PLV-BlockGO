@@ -3,17 +3,16 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import FormulaBuilder from './FormulaBuilder';
 import { createGradeTemplate } from '../../services/api';
+import { showSystemNotification } from '../../services/NotificationContext';
 
 jest.mock('../../services/api', () => ({
   createGradeTemplate: jest.fn(),
 }));
+jest.mock('../../services/NotificationContext', () => ({ showSystemNotification: jest.fn() }));
 
 describe('FormulaBuilder Component', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    
-    // Mock window.alert to prevent popups during tests
-    window.alert = jest.fn();
   });
 
   it('renders the initial UI and default columns correctly', () => {
@@ -68,7 +67,7 @@ describe('FormulaBuilder Component', () => {
     const submitBtn = screen.getByText('Submit for Approval');
     fireEvent.click(submitBtn);
 
-    await waitFor(() => expect(window.alert).toHaveBeenCalledWith('Template submitted for approval successfully!'));
+    await waitFor(() => expect(showSystemNotification).toHaveBeenCalledWith('Template submitted for approval successfully!'));
     expect(createGradeTemplate).toHaveBeenCalledTimes(1);
     expect(createGradeTemplate).toHaveBeenCalledWith(expect.objectContaining({
       templateName: 'Test Template',

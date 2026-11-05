@@ -18,6 +18,16 @@ CREATE TABLE IF NOT EXISTS users (
     password_reset_expires BIGINT
 );
 
+-- Keep JWT revocation state aligned with migrations/020_auth_version.sql.
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE users
+    DROP CONSTRAINT IF EXISTS ck_users_auth_version_positive;
+
+ALTER TABLE users
+    ADD CONSTRAINT ck_users_auth_version_positive CHECK (auth_version > 0);
+
 -- Create StudentProfiles table
 CREATE TABLE IF NOT EXISTS studentprofiles (
     user_id SERIAL PRIMARY KEY,
@@ -34,6 +44,7 @@ CREATE TABLE IF NOT EXISTS studentprofiles (
     address TEXT,
     student_email VARCHAR(255),
     batch_year INTEGER,
+    is_irregular BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -221,6 +232,16 @@ CREATE TABLE IF NOT EXISTS program_curriculum_assignments (
 CREATE INDEX IF NOT EXISTS idx_program_curriculum_assignment_curriculum
     ON program_curriculum_assignments(curriculum_id);
 
+CREATE TABLE IF NOT EXISTS curriculum_batch_assignments (
+    program_id INTEGER NOT NULL REFERENCES academic_programs(program_id) ON DELETE CASCADE,
+    batch_year INTEGER NOT NULL CHECK (batch_year BETWEEN 2000 AND 9999),
+    curriculum_id BIGINT NOT NULL REFERENCES curriculums(curriculum_id) ON DELETE RESTRICT,
+    assigned_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    assigned_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (program_id, batch_year)
+);
+
 CREATE TABLE IF NOT EXISTS support_tickets (
     ticket_id BIGSERIAL PRIMARY KEY,
     registrar_id INTEGER NOT NULL REFERENCES users(id),
@@ -239,6 +260,17 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     CONSTRAINT ck_support_ticket_specialist CHECK (assigned_specialist IS NULL OR assigned_specialist IN ('IT_ADMIN', 'FRONTEND_DEVELOPER', 'BACKEND_DEVELOPER', 'NETWORK_SPECIALIST'))
 );
 
+CREATE TABLE IF NOT EXISTS support_ticket_attachments (
+    attachment_id BIGSERIAL PRIMARY KEY,
+    ticket_id BIGINT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    original_file_name VARCHAR(255) NOT NULL,
+    content_type VARCHAR(100) NOT NULL,
+    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0 AND size_bytes <= 5242880),
+    content BYTEA NOT NULL,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS password_reset_requests (
     request_id BIGSERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -251,6 +283,31 @@ CREATE TABLE IF NOT EXISTS password_reset_requests (
 
 CREATE INDEX IF NOT EXISTS idx_password_reset_requests_email
     ON password_reset_requests(LOWER(email), created_at DESC);
+
+-- Active self-service email verification codes. This is separate from the
+-- Registrar-managed password_reset_requests workflow above.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    token_id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash CHAR(64) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    used_at TIMESTAMP WITH TIME ZONE,
+    requested_ip VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_password_reset_token_attempts CHECK (attempt_count BETWEEN 0 AND 5)
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_created
+    ON password_reset_tokens(user_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_password_reset_tokens_active_user
+    ON password_reset_tokens(user_id)
+    WHERE used_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expiry
+    ON password_reset_tokens(expires_at)
+    WHERE used_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS security_events (
     security_event_id BIGSERIAL PRIMARY KEY,
@@ -266,6 +323,28 @@ CREATE TABLE IF NOT EXISTS security_events (
     resolved_by INTEGER REFERENCES users(id),
     CONSTRAINT ck_security_event_severity CHECK (severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL'))
 );
+
+CREATE TABLE IF NOT EXISTS ip_tracker_mappings (
+    tracker_id BIGINT PRIMARY KEY,
+    ip_address VARCHAR(100) NOT NULL UNIQUE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO ip_tracker_mappings (tracker_id, ip_address)
+SELECT (SELECT COALESCE(MAX(tracker_id), 0) FROM ip_tracker_mappings)
+       + ROW_NUMBER() OVER (ORDER BY MIN(security_event_id), ip_address),
+       ip_address
+  FROM security_events
+ WHERE ip_address IS NOT NULL
+   AND BTRIM(ip_address) <> ''
+   AND NOT EXISTS (
+       SELECT 1
+         FROM ip_tracker_mappings existing
+        WHERE existing.ip_address = security_events.ip_address
+   )
+ GROUP BY ip_address
+ ORDER BY MIN(security_event_id), ip_address
+ON CONFLICT (ip_address) DO NOTHING;
 
 ALTER TABLE studentprofiles ADD COLUMN IF NOT EXISTS curriculum_id BIGINT REFERENCES curriculums(curriculum_id) ON DELETE SET NULL;
 ALTER TABLE facultyprofiles ADD COLUMN IF NOT EXISTS faculty_id VARCHAR(100);
@@ -284,6 +363,10 @@ CREATE TABLE IF NOT EXISTS academicsections (
     department VARCHAR(255) NOT NULL,
     year_level INT NOT NULL CHECK (year_level BETWEEN 1 AND 4),
     section_num INT NOT NULL CHECK (section_num > 0),
+    max_capacity INT NOT NULL DEFAULT 40 CHECK (max_capacity BETWEEN 1 AND 500),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    archived_at TIMESTAMP WITH TIME ZONE,
+    archived_by VARCHAR(255),
     UNIQUE (department, year_level, section_num)
 );
 CREATE TABLE IF NOT EXISTS facultysections (
@@ -293,7 +376,13 @@ CREATE TABLE IF NOT EXISTS facultysections (
     section VARCHAR(50) NOT NULL,
     year_level VARCHAR(50),
     subject VARCHAR(100),
-    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    academic_section_id INTEGER REFERENCES academicsections(id) ON DELETE RESTRICT,
+    school_year VARCHAR(20),
+    semester VARCHAR(20),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    deactivated_at TIMESTAMP WITH TIME ZONE,
+    deactivated_by VARCHAR(255)
 );
 
 CREATE TABLE IF NOT EXISTS shared_client_state (
@@ -319,11 +408,127 @@ CREATE TABLE IF NOT EXISTS student_enrollments (
     section VARCHAR(50),
     status VARCHAR(20) NOT NULL DEFAULT 'ENROLLED'
         CHECK (status IN ('ENROLLED', 'DROPPED', 'WITHDRAWN', 'COMPLETED')),
+    enrollment_state VARCHAR(20) NOT NULL DEFAULT 'PLANNING'
+        CHECK (enrollment_state IN ('PLANNING', 'FINALIZED')),
+    finalized_at TIMESTAMP WITH TIME ZONE,
+    finalized_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    nstp_option VARCHAR(100),
     enrolled_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     enrolled_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (student_user_id, school_year, semester)
 );
+
+-- See migration 029 for the production upgrade path.
+CREATE TABLE IF NOT EXISTS faculty_access_controls (
+    faculty_user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    department VARCHAR(255) NOT NULL,
+    is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+    block_reason TEXT,
+    blocked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    blocked_at TIMESTAMP WITH TIME ZONE,
+    unblocked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    unblocked_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_faculty_access_block_reason CHECK (NOT is_blocked OR NULLIF(BTRIM(block_reason), '') IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS faculty_access_events (
+    event_id BIGSERIAL PRIMARY KEY,
+    faculty_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    department VARCHAR(255) NOT NULL,
+    action VARCHAR(20) NOT NULL CHECK (action IN ('BLOCKED', 'UNBLOCKED')),
+    reason TEXT,
+    acted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    acted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS student_non_regular_subjects (
+    non_regular_subject_id BIGSERIAL PRIMARY KEY,
+    student_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    enrollment_id BIGINT NOT NULL REFERENCES student_enrollments(enrollment_id) ON DELETE CASCADE,
+    school_year VARCHAR(20) NOT NULL,
+    semester VARCHAR(20) NOT NULL CHECK (semester IN ('FIRST', 'SECOND', 'MIDYEAR')),
+    source_program_id INTEGER NOT NULL REFERENCES academic_programs(program_id) ON DELETE RESTRICT,
+    source_curriculum_id BIGINT NOT NULL REFERENCES curriculums(curriculum_id) ON DELETE RESTRICT,
+    subject_id BIGINT NOT NULL REFERENCES curriculum_subjects(subject_id) ON DELETE RESTRICT,
+    subject_code VARCHAR(80) NOT NULL,
+    faculty_section_id INTEGER REFERENCES facultysections(id) ON DELETE SET NULL,
+    classification VARCHAR(30) NOT NULL DEFAULT 'NON_REGULAR' CHECK (classification = 'NON_REGULAR'),
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'DROPPED')),
+    added_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    added_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    override_reason TEXT,
+    CONSTRAINT uq_non_regular_student_subject_period UNIQUE (student_user_id, school_year, semester, subject_id)
+);
+
+CREATE TABLE IF NOT EXISTS grade_submission_snapshots (
+    snapshot_id BIGSERIAL PRIMARY KEY,
+    record_id VARCHAR(255) NOT NULL,
+    assignment_cycle_id VARCHAR(100) NOT NULL DEFAULT '',
+    submission_version INTEGER NOT NULL DEFAULT 1,
+    student_id VARCHAR(100) NOT NULL,
+    student_name VARCHAR(255) NOT NULL,
+    course VARCHAR(255) NOT NULL,
+    subject_code VARCHAR(100) NOT NULL,
+    subject_name VARCHAR(255) NOT NULL,
+    school_year VARCHAR(50) NOT NULL,
+    semester VARCHAR(50) NOT NULL,
+    term VARCHAR(20) NOT NULL DEFAULT 'finals',
+    year_level VARCHAR(50) NOT NULL,
+    section VARCHAR(100) NOT NULL,
+    academic_section_id INTEGER,
+    faculty_id VARCHAR(255) NOT NULL,
+    before_grade TEXT,
+    submitted_grade TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'SubmittedToRegistrar',
+    submitted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    returned_at TIMESTAMP WITH TIME ZONE,
+    return_reason TEXT,
+    finalized_at TIMESTAMP WITH TIME ZONE,
+    transaction_id VARCHAR(255),
+    UNIQUE (record_id, submission_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_grade_submission_snapshots_record
+    ON grade_submission_snapshots (record_id, submission_version DESC);
+CREATE INDEX IF NOT EXISTS idx_grade_submission_snapshots_scope
+    ON grade_submission_snapshots (LOWER(course), school_year, semester, term);
+
+CREATE TABLE IF NOT EXISTS nstp_options (
+    option_code VARCHAR(50) PRIMARY KEY,
+    option_name VARCHAR(150) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS grade_releases (
+    record_id VARCHAR(255) PRIMARY KEY,
+    student_identifier VARCHAR(255) NOT NULL,
+    school_year VARCHAR(20) NOT NULL,
+    semester VARCHAR(20) NOT NULL,
+    term VARCHAR(20),
+    released_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    released_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS academic_periods (
+    academic_period_id BIGSERIAL PRIMARY KEY,
+    school_year VARCHAR(20) NOT NULL,
+    semester VARCHAR(20) NOT NULL CHECK (semester IN ('FIRST', 'SECOND', 'MIDYEAR')),
+    term VARCHAR(20) NOT NULL CHECK (term IN ('midterm', 'finals')),
+    start_date DATE,
+    end_date DATE,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'CLOSED')),
+    opened_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    opened_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE (school_year, semester, term),
+    CHECK (start_date IS NULL OR end_date IS NULL OR end_date >= start_date)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_academic_period_active
+    ON academic_periods ((status)) WHERE status = 'ACTIVE';
 
 CREATE TABLE IF NOT EXISTS student_id_sequences (
     enrollment_year INTEGER PRIMARY KEY CHECK (enrollment_year BETWEEN 2000 AND 9999),
@@ -332,6 +537,12 @@ CREATE TABLE IF NOT EXISTS student_id_sequences (
 );
 
 CREATE UNIQUE INDEX idx_unique_faculty_section ON FacultySections(user_id, department, section, subject);
+COMMENT ON TABLE facultysections IS 'Each row is a distinct active faculty-assignment workflow cycle.';
+CREATE TABLE IF NOT EXISTS grade_assignment_cycles (
+    record_id VARCHAR(255) PRIMARY KEY,
+    assignment_cycle_id VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX idx_gradetemplates_department ON GradeTemplates(department);
 
 
@@ -356,7 +567,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     FOREIGN KEY (receiver_email) REFERENCES users(email)
 );
 
--- Online Status table  
+-- Online Status table
 CREATE TABLE IF NOT EXISTS online_status (
     email VARCHAR(100) PRIMARY KEY,
     is_online BOOLEAN DEFAULT false,

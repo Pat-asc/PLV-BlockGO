@@ -16,6 +16,7 @@ using ClosedXML.Excel;
 using BlockGo.Models;
 using BlockGo.Services;
 using BlockGo.Mappers;
+using Client_app.Services;
 
 namespace BlockGo.Controllers
 {
@@ -33,6 +34,85 @@ namespace BlockGo.Controllers
             _logger = logger;
             _blockchainService = blockchainService;
             _connectionString = configuration.GetConnectionString("MasterConnection") ?? configuration.GetConnectionString("DefaultConnection") ?? "";
+        }
+
+        private static string NormalizeAssignmentSemester(string? value)
+        {
+            var normalized = (value ?? "").Trim().ToLowerInvariant().Replace("_", " ").Replace("-", " ");
+            return normalized switch
+            {
+                "first" or "1" or "1st" or "first semester" or "1st semester" => "FIRST",
+                "second" or "2" or "2nd" or "second semester" or "2nd semester" => "SECOND",
+                "midyear" or "mid year" or "summer" => "MIDYEAR",
+                _ => throw new ArgumentException("Semester is required and must be First, Second, or Midyear.")
+            };
+        }
+
+        private static async Task InsertExactFacultyAssignmentAsync(
+            NpgsqlConnection connection, object facultyId, string? department, string subject,
+            string? section, string? yearLevel, string? schoolYear, string? semester)
+        {
+            var normalizedSchoolYear = (schoolYear ?? "").Trim();
+            var schoolYearMatch = System.Text.RegularExpressions.Regex.Match(normalizedSchoolYear, @"^(\d{4})\s*[-/]\s*(\d{4})$");
+            if (!schoolYearMatch.Success || int.Parse(schoolYearMatch.Groups[2].Value) != int.Parse(schoolYearMatch.Groups[1].Value) + 1)
+                throw new ArgumentException("School year is required and must use consecutive YYYY-YYYY values.");
+            normalizedSchoolYear = $"{schoolYearMatch.Groups[1].Value}-{schoolYearMatch.Groups[2].Value}";
+            var normalizedSemester = NormalizeAssignmentSemester(semester);
+
+            var sectionMatch = System.Text.RegularExpressions.Regex.Match((section ?? "").Trim(), @"(?:(\d+)\s*[-–]\s*)?(\d+)$");
+            var parsedYear = int.TryParse(yearLevel, out var year) ? year :
+                (sectionMatch.Success && sectionMatch.Groups[1].Success ? int.Parse(sectionMatch.Groups[1].Value) : 0);
+            var parsedSection = sectionMatch.Success ? int.Parse(sectionMatch.Groups[2].Value) : 0;
+            if (parsedYear is < 1 or > 4 || parsedSection < 1 || string.IsNullOrWhiteSpace(department))
+                throw new ArgumentException("Department, year level, and a canonical section are required.");
+
+            await using var resolve = new NpgsqlCommand(@"
+                SELECT s.id, p.program_name, p.program_code
+                FROM academicsections s
+                JOIN academic_programs p
+                  ON LOWER(s.department) IN (LOWER(p.program_name), LOWER(p.program_code))
+                WHERE LOWER(@department) IN (LOWER(p.program_name), LOWER(p.program_code))
+                  AND s.is_active = TRUE
+                  AND s.year_level = @yearLevel AND s.section_num = @sectionNumber
+                  AND p.is_active = TRUE
+                  AND EXISTS (
+                      SELECT 1 FROM curriculums c
+                      JOIN curriculum_subjects cs ON cs.curriculum_id = c.curriculum_id
+                      WHERE c.program_id = p.program_id AND c.status = 'PUBLISHED'
+                        AND cs.year_level = @yearLevel AND cs.semester = @semester
+                        AND LOWER(cs.subject_code) = LOWER(@subject)
+                  )
+                LIMIT 2;", connection);
+            resolve.Parameters.AddWithValue("department", department.Trim());
+            resolve.Parameters.AddWithValue("yearLevel", parsedYear);
+            resolve.Parameters.AddWithValue("sectionNumber", parsedSection);
+            resolve.Parameters.AddWithValue("semester", normalizedSemester);
+            resolve.Parameters.AddWithValue("subject", subject.Trim());
+            var candidates = new List<(int Id, string Name, string Code)>();
+            await using (var reader = await resolve.ExecuteReaderAsync())
+                while (await reader.ReadAsync()) candidates.Add((reader.GetInt32(0), reader.GetString(1), reader.GetString(2)));
+            if (candidates.Count != 1)
+                throw new ArgumentException(candidates.Count == 0
+                    ? "The academic section or subject does not exist in the published curriculum for this period."
+                    : "The academic section is ambiguous and cannot be assigned safely.");
+
+            var selected = candidates[0];
+            await using var insert = new NpgsqlCommand(@"
+                INSERT INTO facultysections
+                    (user_id, department, subject, section, year_level,
+                     academic_section_id, school_year, semester, is_active)
+                VALUES (@userId, @department, @subject, @section, @yearLevel,
+                        @academicSectionId, @schoolYear, @semester, TRUE)
+                ON CONFLICT DO NOTHING;", connection);
+            insert.Parameters.AddWithValue("userId", facultyId);
+            insert.Parameters.AddWithValue("department", selected.Name);
+            insert.Parameters.AddWithValue("subject", subject.Trim());
+            insert.Parameters.AddWithValue("section", $"{selected.Code} {parsedYear}-{parsedSection}");
+            insert.Parameters.AddWithValue("yearLevel", parsedYear.ToString());
+            insert.Parameters.AddWithValue("academicSectionId", selected.Id);
+            insert.Parameters.AddWithValue("schoolYear", normalizedSchoolYear);
+            insert.Parameters.AddWithValue("semester", normalizedSemester);
+            await insert.ExecuteNonQueryAsync();
         }
 
         private string HashIdentifier(string input)
@@ -94,12 +174,14 @@ namespace BlockGo.Controllers
 
         [HttpPost("bulk-upload")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkUploadGrades([FromForm] IFormFile file, [FromForm] string? semester, [FromForm] string? schoolYear, [FromForm] string? yearLevel, [FromForm] string? section)
         {
             _logger.LogInformation("Bulk upload initiated by: {User}", User.Identity?.Name);
             
-            if (file == null || file.Length == 0)
-                return BadRequest(new { status = "Error", message = "File required" });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, HttpContext.RequestAborted);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
 
             var facultyEmail = User.Identity?.Name;
             if (string.IsNullOrEmpty(facultyEmail))
@@ -107,9 +189,7 @@ namespace BlockGo.Controllers
 
             try
             {
-                var ext = Path.GetExtension(file.FileName).ToLower();
-                if (ext != ".csv" && ext != ".xlsx")
-                    return BadRequest(new { status = "Error", message = "Only .csv and .xlsx files are supported." });
+                const string ext = ".csv";
 
                 var tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ext);
                 var batchId = Guid.NewGuid().ToString();
@@ -261,7 +341,7 @@ namespace BlockGo.Controllers
                     approvedCount += await cmd.ExecuteNonQueryAsync();
                 }
 
-                return Ok(new { status = "Success", message = $"{approvedCount} grades approved by Department Admin. Ready for Registrar finalization.", approvedCount });
+                return Ok(new { status = "Success", message = $"{approvedCount} grades approved by the Chairperson and ready for Registrar finalization.", approvedCount });
             }
             catch (Exception ex)
             {
@@ -271,65 +351,15 @@ namespace BlockGo.Controllers
 
         [HttpPost("finalize-grades")]
         [Authorize(Roles = "registrar")]
-        public async Task<IActionResult> FinalizeGradesAsRegistrar([FromBody] FinalizeGradesRequest request)
+        public IActionResult RetiredBulkGradeFinalization()
         {
-            var registrarEmail = User.Identity?.Name;
-            try
+            // Retired: this legacy route does not perform the authoritative
+            // approved-snapshot checks now required for Registrar finalization.
+            return StatusCode(StatusCodes.Status410Gone, new
             {
-                using var conn = new NpgsqlConnection(_connectionString);
-                await conn.OpenAsync();
-                int finalizedCount = 0;
-
-                foreach (var stagingId in request.StagingIds ?? new List<int>())
-                {
-                    using var selectCmd = new NpgsqlCommand("SELECT * FROM bulk_grade_staging WHERE staging_id = @id", conn);
-                    selectCmd.Parameters.AddWithValue("id", stagingId);
-                    using var reader = await selectCmd.ExecuteReaderAsync();
-                    if (await reader.ReadAsync()) {
-                        var record = new AcademicRecord {
-                            Id = Guid.NewGuid().ToString(),
-                            StudentHash = reader["student_hash"].ToString() ?? "",
-                            Course = reader["course"].ToString() ?? "",
-                            SubjectCode = reader["subject_code"].ToString() ?? "",
-                            Grade = reader["grade"].ToString() ?? "",
-                            Semester = reader["semester"].ToString() ?? "",
-                            SchoolYear = reader["school_year"].ToString() ?? "",
-                            YearLevel = reader["year_level"].ToString() ?? "",
-                            Section = reader["section"].ToString() ?? "",
-                            FacultyId = reader["faculty_id"].ToString() ?? "",
-                            University = "PLV",
-                            Date = DateTime.Now.ToString("yyyy-MM-dd"),
-                            Status = "FINALIZED",
-                            Version = 1
-                        };
-                        reader.Close();
-
-                        await _blockchainService.SubmitGradeAsync(record, registrarEmail ?? "system");
-
-                        using var deleteCmd = new NpgsqlCommand("DELETE FROM bulk_grade_staging WHERE staging_id = @id", conn);
-                        deleteCmd.Parameters.AddWithValue("id", stagingId);
-                        await deleteCmd.ExecuteNonQueryAsync();
-
-                        using var auditCmd = new NpgsqlCommand(@"
-                            INSERT INTO gradecorrectionlogs (recordid, oldgrade, newgrade, reasontext, approvedby, timestamp)
-                            VALUES (@rid, 'STAGED', 'FINALIZED', 'Bulk Finalization to Ledger', @reg, CURRENT_TIMESTAMP)", conn);
-                        auditCmd.Parameters.AddWithValue("rid", record.Id);
-                        auditCmd.Parameters.AddWithValue("reg", registrarEmail ?? "system");
-                        await auditCmd.ExecuteNonQueryAsync();
-
-                        finalizedCount++;
-                    } else {
-                        reader.Close();
-                    }
-                }
-
-                return Ok(new { status = "Success", message = $"{finalizedCount} grades officially committed to the blockchain ledger.", finalizedCount });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Finalization error");
-                return StatusCode(500, new { status = "Error", message = ex.Message });
-            }
+                status = "Error",
+                message = "This legacy bulk-finalization route is retired. Registrars must use the approved grade finalization workflow."
+            });
         }
 
         [HttpGet("staged")]
@@ -381,16 +411,16 @@ namespace BlockGo.Controllers
         [HttpPost("/api/bulk-faculty-sections-upload")]
         [Authorize(Roles = "registrar,department_admin,chairperson,admin")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkFacultySectionsUpload([FromForm] IFormFile file, [FromForm] string? department)
         {
             _logger.LogInformation("Bulk faculty sections upload initiated by: {User}", User.Identity?.Name);
 
-            if (file == null || file.Length == 0)
-                return BadRequest(new { status = "Error", message = "CSV file required." });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, HttpContext.RequestAborted);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
 
-            var ext = Path.GetExtension(file.FileName).ToLower();
-            if (ext != ".csv" && ext != ".xlsx")
-                return BadRequest(new { status = "Error", message = "Only .csv and .xlsx files are supported." });
+            const string ext = ".csv";
 
             var tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ext);
 
@@ -435,6 +465,8 @@ namespace BlockGo.Controllers
                             var section = getVal("section") ?? getVal("class_section") ?? getVal("section_name") ?? (parts.Length > 2 ? parts[2]?.Trim() : "");
                             var yearLevel = getVal("year_level") ?? getVal("year") ?? getVal("yearlevel") ?? (parts.Length > 3 ? parts[3]?.Trim() : "");
                             var dept = getVal("department") ?? getVal("dept") ?? getVal("course") ?? department ?? "";
+                            var schoolYear = getVal("school_year") ?? getVal("schoolyear") ?? getVal("academic_year");
+                            var semester = getVal("semester") ?? getVal("term");
 
                             if (string.IsNullOrWhiteSpace(facultyEmail) || string.IsNullOrWhiteSpace(subject))
                                 throw new Exception("Faculty email and subject are required.");
@@ -456,17 +488,7 @@ namespace BlockGo.Controllers
                             if (facultyId == null)
                                 throw new Exception($"Faculty account {facultyEmail} not found.");
 
-                            // Insert or update FacultySections
-                            using var cmd = new NpgsqlCommand(@"
-                                INSERT INTO FacultySections (user_id, department, subject, section, year_level)
-                                VALUES (@uid, @dept, @subject, @section, @year)
-                                ON CONFLICT (user_id, department, subject, section) DO NOTHING", conn);
-                            cmd.Parameters.AddWithValue("uid", facultyId);
-                            cmd.Parameters.AddWithValue("dept", string.IsNullOrWhiteSpace(dept) ? (object)DBNull.Value : dept);
-                            cmd.Parameters.AddWithValue("subject", subject.Trim());
-                            cmd.Parameters.AddWithValue("section", string.IsNullOrWhiteSpace(section) ? (object)DBNull.Value : section);
-                            cmd.Parameters.AddWithValue("year", string.IsNullOrWhiteSpace(yearLevel) ? (object)DBNull.Value : yearLevel);
-                            await cmd.ExecuteNonQueryAsync();
+                            await InsertExactFacultyAssignmentAsync(conn, facultyId, dept, subject, section, yearLevel, schoolYear, semester);
                             count++;
                         }
                         catch (Exception ex)
@@ -500,6 +522,8 @@ namespace BlockGo.Controllers
                             var section = getVal("section") ?? getVal("class_section") ?? "";
                             var yearLevel = getVal("year_level") ?? getVal("year") ?? "";
                             var dept = getVal("department") ?? department ?? "";
+                            var schoolYear = getVal("school_year") ?? getVal("schoolyear") ?? getVal("academic_year");
+                            var semester = getVal("semester") ?? getVal("term");
 
                             if (string.IsNullOrWhiteSpace(facultyEmail) || string.IsNullOrWhiteSpace(subject))
                                 throw new Exception("Faculty email and subject are required.");
@@ -512,16 +536,7 @@ namespace BlockGo.Controllers
                             if (facultyId == null)
                                 throw new Exception($"Faculty account {facultyEmail} not found.");
 
-                            using var cmd = new NpgsqlCommand(@"
-                                INSERT INTO FacultySections (user_id, department, subject, section, year_level)
-                                VALUES (@uid, @dept, @subject, @section, @year)
-                                ON CONFLICT (user_id, department, subject, section) DO NOTHING", conn);
-                            cmd.Parameters.AddWithValue("uid", facultyId);
-                            cmd.Parameters.AddWithValue("dept", string.IsNullOrWhiteSpace(dept) ? (object)DBNull.Value : dept);
-                            cmd.Parameters.AddWithValue("subject", subject.Trim());
-                            cmd.Parameters.AddWithValue("section", string.IsNullOrWhiteSpace(section) ? (object)DBNull.Value : section);
-                            cmd.Parameters.AddWithValue("year", string.IsNullOrWhiteSpace(yearLevel) ? (object)DBNull.Value : yearLevel);
-                            await cmd.ExecuteNonQueryAsync();
+                            await InsertExactFacultyAssignmentAsync(conn, facultyId, dept, subject, section, yearLevel, schoolYear, semester);
                             count++;
                         }
                         catch (Exception ex)
@@ -558,16 +573,16 @@ namespace BlockGo.Controllers
         [HttpPost("/api/bulk-faculty-load-chairperson")]
         [Authorize(Roles = "department_admin,chairperson,registrar,admin")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(CsvUploadValidator.MaximumMultipartBodyBytes)]
         public async Task<IActionResult> BulkFacultyLoadChairperson([FromForm] IFormFile file, [FromForm] string? department)
         {
             _logger.LogInformation("Chairperson bulk faculty load initiated by: {User}", User.Identity?.Name);
 
-            if (file == null || file.Length == 0)
-                return BadRequest(new { status = "Error", message = "CSV file required." });
+            var validationError = await CsvUploadValidator.ValidateAsync(file, HttpContext.RequestAborted);
+            if (validationError is not null)
+                return BadRequest(new { status = "Error", message = validationError });
 
-            var ext = Path.GetExtension(file.FileName).ToLower();
-            if (ext != ".csv" && ext != ".xlsx")
-                return BadRequest(new { status = "Error", message = "Only .csv and .xlsx files are supported." });
+            const string ext = ".csv";
 
             var tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ext);
 
@@ -653,6 +668,8 @@ namespace BlockGo.Controllers
                             var section = getVal("section") ?? getVal("class_section") ?? getVal("section_name") ?? (parts.Length > 2 ? parts[2]?.Trim() : "");
                             var yearLevel = getVal("year_level") ?? getVal("year") ?? getVal("yearlevel") ?? (parts.Length > 3 ? parts[3]?.Trim() : "");
                             var deptToUse = string.IsNullOrWhiteSpace(department) ? chairDept : department;
+                            var schoolYear = getVal("school_year") ?? getVal("schoolyear") ?? getVal("academic_year");
+                            var semester = getVal("semester") ?? getVal("term");
 
                             if (string.IsNullOrWhiteSpace(facultyEmail) || string.IsNullOrWhiteSpace(subject))
                                 throw new Exception("Faculty email and subject are required.");
@@ -673,16 +690,7 @@ namespace BlockGo.Controllers
                             if (facultyId == null)
                                 throw new Exception($"Faculty account {facultyEmail} not found.");
 
-                            using var cmd = new NpgsqlCommand(@"
-                                INSERT INTO FacultySections (user_id, department, subject, section, year_level)
-                                VALUES (@uid, @dept, @subject, @section, @year)
-                                ON CONFLICT (user_id, department, subject, section) DO NOTHING", conn);
-                            cmd.Parameters.AddWithValue("uid", facultyId);
-                            cmd.Parameters.AddWithValue("dept", string.IsNullOrWhiteSpace(deptToUse) ? (object)DBNull.Value : deptToUse);
-                            cmd.Parameters.AddWithValue("subject", subject.Trim());
-                            cmd.Parameters.AddWithValue("section", string.IsNullOrWhiteSpace(section) ? (object)DBNull.Value : section);
-                            cmd.Parameters.AddWithValue("year", string.IsNullOrWhiteSpace(yearLevel) ? (object)DBNull.Value : yearLevel);
-                            await cmd.ExecuteNonQueryAsync();
+                            await InsertExactFacultyAssignmentAsync(conn, facultyId, deptToUse, subject, section, yearLevel, schoolYear, semester);
                             count++;
                         }
                         catch (Exception ex)
@@ -716,6 +724,8 @@ namespace BlockGo.Controllers
                             var section = getVal("section") ?? getVal("class_section") ?? getVal("section_name") ?? "";
                             var yearLevel = getVal("year_level") ?? getVal("year") ?? getVal("yearlevel") ?? "";
                             var deptToUse = string.IsNullOrWhiteSpace(department) ? chairDept : department;
+                            var schoolYear = getVal("school_year") ?? getVal("schoolyear") ?? getVal("academic_year");
+                            var semester = getVal("semester") ?? getVal("term");
 
                             if (string.IsNullOrWhiteSpace(facultyEmail) || string.IsNullOrWhiteSpace(subject))
                                 throw new Exception("Faculty email and subject are required.");
@@ -736,16 +746,7 @@ namespace BlockGo.Controllers
                             if (facultyId == null)
                                 throw new Exception($"Faculty account {facultyEmail} not found.");
 
-                            using var cmd = new NpgsqlCommand(@"
-                                INSERT INTO FacultySections (user_id, department, subject, section, year_level)
-                                VALUES (@uid, @dept, @subject, @section, @year)
-                                ON CONFLICT (user_id, department, subject, section) DO NOTHING", conn);
-                            cmd.Parameters.AddWithValue("uid", facultyId);
-                            cmd.Parameters.AddWithValue("dept", string.IsNullOrWhiteSpace(deptToUse) ? (object)DBNull.Value : deptToUse);
-                            cmd.Parameters.AddWithValue("subject", subject.Trim());
-                            cmd.Parameters.AddWithValue("section", string.IsNullOrWhiteSpace(section) ? (object)DBNull.Value : section);
-                            cmd.Parameters.AddWithValue("year", string.IsNullOrWhiteSpace(yearLevel) ? (object)DBNull.Value : yearLevel);
-                            await cmd.ExecuteNonQueryAsync();
+                            await InsertExactFacultyAssignmentAsync(conn, facultyId, deptToUse, subject, section, yearLevel, schoolYear, semester);
                             count++;
                         }
                         catch (Exception ex)
@@ -780,8 +781,4 @@ namespace BlockGo.Controllers
         public List<int> StagingIds { get; set; } = new();
     }
 
-    public class FinalizeGradesRequest
-    {
-        public List<int> StagingIds { get; set; } = new();
-    }
 }

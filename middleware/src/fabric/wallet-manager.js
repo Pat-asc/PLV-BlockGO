@@ -111,7 +111,17 @@ function resilientWallet(role, initialWallet) {
 
     return {
         get: (label) => invoke('get', [label], async (stored) => {
-            if (!stored || !encryptionKey) return stored;
+            if (!stored) {
+                // The Fabric SDK CouchDB store suppresses get-document errors and
+                // returns undefined even for transport/authentication failures.
+                // A list check distinguishes a truly absent key from an unavailable
+                // or unreadable wallet without modifying any wallet document.
+                const labels = await invoke('list', []);
+                if (labels.includes(label))
+                    throw new Error(`Fabric wallet identity '${label}' exists but could not be read; preserve the wallet and inspect CouchDB access.`);
+                return stored;
+            }
+            if (!encryptionKey) return stored;
             const copy = structuredClone(stored);
             if (copy?.credentials?.privateKey) copy.credentials.privateKey = await decryptPrivateKey(copy.credentials.privateKey, encryptionKey);
             return copy;
@@ -157,4 +167,4 @@ async function findIdentity(username, roleHint) {
     return null;
 }
 
-module.exports = { checkWallets, findIdentity, getWallet, isRetryableCouchDbError };
+module.exports = { checkWallets, findIdentity, getWallet, isRetryableCouchDbError, resilientWallet };

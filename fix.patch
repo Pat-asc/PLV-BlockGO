@@ -1,0 +1,127 @@
+diff --git a/client-app/Controllers/SystemSettingsController.cs b/client-app/Controllers/SystemSettingsController.cs
+index cb4ec19c..58702874 100644
+--- a/client-app/Controllers/SystemSettingsController.cs
++++ b/client-app/Controllers/SystemSettingsController.cs
+@@ -239,25 +239,24 @@ namespace Client_app.Controllers
+ 
+                     await authorityReader.DisposeAsync();
+ 
+-                    if (!string.Equals(requestedSchoolYear, activeSchoolYear, StringComparison.OrdinalIgnoreCase) ||
+-                        !string.Equals(requestedSemester, activeSemester, StringComparison.OrdinalIgnoreCase))
++                    var activeSemesterDisplay = activeSemester switch
+                     {
+-                        var activeSemesterDisplay = activeSemester switch
+-                        {
+-                            "FIRST" => "1st Semester",
+-                            "SECOND" => "2nd Semester",
+-                            "MIDYEAR" => "Summer",
+-                            _ => activeSemester
+-                        };
++                        "FIRST" => "1st Semester",
++                        "SECOND" => "2nd Semester",
++                        "MIDYEAR" => "Summer",
++                        _ => activeSemester
++                    };
+ 
+-                        return Conflict(new
+-                        {
+-                            status = "Error",
+-                            message =
+-                                $"Save Schedule cannot change the active academic period. " +
+-                                $"The active period is {activeSchoolYear} · {activeSemesterDisplay}. " +
+-                                "Use Reset Encoding Season to change the school year or semester."
+-                        });
++                    try
++                    {
++                        var dict = JsonSerializer.Deserialize<Dictionary<string, object>>(settingValue) ?? new Dictionary<string, object>();
++                        dict[\"schoolYear\"] = activeSchoolYear;
++                        dict[\"semester\"] = activeSemesterDisplay;
++                        req.Value = JsonSerializer.Serialize(dict);
++                    }
++                    catch
++                    {
++                        // Fallback if parsing strictly to dictionary fails
+                     }
+                 }
+ 
+diff --git a/frontend/src/components/registrar/EncodingPeriod.jsx b/frontend/src/components/registrar/EncodingPeriod.jsx
+index 77117735..7e51c8a4 100644
+--- a/frontend/src/components/registrar/EncodingPeriod.jsx
++++ b/frontend/src/components/registrar/EncodingPeriod.jsx
+@@ -148,13 +148,44 @@ function EncodingPeriod({ onResetEncodingSeason }) {
+   };
+ 
+   const handleSave = async () => {
+-    const encodingData = {
+-      ...period,
+-    };
+-
+     try {
+       setIsSaving(true);
++      setLoadError(\"\");
++      const optionsResult = await fetchAcademicPeriodOptions();
++      const activeAcademicPeriod = optionsResult?.activeAcademicPeriod;
++
++      if (!activeAcademicPeriod) {
++        setStatusMessage(\"No active academic period exists. Use Reset Encoding Season first.\");
++        return;
++      }
++
++      const toSemesterDisplay = (value) => {
++        const normalized = String(value || \"\").trim().toUpperCase();
++        if (normalized === \"FIRST\" || normalized === \"1ST SEMESTER\") return \"1st Semester\";
++        if (normalized === \"SECOND\" || normalized === \"2ND SEMESTER\") return \"2nd Semester\";
++        if (normalized === \"MIDYEAR\" || normalized === \"SUMMER\" || normalized === \"SUMMER / MIDYEAR\") return \"Summer\";
++        return \"\";
++      };
++
++      const authoritativeSchoolYear = activeAcademicPeriod.schoolYear;
++      const authoritativeSemester = toSemesterDisplay(activeAcademicPeriod.semester);
++
++      const encodingData = {
++        schoolYear: authoritativeSchoolYear,
++        semester: authoritativeSemester,
++        term: period.term,
++        startDate: period.startDate,
++        endDate: period.endDate,
++      };
++
+       await updateSystemSetting(\"encoding_period\", JSON.stringify(encodingData));
++
++      setPeriod((current) => ({
++        ...current,
++        schoolYear: authoritativeSchoolYear,
++        semester: authoritativeSemester
++      }));
++
+       localStorage.setItem(\"encodingPeriod\", JSON.stringify(encodingData));
+       window.dispatchEvent(
+         new CustomEvent(\"blockgo:system-setting-changed\", {
+diff --git a/frontend/src/components/registrar/EncodingPeriod.test.jsx b/frontend/src/components/registrar/EncodingPeriod.test.jsx
+index 380187b9..069a59c9 100644
+--- a/frontend/src/components/registrar/EncodingPeriod.test.jsx
++++ b/frontend/src/components/registrar/EncodingPeriod.test.jsx
+@@ -31,14 +31,21 @@ test('renders authoritative school years and selects the active year', async ()
+   expect(screen.queryByPlaceholderText('2026-2027')).not.toBeInTheDocument();
+ });
+ 
+-test('changing the year updates the saved encoding-period state', async () => {
++test('manual year changes are safely overridden by the authoritative backend period when saving', async () => {
++  fetchAcademicPeriodOptions.mockResolvedValue({
++    status: 'Success',
++    schoolYears: ['2026-2027', '2025-2026'],
++    currentSchoolYear: '2026-2027',
++    activeAcademicPeriod: { schoolYear: '2026-2027', semester: 'MIDYEAR' },
++  });
++
+   render(<EncodingPeriod />);
+   const year = await screen.findByRole('combobox', { name: 'School Year' });
+   await waitFor(() => expect(year).toBeEnabled());
+   fireEvent.change(year, { target: { value: '2025-2026' } });
+   fireEvent.click(screen.getByRole('button', { name: 'Save Schedule' }));
+   await waitFor(() => expect(updateSystemSetting).toHaveBeenCalled());
+-  expect(JSON.parse(updateSystemSetting.mock.calls[0][1])).toMatchObject({ schoolYear: '2025-2026' });
++  expect(JSON.parse(updateSystemSetting.mock.calls[0][1])).toMatchObject({ schoolYear: '2026-2027', semester: 'Summer' });
+ });
+ 
+ test('keeps semester, term, and encoding dates functional', async () => {

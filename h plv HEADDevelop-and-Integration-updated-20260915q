@@ -1,0 +1,62 @@
+[33m> 7e0ad80a[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mDevelop-and-Integration[m[33m, [m[1;31mplv/Develop-and-Integration-updated-20260915[m[33m)[m Fix production monitoring, routing, authentication and Kubernetes deployment
+[33m< 10ffd1f0[m[33m ([m[1;31mplv/Develop-and-Integration[m[33m, [m[1;31morigin/Develop-and-Integration[m[33m)[m Document malformed reset request response
+[33m< 5a011a60[m Align retired password reset API contract
+[33m< a9baf8df[m Make registrar promotion atomic and harden local deployment
+[33m< 563c054d[m Promote Staging-and-Testing → main (#93)
+[33m< 08156ac0[m Merge branch 'main' into Staging-and-Testing
+[33m< 578a3260[m Promote feature/api-endpoints-Testing → Staging-and-Testing (#92)
+[33m< 9982f96f[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#91)
+[33m< 882daece[m Sync/staging history override 20260913 (#90)
+[33m< bbc8e4c0[m[33m ([m[1;31morigin/sync/staging-history-override-20260913[m[33m, [m[1;32msync/staging-history-override-20260913[m[33m, [m[1;32mfeature/api-endpoints-Testing[m[33m)[m merge legacy Staging history while preserving tested feature state
+[33m< 84faa540[m[33m ([m[1;31morigin/feature/api-endpoints-Testing[m[33m, [m[1;32mbackup/feature-before-staging-override-20260913[m[33m)[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#88)
+[33m< feb7fcc6[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#87)
+[33m< 8d12d054[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#86)
+[33m< 945acaef[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#85)
+[33m< 98350c2c[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#84)
+[33m< 07ba7f7b[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#83)
+[33m< 94329a58[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#82)
+[33m< 109294e8[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#81)
+[33m< e7161eed[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#80)
+[33m< 02045a15[m fix Trivy pip SBOM false positives
+[33m< 0e61b407[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#79)
+[33m< fb31ddc8[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#78)
+[33m< 6e1128af[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#77)
+[33m< 329fca96[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#76)
+[33m< 092fa1b5[m fix Python msgpack vulnerability (#75)
+[33m< b9a01698[m[33m ([m[1;31mplv/fix/middleware-security-dependencies[m[33m, [m[1;32mfix/middleware-security-dependencies[m[33m)[m fix Python msgpack vulnerability
+[33m< 7dead661[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#74)
+[33m< 6ba80457[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#73)
+[33m< 5fbbab5b[m Update feature and api-endpoints-Testing.yml
+[33m< 6a9c822e[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#72)
+[33m< af5423b1[m Update feature and api-endpoints-Testing.yml
+[33m< 126d1beb[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#71)
+[33m< cfc6cd14[m Update feature and api-endpoints-Testing.yml
+[33m< d928bd5b[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#70)
+[33m< 27523922[m Update security.yml
+[33m< caf2d907[m Update Dev-Ci.yml
+[33m< 29486bbb[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#69)
+[33m< 6cb6a70e[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#68)
+[33m< 18749189[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#67)
+[33m< 1f6c2da1[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#65)
+[33m< 8eea7c2d[m Refactor CI workflow for .NET services and tests
+[33m< f70cd46c[m Bump @testing-library/jest-dom from 6.9.1 to 7.0.1 in /frontend (#53)
+[33m< 4d32a386[m Bump ClosedXML and 9 others (#54)
+[33m< d3c99468[m Merge branch 'main' into dependabot/nuget/client-app/dotnet-minor-patch-348bfad33c
+[33m< 0c931343[m Bump Microsoft.Extensions.Diagnostics.HealthChecks from 8.0.11 to 10.0.12 (#58)
+[33m< c975008c[m Bump Serilog and Serilog.Sinks.Console (#61)
+[33m< bd54d7d8[m Bump the python-minor-patch group across 1 directory with 4 updates (#64)
+[33m< 516fd40f[m Bump the python-minor-patch group across 1 directory with 4 updates
+[33m< 0b2d55fb[m actions reconfig (#63)
+[33m< f700e6cd[m Bump ClosedXML and 9 others
+[33m< b987c778[m Bump Microsoft.Extensions.Diagnostics.HealthChecks from 8.0.11 to 10.0.12
+[33m< 7bc2fc34[m fixed all misconfig in actions (#62)
+[33m< d5051c4d[m Bump Serilog and Serilog.Sinks.Console
+[33m< 6e37b028[m Bump @testing-library/jest-dom from 6.9.1 to 7.0.1 in /frontend
+[33m< 2d03d409[m git actions newly config for devops sdlc alignment (#37)
+[33m< e645a480[m Merge branch 'main' into Develop-and-Integration
+[33m< 70de7023[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#36)
+[33m< 9a440d23[m Promote Develop-and-Integration → feature/api-endpoints-Testing (#35)
+[33m< c9f36e50[m[33m ([m[1;31morigin/Staging-and-Testing[m[33m, [m[1;32mStaging-and-Testing[m[33m)[m version control
+[33m< 3379d823[m Apply all updates from Backup-2 directly to staging
+[33m< 3a4604aa[m Resolve conflicts by keeping local deletions and edits | pakiayos nung 401 sa system admin
+[33m< ea96ac7f[m Update stress-test.yml

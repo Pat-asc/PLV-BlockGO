@@ -1,5 +1,37 @@
 ---
 apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: operations-monitor
+  namespace: plv-fabric
+  labels: { app: dotnet-operations-service }
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: operations-pod-monitor
+  namespace: plv-fabric
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: operations-pod-monitor
+  namespace: plv-fabric
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: operations-pod-monitor
+subjects:
+- kind: ServiceAccount
+  name: operations-monitor
+  namespace: plv-fabric
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: dotnet-service-config
@@ -27,6 +59,12 @@ data:
   DOTNET_GRADE_SERVICE_URL: http://dotnet-grade-service.plv-fabric.svc.cluster.local:5103
   DOTNET_OPERATIONS_SERVICE_URL: http://dotnet-operations-service.plv-fabric.svc.cluster.local:5104
   DOTNET_REALTIME_SERVICE_URL: http://dotnet-realtime-service.plv-fabric.svc.cluster.local:5105
+  # Process at most the GCP LB/Ingress pair and stop at the first untrusted hop.
+  ForwardedHeaders__ForwardLimit: "2"
+  ForwardedHeaders__KnownNetworks__0: 10.72.0.0/16
+  ForwardedHeaders__KnownNetworks__1: 10.96.0.0/16
+  ForwardedHeaders__KnownNetworks__2: 35.191.0.0/16
+  ForwardedHeaders__KnownNetworks__3: 130.211.0.0/22
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -53,6 +91,7 @@ spec:
         ports: [{ name: http, containerPort: 5000 }]
         envFrom:
         - configMapRef: { name: dotnet-service-config }
+        - configMapRef: { name: blockgo-public-hosting }
         env:
         - { name: DOTNET_SERVICE_NAME, value: gateway }
         - { name: DOTNET_SERVICE_PORT, value: "5000" }
@@ -84,6 +123,7 @@ metadata:
   labels: { app: dotnet-api-gateway, compatibility: client-app }
   annotations:
     cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default":"blockgo-forwarded-headers"}'
 spec:
   selector: { app: dotnet-api-gateway }
   ports: [{ name: http, protocol: TCP, port: 5000, targetPort: 5000 }]
@@ -280,6 +320,7 @@ spec:
     metadata:
       labels: { app: dotnet-operations-service, tier: application, runtime: dotnet }
     spec:
+      serviceAccountName: operations-monitor
       terminationGracePeriodSeconds: 35
       containers:
       - name: dotnet-operations-service

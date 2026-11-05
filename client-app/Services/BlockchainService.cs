@@ -1,6 +1,8 @@
 using BlockGo.Models;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Net;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -9,6 +11,25 @@ using System.Linq;
 
 namespace BlockGo.Services
 {
+    public sealed class LedgerGradeNotFoundException : Exception
+    {
+        public LedgerGradeNotFoundException(string recordId)
+            : base($"Grade {recordId} has not been issued to the Fabric ledger yet.") { }
+    }
+
+    public sealed class LedgerMiddlewareException : Exception
+    {
+        public string Code { get; }
+        public HttpStatusCode StatusCode { get; }
+
+        public LedgerMiddlewareException(string operation, string code, HttpStatusCode statusCode, string reason)
+            : base($"{operation} failed ({code}, HTTP {(int)statusCode}): {reason}")
+        {
+            Code = code;
+            StatusCode = statusCode;
+        }
+    }
+
     public class BlockchainService : IBlockchainService
     {
         private readonly HttpClient _httpClient;
@@ -25,9 +46,28 @@ namespace BlockGo.Services
             _httpClient.DefaultRequestHeaders.Add("x-api-key", apiKey);
             // Fabric commits regularly take longer than a normal read request because the
             // transaction must be endorsed, ordered, and committed before middleware replies.
-            // Two seconds caused valid registrar finalizations to be cancelled mid-commit.
+            // Two seconds caused valid Chairperson finalizations to be cancelled mid-commit.
             var requestTimeoutSeconds = configuration.GetValue<int?>("Middleware:RequestTimeoutSeconds") ?? 120;
             _httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(10, requestTimeoutSeconds));
+        }
+
+        private static async Task<Exception> MiddlewareErrorAsync(HttpResponseMessage response, string operation, string? recordId = null)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            var code = "MIDDLEWARE_ERROR";
+            var reason = "The Fabric service did not complete the operation. Check the middleware service log.";
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                if (document.RootElement.TryGetProperty("code", out var codeValue))
+                    code = codeValue.GetString() ?? code;
+                if (document.RootElement.TryGetProperty("error", out var reasonValue))
+                    reason = reasonValue.GetString() ?? reason;
+            }
+            catch (JsonException) { /* Never surface an unstructured upstream body or secret. */ }
+            if (response.StatusCode == HttpStatusCode.NotFound && code == "GRADE_NOT_FOUND" && recordId != null)
+                return new LedgerGradeNotFoundException(recordId);
+            return new LedgerMiddlewareException(operation, code, response.StatusCode, reason);
         }
 
         public async Task<string> GetAllGradesAsync(string invokerUsername)
@@ -41,9 +81,9 @@ namespace BlockGo.Services
             
             if (!response.IsSuccessStatusCode)
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger?.LogError("Middleware GetAllGrades Error: {Error}", errorContent);
-                throw new Exception($"Middleware Error: {errorContent}");
+                var error = await MiddlewareErrorAsync(response, "GetAllGrades");
+                _logger?.LogError(error, "Fabric GetAllGrades failed for {Invoker}", invokerUsername);
+                throw error;
             }
             
             return await response.Content.ReadAsStringAsync();
@@ -104,9 +144,12 @@ namespace BlockGo.Services
             
             if (!response.IsSuccessStatusCode)
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger?.LogError("Middleware GetGrade Error: {Error}", errorContent);
-                throw new Exception($"Middleware Error: {errorContent}");
+                var error = await MiddlewareErrorAsync(response, "ReadGrade", recordId);
+                if (error is LedgerGradeNotFoundException)
+                    _logger?.LogInformation("Grade {RecordId} is not yet on the Fabric ledger", recordId);
+                else
+                    _logger?.LogError(error, "Fabric ReadGrade failed for {RecordId} as {Invoker}", recordId, invokerUsername);
+                throw error;
             }
             
             return await response.Content.ReadAsStringAsync();
@@ -114,7 +157,7 @@ namespace BlockGo.Services
 
         public async Task<string> SubmitGradeAsync(AcademicRecord record, string invokerUsername)
         {
-            _logger?.LogInformation("Submitting grade for student: {StudentId} as {User}", record.Id, invokerUsername);
+            _logger?.LogInformation("Submitting grade {RecordId} to Fabric as {Invoker}", record.Id, invokerUsername);
             
             var request = new HttpRequestMessage(HttpMethod.Post, $"{_middlewareBaseUrl}/api/issue-grade")
             {
@@ -126,9 +169,9 @@ namespace BlockGo.Services
             
             if (!response.IsSuccessStatusCode)
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger?.LogError("Middleware Issue Error: {Error}", errorContent);
-                throw new Exception($"Middleware Error: {errorContent}");
+                var error = await MiddlewareErrorAsync(response, "IssueGrade", record.Id);
+                _logger?.LogError(error, "Fabric IssueGrade failed for {RecordId} as {Invoker}", record.Id, invokerUsername);
+                throw error;
             }
             
             return await response.Content.ReadAsStringAsync();
@@ -214,9 +257,9 @@ namespace BlockGo.Services
             
             if (!response.IsSuccessStatusCode)
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger?.LogError("Middleware Approve Error: {Error}", errorContent);
-                throw new Exception($"Middleware Error: {errorContent}");
+                var error = await MiddlewareErrorAsync(response, "ApproveGrade", recordId);
+                _logger?.LogError(error, "Fabric ApproveGrade failed for {RecordId} as {Invoker}", recordId, invokerUsername);
+                throw error;
             }
             
             return await response.Content.ReadAsStringAsync();
@@ -236,11 +279,52 @@ namespace BlockGo.Services
             
             if (!response.IsSuccessStatusCode)
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger?.LogError("Middleware Finalize Error: {Error}", errorContent);
-                throw new Exception($"Middleware Error: {errorContent}");
+                var error = await MiddlewareErrorAsync(response, "FinalizeRecord", recordId);
+                _logger?.LogError(error, "Fabric FinalizeRecord failed for {RecordId} as {Invoker}", recordId, invokerUsername);
+                throw error;
             }
             
+            return await response.Content.ReadAsStringAsync();
+        }
+
+        public async Task<string> FinalizeApprovedGradesAsync(IEnumerable<AcademicRecord> records, string invokerUsername)
+        {
+            var approvedRecords = records.ToArray();
+            _logger?.LogInformation("Finalizing approved grade batch ({Count} records) as {User}", approvedRecords.Length, invokerUsername);
+
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{_middlewareBaseUrl}/api/finalize-approved-grades")
+            {
+                Content = JsonContent.Create(approvedRecords)
+            };
+            request.Headers.Add("x-user-identity", invokerUsername);
+
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await MiddlewareErrorAsync(response, "FinalizeApprovedGrades");
+                _logger?.LogError(error, "Fabric approved-grade batch finalization failed as {Invoker}", invokerUsername);
+                throw error;
+            }
+
+            return await response.Content.ReadAsStringAsync();
+        }
+
+        public async Task<string> CorrectFinalizedGradeAsync(FinalizedGradeCorrectionRequest correction, string invokerUsername)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{_middlewareBaseUrl}/api/correct-finalized-grade")
+            {
+                Content = JsonContent.Create(new
+                {
+                    record_id = correction.RecordId,
+                    new_grade = correction.NewGrade,
+                    reason = correction.Reason,
+                    expected_grade_version = correction.ExpectedGradeVersion
+                })
+            };
+            request.Headers.Add("x-user-identity", invokerUsername);
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+                throw await MiddlewareErrorAsync(response, "CorrectFinalizedGrade", correction.RecordId);
             return await response.Content.ReadAsStringAsync();
         }
     }

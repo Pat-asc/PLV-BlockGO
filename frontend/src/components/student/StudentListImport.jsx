@@ -1,3 +1,4 @@
+import { showSystemNotification } from '../../services/NotificationContext';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { uploadToIpfs, openDecryptedIpfsFile } from "../../services/api";
 import Modal from "../../services/Modal";
@@ -95,15 +96,15 @@ function StudentListImport() {
               setIpfsModalOpen(false);
           } catch (error) {
               if (viewerWindow) viewerWindow.close();
-              alert(error.message);
+              showSystemNotification(error.message);
           }
       } else {
-          alert("Vault Password is required");
+          showSystemNotification("Vault Password is required");
       }
   };
 
   const handleDownloadTemplate = () => {    if (!selectedProgram || !selectedBatchYear) {
-      alert("Please complete the department and batch year first.");
+      showSystemNotification("Please complete the department and batch year first.");
       return;
     }
     const csvContent = "student_no,full_name,email,date_of_birth,department,section,grade,course,semester,school_year\nMOCK-tudent1,Juan Dela Cruz,mock.student1@plv.edu.ph,2005-05-15,Bachelor of Science in Computer Science,3-1,95,Bachelor of Science in Computer Science,2nd Semester,2024\n";
@@ -118,17 +119,17 @@ function StudentListImport() {
   };
 
   const handleImport = () => {
-    if (!selectedProgram || !selectedBatchYear) { alert("Please complete the department and batch year first."); return; }
-    if (!/^\d{4}$/.test(selectedBatchYear)) { alert("Batch year must be a 4-digit year."); return; }
-    if (!selectedFile) { alert("Please choose the Excel CSV file first."); return; }
-    if (!selectedFile.name.toLowerCase().endsWith(".csv")) { alert("Please upload the Excel CSV template in .csv format."); return; }
+    if (!selectedProgram || !selectedBatchYear) { showSystemNotification("Please complete the department and batch year first."); return; }
+    if (!/^\d{4}$/.test(selectedBatchYear)) { showSystemNotification("Batch year must be a 4-digit year."); return; }
+    if (!selectedFile) { showSystemNotification("Please choose the Excel CSV file first."); return; }
+    if (!selectedFile.name.toLowerCase().endsWith(".csv")) { showSystemNotification("Please upload the Excel CSV template in .csv format."); return; }
 
     setIsUploading(true);
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
       const text = event.target?.result;
-      if (!text) { alert("Unable to read file."); return; }
+      if (!text) { showSystemNotification("Unable to read file."); return; }
 
       const ipfsRes = await uploadToIpfs(selectedFile);
       const cid = ipfsRes.cid;
@@ -175,9 +176,9 @@ function StudentListImport() {
       localStorage.setItem("STUDENT_SUBMISSION_LOGS_KEY", JSON.stringify(updatedLogs));
 
       setSelectedFile(null);
-      alert("Student list forwarded to the chairperson successfully.");
+      showSystemNotification("Student list forwarded to the chairperson successfully.");
       } catch (err) {
-        alert("Upload failed: " + err.message);
+        showSystemNotification("Upload failed: " + err.message);
       } finally {
         setIsUploading(false);
       }

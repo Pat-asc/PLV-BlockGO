@@ -4,13 +4,9 @@ WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm install
+RUN npm ci
 
 COPY . .
-
-RUN npx tailwindcss init -p && \
-    echo "module.exports = { content: ['./src/**/*.{js,jsx,ts,tsx}'], theme: { extend: {} }, plugins: [] }" > tailwind.config.js && \
-    echo "@tailwind base; @tailwind components; @tailwind utilities;" > src/index.css
 
 RUN DISABLE_ESLINT_PLUGIN=true npm run build
 

@@ -15,7 +15,8 @@ public sealed class PasswordResetRequestsController : ControllerBase
     {
         _connectionString = configuration.GetConnectionString("MasterConnection")
             ?? configuration.GetConnectionString("PostgresConnection")
-            ?? throw new InvalidOperationException("A PostgreSQL write connection is required.");
+            ?? throw new InvalidOperationException(
+                "A PostgreSQL write connection is required.");
     }
 
     [HttpGet]
@@ -23,6 +24,7 @@ public sealed class PasswordResetRequestsController : ControllerBase
     {
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+
         await using var command = new NpgsqlCommand(@"
             SELECT pr.request_id, pr.user_id, pr.email, pr.request_status,
                    pr.request_reason, pr.reviewed_at, pr.review_note,
@@ -40,8 +42,11 @@ public sealed class PasswordResetRequestsController : ControllerBase
                          WHEN 'PENDING' THEN 0 WHEN 'APPROVED' THEN 1 ELSE 2
                      END,
                      pr.created_at DESC;", connection);
+
         var requests = new List<object>();
+
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
         while (await reader.ReadAsync(cancellationToken))
         {
             requests.Add(new
@@ -59,6 +64,7 @@ public sealed class PasswordResetRequestsController : ControllerBase
                 role = reader.GetString(10)
             });
         }
+
         return Ok(new { status = "Success", data = requests });
     }
 }

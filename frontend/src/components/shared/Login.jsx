@@ -3,11 +3,12 @@ import React, { useState } from 'react';
 import '../../assets/App.css';
 import plvbg from '../../assets/plvbg.png';
 import plvlogo from '../../assets/plvlogo.png';
-import { login, forgotPassword } from '../../services/api';
+import { forgotPassword, login, requestPasswordResetAssistance, resetPassword } from '../../services/api';
 import { createLocalDevToken, createLocalDevTokenForRole } from '../../utils/localDevAuth';
+import PasswordStrength from './PasswordStrength';
+import { isPasswordValid, PASSWORD_POLICY_MESSAGE } from '../../utils/passwordPolicy';
 
 const Login = ({ onLogin }) => {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -15,6 +16,12 @@ const Login = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
@@ -48,8 +55,8 @@ const Login = ({ onLogin }) => {
 
   const handleForgotPassword = async (e) => {
     e.preventDefault();
-    if (!emailRegex.test(email)) {
-      setError('Please enter a valid email address.');
+    if (!email.trim()) {
+      setError('Please enter your registered email or account identifier.');
       return;
     }
     setIsLoading(true);
@@ -57,11 +64,62 @@ const Login = ({ onLogin }) => {
     setMessage('');
     try {
       const data = await forgotPassword(email);
-      setMessage(data.message || 'Your request is pending with the Registrar.');
+      setMessage(data.message || 'Check your registered email for the password reset code.');
+      setCurrentView('resetPassword');
     } catch (error) {
       setError(error.message);
     }
     setIsLoading(false);
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    if (!/^\d{6}$/.test(verificationCode)) {
+      setError('Enter the six-digit verification code from your email.');
+      return;
+    }
+    if (!isPasswordValid(newPassword)) {
+      setError(PASSWORD_POLICY_MESSAGE);
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('The password confirmation does not match.');
+      return;
+    }
+    setIsLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const data = await resetPassword({ email, code: verificationCode, newPassword });
+      setVerificationCode('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPassword('');
+      setCurrentView('signIn');
+      setMessage(data.message || 'Password updated successfully. You can now sign in.');
+    } catch (resetError) {
+      setError(resetError.message || 'Unable to reset the password.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleManualAssistance = async () => {
+    if (!email.trim()) {
+      setError('Enter your registered email or account identifier before requesting manual assistance.');
+      return;
+    }
+    setIsLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const data = await requestPasswordResetAssistance(email);
+      setMessage(data.message || 'If the account is eligible, a manual recovery request is pending with the Registrar.');
+    } catch (assistanceError) {
+      setError(assistanceError.message || 'Unable to request manual assistance.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const renderPasswordInput = ({
@@ -162,7 +220,8 @@ const Login = ({ onLogin }) => {
 
           <h2 className="welcome-text">
             {currentView === 'signIn' && "Welcome"}
-            {currentView === 'forgotPassword' && "Request Password Reset"}
+            {currentView === 'forgotPassword' && "Forgot Password"}
+            {currentView === 'resetPassword' && "Verify and Reset Password"}
           </h2>
           {error && <p style={{ color: 'red', textAlign: 'center' }}>{error}</p>}
           {message && <p style={{ color: 'green', textAlign: 'center' }}>{message}</p>}
@@ -227,19 +286,50 @@ const Login = ({ onLogin }) => {
             <form className="login-form" onSubmit={handleForgotPassword}>
               
               <div className="input-group">
-                <label>Email</label>
-                <input type="email" placeholder="Your registered email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                <label>Email or Account ID</label>
+                <input type="text" autoComplete="username" placeholder="Registered email, ID, or student number" value={email} onChange={(e) => setEmail(e.target.value)} required />
               </div>
               <button type="submit" className="sign-in-btn" disabled={isLoading}>
-                {isLoading ? (<><span className="spinner"></span> Submitting...</>) : 'Submit Request'}
+                {isLoading ? (<><span className="spinner"></span> Sending...</>) : 'Send Reset Code'}
               </button>
               <p style={{ color: '#64748b', fontSize: '12px', lineHeight: 1.5, textAlign: 'center' }}>
-                Faculty and Chairperson requests are reviewed by the Registrar. No password or verification code is sent by this form.
+                Self-service email recovery is available for every active BlockGo account with a registered recovery email.
               </p>
+              <button type="button" className="toggle-view auth-link" onClick={handleManualAssistance} disabled={isLoading} style={{ cursor: 'pointer', fontWeight: 'bold', marginTop: '8px', border: 'none', background: 'transparent' }}>
+                Can't access your registered email? Request Manual Assistance
+              </button>
             </form>
           )}
 
-          {currentView === 'forgotPassword' && (
+          {currentView === 'resetPassword' && (
+            <form className="login-form" onSubmit={handleResetPassword}>
+              <div className="input-group">
+                <label>Verification Code</label>
+                <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength="6" pattern="[0-9]{6}" placeholder="6-digit verification code" value={verificationCode} onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, ''))} required />
+              </div>
+              {renderPasswordInput({
+                label: 'New Password', value: newPassword,
+                onChange: (e) => setNewPassword(e.target.value), placeholder: 'New Password',
+                autoComplete: 'new-password', isVisible: showNewPassword,
+                onToggle: () => setShowNewPassword((current) => !current),
+              })}
+              <PasswordStrength password={newPassword} />
+              {renderPasswordInput({
+                label: 'Confirm New Password', value: confirmPassword,
+                onChange: (e) => setConfirmPassword(e.target.value), placeholder: 'Confirm New Password',
+                autoComplete: 'new-password', isVisible: showConfirmPassword,
+                onToggle: () => setShowConfirmPassword((current) => !current),
+              })}
+              <button type="submit" className="sign-in-btn" disabled={isLoading}>
+                {isLoading ? (<><span className="spinner"></span> Resetting...</>) : 'Reset Password'}
+              </button>
+              <button type="button" className="toggle-view auth-link" onClick={handleManualAssistance} disabled={isLoading} style={{ cursor: 'pointer', fontWeight: 'bold', marginTop: '8px', border: 'none', background: 'transparent' }}>
+                Request Manual Assistance
+              </button>
+            </form>
+          )}
+
+          {(currentView === 'forgotPassword' || currentView === 'resetPassword') && (
             <p className="toggle-view auth-link" onClick={() => { setCurrentView('signIn'); setError(''); setMessage(''); }} style={{ cursor: 'pointer', fontWeight: 'bold', marginTop: '15px' }}>
               Back to Sign In
             </p>

@@ -1,3 +1,8 @@
+:root {
+  --blockgo-font-scale: 1;
+  font-size: calc(16px * var(--blockgo-font-scale));
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -5,6 +10,37 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.blockgo-text-size-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.35rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.96);
+  color: #334155;
+}
+
+.blockgo-text-size-control button {
+  min-width: 2rem;
+  min-height: 2rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: #334155;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.blockgo-text-size-control button:hover,
+.blockgo-text-size-control button:focus-visible,
+.blockgo-text-size-control button.is-active {
+  background: #003366;
+  color: #fff;
 }
 
 code {

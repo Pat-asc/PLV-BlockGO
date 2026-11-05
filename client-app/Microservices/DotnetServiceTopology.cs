@@ -1,11 +1,7 @@
 using Yarp.ReverseProxy.Configuration;
+using Yarp.ReverseProxy.Transforms;
 
 namespace Client_app.Microservices;
-
-/// <summary>
-/// Defines the independently deployed ASP.NET service boundaries while keeping
-/// the existing public URLs stable behind dotnet-api-gateway.
-/// </summary>
 public static class DotnetServiceTopology
 {
     public const string Gateway = "gateway";
@@ -39,6 +35,7 @@ public static class DotnetServiceTopology
                 "Client_app.Controllers.GradeTemplateController",
                 "Client_app.Controllers.SectioningController",
                 "Client_app.Controllers.RegistrarDashboardController",
+                "Client_app.Controllers.TranscriptController",
                 "Client_app.Controllers.SearchController"),
             [Grade] = ControllerSet(
                 "BlockGo.Controllers.GradesController",
@@ -126,11 +123,15 @@ public static class DotnetServiceTopology
             "/api/GradeTemplate", "/api/GradeTemplate/{**catch-all}",
             "/api/Sectioning", "/api/Sectioning/{**catch-all}",
             "/api/RegistrarDashboard", "/api/RegistrarDashboard/{**catch-all}",
+            "/api/Transcript", "/api/Transcript/{**catch-all}",
             "/api/registrar/Search", "/api/registrar/Search/{**catch-all}");
         AddRoutes(routes, Grade,
             "/api/Grades", "/api/Grades/{**catch-all}",
             "/api/BulkUpload", "/api/BulkUpload/{**catch-all}",
-            "/api/Student", "/api/Student/{**catch-all}");
+            "/api/Student", "/api/Student/{**catch-all}",
+            "/api/bulk-faculty-load", "/api/bulk-faculty-sections",
+            "/api/bulk-faculty-sections-upload", "/api/assign-faculty-bulk",
+            "/api/chairperson/assign-faculty-bulk", "/api/bulk-faculty-load-chairperson");
         AddRoutes(routes, Operations,
             "/api/SystemSettings", "/api/SystemSettings/{**catch-all}",
             "/api/SystemMonitoring", "/api/SystemMonitoring/{**catch-all}",
@@ -161,7 +162,7 @@ public static class DotnetServiceTopology
                 RouteId = $"{cluster}-{index}",
                 ClusterId = cluster,
                 Match = new RouteMatch { Path = paths[index] }
-            });
+            }.WithTransformXForwarded("X-Forwarded-", ForwardedTransformActions.Set));
         }
     }
 }

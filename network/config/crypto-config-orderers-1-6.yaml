@@ -1,0 +1,11 @@
+OrdererOrgs:
+  - Name: Orderer
+    Domain: capstone.com
+    EnableNodeOUs: true
+    Specs:
+      - Hostname: orderer
+      - Hostname: orderer2
+      - Hostname: orderer3
+      - Hostname: orderer4
+      - Hostname: orderer5
+      - Hostname: orderer6

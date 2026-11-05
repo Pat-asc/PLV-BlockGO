@@ -1,6 +1,7 @@
 import {
   buildCsvContent,
   buildStudentCsvContent,
+  downloadCsvFile,
   getGregorianCalendarYear,
   getNextStudentId,
   parseCsvRows,
@@ -46,6 +47,21 @@ describe("studentSectioningHelpers", () => {
         sectionCode: "",
       },
     ]);
+  });
+
+  it("downloads a non-empty CSV template with the requested production-safe filename", () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = URL.createObjectURL = jest.fn(() => "blob:section-template");
+    const revokeObjectURL = URL.revokeObjectURL = jest.fn();
+    const click = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    downloadCsvFile(buildStudentCsvContent([{ studentId: "26-0001", sex: "Male", lastName: "Dela Cruz", firstName: "Juan", middleName: "Santos", yearLevel: "1st Year" }]), "bsit-1st-year-section-template.csv");
+    expect(createObjectURL.mock.calls[0][0]).toBeInstanceOf(Blob);
+    expect(click).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:section-template");
+    click.mockRestore();
+    URL.createObjectURL = originalCreateObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL;
   });
 
   it("accepts common student number and middle name header aliases", () => {

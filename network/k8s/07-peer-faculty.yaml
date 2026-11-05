@@ -9,7 +9,7 @@ spec:
   storageClassName: fabric-storage
   resources:
     requests:
-      storage: 50Gi
+      storage: 20Gi
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -48,6 +48,9 @@ spec:
       initContainers:
       - name: prepare-couchdb-config
         image: busybox:1.36.1
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {cpu: 100m, memory: 64Mi}
         imagePullPolicy: IfNotPresent
         command:
         - /bin/sh
@@ -62,6 +65,9 @@ spec:
       containers:
       - name: couchdb
         image: couchdb:3.2.2
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {cpu: 500m, memory: 768Mi}
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5984
@@ -119,7 +125,7 @@ spec:
       accessModes: [ "ReadWriteOnce" ]
       resources:
         requests:
-          storage: 30Gi
+          storage: 10Gi
 ---
 apiVersion: v1
 kind: Service
@@ -355,6 +361,9 @@ spec:
       initContainers:
       - name: prepare-couchdb-config
         image: busybox:1.36.1
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {cpu: 100m, memory: 64Mi}
         imagePullPolicy: IfNotPresent
         command:
         - /bin/sh
@@ -369,6 +378,9 @@ spec:
       containers:
       - name: couchdb
         image: couchdb:3.2.2
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {cpu: 250m, memory: 512Mi}
         ports:
         - containerPort: 5984
           name: couchdb
@@ -421,10 +433,11 @@ spec:
   - metadata:
       name: couchdb-wallet-storage
     spec:
+      storageClassName: fabric-storage
       accessModes: ["ReadWriteOnce"]
       resources:
         requests:
-          storage: 10Gi
+          storage: 5Gi
 ---
 apiVersion: v1
 kind: Service

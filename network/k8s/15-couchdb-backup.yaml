@@ -30,6 +30,7 @@ spec:
           containers:
           - name: couchdb-backup
             image: alpine:3.18
+            resources: {requests: {cpu: 25m, memory: 64Mi}, limits: {cpu: 250m, memory: 256Mi}}
             env:
             - name: COUCHDB_USER
               valueFrom:

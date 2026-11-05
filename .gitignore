@@ -24,7 +24,37 @@ temp/
 .cache/
 *.cache
 *.cache.json
-/tests/
+/tests/*
+!/tests/GradeComparisonChecks/
+!/tests/GradeComparisonChecks/GradeComparisonChecks.csproj
+!/tests/GradeComparisonChecks/Program.cs
+/tests/GradeComparisonChecks/bin/
+/tests/GradeComparisonChecks/obj/
+!/tests/ClientIpForwardingChecks/
+!/tests/ClientIpForwardingChecks/ClientIpForwardingChecks.csproj
+!/tests/ClientIpForwardingChecks/Program.cs
+/tests/ClientIpForwardingChecks/bin/
+/tests/ClientIpForwardingChecks/obj/
+!/tests/KubernetesPodHealthTests/
+!/tests/KubernetesPodHealthTests/**
+/tests/KubernetesPodHealthTests/bin/
+/tests/KubernetesPodHealthTests/obj/
+!/tests/AssignmentRegressionTests/
+!/tests/AssignmentRegressionTests/AssignmentRegressionTests.csproj
+!/tests/AssignmentRegressionTests/Program.cs
+/tests/AssignmentRegressionTests/bin/
+/tests/AssignmentRegressionTests/obj/
+!/tests/GrafanaSessionChecks/
+!/tests/GrafanaSessionChecks/GrafanaSessionChecks.csproj
+!/tests/GrafanaSessionChecks/Program.cs
+/tests/GrafanaSessionChecks/bin/
+/tests/GrafanaSessionChecks/obj/
+!/tests/StudentSubjectGradeChecks/
+!/tests/StudentSubjectGradeChecks/Program.cs
+/tests/StudentSubjectGradeChecks/bin/
+/tests/StudentSubjectGradeChecks/obj/
+!/tests/LoadTests/
+!/tests/LoadTests/k6-grade-submission.js
 /test-results/
 
 # =========================
@@ -75,6 +105,7 @@ network/.local-couchdb-*-port-forward*.pid
 docker-compose.override.yml
 network/.tmp-k8s/
 network/k8s/.tmp-k8s/
+.production-release/
 # =========================
 # BLOCKCHAIN NETWORK SPECIFIC
 # =========================

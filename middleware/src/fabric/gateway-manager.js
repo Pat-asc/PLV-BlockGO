@@ -1,9 +1,14 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const net = require('net');
 const tls = require('tls');
 const path = require('path');
 const { isContainerized, middlewareRoot, parsePositiveInt } = require('../shared/config');
 const { findIdentity } = require('./wallet-manager');
+const { safeFabricReason } = require('./ledger-errors');
+const createLogger = require('../shared/logger');
+
+const logger = createLogger('fabric-gateway');
 
 const gatewayCache = new Map();
 const idleTimeout = parsePositiveInt(process.env.GATEWAY_IDLE_TIMEOUT_MS, 5 * 60 * 1000);
@@ -95,13 +100,27 @@ function fabricEndpointUrls() {
             orderer6: process.env.FABRIC_ORDERER_6_URL || 'grpcs://orderer-6.plv-pubad-campus.svc.cluster.local:7050'
         });
     }
+
+    const disabledOrderers = new Set(
+        String(process.env.FABRIC_DISABLED_ORDERERS || '')
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean)
+    );
+
+    for (const name of disabledOrderers) {
+        if (name !== 'orderer' && name.startsWith('orderer')) {
+            delete endpoints[name];
+        }
+    }
+
     return endpoints;
 }
 
 function fabricDiscoveryEnabled() {
     const configured = process.env.FABRIC_DISCOVERY_ENABLED;
-    if (configured !== undefined) return ['1', 'true', 'yes', 'on'].includes(String(configured).trim().toLowerCase());
-    return Boolean(process.env.KUBERNETES_SERVICE_HOST);
+    return configured !== undefined &&
+        ['1', 'true', 'yes', 'on'].includes(String(configured).trim().toLowerCase());
 }
 
 function profileForIdentity(identity) {
@@ -125,7 +144,10 @@ function profileForIdentity(identity) {
         profile.peers['peer1.faculty.capstone.com'] = endpoint(urls.facultySecondary, tls('faculty'), 'peer1.faculty.capstone.com');
         profile.peers['peer1.department.capstone.com'] = endpoint(urls.departmentSecondary, tls('department'), 'peer1.department.capstone.com');
         for (let number = 2; number <= 6; number += 1) {
-            profile.orderers[`orderer${number}.capstone.com`] = endpoint(urls[`orderer${number}`], tls('orderer'), `orderer${number}.capstone.com`);
+            const ordererUrl = urls[`orderer${number}`];
+            if (ordererUrl) {
+                profile.orderers[`orderer${number}.capstone.com`] = endpoint(ordererUrl, tls('orderer'), `orderer${number}.capstone.com`);
+            }
         }
     }
     const channelName = process.env.CHANNEL_NAME || 'registrar-channel';
@@ -150,6 +172,23 @@ function profileForIdentity(identity) {
         details.peers = (details.peers || []).filter((peer) => profile.peers[peer]);
     }
     return profile;
+}
+
+function identityFingerprint(identity) {
+    const certificate = identity?.credentials?.certificate || '';
+    const mspId = identity?.mspId || '';
+
+    return crypto
+        .createHash('sha256')
+        .update(`${mspId}\n${certificate}`)
+        .digest('hex');
+}
+
+function isReusableCacheEntry(cached, identity, now = Date.now()) {
+    if (!cached || !identity) return false;
+    return cached.mspId === identity.mspId &&
+        cached.identityFingerprint === identityFingerprint(identity) &&
+        now - cached.lastAccessed <= idleTimeout;
 }
 
 function disconnect(username, reason = 'invalidated') {
@@ -177,17 +216,31 @@ function ensurePruner() {
 async function contractForUser(username, roleHint) {
     if (!username) throw new Error('A valid user identity is required for the Fabric transaction.');
     ensurePruner();
-    const found = await findIdentity(username, roleHint);
+    let found;
+    try { found = await findIdentity(username, roleHint); }
+    catch (error) {
+        logger.error({ identity: username, role: roleHint, stage: 'wallet', reason: safeFabricReason(error) }, 'Fabric wallet lookup failed');
+        throw error;
+    }
     if (!found) {
         disconnect(username, 'wallet-removed');
+        logger.warn({ identity: username, role: roleHint, stage: 'wallet' }, 'Fabric wallet identity is missing');
         throw new Error(`Access Denied: Wallet identity for '${username}' not found. The Registrar must register this user first.`);
     }
+    const fingerprint = identityFingerprint(found.identity);
     const cached = gatewayCache.get(username);
-    if (cached && cached.mspId === found.identity.mspId && Date.now() - cached.lastAccessed <= idleTimeout) {
+
+    if (isReusableCacheEntry(cached, found.identity)) {
         cached.lastAccessed = Date.now();
         return cached.contract;
     }
-    disconnect(username, 'reconnect');
+
+    disconnect(
+        username,
+        cached && cached.identityFingerprint !== fingerprint
+            ? 'identity-changed'
+            : 'reconnect'
+    );
     while (gatewayCache.size >= maxUsers) {
         const oldest = [...gatewayCache.entries()].sort((a, b) => a[1].lastAccessed - b[1].lastAccessed)[0];
         if (!oldest) break;
@@ -195,17 +248,34 @@ async function contractForUser(username, roleHint) {
     }
     const FabricGateway = gatewayConstructor();
     const gateway = new FabricGateway();
-    await gateway.connect(profileForIdentity(found.identity), {
-        wallet: found.wallet,
-        identity: username,
-        // Kubernetes DNS can route the explicit FQDNs in profileForIdentity. Fabric
-        // discovery may return channel endpoints advertised for another namespace
-        // (or external orderer hostnames), so it must be explicitly opt-in there.
-        discovery: { enabled: fabricDiscoveryEnabled(), asLocalhost: !isContainerized() }
+    const channel = process.env.CHANNEL_NAME || 'registrar-channel';
+    const chaincode = process.env.CHAINCODE_NAME || 'registrar';
+    let contract;
+    try {
+        await gateway.connect(profileForIdentity(found.identity), {
+            wallet: found.wallet,
+            identity: username,
+            // Kubernetes DNS can route the explicit FQDNs in profileForIdentity. Fabric
+            // discovery may return channel endpoints advertised for another namespace
+            // (or external orderer hostnames), so it must be explicitly opt-in there.
+            discovery: { enabled: fabricDiscoveryEnabled(), asLocalhost: !isContainerized() }
+        });
+        const network = await gateway.getNetwork(channel);
+        contract = network.getContract(chaincode);
+    } catch (error) {
+        try { gateway.disconnect(); } catch { /* connection did not complete */ }
+        logger.error({ identity: username, mspId: found.identity.mspId, channel, chaincode,
+            stage: 'gateway-or-contract', reason: safeFabricReason(error) }, 'Fabric gateway connection failed');
+        throw error;
+    }
+    logger.info({ identity: username, mspId: found.identity.mspId, channel, chaincode }, 'Fabric contract resolved');
+    gatewayCache.set(username, {
+        gateway,
+        contract,
+        mspId: found.identity.mspId,
+        identityFingerprint: fingerprint,
+        lastAccessed: Date.now()
     });
-    const network = await gateway.getNetwork(process.env.CHANNEL_NAME || 'registrar-channel');
-    const contract = network.getContract(process.env.CHAINCODE_NAME || 'registrar');
-    gatewayCache.set(username, { gateway, contract, mspId: found.identity.mspId, lastAccessed: Date.now() });
     return contract;
 }
 
@@ -243,9 +313,29 @@ function checkSocket(name, endpointUrl) {
             ? tls.connect({ ...options, ca: tlsRoot, servername: serverNames[name], rejectUnauthorized: true })
             : net.createConnection(options);
         const readyEvent = secure ? 'secureConnect' : 'connect';
-        const timeout = setTimeout(() => socket.destroy(new Error(`${name} connection timed out.`)), Number(process.env.FABRIC_READINESS_TIMEOUT_MS || 2000));
-        socket.once(readyEvent, () => { clearTimeout(timeout); socket.end(); resolve([name, secure ? 'tls-ready' : 'reachable']); });
-        socket.once('error', (error) => { clearTimeout(timeout); reject(new Error(`${name} is unreachable: ${error.message}`)); });
+        let settled = false;
+        const finish = (error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            socket.removeListener(readyEvent, onReady);
+            socket.removeListener('error', onError);
+            // A readiness probe needs only to establish the connection. Destroy it
+            // synchronously after that result so repeated probes cannot retain TLS
+            // sockets and their native OpenSSL allocations while awaiting a peer's
+            // close-notify response.
+            socket.destroy();
+            if (error) reject(new Error(`${name} is unreachable: ${error.message}`));
+            else resolve([name, secure ? 'tls-ready' : 'reachable']);
+        };
+        const onReady = () => finish();
+        const onError = (error) => finish(error);
+        const timeout = setTimeout(
+            () => finish(new Error('connection timed out.')),
+            Number(process.env.FABRIC_READINESS_TIMEOUT_MS || 2000)
+        );
+        socket.once(readyEvent, onReady);
+        socket.once('error', onError);
     });
 }
 
@@ -274,4 +364,5 @@ async function closeGateways() {
     for (const username of [...gatewayCache.keys()]) disconnect(username, 'shutdown');
 }
 
-module.exports = { cacheStats, checkFabricEndpoints, closeGateways, contractForUser, disconnect, profileForIdentity };
+module.exports = { cacheStats, checkFabricEndpoints, checkSocket, closeGateways, contractForUser, disconnect,
+    fabricEndpointUrls, identityFingerprint, isReusableCacheEntry, profileForIdentity };

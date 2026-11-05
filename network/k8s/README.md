@@ -24,9 +24,9 @@ chmod +x ./full_deploy.sh
 # http://localhost:8080
 
 # Create or connect to the regional GKE cluster (one node pool node per zone)
-export GCP_PROJECT_ID="your-project"
-export GKE_CLUSTER_NAME="blockgo-production"
-export GKE_REGION="asia-southeast1"
+export GCP_PROJECT_ID="project-fa00844e-5237-451f-a95"
+export GKE_CLUSTER_NAME="blockgo-prod"
+export GKE_REGION="asia-east1"
 # Recommended: a least-privilege GKE node service account
 export GKE_NODE_SERVICE_ACCOUNT="blockgo-gke@your-project.iam.gserviceaccount.com"
 ./k8s/deploy-k8s.sh production gke-setup
@@ -36,8 +36,12 @@ export GKE_NODE_SERVICE_ACCOUNT="blockgo-gke@your-project.iam.gserviceaccount.co
 ./full_deploy.sh
 
 # Production/GKE profile. Use an Artifact Registry path and immutable tag.
-export PRODUCTION_IMAGE_REPOSITORY="asia-southeast1-docker.pkg.dev/your-project/blockgo"
+export PRODUCTION_IMAGE_REPOSITORY="asia-east1-docker.pkg.dev/project-fa00844e-5237-451f-a95/blockgo"
 export PRODUCTION_IMAGE_TAG="<release-or-commit-sha>"
+export BLOCKGO_PUBLIC_HOST="plv-blockgo.com"
+export BLOCKGO_PUBLIC_IP="136.81.171.96"
+export BLOCKGO_PUBLIC_SCHEME="https"
+export BLOCKGO_PUBLIC_TLS_SECRET="blockgo-public-tls"
 ./k8s/deploy-k8s.sh production apply
 
 # Monitor deployment status
@@ -63,6 +67,97 @@ Production `apply` builds and publishes the application images from this source
 revision, generates a separate six-consenter channel block, validates certificate
 expiry, CA chains, private-key matches, and Kubernetes DNS SANs, and then deploys
 the HA topology. Local channel artifacts remain three-consenter artifacts.
+
+### Public hosting and Cloudflare DNS
+
+Cloudflare remains the authoritative public DNS/proxy layer. The Kubernetes
+ingress is the origin behind Cloudflare, while PostgreSQL, CouchDB, peers,
+orderers, and middleware-to-Fabric traffic continue to use Kubernetes internal
+DNS. Changing the website hostname never requires regenerating Fabric TLS/MSP
+material or changing a Fabric channel.
+
+Production requires a hostname-only `BLOCKGO_PUBLIC_HOST`, its GKE origin IPv4
+address in `BLOCKGO_PUBLIC_IP`, and `BLOCKGO_PUBLIC_SCHEME=https`. Production
+rejects HTTP; the HTTP exception is confined to the explicit `local` profile.
+Public-hosting
+configuration precedence is:
+
+1. Explicit environment variables.
+2. `k8s/production-hosting.env`, when present.
+3. Safe defaults for the scheme (`https`), TLS Secret
+   (`blockgo-public-tls`), and allowed origins (the configured public origin).
+
+The optional file is non-secret; use `k8s/production-hosting.env.example` as a
+template. Never put Cloudflare credentials, TLS private keys, database
+passwords, or application secrets in that file. The referenced TLS Secret must
+already exist in `plv-fabric` with type `kubernetes.io/tls`. Before changing the
+ingress, the deployment validates that `tls.crt` is current, covers the public
+hostname, and matches `tls.key`.
+
+Create the public origin certificate Secret separately from every Fabric TLS
+Secret. Use either a Cloudflare Origin CA certificate or a publicly trusted
+certificate that covers `plv-blockgo.com`:
+
+```bash
+kubectl create namespace plv-fabric --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret tls blockgo-public-tls \
+  --namespace plv-fabric \
+  --cert=/secure/path/plv-blockgo.com-origin.crt \
+  --key=/secure/path/plv-blockgo.com-origin.key
+```
+
+In Cloudflare, configure an orange-cloud proxied `A` record for
+`plv-blockgo.com` pointing to `136.81.171.96`, and set SSL/TLS encryption mode
+to **Full (strict)**. The Kubernetes ingress terminates HTTPS again at the GCP
+origin. The current ingress exposes only `plv-blockgo.com`; `www.plv-blockgo.com`
+should be redirected at Cloudflare unless a second ingress host and a certificate
+SAN for `www.plv-blockgo.com` are deliberately added.
+
+Render and validate a hosting change without accessing Kubernetes:
+
+```bash
+export BLOCKGO_PUBLIC_HOST="plv-blockgo.com"
+export BLOCKGO_PUBLIC_IP="136.81.171.96"
+export BLOCKGO_PUBLIC_SCHEME="https"
+export BLOCKGO_PUBLIC_TLS_SECRET="blockgo-public-tls"
+
+./k8s/deploy-k8s.sh production hosting-plan
+```
+
+Apply only public hosting, CORS, frontend Nginx, and ingress configuration:
+
+```bash
+./k8s/deploy-k8s.sh production apply-hosting
+```
+
+For a future domain rotation:
+
+```bash
+export BLOCKGO_PUBLIC_HOST="blockgo.example.edu.ph"
+export BLOCKGO_PUBLIC_IP="203.0.113.10"
+export BLOCKGO_PUBLIC_SCHEME="https"
+export BLOCKGO_PUBLIC_TLS_SECRET="blockgo-public-tls"
+export BLOCKGO_ALLOWED_ORIGINS="https://blockgo.example.edu.ph"
+
+./k8s/deploy-k8s.sh production hosting-plan
+./k8s/deploy-k8s.sh production apply-hosting
+```
+
+The command discovers either the ingress IP address or provider hostname and
+prints the Cloudflare DNS action. It never calls a Cloudflare API and never
+stores a Cloudflare token. If allocation is not complete, it reports that the
+external ingress address is pending. Browser API, SignalR, and IPFS requests
+remain same-origin (`/api`, `/chatHub`, and `/ipfs`).
+Because the page is HTTPS, the browser upgrades the SignalR/WebSocket endpoint
+to `wss://<public-host>/chatHub`; no production `ws://` endpoint is configured.
+
+`./k8s/deploy-k8s.sh production status` reports the configured public URL and
+IP, Cloudflare proxy expectation, HTTPS/TLS Secret state, strict origin HTTPS
+requirement, and the separate unchanged Fabric TLS boundary.
+
+The hosting-only action does not apply or restart orderers or peers, run
+`InitLedger`, install chaincode, modify channels, regenerate Fabric crypto, or
+touch database/ledger PVCs.
 
 ### Automated PostgreSQL backups
 
@@ -91,7 +186,7 @@ export POSTGRES_BACKUP_PRINCIPAL="principal://iam.googleapis.com/projects/${GCP_
 
 gcloud storage buckets create "gs://${POSTGRES_BACKUP_GCS_BUCKET}" \
   --project="$GCP_PROJECT_ID" \
-  --location=asia-southeast1 \
+  --location="$GKE_REGION" \
   --uniform-bucket-level-access
 
 gcloud storage buckets add-iam-policy-binding "gs://${POSTGRES_BACKUP_GCS_BUCKET}" \
@@ -283,20 +378,31 @@ in PostgreSQL `pending_grade_records` until finalization succeeds.
 
 | Component | Type | Replicas | Storage |
 |-----------|------|----------|---------|
-| PostgreSQL | StatefulSet | local: 1; production: 6 (1 writer + 5 streaming standbys) | 100Gi each in production |
-| Fabric Orderer | Deployment | local: 3; production: 6 | 20Gi each |
-| Fabric Peer | Deployment | local: 3; production: 6 (2 per campus) | 50Gi each |
-| Fabric CA | Deployment | 3 | ephemeral |
-| Peer state CouchDB | StatefulSet | local: 3; production: 6 | 30Gi each |
-| Middleware gateway and services | Deployments | 2-5 each (HPA) | ephemeral |
-| .NET gateway and services | Deployments | 2-5 each (HPA) | ephemeral |
-| IPFS Nodes | StatefulSet | 3 (Main, Annex, Pubad) | 5Gi per node (10Gi in the local profile) |
+| PostgreSQL | StatefulSet | local: 1; production: 6 (1 writer + 5 streaming standbys) | 20Gi each |
+| Fabric Orderer | Deployment | local: 3; production: 6 | 10Gi each |
+| Fabric Peer | Deployment | 3 primary; 3 optional secondary | 20Gi each |
+| Fabric CA | Deployment | 3 | production: 10Gi each; local: 2Gi |
+| Peer state CouchDB | StatefulSet | 3 primary; 3 optional secondary | 10Gi each |
+| Wallet CouchDB | StatefulSet | 3 | production: 10Gi each; local: 5Gi |
+| Middleware gateway and services | Deployments | 2-4 each (HPA) | ephemeral |
+| .NET gateway and services | Deployments | 2-4 each (HPA) | ephemeral |
+| IPFS Nodes | StatefulSet | 3 (Main, Annex, Pubad) | production: 10Gi each; local: 5Gi source request |
 
 ## Storage
 
 - **Local**: static host-path PVs bind to `fabric-storage`
 - **GKE production**: `fabric-storage` uses the GKE PD CSI driver with
-  `pd-balanced` regional persistent disks and delayed binding
+  `pd-standard` zonal persistent disks, `Retain`, and delayed binding. Existing
+  PVCs are never shrunk automatically; the deployment preflight rejects a
+  changed claim size on an existing installation.
+  Production rendering raises local 2Gi/5Gi claims to the 10Gi minimum for
+  zonal `pd-standard`; it does not rewrite the local profile manifests.
+
+The five-worker cap uses at most 10 VM vCPUs. GKE's `maxSurge` setting is
+per zone, so the three-zone node pool uses zero surge and one unavailable
+node during upgrades under the 12-vCPU quota. Secondary Fabric peers are not
+deployed by default; set `DEPLOY_SECONDARY_PEERS=true` only after checking
+cluster capacity and the additional PVC costs.
 
 ### GKE three-zone placement
 

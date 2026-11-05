@@ -1,0 +1,15 @@
+name: BlockGo source paths
+
+paths:
+  - frontend/src
+  - middleware/src
+  - client-app
+  - chaincode
+
+paths-ignore:
+  - "**/bin/**"
+  - "**/obj/**"
+  - "**/node_modules/**"
+  - "frontend/build/**"
+  - "network/fabric-k8s-data/**"
+  - "network/channel-artifacts-final/**"

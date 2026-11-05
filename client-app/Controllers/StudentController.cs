@@ -11,6 +11,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Globalization;
 using Npgsql;
+using Client_app.Services;
 
 namespace Client_app.Controllers
 {
@@ -111,6 +112,204 @@ namespace Client_app.Controllers
             }
         }
 
+        [HttpGet("subjects")]
+        [Authorize(Roles = "student")]
+        public async Task<IActionResult> GetCurrentSubjects(CancellationToken cancellationToken)
+        {
+            var email = User.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(email)) return Unauthorized();
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            var enrollment = await StudentCurrentSubjectEnrollmentResolver.ResolveAsync(connection, email, cancellationToken);
+            if (enrollment is null)
+                return NotFound(new
+                {
+                    status = "Error",
+                    message = "No enrolled academic section with an assigned curriculum was found for this student in the active academic period."
+                });
+
+            var studentNo = enrollment.StudentNo;
+            var enrollmentId = enrollment.EnrollmentId;
+            var schoolYear = enrollment.SchoolYear;
+            var semester = enrollment.Semester;
+            var yearLevel = enrollment.YearLevel;
+            var programId = enrollment.ProgramId;
+            var programCode = enrollment.ProgramCode;
+            var department = enrollment.ProgramName;
+            var sectionId = enrollment.AcademicSectionId;
+            var sectionNumber = enrollment.SectionNumber;
+            var curriculumId = enrollment.CurriculumId;
+
+            var sectionToken = $"{yearLevel}-{sectionNumber}";
+            var canonicalSection = $"{programCode} {sectionToken}";
+            var subjectRows = new List<CurrentSubjectRow>();
+            await using var command = new NpgsqlCommand(@"
+                SELECT cs.subject_code, cs.subject_title, cs.units,
+                       faculty.full_name, faculty.assignment_cycle_id
+                FROM curriculum_subjects cs
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(fp.full_name, u.email) AS full_name,
+                           fs.id::text AS assignment_cycle_id
+                    FROM facultysections fs
+                    JOIN users u ON u.id = fs.user_id
+                        AND LOWER(u.role) = 'faculty' AND LOWER(u.status) = 'approved' AND u.is_active
+                    LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
+                    WHERE LOWER(TRIM(fs.subject)) = LOWER(TRIM(cs.subject_code))
+                      AND fs.academic_section_id = @academicSectionId
+                      AND fs.school_year = @schoolYear AND fs.semester = @semester
+                      AND fs.is_active = TRUE
+                    LIMIT 1
+                ) faculty ON TRUE
+                WHERE cs.curriculum_id = @curriculumId
+                  AND cs.year_level = @yearLevelNumber AND cs.semester = @semester
+                ORDER BY cs.subject_code;", connection);
+            command.Parameters.AddWithValue("curriculumId", curriculumId);
+            command.Parameters.AddWithValue("yearLevelNumber", yearLevel);
+            command.Parameters.AddWithValue("yearLevel", yearLevel.ToString(CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("sectionNumber", sectionNumber.ToString(CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("sectionToken", sectionToken);
+            command.Parameters.AddWithValue("department", department);
+            command.Parameters.AddWithValue("programCode", programCode);
+            command.Parameters.AddWithValue("semester", semester);
+            command.Parameters.AddWithValue("schoolYear", schoolYear);
+            command.Parameters.AddWithValue("academicSectionId", sectionId);
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            {
+                while (await reader.ReadAsync(cancellationToken))
+                    subjectRows.Add(new CurrentSubjectRow(
+                        reader.GetString(0), reader.GetString(1), reader.GetDecimal(2),
+                        reader.IsDBNull(3) ? "To be assigned" : reader.GetString(3),
+                        reader.IsDBNull(4) ? "" : reader.GetString(4), canonicalSection, false));
+            }
+
+            await using (var nonRegularCommand = new NpgsqlCommand(@"
+                SELECT cs.subject_code, cs.subject_title, cs.units,
+                       COALESCE(fp.full_name, u.email) AS faculty_name,
+                       fs.id::text AS assignment_cycle_id, fs.section
+                FROM student_non_regular_subjects assignment
+                JOIN curriculum_subjects cs ON cs.subject_id = assignment.subject_id
+                JOIN facultysections fs ON fs.id = assignment.faculty_section_id AND fs.is_active = TRUE
+                JOIN users u ON u.id = fs.user_id AND LOWER(u.role) = 'faculty'
+                LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
+                WHERE assignment.student_user_id = (
+                    SELECT id FROM users WHERE LOWER(email) = LOWER(@studentEmail) LIMIT 1)
+                  AND assignment.enrollment_id = @enrollmentId
+                  AND assignment.school_year = @schoolYear
+                  AND assignment.semester = @semester
+                  AND assignment.status = 'ACTIVE'
+                ORDER BY cs.subject_code;", connection))
+            {
+                nonRegularCommand.Parameters.AddWithValue("studentEmail", email);
+                nonRegularCommand.Parameters.AddWithValue("enrollmentId", enrollmentId);
+                nonRegularCommand.Parameters.AddWithValue("schoolYear", schoolYear);
+                nonRegularCommand.Parameters.AddWithValue("semester", semester);
+                await using var reader = await nonRegularCommand.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                    subjectRows.Add(new CurrentSubjectRow(
+                        reader.GetString(0), reader.GetString(1), reader.GetDecimal(2),
+                        reader.GetString(3), reader.GetString(4), reader.GetString(5), true));
+            }
+
+            var ledgerAvailable = true;
+            var finalizedRecords = new List<AcademicRecord>();
+            try
+            {
+                finalizedRecords = await LoadLedgerFinalizedRecordsAsync(email, studentNo, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                ledgerAvailable = false;
+                _logger.LogWarning(exception,
+                    "Fabric finalized-grade read is unavailable for student {StudentNo}; subject cards will report an unavailable state.",
+                    studentNo);
+            }
+            if (ledgerAvailable)
+            {
+                try
+                {
+                    await ApplyAssignmentCycleMappingsAsync(connection, finalizedRecords, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    _logger.LogWarning(exception,
+                        "Assignment-cycle mappings could not be loaded for student {StudentNo}; safe section/legacy matching will be used.",
+                        studentNo);
+                }
+            }
+
+            var subjects = subjectRows.Select(subject =>
+            {
+                var attempt = new StudentSubjectAttempt(
+                    enrollmentId, email, studentNo, subject.SubjectCode, schoolYear, semester,
+                    subject.Section, subject.AssignmentCycleId);
+                var resolved = StudentSubjectGradeResolver.Resolve(attempt, finalizedRecords, ledgerAvailable);
+                var record = resolved.Record;
+                var equivalent = resolved.FinalizedGrade.HasValue
+                    ? GradeEquivalent(resolved.FinalizedGrade.Value).ToString("0.00", CultureInfo.InvariantCulture)
+                    : null;
+                var gradeStatus = resolved.Availability switch
+                {
+                    StudentSubjectGradeResolver.LedgerUnavailable => "Temporarily Unavailable",
+                    StudentSubjectGradeResolver.Ambiguous => "Verification Required",
+                    StudentSubjectGradeResolver.Finalized when equivalent == "5.00" => "Failed",
+                    StudentSubjectGradeResolver.Finalized => "Completed",
+                    _ => "In Progress"
+                };
+
+                _logger.LogInformation(
+                    "Student subject grade resolution Student={StudentNo} Subject={SubjectCode} SchoolYear={SchoolYear} Semester={Semester} Section={Section} EnrollmentId={EnrollmentId} FacultySectionId={FacultySectionId} AssignmentCycleId={AssignmentCycleId} GradeRecordId={GradeRecordId} WorkflowStatus={WorkflowStatus} FabricRecordId={FabricRecordId} TransactionId={TransactionId} MatchBasis={MatchBasis}",
+                    studentNo, subject.SubjectCode, schoolYear, semester, canonicalSection, enrollmentId,
+                    subject.AssignmentCycleId, record?.AssignmentCycleId, record?.Id, record?.Status,
+                    record?.Id, record?.TransactionId, resolved.MatchBasis);
+
+                return new
+                {
+                    subjectCode = subject.SubjectCode,
+                    subjectTitle = subject.SubjectTitle,
+                    units = subject.Units,
+                    schoolYear,
+                    semester,
+                    section = subject.Section,
+                    subjectClassification = subject.IsNonRegular ? "NON-REGULAR" : "REGULAR",
+                    isNonRegular = subject.IsNonRegular,
+                    professor = subject.FacultyName,
+                    facultyName = subject.FacultyName,
+                    enrollmentId,
+                    assignmentCycleId = string.IsNullOrWhiteSpace(subject.AssignmentCycleId) ? null : subject.AssignmentCycleId,
+                    gradeAssignmentCycleId = string.IsNullOrWhiteSpace(record?.AssignmentCycleId) ? null : record.AssignmentCycleId,
+                    gradeRecordId = record?.Id,
+                    finalizedGrade = resolved.FinalizedGrade,
+                    gradeEquivalent = equivalent,
+                    gradeStatus,
+                    isFinalized = resolved.IsFinalized,
+                    gradeAvailability = resolved.Availability,
+                    blockchainTransactionId = record?.TransactionId,
+                    blockchainTransactionHash = string.IsNullOrWhiteSpace(record?.TransactionHash) ? record?.TransactionId : record.TransactionHash,
+                    blockchainRecordId = record?.Id,
+                    finalizedAt = string.IsNullOrWhiteSpace(record?.Timestamp) ? record?.Date : record.Timestamp,
+                    matchBasis = resolved.MatchBasis,
+                    status = gradeStatus
+                };
+            }).ToArray();
+
+            return Ok(new { status = "Success", data = new {
+                studentNo, schoolYear, semester, section = canonicalSection,
+                enrollmentId, sectionId, yearLevel, department, programCode, programId, curriculumId,
+                gradeLookupStatus = ledgerAvailable ? "Available" : "Unavailable",
+                gradeLookupMessage = ledgerAvailable ? null : "Finalized grades are temporarily unavailable because the Fabric ledger could not be read.",
+                subjects
+            } });
+        }
+
         [HttpGet("grades")]
         [Authorize(Roles = "student")]
         public async Task<IActionResult> GetHistoricalGrades(CancellationToken cancellationToken)
@@ -119,23 +318,19 @@ namespace Client_app.Controllers
             if (string.IsNullOrWhiteSpace(email)) return Unauthorized();
 
             List<AcademicRecord> records = new();
+            Exception? ledgerReadException = null;
+            var studentNo = await LoadStudentNumberAsync(email, cancellationToken);
             try
             {
-                var responseJson = await _blockchain.GetAllGradesAsync(email);
-                using var responseDocument = JsonDocument.Parse(responseJson);
-                var data = responseDocument.RootElement.TryGetProperty("data", out var dataElement)
-                    ? dataElement
-                    : responseDocument.RootElement;
-                records = JsonSerializer.Deserialize<List<AcademicRecord>>(
-                    data.GetRawText(),
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<AcademicRecord>();
-
-                records = records.Where(record =>
-                    string.Equals(record.StudentHash, email, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(record.Status, "Finalized", StringComparison.OrdinalIgnoreCase)).ToList();
+                records = await LoadLedgerFinalizedRecordsAsync(email, studentNo, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception exception)
             {
+                ledgerReadException = exception;
                 _logger.LogWarning(exception, "Blockchain grade retrieval failed for student {StudentEmail}, checking database fallback.", email);
             }
 
@@ -146,35 +341,57 @@ namespace Client_app.Controllers
                     using var conn = new NpgsqlConnection(_connectionString);
                     await conn.OpenAsync(cancellationToken);
                     using var dbCmd = new NpgsqlCommand(@"
-                        SELECT id, student_hash, student_no, student_name, course, subject_code, subject_title, grade, term, status, date, semester, school_year, faculty_id, units, section, year_level
-                        FROM pending_grade_records
-                        WHERE (LOWER(student_hash) = LOWER(@email)
-                           OR LOWER(student_no) = LOWER(@email)
-                           OR student_hash IN (SELECT student_no FROM studentprofiles WHERE LOWER(student_email) = LOWER(@email))
-                           OR student_hash IN (SELECT student_no FROM studentprofiles sp JOIN users u ON u.id = sp.user_id WHERE LOWER(u.email) = LOWER(@email)))
-                          AND status IN ('Finalized', 'DepartmentApproved', 'Issued')
-                        ORDER BY school_year DESC, semester DESC, subject_code ASC", conn);
+                        SELECT grade.id, grade.student_hash, grade.student_no, grade.student_name,
+                               grade.course, grade.subject_code, grade.subject_title, grade.grade,
+                               grade.term, grade.status, grade.date, grade.semester, grade.school_year,
+                               grade.faculty_id, grade.units, grade.section,
+                               COALESCE(enrollment.year_level::text, '') AS year_level,
+                               COALESCE(cycle.assignment_cycle_id, grade.assignment_cycle_id, 'legacy') AS assignment_cycle_id,
+                               COALESCE(grade.transaction_id, '') AS transaction_id,
+                               COALESCE(grade.transaction_hash, '') AS transaction_hash,
+                               COALESCE(grade.recorded_at::text, '') AS recorded_at
+                        FROM pending_grade_records grade
+                        JOIN grade_releases release ON release.record_id = grade.id
+                        JOIN users student ON LOWER(student.email) = LOWER(@email)
+                          AND LOWER(student.role) = 'student'
+                        JOIN studentprofiles sp ON sp.user_id = student.id
+                        LEFT JOIN student_enrollments enrollment
+                          ON enrollment.student_user_id = student.id
+                         AND enrollment.school_year = grade.school_year
+                         AND enrollment.semester = grade.semester
+                        LEFT JOIN grade_assignment_cycles cycle ON cycle.record_id = grade.id
+                        WHERE LOWER(grade.student_hash) = LOWER(student.email)
+                          AND LOWER(grade.student_no) = LOWER(sp.student_no)
+                          AND LOWER(release.student_identifier) IN (LOWER(student.email), LOWER(sp.student_no))
+                          AND LOWER(grade.status) = 'finalized'
+                        ORDER BY grade.school_year DESC, grade.semester DESC, grade.subject_code ASC", conn);
                     dbCmd.Parameters.AddWithValue("email", email.Trim());
                     using var reader = await dbCmd.ExecuteReaderAsync(cancellationToken);
                     while (await reader.ReadAsync(cancellationToken))
                     {
                         records.Add(new AcademicRecord
                         {
-                            Id = reader["id"]?.ToString(),
-                            SubjectCode = reader["subject_code"]?.ToString(),
-                            SubjectTitle = reader["subject_title"]?.ToString(),
-                            Grade = reader["grade"]?.ToString(),
+                            Id = reader["id"]?.ToString() ?? "",
+                            SubjectCode = reader["subject_code"]?.ToString() ?? "",
+                            SubjectTitle = reader["subject_title"]?.ToString() ?? "",
+                            Grade = reader["grade"]?.ToString() ?? "",
                             Term = reader["term"]?.ToString() ?? "Final",
-                            Status = reader["status"]?.ToString(),
-                            Date = reader["date"]?.ToString(),
+                            Status = reader["status"]?.ToString() ?? "",
+                            Date = reader["date"]?.ToString() ?? "",
                             StudentHash = reader["student_hash"]?.ToString() ?? reader["student_no"]?.ToString(),
-                            Course = reader["course"]?.ToString(),
-                            SchoolYear = reader["school_year"]?.ToString(),
-                            Semester = reader["semester"]?.ToString(),
-                            FacultyId = reader["faculty_id"]?.ToString(),
+                            StudentNo = reader["student_no"]?.ToString() ?? "",
+                            StudentId = reader["student_no"]?.ToString() ?? "",
+                            Course = reader["course"]?.ToString() ?? "",
+                            SchoolYear = reader["school_year"]?.ToString() ?? "",
+                            Semester = reader["semester"]?.ToString() ?? "",
+                            FacultyId = reader["faculty_id"]?.ToString() ?? "",
                             Units = reader["units"] != DBNull.Value ? Convert.ToInt32(reader["units"]) : 0,
-                            Section = reader["section"]?.ToString(),
-                            YearLevel = reader["year_level"]?.ToString()
+                            Section = reader["section"]?.ToString() ?? "",
+                            YearLevel = reader["year_level"]?.ToString() ?? "",
+                            AssignmentCycleId = reader["assignment_cycle_id"]?.ToString() ?? "legacy",
+                            TransactionId = reader["transaction_id"]?.ToString() ?? "",
+                            TransactionHash = reader["transaction_hash"]?.ToString() ?? "",
+                            Timestamp = reader["recorded_at"]?.ToString() ?? ""
                         });
                     }
                 }
@@ -184,13 +401,41 @@ namespace Client_app.Controllers
                 }
             }
 
+            if (records.Count == 0 && ledgerReadException is not null)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    status = "Unavailable",
+                    code = "FABRIC_UNAVAILABLE",
+                    message = "Finalized grades are temporarily unavailable because the Fabric ledger could not be read."
+                });
+            }
+
             try
             {
+                await using var mappingConnection = new NpgsqlConnection(_connectionString);
+                await mappingConnection.OpenAsync(cancellationToken);
+                try
+                {
+                    await ApplyAssignmentCycleMappingsAsync(mappingConnection, records, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    _logger.LogWarning(exception,
+                        "Assignment-cycle mappings could not be loaded for student {StudentNo}; immutable ledger grade history will still be returned.",
+                        studentNo);
+                }
                 var facultyNames = await LoadFacultyNamesAsync(records.Select(record => record.FacultyId), cancellationToken);
                 var subjectMetadata = await LoadSubjectMetadataAsync(email, cancellationToken);
-                var currentEnrollment = await LoadCurrentEnrollmentAsync(email, cancellationToken);
-                var grades = new List<object>();
-                foreach (var record in records)
+                var gradesByIdentity = new Dictionary<string, (DateTimeOffset RecordedAt, object Row)>(StringComparer.OrdinalIgnoreCase);
+                var distinctRecords = records
+                    .GroupBy(record => record.Id, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.OrderByDescending(HistoricalGradeTimestamp).First());
+                foreach (var record in distinctRecords)
                 {
                     var yearLevel = ParseYearLevel(record.YearLevel, record.Section);
                     var subjectTitle = !string.IsNullOrWhiteSpace(record.SubjectTitle)
@@ -203,18 +448,10 @@ namespace Client_app.Controllers
                         ? record.ProfessorName
                         : facultyNames.TryGetValue(record.FacultyId, out var name) ? name : record.FacultyId;
                     var terms = ParseGradeTerms(record.Grade, record.Term);
-                    var isCurrentEnrollmentRecord = currentEnrollment != null &&
-                        SectionsMatch(record.Section, currentEnrollment.Value.Section);
-                    var displaySchoolYear = isCurrentEnrollmentRecord
-                        ? currentEnrollment!.Value.SchoolYear
-                        : record.SchoolYear;
-                    var displaySemester = isCurrentEnrollmentRecord
-                        ? currentEnrollment!.Value.Semester
-                        : record.Semester;
 
                     foreach (var term in terms)
                     {
-                        grades.Add(new
+                        var row = new
                         {
                             recordId = record.Id,
                             studentId = string.IsNullOrWhiteSpace(record.StudentId) ? record.StudentNo : record.StudentId,
@@ -225,8 +462,10 @@ namespace Client_app.Controllers
                             committedBy = string.IsNullOrWhiteSpace(record.SubmittedBy) ? professor : record.SubmittedBy,
                             units,
                             yearLevel,
-                            semester = displaySemester,
-                            schoolYear = displaySchoolYear,
+                            semester = record.Semester,
+                            schoolYear = record.SchoolYear,
+                            section = record.Section,
+                            assignmentCycleId = string.IsNullOrWhiteSpace(record.AssignmentCycleId) ? null : record.AssignmentCycleId,
                             term = term.Name,
                             grade = term.Grade,
                             finalAverage = term.FinalAverage,
@@ -235,16 +474,32 @@ namespace Client_app.Controllers
                             transactionHash = string.IsNullOrWhiteSpace(record.TransactionHash) ? record.TransactionId : record.TransactionHash,
                             timestamp = record.Timestamp,
                             date = record.Date
+                        };
+                        var assignmentIdentity = string.IsNullOrWhiteSpace(record.AssignmentCycleId)
+                            ? record.Section?.Trim() ?? string.Empty
+                            : record.AssignmentCycleId.Trim();
+                        var identity = string.Join("|", new[]
+                        {
+                            string.IsNullOrWhiteSpace(record.StudentHash) ? record.StudentNo : record.StudentHash,
+                            record.SubjectCode?.Trim() ?? string.Empty,
+                            assignmentIdentity,
+                            record.SchoolYear?.Trim() ?? string.Empty,
+                            record.Semester?.Trim() ?? string.Empty,
+                            term.Name.Trim().ToLowerInvariant()
                         });
+                        var recordedAt = HistoricalGradeTimestamp(record);
+                        if (!gradesByIdentity.TryGetValue(identity, out var existing) || recordedAt >= existing.RecordedAt)
+                            gradesByIdentity[identity] = (recordedAt, row);
                     }
                 }
 
-                var orderedGrades = grades.OrderBy(item => JsonSerializer.Serialize(item)).ToArray();
+                var orderedGrades = gradesByIdentity.Values.Select(value => value.Row)
+                    .OrderBy(item => JsonSerializer.Serialize(item)).ToArray();
                 return Ok(new
                 {
                     status = "Success",
                     data = orderedGrades,
-                    message = orderedGrades.Length == 0 ? "There are currently no grade records available." : null
+                    message = orderedGrades.Length == 0 ? "No released grades are available for this term yet." : null
                 });
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -258,14 +513,14 @@ namespace Client_app.Controllers
                 {
                     status = "Success",
                     data = Array.Empty<object>(),
-                    message = "There are currently no grade records available."
+                    message = "No released grades are available for this term yet."
                 });
             }
         }
 
         [HttpGet("blockchain-transactions")]
         [Authorize(Roles = "student")]
-        public async Task<IActionResult> GetBlockchainTransactions()
+        public async Task<IActionResult> GetBlockchainTransactions(CancellationToken cancellationToken)
         {
             var email = User.Identity?.Name;
             if (string.IsNullOrWhiteSpace(email)) return Unauthorized();
@@ -273,6 +528,8 @@ namespace Client_app.Controllers
             var safeTransactions = new List<object>();
             try
             {
+                var studentNo = await LoadStudentNumberAsync(email, cancellationToken);
+                var releasedRecordIds = await LoadReleasedRecordIdsAsync(email, studentNo, cancellationToken);
                 var responseJson = await _blockchain.GetStudentTransactionsAsync(email);
                 using var responseDocument = JsonDocument.Parse(responseJson);
                 var data = responseDocument.RootElement.TryGetProperty("data", out var dataElement)
@@ -284,7 +541,11 @@ namespace Client_app.Controllers
                     {
                         if (!transaction.TryGetProperty("record", out var recordElement)) continue;
                         var record = JsonSerializer.Deserialize<AcademicRecord>(recordElement.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                        if (record is null || !string.Equals(record.StudentHash, email, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (record is null
+                            || !StudentSubjectGradeResolver.MatchesStudent(record, email, studentNo)
+                            || !string.Equals(record.Status?.Trim(), "Finalized", StringComparison.OrdinalIgnoreCase)
+                            || string.IsNullOrWhiteSpace(record.Id)
+                            || !releasedRecordIds.Contains(GradeReleasePolicy.ReleaseKey(record))) continue;
 
                         var transactionId = GetJsonString(transaction, "transaction_id");
                         safeTransactions.Add(new
@@ -387,7 +648,7 @@ namespace Client_app.Controllers
                 FROM users u
                 JOIN studentprofiles sp ON sp.user_id = u.id
                 LEFT JOIN LATERAL (
-                    SELECT se.program_id
+                    SELECT se.program_id, se.curriculum_id
                     FROM student_enrollments se
                     WHERE se.student_user_id = u.id
                     ORDER BY se.updated_at DESC, se.enrollment_id DESC LIMIT 1
@@ -395,8 +656,7 @@ namespace Client_app.Controllers
                 JOIN academic_programs p ON p.program_id = enrollment.program_id
                     OR (enrollment.program_id IS NULL AND
                         (LOWER(p.program_name) = LOWER(sp.department) OR LOWER(p.program_code) = LOWER(sp.department)))
-                JOIN program_curriculum_assignments pca ON pca.program_id = p.program_id
-                JOIN curriculums c ON c.curriculum_id = pca.curriculum_id
+                JOIN curriculums c ON c.curriculum_id = enrollment.curriculum_id
                 JOIN curriculum_subjects cs ON cs.curriculum_id = c.curriculum_id
                 WHERE LOWER(u.email) = LOWER(@email)
                   AND c.status IN ('PUBLISHED', 'ARCHIVED')
@@ -440,32 +700,93 @@ namespace Client_app.Controllers
 
         private async Task<List<AcademicRecord>> LoadFinalizedRecordsAsync(string email)
         {
+            var studentNo = await LoadStudentNumberAsync(email, CancellationToken.None);
+            return await LoadLedgerFinalizedRecordsAsync(email, studentNo, CancellationToken.None);
+        }
+
+        private async Task<List<AcademicRecord>> LoadLedgerFinalizedRecordsAsync(
+            string email,
+            string studentNo,
+            CancellationToken cancellationToken)
+        {
+            var releasedRecordIds = await LoadReleasedRecordIdsAsync(email, studentNo, cancellationToken);
+            if (releasedRecordIds.Count == 0) return new List<AcademicRecord>();
+
             var responseJson = await _blockchain.GetAllGradesAsync(email);
             using var document = JsonDocument.Parse(responseJson);
             var data = document.RootElement.TryGetProperty("data", out var nested) ? nested : document.RootElement;
             return (JsonSerializer.Deserialize<List<AcademicRecord>>(data.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                     ?? new List<AcademicRecord>())
-                .Where(record => string.Equals(record.StudentHash, email, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(record.Status, "Finalized", StringComparison.OrdinalIgnoreCase))
+                .Where(record => StudentSubjectGradeResolver.MatchesStudent(record, email, studentNo)
+                    && GradeReleasePolicy.IsVisibleToStudent(record, releasedRecordIds))
                 .ToList();
         }
 
-        private static decimal? FinalNumericGrade(string? rawGrade)
+        private async Task<HashSet<string>> LoadReleasedRecordIdsAsync(
+            string email,
+            string studentNo,
+            CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(rawGrade)) return null;
-            if (decimal.TryParse(rawGrade, NumberStyles.Number, CultureInfo.InvariantCulture, out var direct)) return direct;
-            try
-            {
-                using var document = JsonDocument.Parse(rawGrade);
-                foreach (var property in new[] { "finalAverage", "finals", "midterm" })
-                {
-                    if (document.RootElement.TryGetProperty(property, out var value)
-                        && decimal.TryParse(value.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed))
-                        return parsed;
-                }
-            }
-            catch (JsonException) { }
-            return null;
+            var released = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var identifiers = new[] { email.Trim(), email.Split('@')[0].Trim(), studentNo?.Trim() ?? string.Empty }
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new NpgsqlCommand(@"
+                SELECT record_id, grade_version
+                FROM grade_releases
+                WHERE LOWER(student_identifier) = ANY(@identifiers);", connection);
+            command.Parameters.AddWithValue("identifiers", identifiers.Select(value => value.ToLowerInvariant()).ToArray());
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                released.Add($"{reader.GetString(0)}|{reader.GetInt32(1)}");
+            return released;
+        }
+
+        private async Task<string> LoadStudentNumberAsync(string email, CancellationToken cancellationToken)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new NpgsqlCommand(@"
+                SELECT COALESCE(sp.student_no, '')
+                FROM users u
+                JOIN studentprofiles sp ON sp.user_id = u.id
+                WHERE LOWER(u.email) = LOWER(@email)
+                LIMIT 1;", connection);
+            command.Parameters.AddWithValue("email", email);
+            return (await command.ExecuteScalarAsync(cancellationToken))?.ToString() ?? "";
+        }
+
+        private static decimal? FinalNumericGrade(string? rawGrade) =>
+            StudentSubjectGradeResolver.ParseFinalGrade(rawGrade);
+
+        private static async Task ApplyAssignmentCycleMappingsAsync(
+            NpgsqlConnection connection,
+            IReadOnlyCollection<AcademicRecord> records,
+            CancellationToken cancellationToken)
+        {
+            var recordIds = records.Select(record => record.Id?.Trim())
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Cast<string>()
+                .ToArray();
+            if (recordIds.Length == 0) return;
+
+            var mappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            await using var command = new NpgsqlCommand(@"
+                SELECT record_id, assignment_cycle_id
+                FROM grade_assignment_cycles
+                WHERE record_id = ANY(@recordIds);", connection);
+            command.Parameters.AddWithValue("recordIds", recordIds);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                mappings[reader.GetString(0)] = reader.GetString(1);
+
+            foreach (var record in records)
+                if (!string.IsNullOrWhiteSpace(record.Id) && mappings.TryGetValue(record.Id, out var cycleId))
+                    record.AssignmentCycleId = cycleId;
         }
 
         private static decimal GradeEquivalent(decimal grade)
@@ -502,41 +823,6 @@ namespace Client_app.Controllers
             return result;
         }
 
-        private async Task<(string SchoolYear, string Semester, string Section)?> LoadCurrentEnrollmentAsync(
-            string email,
-            CancellationToken cancellationToken)
-        {
-            await using var connection = new NpgsqlConnection(_connectionString);
-            await connection.OpenAsync(cancellationToken);
-            await using var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT se.school_year, se.semester, COALESCE(se.section, sp.section, '')
-                FROM users u
-                JOIN studentprofiles sp ON sp.user_id = u.id
-                JOIN student_enrollments se ON se.student_user_id = u.id
-                WHERE LOWER(u.email) = LOWER(@email)
-                  AND se.status = 'ENROLLED'
-                ORDER BY se.updated_at DESC, se.enrollment_id DESC
-                LIMIT 1;";
-            command.Parameters.AddWithValue("email", email);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken)) return null;
-            return (
-                reader.IsDBNull(0) ? "" : reader.GetString(0),
-                reader.IsDBNull(1) ? "" : reader.GetString(1),
-                reader.IsDBNull(2) ? "" : reader.GetString(2));
-        }
-
-        private static bool SectionsMatch(string? gradeSection, string? enrollmentSection)
-        {
-            var grade = Regex.Replace(gradeSection ?? "", @"\s+", " ").Trim();
-            var enrollment = Regex.Replace(enrollmentSection ?? "", @"\s+", " ").Trim();
-            if (grade.Length == 0 || enrollment.Length == 0) return false;
-            return string.Equals(grade, enrollment, StringComparison.OrdinalIgnoreCase) ||
-                   grade.EndsWith($" {enrollment}", StringComparison.OrdinalIgnoreCase) ||
-                   enrollment.EndsWith($" {grade}", StringComparison.OrdinalIgnoreCase);
-        }
-
         private async Task<Dictionary<string, (string Title, decimal Units)>> LoadSubjectMetadataAsync(string email, CancellationToken cancellationToken)
         {
             var result = new Dictionary<string, (string Title, decimal Units)>(StringComparer.OrdinalIgnoreCase);
@@ -548,7 +834,7 @@ namespace Client_app.Controllers
                 FROM users u
                 JOIN studentprofiles sp ON sp.user_id = u.id
                 LEFT JOIN LATERAL (
-                    SELECT se.program_id
+                    SELECT se.program_id, se.curriculum_id
                     FROM student_enrollments se
                     WHERE se.student_user_id = u.id
                     ORDER BY se.updated_at DESC, se.enrollment_id DESC
@@ -557,8 +843,7 @@ namespace Client_app.Controllers
                 JOIN academic_programs p ON p.program_id = enrollment.program_id
                     OR (enrollment.program_id IS NULL AND
                         (LOWER(p.program_name) = LOWER(sp.department) OR LOWER(p.program_code) = LOWER(sp.department)))
-                JOIN program_curriculum_assignments pca ON pca.program_id = p.program_id
-                JOIN curriculums c ON c.curriculum_id = pca.curriculum_id
+                JOIN curriculums c ON c.curriculum_id = enrollment.curriculum_id
                     AND c.status IN ('PUBLISHED', 'ARCHIVED')
                 JOIN curriculum_subjects cs ON cs.curriculum_id = c.curriculum_id
                 WHERE LOWER(u.email) = LOWER(@email);";
@@ -586,6 +871,15 @@ namespace Client_app.Controllers
             }
             if (terms.Count == 0) terms.Add((string.IsNullOrWhiteSpace(explicitTerm) ? "finals" : explicitTerm.ToLowerInvariant(), rawGrade, rawGrade));
             return terms;
+        }
+
+        private static DateTimeOffset HistoricalGradeTimestamp(AcademicRecord record)
+        {
+            var value = string.IsNullOrWhiteSpace(record.Timestamp) ? record.Date : record.Timestamp;
+            return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed)
+                ? parsed
+                : DateTimeOffset.MinValue;
         }
 
         private static string GetDisplayGrade(string rawGrade, string explicitTerm)
@@ -647,6 +941,15 @@ namespace Client_app.Controllers
             if (!element.TryGetProperty(property, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return fallback;
             return value.ValueKind == JsonValueKind.String ? value.GetString() ?? fallback : value.ToString();
         }
+
+        private sealed record CurrentSubjectRow(
+            string SubjectCode,
+            string SubjectTitle,
+            decimal Units,
+            string FacultyName,
+            string AssignmentCycleId,
+            string Section,
+            bool IsNonRegular);
     }
 
     public class UpdateProfileRequest
