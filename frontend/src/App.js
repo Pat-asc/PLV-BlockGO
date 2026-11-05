@@ -238,10 +238,10 @@ function AppContent() {
     setChatUnreadTotal(totalUnread);
   }, []);
 
-  const handleIncomingMessage = useCallback(({ from, message, attachmentName }) => {
-    const senderName = from ? from.split('@')[0] : 'A user';
-    const chatPreview = message || (attachmentName ? `Sent ${attachmentName}` : 'Sent an attachment');
-    const isRegistrar = normalizeAppRole(user?.role).includes('registrar');
+  const handleIncomingMessage = useCallback(({ id, from, senderName: suppliedSenderName, message, attachmentName, attachmentMime, type }) => {
+    if (!from || from === user?.email) return;
+    const senderName = suppliedSenderName || from.split('@')[0] || 'A user';
+    const chatPreview = message || (attachmentMime?.startsWith('image/') ? 'Sent an image' : attachmentName ? 'Sent an attachment' : 'Sent an attachment');
 
     setLatestChatNotice({
       from: senderName,
@@ -249,11 +249,16 @@ function AppContent() {
       receivedAt: new Date().toISOString(),
     });
 
-    if (isRegistrar && from) {
+    addNotification(chatPreview.length > 110 ? `${chatPreview.slice(0, 107)}...` : chatPreview, 'info', {
+      title: `New message · ${senderName}`,
+      eventKey: `chat|${id || `${from}|${chatPreview}`}`,
+      duration: 10000,
+      onClick: type === 'group_message' || type === 'group_invitation' ? undefined : () => {
       setIsChatOpen(true);
       setChatAutoOpenTarget({ email: from, nonce: Date.now() });
-    }
-  }, [user?.role]);
+      },
+    });
+  }, [addNotification, user?.email]);
 
   const handleRegistrationRequest = useCallback((request) => {
     const isRegistrar = normalizeAppRole(user?.role).includes('registrar');

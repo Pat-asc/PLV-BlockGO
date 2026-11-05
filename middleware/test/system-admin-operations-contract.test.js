@@ -59,9 +59,10 @@ test('successful authentication is audited once and login analytics remain Syste
   assert.doesNotMatch(monitoringController, /INSERT INTO audit_logs/);
 });
 
-test('security alert IP trackers are stable, incremental, and start at 100', () => {
-  assert.match(monitoringController, /LEFT JOIN ip_tracker_mappings tracker ON tracker\.ip_address = event\.ip_address/);
-  assert.match(monitoringController, /ipTracker = reader\.IsDBNull\(6\) \? null : IpTrackerFormatter\.Format\(reader\.GetInt64\(6\)\)/);
+test('security alerts expose the persisted client IP without converting tracker IDs into addresses', () => {
+  assert.match(monitoringController, /event\.ip_address/);
+  assert.match(monitoringController, /ipAddress = reader\.IsDBNull\(6\) \? null : reader\.GetString\(6\)/);
+  assert.doesNotMatch(monitoringController, /IpTrackerFormatter|tracker\.tracker_id|ipTracker\s*=/);
   assert.doesNotMatch(monitoringController, /summary = \$"[^\n]*reader\.GetString\(4\)[^\n]*reader\.GetString\(5\)/);
   assert.match(ipTrackerMigration, /ip_address VARCHAR\(100\) NOT NULL UNIQUE/);
   assert.match(ipTrackerMigration, /ORDER BY MIN\(security_event_id\), ip_address/);

@@ -18,6 +18,16 @@ CREATE TABLE IF NOT EXISTS users (
     password_reset_expires BIGINT
 );
 
+-- Keep JWT revocation state aligned with migrations/020_auth_version.sql.
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE users
+    DROP CONSTRAINT IF EXISTS ck_users_auth_version_positive;
+
+ALTER TABLE users
+    ADD CONSTRAINT ck_users_auth_version_positive CHECK (auth_version > 0);
+
 -- Create StudentProfiles table
 CREATE TABLE IF NOT EXISTS studentprofiles (
     user_id SERIAL PRIMARY KEY,
@@ -274,6 +284,31 @@ CREATE TABLE IF NOT EXISTS password_reset_requests (
 CREATE INDEX IF NOT EXISTS idx_password_reset_requests_email
     ON password_reset_requests(LOWER(email), created_at DESC);
 
+-- Active self-service email verification codes. This is separate from the
+-- Registrar-managed password_reset_requests workflow above.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    token_id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash CHAR(64) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    used_at TIMESTAMP WITH TIME ZONE,
+    requested_ip VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_password_reset_token_attempts CHECK (attempt_count BETWEEN 0 AND 5)
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_created
+    ON password_reset_tokens(user_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_password_reset_tokens_active_user
+    ON password_reset_tokens(user_id)
+    WHERE used_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expiry
+    ON password_reset_tokens(expires_at)
+    WHERE used_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS security_events (
     security_event_id BIGSERIAL PRIMARY KEY,
     event_type VARCHAR(80) NOT NULL,
@@ -288,6 +323,28 @@ CREATE TABLE IF NOT EXISTS security_events (
     resolved_by INTEGER REFERENCES users(id),
     CONSTRAINT ck_security_event_severity CHECK (severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL'))
 );
+
+CREATE TABLE IF NOT EXISTS ip_tracker_mappings (
+    tracker_id BIGINT PRIMARY KEY,
+    ip_address VARCHAR(100) NOT NULL UNIQUE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO ip_tracker_mappings (tracker_id, ip_address)
+SELECT (SELECT COALESCE(MAX(tracker_id), 0) FROM ip_tracker_mappings)
+       + ROW_NUMBER() OVER (ORDER BY MIN(security_event_id), ip_address),
+       ip_address
+  FROM security_events
+ WHERE ip_address IS NOT NULL
+   AND BTRIM(ip_address) <> ''
+   AND NOT EXISTS (
+       SELECT 1
+         FROM ip_tracker_mappings existing
+        WHERE existing.ip_address = security_events.ip_address
+   )
+ GROUP BY ip_address
+ ORDER BY MIN(security_event_id), ip_address
+ON CONFLICT (ip_address) DO NOTHING;
 
 ALTER TABLE studentprofiles ADD COLUMN IF NOT EXISTS curriculum_id BIGINT REFERENCES curriculums(curriculum_id) ON DELETE SET NULL;
 ALTER TABLE facultyprofiles ADD COLUMN IF NOT EXISTS faculty_id VARCHAR(100);

@@ -1043,3 +1043,21 @@ body { background-color: #f1f5f9; margin: 0; }
   .table-header-inner { flex-direction: column; align-items: flex-start; }
   .table-footer { flex-direction: column; align-items: flex-start; }
 }
+
+@keyframes blockgo-notification-enter {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes blockgo-notification-exit {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(12px); }
+}
+
+.notification-enter { animation: blockgo-notification-enter 180ms ease-out both; }
+.notification-exit { animation: blockgo-notification-exit 180ms ease-in both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .notification-enter,
+  .notification-exit { animation-duration: 1ms; }
+}

@@ -16,11 +16,7 @@ Check("tampered cookie is rejected", !restartedReplica.TryValidate(tampered, out
 var expiredReplica = new GrafanaSessionTokenService("stable-production-secret", TimeSpan.FromHours(8), () => now.AddHours(9));
 Check("expired cookie is rejected", !expiredReplica.TryValidate(token, out _));
 
-Check("first distinct IP maps to 100.0.0.1", IpTrackerFormatter.Format(1) == "100.0.0.1");
-Check("second distinct IP maps to 100.0.0.2", IpTrackerFormatter.Format(2) == "100.0.0.2");
-Check("the same ordinal is stable", IpTrackerFormatter.Format(1) == IpTrackerFormatter.Format(1));
-
-Console.WriteLine("All Grafana session and IP tracker checks passed.");
+Console.WriteLine("All Grafana session checks passed.");
 
 static void Check(string name, bool passed)
 {

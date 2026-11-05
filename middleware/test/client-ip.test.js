@@ -51,3 +51,9 @@ test('IPv4-mapped IPv6 is normalized while native IPv6 is preserved', () => {
     assert.equal(normalizeIp('::ffff:203.0.113.25'), '203.0.113.25');
     assert.equal(normalizeIp('2001:db8::25'), '2001:db8::25');
 });
+
+test('missing or invalid addresses remain unavailable instead of being fabricated', () => {
+    assert.equal(clientIp({}), null);
+    assert.equal(normalizeIp('not-an-ip-address'), null);
+    assert.equal(normalizeIp(''), null);
+});

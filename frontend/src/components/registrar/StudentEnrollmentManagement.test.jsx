@@ -12,6 +12,7 @@ import {
   fetchCrossCurriculumOptions,
   assignCrossCurriculumSubjects,
 } from '../../services/api';
+import { showSystemNotification } from '../../services/NotificationContext';
 
 jest.mock('../../services/api', () => ({
   fetchApprovedStudents: jest.fn(),
@@ -26,6 +27,7 @@ jest.mock('../../services/api', () => ({
   assignCrossCurriculumSubjects: jest.fn(),
   removeNonRegularSubject: jest.fn(),
 }));
+jest.mock('../../services/NotificationContext', () => ({ showSystemNotification: jest.fn() }));
 
 const program = 'Bachelor of Science in Information Technology';
 
@@ -182,6 +184,32 @@ test('uses section and status filters without duplicating the Enrollment Setup p
   expect(screen.queryByText('Regular Student')).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Filter enrollments by status'), { target: { value: 'Regular' } });
   expect(screen.getByText('No matching students found.')).toBeInTheDocument();
+});
+
+test('refreshes the authoritative enrollment list after consecutive CSV uploads without duplicating existing students', async () => {
+  const existing = { id: 42, fullname: 'Juan Dela Cruz', studentno: '26-0001', department: program, section: '1-1' };
+  const firstNew = { id: 43, fullname: 'Maria Santos', studentno: '26-0002', department: program, section: '' };
+  const secondNew = { id: 44, fullname: 'Ana Reyes', studentno: '26-0003', department: program, section: '' };
+  fetchApprovedStudents
+    .mockResolvedValueOnce({ students: [existing] })
+    .mockResolvedValueOnce({ students: [existing, firstNew] })
+    .mockResolvedValueOnce({ students: [existing, firstNew, secondNew] });
+
+  render(<StudentEnrollmentManagement programs={[program]} />);
+  await screen.findByText('Juan Dela Cruz');
+  const input = screen.getByLabelText('Enrollment CSV file');
+  fireEvent.change(input, { target: { files: [new File(['First Name,Last Name\nMaria,Santos'], 'first.csv', { type: 'text/csv' })] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Upload & Prepare' }));
+  expect(await screen.findByText('Maria Santos')).toBeInTheDocument();
+
+  fireEvent.change(input, { target: { files: [new File(['First Name,Last Name\nAna,Reyes'], 'second.csv', { type: 'text/csv' })] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Upload & Prepare' }));
+  expect(await screen.findByText('Ana Reyes')).toBeInTheDocument();
+  expect(screen.getAllByText('Juan Dela Cruz')).toHaveLength(1);
+  expect(screen.getAllByText('Maria Santos')).toHaveLength(1);
+  expect(fetchApprovedStudents).toHaveBeenCalledTimes(3);
+  expect(registrarBulkEnrollStudents).toHaveBeenCalledTimes(2);
+  expect(showSystemNotification).toHaveBeenLastCalledWith('Student enrollment saved.', 'success');
 });
 
 test('shows Cross-Curriculum actions only for selected students and clears the selection', async () => {

@@ -87,13 +87,43 @@ test('image preview is centered in a viewport overlay outside the clipped chat w
   act(() => mockHandlers.ReceiveMessage({ messageId: 1, sender: 'registrar@plv.edu.ph',
     receiver: 'system-admin@plv.edu.ph', sentAt: '2026-09-15T05:00:00Z',
     attachmentName: 'Screenshot.png', attachmentMime: 'image/png', attachmentDataBase64: 'aGVsbG8=' }));
-  fireEvent.click(await screen.findByTitle('Open image preview'));
+  const previewTrigger = await screen.findByTitle('Open image preview');
+  fireEvent.click(previewTrigger);
 
-  const close = screen.getByTitle('Close image preview');
+  const dialog = screen.getByRole('dialog', { name: 'Image preview' });
+  const close = screen.getByRole('button', { name: 'Close image preview' });
   expect(within(container).queryByTitle('Close image preview')).not.toBeInTheDocument();
-  expect(screen.getAllByAltText('Screenshot.png')[1]).toHaveClass('mx-auto', 'object-contain');
+  expect(dialog).toHaveClass('fixed', 'inset-0', 'grid', 'place-items-center');
+  expect(screen.getByTestId('chat-image-lightbox')).toHaveClass('w-[calc(100vw-1rem)]', 'grid-rows-[minmax(0,1fr)_auto]');
+  expect(screen.getAllByAltText('Screenshot.png')[1]).toHaveClass('chat-image-preview', 'h-auto', 'w-auto', 'max-h-full', 'max-w-full', 'object-contain');
+  expect(document.body.style.overflow).toBe('hidden');
   fireEvent.click(close);
   expect(screen.queryByTitle('Close image preview')).not.toBeInTheDocument();
+  expect(document.body.style.overflow).toBe('');
+  expect(previewTrigger).toHaveFocus();
+
+  fireEvent.click(previewTrigger);
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(screen.queryByRole('dialog', { name: 'Image preview' })).not.toBeInTheDocument();
+});
+
+test('deduplicates incoming message notifications and suppresses own or currently visible conversation events', async () => {
+  const onIncomingMessage = jest.fn();
+  const { rerender } = render(<Chat userEmail="student@plv.edu.ph" userRole="student" isOpen={false} onIncomingMessage={onIncomingMessage} />);
+  await waitFor(() => expect(mockHandlers.ReceiveMessage).toBeDefined());
+  const incoming = { messageId: 91, sender: 'faculty@plv.edu.ph', senderName: 'Prof. Santos', receiver: 'student@plv.edu.ph', message: 'Good afternoon', sentAt: '2026-11-05T05:00:00Z' };
+  act(() => {
+    mockHandlers.ReceiveMessage(incoming);
+    mockHandlers.ReceiveMessage(incoming);
+    mockHandlers.ReceiveMessage({ ...incoming, messageId: 92, sender: 'student@plv.edu.ph', receiver: 'faculty@plv.edu.ph' });
+  });
+  expect(onIncomingMessage).toHaveBeenCalledTimes(1);
+  expect(onIncomingMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 91, from: 'faculty@plv.edu.ph', senderName: 'Prof. Santos', message: 'Good afternoon' }));
+
+  rerender(<Chat userEmail="student@plv.edu.ph" userRole="student" isOpen autoOpenTarget={{ email: 'faculty@plv.edu.ph', nonce: 1 }} onIncomingMessage={onIncomingMessage} />);
+  await waitFor(() => expect(screen.getAllByText('faculty@plv.edu.ph').length).toBeGreaterThan(0));
+  act(() => mockHandlers.ReceiveMessage({ ...incoming, messageId: 93 }));
+  expect(onIncomingMessage).toHaveBeenCalledTimes(1);
 });
 
 test('twenty identical academic events cause one pull and one local event', async () => {

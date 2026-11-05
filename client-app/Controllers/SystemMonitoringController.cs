@@ -714,9 +714,8 @@ namespace Client_app.Controllers
                 await using var command = new NpgsqlCommand(@"
                     SELECT event.security_event_id, event.event_type, event.severity,
                            event.attempted_identity, event.details, event.created_at,
-                           tracker.tracker_id
+                           event.ip_address
                     FROM security_events event
-                    LEFT JOIN ip_tracker_mappings tracker ON tracker.ip_address = event.ip_address
                     WHERE event.resolved_at IS NULL
                       AND event.created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
                     ORDER BY event.created_at DESC LIMIT 100;", connection);
@@ -731,7 +730,7 @@ namespace Client_app.Controllers
                         component = "access-control",
                         summary = $"{(reader.IsDBNull(3) ? "Unknown identity" : reader.GetString(3))}: {(reader.IsDBNull(4) ? "Access attempt denied." : reader.GetString(4))}",
                         occurredAt = reader.GetFieldValue<DateTimeOffset>(5),
-                        ipTracker = reader.IsDBNull(6) ? null : IpTrackerFormatter.Format(reader.GetInt64(6))
+                        ipAddress = reader.IsDBNull(6) ? null : reader.GetString(6)
                     });
                 }
             }

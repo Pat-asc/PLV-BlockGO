@@ -1085,11 +1085,14 @@ namespace Client_app.Controllers
                     SELECT u.id, sp.full_name, u.email,
                            COALESCE(prog.program_name, sp.department) AS department,
                            sp.student_no,
-                           CASE WHEN @schoolYear IS NULL THEN sp.section ELSE enrollment.section END,
+                           CASE WHEN @schoolYear IS NULL
+                                THEN COALESCE(enrollment.section, sp.section)
+                                ELSE enrollment.section END,
                            CASE
                              WHEN @schoolYear IS NOT NULL AND enrollment.enrollment_id IS NULL THEN 'Unassigned'
-                             WHEN NULLIF(TRIM(CASE WHEN @schoolYear IS NULL THEN sp.section ELSE enrollment.section END), '') IS NULL THEN 'Unassigned'
-                             ELSE COALESCE(enrollment.enrollment_state, sp.assignment_status, 'Enrolled')
+                             WHEN enrollment.academic_section_id IS NOT NULL THEN 'Assigned'
+                             WHEN NULLIF(TRIM(CASE WHEN @schoolYear IS NULL THEN COALESCE(enrollment.section, sp.section) ELSE enrollment.section END), '') IS NULL THEN 'Unassigned'
+                             ELSE 'Assigned'
                            END AS assignment_status,
                            CASE WHEN @schoolYear IS NULL
                                 THEN COALESCE(NULLIF(TRIM(sp.year_level), ''), enrollment.year_level::text, '1')
@@ -1106,9 +1109,15 @@ namespace Client_app.Controllers
                     JOIN StudentProfiles sp ON u.id = sp.user_id
                     LEFT JOIN LATERAL (
                         SELECT se.enrollment_id, se.program_id, se.curriculum_id, se.academic_section_id,
-                               se.year_level, se.school_year, se.semester, se.section, se.status,
+                               se.year_level, se.school_year, se.semester,
+                               COALESCE(
+                                   NULLIF(TRIM(se.section), ''),
+                                   CASE WHEN section.id IS NOT NULL THEN CONCAT(section.year_level, '-', section.section_num) END
+                               ) AS section,
+                               se.status,
                                se.enrollment_state, se.batch_year, se.nstp_option
                         FROM student_enrollments se
+                        LEFT JOIN academicsections section ON section.id = se.academic_section_id
                         WHERE se.student_user_id = u.id
                           AND (@schoolYear IS NULL OR (se.school_year = @schoolYear AND se.semester = @semester))
                           AND (@schoolYear IS NULL OR UPPER(se.status) = 'ENROLLED')
@@ -5059,7 +5068,7 @@ namespace Client_app.Controllers
 
                 if (normalizedRole == "student")
                 {
-                    query = baseQuery + @"sp.full_name, sp.department, sp.student_no, sp.section,
+                    query = baseQuery + @"sp.full_name, sp.department, sp.student_no, COALESCE(enrollment.section, sp.section),
                         sp.date_of_birth, sp.student_email, sp.middle_name, sp.phone, sp.address, sp.sex,
                         COALESCE(sp.year_level, enrollment.year_level::text),
                         COALESCE(sp.curriculum_id, enrollment.curriculum_id),
@@ -5068,8 +5077,13 @@ namespace Client_app.Controllers
                         FROM Users u
                         JOIN StudentProfiles sp ON u.id = sp.user_id
                         LEFT JOIN LATERAL (
-                            SELECT se.curriculum_id, se.year_level, se.school_year, se.semester, se.status
+                            SELECT se.curriculum_id, se.year_level, se.school_year, se.semester, se.status,
+                                   COALESCE(
+                                       NULLIF(TRIM(se.section), ''),
+                                       CASE WHEN section.id IS NOT NULL THEN CONCAT(section.year_level, '-', section.section_num) END
+                                   ) AS section
                             FROM student_enrollments se
+                            LEFT JOIN academicsections section ON section.id = se.academic_section_id
                             WHERE se.student_user_id = u.id
                             ORDER BY se.updated_at DESC, se.enrollment_id DESC
                             LIMIT 1

@@ -937,14 +937,42 @@ jobs:
           fi
 
           SCHEMA_READY=0
+          SCHEMA_MISSING="schema initialization has not completed"
           for ATTEMPT in $(seq 1 60); do
-            REQUIRED_TABLES="$(docker exec blockgo-security-postgres \
+            SCHEMA_MISSING="$(docker exec blockgo-security-postgres \
               psql --username postgres --dbname ActivityLogs --tuples-only --no-align \
-              --command "SELECT COUNT(*) FROM pg_class WHERE relkind = 'r' AND relname IN ('users', 'security_events');" \
-              2>/dev/null || echo 0)"
-            echo "Schema attempt $ATTEMPT/60 -> $REQUIRED_TABLES required tables"
+              --command "WITH required_relations(name) AS (
+                           VALUES ('users'), ('security_events'), ('ip_tracker_mappings'), ('password_reset_tokens')
+                         ),
+                         missing_relations(object_name) AS (
+                           SELECT 'table public.' || name
+                             FROM required_relations
+                            WHERE to_regclass('public.' || name) IS NULL
+                         ),
+                         required_columns(table_name, column_name) AS (
+                           VALUES ('users', 'auth_version')
+                         ),
+                         missing_columns(object_name) AS (
+                           SELECT 'column public.' || required.table_name || '.' || required.column_name
+                             FROM required_columns required
+                            WHERE NOT EXISTS (
+                                  SELECT 1
+                                    FROM information_schema.columns existing
+                                   WHERE existing.table_schema = 'public'
+                                     AND existing.table_name = required.table_name
+                                     AND existing.column_name = required.column_name
+                            )
+                         )
+                         SELECT COALESCE(string_agg(object_name, ', ' ORDER BY object_name), '')
+                           FROM (
+                               SELECT object_name FROM missing_relations
+                               UNION ALL
+                               SELECT object_name FROM missing_columns
+                           ) missing;" \
+              2>/dev/null || echo 'schema query failed')"
+            echo "Schema attempt $ATTEMPT/60 -> missing: ${SCHEMA_MISSING:-none}"
 
-            if [ "$REQUIRED_TABLES" = "2" ]; then
+            if [ -z "$SCHEMA_MISSING" ]; then
               SCHEMA_READY=1
               break
             fi
@@ -953,7 +981,7 @@ jobs:
           done
 
           if [ "$SCHEMA_READY" -ne 1 ]; then
-            echo "::error::Repository-managed PostgreSQL schema did not create users and security_events."
+            echo "::error::Repository-managed PostgreSQL schema is missing required objects: $SCHEMA_MISSING"
             docker logs --tail 200 blockgo-security-postgres || true
             exit 1
           fi
