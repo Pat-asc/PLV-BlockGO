@@ -35,6 +35,25 @@ test('reset-password runtime accepts code and rejects the retired otp field', ()
     assert.doesNotMatch(route, /req\.body\?\.otp|['"]otp['"]/);
 });
 
+test('Schemathesis keeps all checks and filters only the exact nonexistent reset-code ST202', () => {
+    const workflow = readRepositoryFile('.github', 'workflows', 'feature and api-endpoints-Testing.yml');
+    const hooks = readRepositoryFile('security', 'schemathesis_hooks.py');
+    const hookTests = readRepositoryFile('security', 'test_schemathesis_hooks.py');
+
+    assert.match(workflow, /version:\s*4\.33\.1/);
+    assert.match(workflow, /hooks:\s*security\.schemathesis_hooks/);
+    assert.match(workflow, /checks:\s*all/);
+    assert.match(workflow, /python3 -m unittest security\.test_schemathesis_hooks/);
+    assert.match(hooks, /case\.path != RESET_PASSWORD_PATH/);
+    assert.match(hooks, /str\(case\.method\)\.upper\(\) != "POST"/);
+    assert.match(hooks, /getattr\(failure, "code", None\) != "ST202"/);
+    assert.match(hooks, /"positive_data_acceptance" not in getattr\(failure, "checks", \(\)\)/);
+    assert.match(hooks, /response\.status_code != 400/);
+    assert.match(hooks, /response\.json\(\) == INVALID_OR_EXPIRED_CODE_RESPONSE/);
+    assert.match(hookTests, /test_keeps_other_methods_paths_failure_codes_statuses_and_bodies/);
+    assert.doesNotMatch(workflow, /exclude-checks|checks:\s*not_a_server_error/);
+});
+
 test('fresh CI bootstrap mirrors current password-reset and IP-tracking migrations', () => {
     const bootstrap = readRepositoryFile('network', 'init-db-schema.sql');
     const resetMigration = readRepositoryFile('migrations', '018_password_reset_tokens.sql');

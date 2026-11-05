@@ -98,7 +98,9 @@ test('the modal shows metadata, Student-ID-aligned tables, mismatch count, and i
   expect(within(tables[0]).getAllByRole('row')[2]).toHaveAttribute('data-mismatch', 'true');
   expect(within(tables[1]).getAllByRole('row')[2]).toHaveAttribute('data-mismatch', 'true');
   expect(screen.getByTestId('grade-comparison-grid')).toHaveClass('lg:grid-cols-2');
-  expect(screen.getByTestId('review-scroll-region')).toHaveClass('overflow-y-auto');
+  expect(screen.getByTestId('review-scroll-region')).toHaveClass('overflow-x-hidden', 'overflow-y-auto');
+  expect(screen.getByTestId('chairperson-submission-scroll')).toHaveClass('overflow-x-auto', 'overflow-y-hidden');
+  expect(screen.getByTestId('chairperson-reference-scroll')).toHaveClass('overflow-x-auto', 'overflow-y-hidden');
   expect(screen.getByTestId('review-modal-footer')).not.toBe(screen.getByTestId('review-scroll-region'));
 });
 
@@ -214,13 +216,29 @@ test('observerOnly Chairperson mode hides approval buttons and displays Before/A
 
   fireEvent.click(within(monitoringBar).getByRole('button', { name: 'View Before/After' }));
   expect(screen.getByTestId('chairperson-before-after-panel')).toHaveClass('overflow-hidden', 'rounded-lg');
-  expect(screen.getByTestId('chairperson-before-after-scroll')).toHaveClass('w-full', 'overflow-x-auto');
-  expect(screen.getByTestId('chairperson-before-after-canvas')).toHaveClass('w-full', 'min-w-[860px]');
-  expect(screen.getByTestId('chairperson-before-after-header')).toHaveClass('w-full', 'text-white', 'dark:bg-sky-900');
-  const beforeAfterTable = screen.getByTestId('chairperson-before-after-table');
-  expect(beforeAfterTable).toHaveClass('w-full');
-  expect(beforeAfterTable).not.toHaveClass('min-w-[860px]');
+  expect(screen.getByTestId('review-scroll-region')).toHaveClass('overflow-x-hidden');
+  const snapshotScroll = screen.getByTestId('chairperson-before-after-scroll');
+  expect(snapshotScroll).toHaveClass('w-full', 'min-w-0', 'overflow-x-auto', 'overflow-y-hidden');
+  expect(snapshotScroll).toHaveProperty('scrollLeft', 0);
+  const snapshotCanvas = within(snapshotScroll).getByTestId('chairperson-before-after-canvas');
+  expect(snapshotCanvas).toHaveAttribute('class', 'box-border w-full min-w-[960px]');
+  expect(within(snapshotCanvas).getByTestId('chairperson-before-after-header')).toHaveClass('box-border', 'w-full', 'text-white', 'dark:bg-sky-900');
+  const beforeAfterTable = within(snapshotCanvas).getByTestId('chairperson-before-after-table');
+  expect(beforeAfterTable).toHaveClass('box-border', 'w-full', 'table-fixed', 'border-collapse');
+  expect(within(beforeAfterTable).getByRole('columnheader', { name: 'Before Value' })).toBeInTheDocument();
+  expect(within(beforeAfterTable).getByRole('columnheader', { name: 'Submitted Value' })).toBeInTheDocument();
+  const columnCount = within(beforeAfterTable).getAllByRole('columnheader').length;
+  for (const row of within(beforeAfterTable).getAllByRole('row').slice(1)) {
+    expect(within(row).getAllByRole('cell')).toHaveLength(columnCount);
+  }
   expect(within(beforeAfterTable).getByText('89.00')).toBeInTheDocument();
   expect(within(beforeAfterTable).getByText('91.50')).toBeInTheDocument();
   expect(within(beforeAfterTable).getAllByText('v2').length).toBeGreaterThan(0);
+
+  fireEvent.click(within(monitoringBar).getByRole('button', { name: 'View History' }));
+  expect(screen.getByTestId('chairperson-history-scroll')).toHaveClass('overflow-x-auto', 'overflow-y-hidden');
+  const historyCanvas = within(screen.getByTestId('chairperson-history-scroll')).getByTestId('chairperson-history-canvas');
+  expect(historyCanvas).toHaveAttribute('class', 'box-border w-full min-w-[880px]');
+  expect(within(historyCanvas).getByTestId('chairperson-history-header')).toHaveClass('box-border', 'w-full');
+  expect(within(historyCanvas).getByTestId('chairperson-history-table')).toHaveClass('box-border', 'w-full', 'border-collapse');
 });

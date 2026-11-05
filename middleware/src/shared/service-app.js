@@ -1,6 +1,7 @@
 const express = require('express');
 const { createMetrics } = require('./metrics');
 const { trustProxySetting } = require('./client-ip');
+const { SECURITY_EVENT_LIMITS, sanitizeAuditValue } = require('./audit-value-sanitizer');
 
 function securityHeaders(req, res, next) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -26,7 +27,14 @@ function createServiceApp(serviceName, logger, options = {}) {
 
 function installErrorHandler(app, logger) {
     app.use((err, req, res, next) => {
-        logger.error({ err, method: req.method, path: req.originalUrl }, 'Unhandled service error');
+        const method = sanitizeAuditValue(req.method, SECURITY_EVENT_LIMITS.requestMethod);
+        const requestPath = sanitizeAuditValue(req.originalUrl || req.path, SECURITY_EVENT_LIMITS.requestPath);
+        if (err?.type === 'entity.parse.failed' && err?.status === 400) {
+            logger.warn({ method, path: requestPath }, 'Malformed JSON request body rejected');
+            if (res.headersSent) return next(err);
+            return res.status(400).json({ error: 'Malformed JSON request body.' });
+        }
+        logger.error({ err, method, path: requestPath }, 'Unhandled service error');
         if (res.headersSent) return next(err);
         res.status(err.status || 500).json({ error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message });
     });
