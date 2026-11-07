@@ -15,6 +15,18 @@ on:
         default: "3m"
         type: string
 
+      student_id_prefix:
+        description: "Synthetic student ID prefix"
+        required: false
+        default: "LOAD"
+        type: string
+
+      student_count:
+        description: "Number of synthetic students in the pool"
+        required: false
+        default: "1000"
+        type: string
+
 permissions:
   contents: read
 
@@ -36,10 +48,10 @@ jobs:
 
     env:
       API_URL: https://plv-blockgo.com/api
-      LOAD_TEST_EMAIL: ${{ secrets.LOAD_TEST_EMAIL }}
+      LOAD_TEST_EMAIL: ${{ secrets.LOAD_TEST_EMAIL || vars.LOAD_TEST_EMAIL }}
       LOAD_TEST_PASSWORD: ${{ secrets.LOAD_TEST_PASSWORD }}
-      STUDENT_ID_PREFIX: ${{ vars.LOAD_TEST_STUDENT_PREFIX }}
-      STUDENT_COUNT: ${{ vars.LOAD_TEST_STUDENT_COUNT }}
+      STUDENT_ID_PREFIX: ${{ inputs.student_id_prefix || vars.STUDENT_ID_PREFIX || vars.LOAD_TEST_STUDENT_PREFIX || secrets.STUDENT_ID_PREFIX || secrets.LOAD_TEST_STUDENT_PREFIX || 'LOAD' }}
+      STUDENT_COUNT: ${{ inputs.student_count || vars.STUDENT_COUNT || vars.LOAD_TEST_STUDENT_COUNT || secrets.STUDENT_COUNT || secrets.LOAD_TEST_STUDENT_COUNT || '1000' }}
 
     steps:
 
@@ -55,10 +67,12 @@ jobs:
           echo "=========================================="
           echo " BLOCKGO LOAD TEST CONFIGURATION"
           echo "=========================================="
-          echo "Runner       : $RUNNER_NAME"
-          echo "API URL      : $API_URL"
-          echo "Target Users : $TARGET_USERS"
-          echo "Hold Duration: $HOLD_DURATION"
+          echo "Runner            : $RUNNER_NAME"
+          echo "API URL           : $API_URL"
+          echo "Target Users      : $TARGET_USERS"
+          echo "Hold Duration     : $HOLD_DURATION"
+          echo "Student ID Prefix : $STUDENT_ID_PREFIX"
+          echo "Student Count     : $STUDENT_COUNT"
           echo "=========================================="
 
 
@@ -78,12 +92,12 @@ jobs:
           fi
 
           if [ -z "$STUDENT_ID_PREFIX" ]; then
-            echo "::error::LOAD_TEST_STUDENT_PREFIX variable is missing."
+            echo "::error::STUDENT_ID_PREFIX (or LOAD_TEST_STUDENT_PREFIX) variable is missing."
             exit 1
           fi
 
           if [ -z "$STUDENT_COUNT" ]; then
-            echo "::error::LOAD_TEST_STUDENT_COUNT variable is missing."
+            echo "::error::STUDENT_COUNT (or LOAD_TEST_STUDENT_COUNT) variable is missing."
             exit 1
           fi
 
