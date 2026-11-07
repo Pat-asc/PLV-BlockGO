@@ -259,6 +259,25 @@ test('imports a CSV dropped onto the upload area', async () => {
   expect(await screen.findByText('1 subjects imported successfully.')).toBeInTheDocument();
 });
 
+test('shows structured backend row errors when a curriculum CSV is rejected', async () => {
+  const importError = new Error('Curriculum CSV validation failed. No records were created.');
+  importError.status = 400;
+  importError.data = {
+    errors: [
+      { row: 2, message: 'Course Code is required.' },
+      { row: 4, message: 'Prerequisite IT 101 does not exist in this curriculum.' },
+    ],
+  };
+  bulkImportCurriculumSubjects.mockRejectedValue(importError);
+  const dropZone = await openBulkUpload();
+
+  fireEvent.drop(dropZone, { dataTransfer: { files: [csvFile()] } });
+
+  const notice = await screen.findByText(/Curriculum CSV validation failed\. No records were created\./);
+  expect(notice).toHaveTextContent('Row 2: Course Code is required.');
+  expect(notice).toHaveTextContent('Row 4: Prerequisite IT 101 does not exist in this curriculum.');
+});
+
 test('resumes a partial CSV import without reposting existing subjects', async () => {
   fetchCurriculums.mockResolvedValue({
     data: [{
