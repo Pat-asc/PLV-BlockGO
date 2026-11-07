@@ -1,10 +1,37 @@
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useMemo, useState } from 'react';
 import { resetManagedAccountPassword } from '../../services/api';
 import PasswordResetRequests from './PasswordResetRequests';
+import PasswordStrength from '../shared/PasswordStrength';
+import { isPasswordValid, PASSWORD_POLICY_MESSAGE } from '../../utils/passwordPolicy';
+import SearchField from '../shared/SearchField';
+
+const normalizedAccountValues = (values) => values
+  .map((value) => String(value || '').trim().toLowerCase())
+  .filter(Boolean);
+
+const accountIdentityValues = (account) => normalizedAccountValues([
+  account.name,
+  account.accountCode,
+  account.email,
+]);
+
+const accountMetadataValues = (account) => normalizedAccountValues([
+  account.roleLabel,
+  account.role,
+  account.department,
+  account.programCode,
+  account.programName,
+]);
+
+const accountProgram = (account) => account?.role === 'department_admin'
+  ? String(account.programCode || account.programName || '').trim()
+  : '';
 
 const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = [], onRefresh }) => {
   const [roleFilter, setRoleFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [resultsOpen, setResultsOpen] = useState(false);
   const [selectedId, setSelectedId] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -27,16 +54,39 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
 
   const visibleAccounts = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return accounts.filter((account) => (roleFilter === 'all' || account.role === roleFilter) && (!query || [account.name, account.email, account.accountCode, account.department].some((value) => String(value || '').toLowerCase().includes(query))));
+    return accounts
+      .filter((account) => roleFilter === 'all' || account.role === roleFilter)
+      .map((account) => {
+        const identityValues = accountIdentityValues(account);
+        const metadataValues = accountMetadataValues(account);
+        const rank = !query ? 0
+          : identityValues.some((value) => value.startsWith(query)) ? 0
+            : identityValues.some((value) => value.includes(query)) ? 1
+              : metadataValues.some((value) => value.startsWith(query)) ? 2
+                : metadataValues.some((value) => value.includes(query)) ? 3 : 4;
+        return { account, rank };
+      })
+      .filter(({ rank }) => rank < 4)
+      .sort((left, right) => left.rank - right.rank || left.account.name.localeCompare(right.account.name))
+      .map(({ account }) => account);
   }, [accounts, roleFilter, search]);
 
   const selected = accounts.find((account) => account.key === selectedId);
+  const updateSearch = (value) => {
+    setSearch(value);
+    setSelectedId('');
+    setResultsOpen(Boolean(value.trim()));
+  };
+  const selectAccount = (accountKey) => {
+    setSelectedId(accountKey);
+    setResultsOpen(false);
+  };
   const resetPassword = async (event) => {
     event.preventDefault(); setNotice(null);
     if (!selected) return setNotice({ type: 'error', message: 'Select an account first.' });
-    if (newPassword.length < 8 || newPassword.length > 128) return setNotice({ type: 'error', message: 'Password must be between 8 and 128 characters.' });
+    if (!isPasswordValid(newPassword)) return setNotice({ type: 'error', message: PASSWORD_POLICY_MESSAGE });
     if (newPassword !== confirmPassword) return setNotice({ type: 'error', message: 'The password confirmation does not match.' });
-    if (!window.confirm(`Reset the password for ${selected.name} (${selected.roleLabel})?`)) return;
+    if (!await requestSystemConfirmation(`Reset the password for ${selected.name} (${selected.roleLabel})?`)) return;
     setSaving(true);
     try {
       const response = await resetManagedAccountPassword(selected.id, newPassword);
@@ -60,9 +110,17 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
         <button type="button" onClick={onRefresh} className="text-[10px] font-semibold text-blue-700 hover:underline">Refresh accounts</button>
       </div>
       <div className="space-y-3">
-        <label className="block text-[11px] font-semibold text-slate-700">Account Type<select value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value); setSelectedId(''); }} className={fieldClass}><option value="all">All Accounts</option><option value="student">Students</option><option value="faculty">Faculty</option><option value="department_admin">Department Administrators</option></select></label>
-        <label className="block text-[11px] font-semibold text-slate-700">Search Account<span className="relative mt-1.5 block"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><SearchIcon /></span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, ID, email, or department..." className="h-9 w-full rounded-md border border-slate-300 pl-9 pr-3 text-xs font-normal outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></span></label>
-        <label className="block text-[11px] font-semibold text-slate-700">Account<select required value={selectedId} onChange={(event) => setSelectedId(event.target.value)} className={fieldClass}><option value="">Select an account</option>{visibleAccounts.map((account) => <option key={account.key} value={account.key}>{account.roleLabel} — {account.name} — {account.accountCode}</option>)}</select></label>
+        <label className="block text-[11px] font-semibold text-slate-700">Account Type<select value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value); setSelectedId(''); setResultsOpen(Boolean(search.trim())); }} className={fieldClass}><option value="all">All Accounts</option><option value="student">Students</option><option value="faculty">Faculty</option><option value="department_admin">Department Administrators</option></select></label>
+        <SearchField value={search} onChange={updateSearch} label="Search Account" placeholder="Name, ID, email, role, department, or program" inputClassName="h-9 text-xs" />
+        {resultsOpen && visibleAccounts.length === 0 ? <p className="text-xs text-slate-500">No results found.</p> : null}
+        {resultsOpen && visibleAccounts.length > 0 ? <div role="listbox" aria-label="Matching accounts" className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-1.5">
+          {visibleAccounts.map((account) => <button key={account.key} type="button" role="option" aria-selected={account.key === selectedId} onClick={() => selectAccount(account.key)} className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition ${account.key === selectedId ? 'bg-blue-100 text-blue-900' : 'bg-white text-slate-700 hover:bg-blue-50'}`}>
+            <span className="min-w-0"><span className="block truncate text-xs font-semibold">{account.name}</span><span className="block truncate text-[10px] text-slate-500">{account.accountCode} · {account.email}</span></span>
+            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">{account.roleLabel}{accountProgram(account) ? ` • ${accountProgram(account)}` : ''}</span>
+          </button>)}
+        </div> : null}
+        <label className="block text-[11px] font-semibold text-slate-700">Account<select required value={selectedId} onChange={(event) => selectAccount(event.target.value)} className={fieldClass}><option value="">Select an account</option>{visibleAccounts.map((account) => <option key={account.key} value={account.key}>{account.roleLabel} — {account.name} — {account.accountCode}{accountProgram(account) ? ` — ${accountProgram(account)}` : ''}</option>)}</select></label>
+        {selected ? <div aria-label="Selected account details" className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-slate-700"><p className="font-bold text-slate-800">{selected.name}</p><p>{selected.roleLabel}{accountProgram(selected) ? ` • ${selected.programName || selected.programCode}` : ''}</p><p className="text-[10px] text-slate-500">{selected.accountCode} • {selected.email}</p></div> : null}
       </div>
     </section>
 
@@ -74,6 +132,7 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
           <label className="block text-[11px] font-semibold text-slate-700">Confirm Password<input required minLength="8" maxLength="128" type={showPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Confirm new password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className={fieldClass} /></label>
         </div>
         <label className="mt-2.5 flex w-fit items-center gap-2 text-[10px] text-slate-600"><input type="checkbox" checked={showPassword} onChange={(event) => setShowPassword(event.target.checked)} className="h-3 w-3" />Show passwords</label>
+        <PasswordStrength password={newPassword} />
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3"><p className="text-[10px] text-slate-500">Password must contain at least 8 characters.</p><button disabled={saving || !selected} className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"><LockIcon />{saving ? 'Resetting…' : 'Reset Password'}</button></div>
       </form>
     </section>
@@ -88,6 +147,7 @@ const PasswordManagement = ({ students = [], faculties = [], departmentAdmins = 
         setRoleFilter(account.role);
         setSearch(account.email);
         setSelectedId(account.key);
+        setResultsOpen(false);
         setNotice({ type: 'success', message: account.name + ' is selected. Enter and confirm the new password above.' });
       }}
     />

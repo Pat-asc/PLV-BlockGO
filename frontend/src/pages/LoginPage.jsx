@@ -1,3 +1,4 @@
+import { showSystemNotification } from '../services/NotificationContext';
 import React, { useState } from "react";
 import plvbg from "../assets/plvbg.png";
 import plvlogo from "../assets/plvlogo.png";
@@ -15,7 +16,7 @@ const LoginPage = ({ onLogin }) => {
     email !== "chairperson@gmail.com" &&
     email !== "registrar@gmail.com"
   ) {
-    alert("Unauthorized email address.");
+    showSystemNotification("Unauthorized email address.");
     return;
   }
 

@@ -25,6 +25,16 @@ spec:
         matchLabels:
           kubernetes.io/metadata.name: plv-fabric
       podSelector:
+        matchLabels:
+          app: dotnet-operations-service
+    ports:
+    - protocol: TCP
+      port: 5984
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: plv-fabric
+      podSelector:
         matchExpressions:
           - key: app
             operator: In
@@ -52,6 +62,32 @@ spec:
               - dotnet-grade-service
               - dotnet-operations-service
               - dotnet-realtime-service
+    ports:
+    - protocol: TCP
+      port: 5432
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: plv-fabric
+      podSelector:
+        matchExpressions:
+          - key: app
+            operator: In
+            values:
+              - dotnet-api-gateway
+              - dotnet-auth-service
+              - dotnet-academic-service
+              - dotnet-grade-service
+              - dotnet-operations-service
+              - dotnet-realtime-service
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow the schema migration Job to update the primary PostgreSQL database.
+  - from:
+    - podSelector:
+        matchLabels:
+          app: postgres-schema-migrations
     ports:
     - protocol: TCP
       port: 5432
@@ -100,6 +136,19 @@ spec:
     ports:
     - protocol: TCP
       port: 5984
+
+  # Allow the System Administrator monitoring service to use the protected
+  # read-only CouchDB browser.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: plv-fabric
+      podSelector:
+        matchLabels:
+          app: dotnet-operations-service
+    ports:
+    - protocol: TCP
+      port: 5984
   - from:
     - namespaceSelector:
         matchLabels:
@@ -136,6 +185,19 @@ spec:
     ports:
     - protocol: TCP
       port: 5984
+
+  # Allow the System Administrator monitoring service to use the protected
+  # read-only CouchDB browser.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: plv-fabric
+      podSelector:
+        matchLabels:
+          app: dotnet-operations-service
+    ports:
+    - protocol: TCP
+      port: 5984
   - from:
     - namespaceSelector:
         matchLabels:
@@ -166,3 +228,31 @@ spec:
   - ports:
     - protocol: TCP
       port: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dotnet-auth-to-postgres
+  namespace: plv-main-campus
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres-primary
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: plv-fabric
+          podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - dotnet-auth-service
+                  - dotnet-api-gateway
+      ports:
+        - protocol: TCP
+          port: 5432

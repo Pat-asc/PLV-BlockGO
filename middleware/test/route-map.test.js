@@ -7,11 +7,11 @@ const { normalizeAuthRole } = require('../src/shared/roles');
 const { isRetryableCouchDbError } = require('../src/fabric/wallet-manager');
 
 const expected = {
-    '/api/login': 'auth', '/api/crypto/hash-password': 'auth', '/api/forgot-password': 'auth', '/api/reset-password': 'auth', '/api/bootstrap': 'auth',
+    '/api/login': 'auth', '/api/crypto/hash-password': 'auth', '/api/forgot-password': 'auth', '/api/reset-password': 'auth', '/api/password-reset-assistance': 'auth', '/api/bootstrap': 'auth',
     '/api/fabric/register-user': 'identity', '/api/enroll': 'identity', '/api/register': 'identity', '/api/revoke': 'identity', '/api/wallet/person@example.edu': 'identity',
     '/api/all-grades': 'ledger', '/api/student-transactions': 'ledger', '/api/admin/ledger-transactions': 'ledger', '/api/grade-history/GRADE-1': 'ledger',
     '/api/fabric/audit-event': 'ledger', '/api/issue-grade': 'ledger', '/api/get-grade/GRADE-1': 'ledger',
-    '/api/update-grade': 'ledger', '/api/approve-grade/GRADE-1': 'ledger', '/api/finalize-grade/GRADE-1': 'ledger',
+    '/api/update-grade': 'ledger', '/api/correct-finalized-grade': 'ledger', '/api/finalize-approved-grades': 'ledger', '/api/approve-grade/GRADE-1': 'ledger', '/api/finalize-grade/GRADE-1': 'ledger',
     '/api/return-grade/GRADE-1': 'ledger', '/api/batch-issue-grade': 'ledger',
     '/api/batch-upload': 'upload', '/api/upload-grades': 'upload',
     '/api/SystemSettings': 'settings', '/api/SystemSettings/EncodingPeriod': 'settings', '/api/SystemSettings/reset-season': 'settings'
@@ -31,6 +31,9 @@ test('documented compatibility routes expose their intended HTTP methods', () =>
     assert.deepEqual(allowedMethods('/api/bootstrap'), ['GET']);
     assert.deepEqual(allowedMethods('/api/admin/ledger-transactions'), ['GET']);
     assert.deepEqual(allowedMethods('/api/crypto/hash-password'), ['POST']);
+    assert.deepEqual(allowedMethods('/api/password-reset-assistance'), ['POST']);
+    assert.deepEqual(allowedMethods('/api/correct-finalized-grade'), ['POST']);
+    assert.deepEqual(allowedMethods('/api/finalize-approved-grades'), ['POST']);
     assert.deepEqual(allowedMethods('/api/SystemSettings/EncodingPeriod'), ['GET']);
     assert.deepEqual(allowedMethods('/api/SystemSettings/reset-season'), ['POST']);
 });
@@ -48,10 +51,36 @@ test('CouchDB transport failures are retried without retrying authentication fai
     assert.equal(isRetryableCouchDbError({ statusCode: 401, message: 'unauthorized' }), false);
 });
 
-test('password reset routes use the approval workflow schema', () => {
-    const source = fs.readFileSync(path.join(__dirname, '../src/services/auth-service.js'), 'utf8');
-    assert.match(source, /request_status[\s\S]*request_reason/);
-    assert.doesNotMatch(source, /\botp_code\b|\bexpires_at\b|\bused_at\b/);
+test('manual password reset assistance uses the approval workflow schema', () => {
+    const authSource = fs.readFileSync(
+        path.join(__dirname, '../src/services/auth-service.js'),
+        'utf8'
+    );
+
+    const resetServiceSource = fs.readFileSync(
+        path.join(__dirname, '../src/shared/password-reset-service.js'),
+        'utf8'
+    );
+
+    assert.match(
+        authSource,
+        /passwordResetService\.requestManualAssistance\(\{\s*email\s*\}\)/
+    );
+
+    assert.match(
+        resetServiceSource,
+        /INSERT INTO password_reset_requests[\s\S]*request_status[\s\S]*request_reason/
+    );
+
+    assert.match(
+        resetServiceSource,
+        /request_status IN \('PENDING', 'APPROVED'\)/
+    );
+
+    assert.doesNotMatch(
+        resetServiceSource,
+        /INSERT INTO password_reset_requests[\s\S]*\botp_code\b/
+    );
 });
 
 test('deployed authentication uses the tested account-aware login limiter', () => {

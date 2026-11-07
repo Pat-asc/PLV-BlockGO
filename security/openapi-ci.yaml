@@ -68,8 +68,9 @@ paths:
               properties:
                 password:
                   type: string
-                  minLength: 1
+                  minLength: 8
                   maxLength: 128
+                  pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s\u0000-\u001F\u007F-\u009F])[^\u0000-\u001F\u007F-\u009F]{8,128}$'
       responses:
         "200":
           description: Password was hashed
@@ -98,7 +99,7 @@ paths:
               required: [email]
               additionalProperties: false
               properties:
-                email: { type: string, format: email, maxLength: 255 }
+                email: { type: string, minLength: 1, maxLength: 255, pattern: '^[^\u0000-\u001F\u007F]*[^\u0000-\u001F\u007F\s][^\u0000-\u001F\u007F]*$' }
       responses:
         "200": { $ref: "#/components/responses/Message" }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -109,27 +110,28 @@ paths:
     post:
       tags: [Authentication]
       operationId: resetPassword
-      summary: Reject the retired public OTP password-reset flow
+      summary: Complete password reset with an email verification code
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [email, otp, newPassword]
+              required: [email, code, newPassword]
               additionalProperties: false
               properties:
                 email: { type: string, format: email, maxLength: 255 }
-                otp: { type: string, pattern: "^[0-9]{6}$" }
-                newPassword: { type: string, minLength: 8, maxLength: 128 }
+                code: { type: string, pattern: "^[0-9]{6}$" }
+                newPassword:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s\u0000-\u001F\u007F-\u009F])[^\u0000-\u001F\u007F-\u009F]{8,128}$'
       responses:
+        "200": { $ref: "#/components/responses/Message" }
         "400": { $ref: "#/components/responses/BadRequest" }
-        "410":
-          description: Public OTP password reset is no longer available
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
 
   /api/fabric/register-user:
     post:

@@ -6,6 +6,7 @@ const { createMetrics } = require('../shared/metrics');
 const { requestJson } = require('../shared/internal-http');
 const { allowedMethods, resolveRoute, serviceTargets } = require('../shared/route-map');
 const { listen } = require('../shared/service-app');
+const { clientIp, trustProxySetting } = require('../shared/client-ip');
 
 const serviceName = 'middleware-api';
 const logger = createLogger(serviceName);
@@ -14,7 +15,7 @@ const app = express();
 const allowedOrigins = corsOrigins();
 
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+app.set('trust proxy', trustProxySetting());
 app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -67,13 +68,20 @@ app.use((req, res) => {
     const service = resolveRoute(pathname);
     if (!service) return res.status(404).json({ error: 'Unknown middleware API route.' });
     const target = new URL(serviceTargets()[service]);
+    const headers = { ...req.headers, host: target.host, 'x-forwarded-host': req.headers.host || '' };
+    delete headers['x-forwarded-for'];
+    delete headers['x-forwarded-proto'];
+    const sourceIp = clientIp(req);
+    if (sourceIp) headers['x-forwarded-for'] = sourceIp;
+    headers['x-forwarded-proto'] = req.protocol;
+
     const proxy = http.request({
         protocol: target.protocol,
         hostname: target.hostname,
         port: target.port,
         method: req.method,
         path: req.originalUrl,
-        headers: { ...req.headers, host: target.host, 'x-forwarded-host': req.headers.host || '' },
+        headers,
         timeout: Number(process.env.PROXY_TIMEOUT_MS || 180000)
     }, (upstream) => {
         res.statusCode = upstream.statusCode || 502;

@@ -5,8 +5,10 @@ cd "$(dirname "$0")/.."
 PROFILE="${K8S_PROFILE:-local}"
 CHANNEL_NAME="${CHANNEL_NAME:-registrar-channel}"
 CC_NAME="${CHAINCODE_NAME:-registrar}"
-CC_LABEL="${CHAINCODE_LABEL:-registrar_1.0}"
-CC_VERSION="${CHAINCODE_VERSION:-1.0}"
+# Production currently has registrar 1.0 at sequence 1. This source changes
+# chaincode behavior, so the safe default is the next immutable definition.
+CC_LABEL="${CHAINCODE_LABEL:-registrar_1.1}"
+CC_VERSION="${CHAINCODE_VERSION:-1.1}"
 CC_SEQUENCE="${CHAINCODE_SEQUENCE:-1}"
 CLI_NAMESPACE="plv-main-campus"
 REMOTE_DIR="/tmp/blockgo-chaincode-bootstrap"
@@ -64,7 +66,8 @@ declare -A ORG_CHAINCODE_DEPLOYMENT=(
 declare -A PACKAGE_FILES
 declare -A PACKAGE_IDS
 
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/blockgo-ccpkg.XXXXXX")"
+mkdir -p "./.tmp"
+WORK_DIR="$(mktemp -d "./.tmp/blockgo-ccpkg.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 require_file() {
@@ -145,7 +148,7 @@ peer_exec_at() {
     local tls_host_override="${PEER_TLS_HOST_OVERRIDE-$peer_host}"
     shift 2
 
-    MSYS_NO_PATHCONV=1 kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- env \
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- env \
         CORE_PEER_TLS_ENABLED=true \
         CORE_PEER_TLS_ROOTCERT_FILE="$REMOTE_DIR/$org/peer-tls-ca.crt" \
         CORE_PEER_TLS_SERVERHOSTOVERRIDE="$tls_host_override" \
@@ -162,10 +165,10 @@ peer_exec() {
 }
 
 stage_cli_files() {
-    kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- \
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- \
         sh -c "rm -rf '$REMOTE_DIR' && mkdir -p '$REMOTE_DIR'" >/dev/null
 
-    kubectl cp \
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl cp \
         ./crypto-config-final-v2/ordererOrganizations/capstone.com/orderers/orderer.capstone.com/tls/ca.crt \
         "$CLI_NAMESPACE/$CLI_POD:$REMOTE_DIR/orderer-tls-ca.crt" -c cli >/dev/null
 
@@ -182,13 +185,13 @@ stage_cli_files() {
         }
         require_file "$peer_ca"
 
-        kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- \
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- \
             mkdir -p "$REMOTE_DIR/$org" >/dev/null
-        kubectl cp "$admin_msp" \
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl cp "$admin_msp" \
             "$CLI_NAMESPACE/$CLI_POD:$REMOTE_DIR/$org/admin-msp" -c cli >/dev/null
-        kubectl cp "$peer_ca" \
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl cp "$peer_ca" \
             "$CLI_NAMESPACE/$CLI_POD:$REMOTE_DIR/$org/peer-tls-ca.crt" -c cli >/dev/null
-        kubectl cp "${PACKAGE_FILES[$org]}" \
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl cp "${PACKAGE_FILES[$org]}" \
             "$CLI_NAMESPACE/$CLI_POD:$REMOTE_DIR/$org.tar.gz" -c cli >/dev/null
 
         service_ip="$(kubectl get service "${ORG_PEER_SERVICE[$org]}" -n "$namespace" -o jsonpath='{.spec.clusterIP}')"
@@ -196,16 +199,16 @@ stage_cli_files() {
             echo "ERROR: Could not resolve ClusterIP for ${ORG_PEER_SERVICE[$org]} in $namespace." >&2
             return 1
         }
-        kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- sh -c \
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- sh -c \
             "grep -Fq '${ORG_PEER_HOST[$org]}' /etc/hosts || printf '\n%s %s\n' '$service_ip' '${ORG_PEER_HOST[$org]}' >> /etc/hosts"
 
-        if [[ "$PROFILE" == "production" ]]; then
+        if [[ "$PROFILE" == "production" && "${DEPLOY_SECONDARY_PEERS:-false}" == "true" ]]; then
             service_ip="$(kubectl get service "${ORG_SECONDARY_PEER_SERVICE[$org]}" -n "$namespace" -o jsonpath='{.spec.clusterIP}')"
             [[ -n "$service_ip" ]] || {
                 echo "ERROR: Could not resolve secondary peer service for $org." >&2
                 return 1
             }
-            kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- sh -c \
+            MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" kubectl exec -n "$CLI_NAMESPACE" "$CLI_POD" -c cli -- sh -c \
                 "grep -Fq '${ORG_SECONDARY_PEER_HOST[$org]}' /etc/hosts || printf '\n%s %s\n' '$service_ip' '${ORG_SECONDARY_PEER_HOST[$org]}' >> /etc/hosts"
         fi
     done
@@ -214,7 +217,7 @@ stage_cli_files() {
 install_packages() {
     for org in "${ORGS[@]}"; do
         local peer_hosts=("${ORG_PEER_HOST[$org]}")
-        if [[ "$PROFILE" == "production" ]]; then
+        if [[ "$PROFILE" == "production" && "${DEPLOY_SECONDARY_PEERS:-false}" == "true" ]]; then
             peer_hosts+=("${ORG_SECONDARY_PEER_HOST[$org]}")
         fi
         local peer_host
@@ -295,7 +298,7 @@ approve_for_org() {
         --version "$CC_VERSION" \
         --package-id "${PACKAGE_IDS[$org]}" \
         --sequence "$CC_SEQUENCE" \
-        --waitForEvent
+        --waitForEvent --waitForEventTimeout 120s
 }
 
 chaincode_is_committed() {

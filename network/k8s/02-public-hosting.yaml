@@ -1,0 +1,22 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blockgo-public-hosting
+  namespace: plv-fabric
+  labels:
+    app.kubernetes.io/part-of: blockgo
+    app.kubernetes.io/component: public-hosting
+data:
+  BLOCKGO_PUBLIC_HOST: "__BLOCKGO_PUBLIC_HOST__"
+  BLOCKGO_PUBLIC_IP: "__BLOCKGO_PUBLIC_IP__"
+  BLOCKGO_PUBLIC_SCHEME: "__BLOCKGO_PUBLIC_SCHEME__"
+  BLOCKGO_PUBLIC_ORIGIN: "__BLOCKGO_PUBLIC_ORIGIN__"
+  BLOCKGO_PUBLIC_API_URL: "__BLOCKGO_PUBLIC_API_URL__"
+  BLOCKGO_PUBLIC_WEBSOCKET_URL: "__BLOCKGO_PUBLIC_WEBSOCKET_URL__"
+  BLOCKGO_PUBLIC_GRAFANA_URL: "__BLOCKGO_PUBLIC_ORIGIN__/api/SystemMonitoring/grafana/"
+  BLOCKGO_DNS_PROVIDER: "Cloudflare"
+  BLOCKGO_CLOUDFLARE_PROXY: "Enabled"
+  BLOCKGO_ORIGIN_HTTPS: "Required"
+  FRONTEND_URL: "__BLOCKGO_PUBLIC_ORIGIN__"
+  CORS_ORIGINS: "__BLOCKGO_ALLOWED_ORIGINS__"

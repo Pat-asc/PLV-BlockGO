@@ -1,5 +1,6 @@
 import React from "react";
 import plvlogo from "../../assets/plvlogo.png";
+import SettingsMenu from "../shared/SettingsMenu";
 
 function RegistrarHeader({ registrarData, onLogout }) {
   return (
@@ -39,9 +40,11 @@ function RegistrarHeader({ registrarData, onLogout }) {
             </p>
           </div>
 
+          <SettingsMenu />
+
           <button
             onClick={onLogout}
-            className="rounded-xl border border-yellow-400 bg-transparent px-5 py-2 text-sm font-semibold text-yellow-400 transition hover:bg-yellow-400 hover:text-[#003366]"
+            className="blockgo-bright-hover rounded-xl border border-yellow-400 bg-transparent px-5 py-2 text-sm font-semibold text-yellow-400 transition hover:bg-yellow-400 hover:text-[#003366]"
           >
             Logout
           </button>

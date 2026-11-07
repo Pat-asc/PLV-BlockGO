@@ -155,8 +155,8 @@ const BulkUploadModal = ({
     activeTab === "paste" ? pasteText.trim().length > 0 : !!selectedFile;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-2 sm:p-4">
+      <div className="max-h-[calc(100dvh-1rem)] w-full min-w-0 max-w-2xl overflow-y-auto rounded-2xl bg-white text-slate-900 shadow-xl dark:bg-slate-900 dark:text-slate-100 sm:max-h-[calc(100dvh-2rem)]">
         <div className="p-4">
           <div className="grid grid-cols-2 gap-3">
             <button
@@ -164,8 +164,8 @@ const BulkUploadModal = ({
               onClick={() => setActiveTab("paste")}
               className={`rounded-xl border py-3 text-sm font-semibold ${
                 activeTab === "paste"
-                  ? "border-[#032d63] bg-[#032d63] text-white"
-                  : "bg-white text-slate-700"
+                  ? "border-[#032d63] bg-[#032d63] text-white dark:border-sky-700 dark:bg-sky-800 dark:text-white"
+                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               }`}
             >
               Paste Text
@@ -176,8 +176,8 @@ const BulkUploadModal = ({
               onClick={() => setActiveTab("csv")}
               className={`rounded-xl border py-3 text-sm font-semibold ${
                 activeTab === "csv"
-                  ? "border-[#032d63] bg-[#032d63] text-white"
-                  : "bg-white text-slate-700"
+                  ? "border-[#032d63] bg-[#032d63] text-white dark:border-sky-700 dark:bg-sky-800 dark:text-white"
+                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               }`}
             >
               Upload CSV

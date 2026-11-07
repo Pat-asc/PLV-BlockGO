@@ -42,7 +42,22 @@ try
             full_name TEXT, student_email TEXT, department TEXT, year_level TEXT, section TEXT,
             assignment_status TEXT, sex TEXT, curriculum_id BIGINT, batch_year INT);");
     await Execute(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment.sql")));
-    await Execute("ALTER TABLE student_enrollments ADD COLUMN batch_year INT;");
+    await Execute(@"
+        ALTER TABLE academicsections
+            ADD COLUMN max_capacity INTEGER NOT NULL DEFAULT 40,
+            ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE;
+        ALTER TABLE student_enrollments
+            ADD COLUMN batch_year INT,
+            ADD COLUMN enrollment_state VARCHAR(20) NOT NULL DEFAULT 'PLANNING',
+            ADD COLUMN finalized_at TIMESTAMPTZ,
+            ADD COLUMN finalized_by INTEGER REFERENCES users(id);
+        CREATE TABLE facultysections (
+            id SERIAL PRIMARY KEY,
+            academic_section_id INTEGER REFERENCES academicsections(id),
+            school_year VARCHAR(20),
+            semester VARCHAR(20),
+            is_active BOOLEAN NOT NULL DEFAULT TRUE
+        );");
     await Execute(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "lookup.sql")));
     await Execute(@"
         INSERT INTO academic_programs VALUES (1, 'BSIT', 'Information Technology'), (2, 'BSCS', 'Computer Science');
@@ -79,6 +94,11 @@ try
     await Reject(() => EnrollmentSectioningService.AssignAsync(connection, 1, new[] { "26-0009" }, "2025-2026", "FIRST", null), "Missing period fabricated an enrollment.");
     await Reject(() => EnrollmentSectioningService.AssignAsync(connection, 3, new[] { "26-0006" }, "2026-2027", "FIRST", "BSIT"), "Cross-department assignment allowed.");
 
+    await Execute("INSERT INTO facultysections (academic_section_id, school_year, semester) VALUES (1, '2025-2026', 'FIRST');");
+    await Reject(() => EnrollmentSectioningService.AssignAsync(connection, 1, new[] { "26-0001" }, "2026-2027", "FIRST", null),
+        "A section with a conflicting active Faculty assignment period was accepted.");
+    await Execute("DELETE FROM facultysections;");
+
     var assigned = await EnrollmentSectioningService.AssignAsync(connection, 1, new[] { "26-0001", "26-0001", "1", "26-0009" }, "2026-2027", "FIRST", "BSIT");
     Check(assigned.Count == 2, "Duplicate student IDs/aliases counted more than once.");
     Check((await EnrollmentSectioningService.GetUnassignedAsync(connection, "BSIT", 1, "2026-2027", "FIRST", null)).Count == 0, "Assigned students still appear in picker.");
@@ -107,7 +127,7 @@ try
         "An intentional move with the saved previous section was rejected.");
     await Reject(() => EnrollmentSectioningService.AssignAsync(connection, previousSection, new[] { "26-0009" }, "2026-2027", "FIRST", null,
         new Dictionary<string, int> { ["26-0009"] = 999 }), "Stale section move was accepted.");
-    Console.WriteLine("PASS: schema defaults, authoritative period queries, scope, eligibility, atomic rollback, retries, snapshots, and concurrent assignment.");
+    Console.WriteLine("PASS: schema defaults, authoritative period queries, scope, eligibility, Faculty-period guard, atomic rollback, retries, snapshots, and concurrent assignment.");
 }
 finally
 {

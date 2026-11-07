@@ -1,0 +1,205 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "3"
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"orderer-3","namespace":"plv-annex-campus"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"orderer-3"}},"strategy":{"rollingUpdate":{"maxSurge":0,"maxUnavailable":1},"type":"RollingUpdate"},"template":{"metadata":{"labels":{"app":"orderer-3","org":"orderer"}},"spec":{"containers":[{"env":[{"name":"FABRIC_CFG_PATH","value":"/etc/hyperledger/fabric"},{"name":"ORDERER_GENERAL_LISTENADDRESS","value":"0.0.0.0"},{"name":"ORDERER_GENERAL_LISTENPORT","value":"7050"},{"name":"ORDERER_METRICS_PROVIDER","value":"prometheus"},{"name":"ORDERER_OPERATIONS_LISTENADDRESS","value":"0.0.0.0:9443"},{"name":"ORDERER_GENERAL_BOOTSTRAPMETHOD","value":"none"},{"name":"ORDERER_GENERAL_LOCALMSPID","value":"OrdererMSP"},{"name":"ORDERER_GENERAL_LOCALMSPDIR","value":"/var/hyperledger/orderer/msp"},{"name":"ORDERER_GENERAL_TLS_ENABLED","value":"true"},{"name":"ORDERER_GENERAL_TLS_PRIVATEKEY","value":"/var/hyperledger/orderer/tls/server.key"},{"name":"ORDERER_GENERAL_TLS_CERTIFICATE","value":"/var/hyperledger/orderer/tls/server.crt"},{"name":"ORDERER_GENERAL_TLS_ROOTCAS","value":"[/var/hyperledger/orderer/tls/ca.crt]"},{"name":"ORDERER_ADMIN_TLS_CLIENTROOTCAS","value":"[/var/hyperledger/orderer/tls/ca.crt]"},{"name":"ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE","value":"/var/hyperledger/orderer/tls/server.crt"},{"name":"ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY","value":"/var/hyperledger/orderer/tls/server.key"},{"name":"ORDERER_GENERAL_CLUSTER_ROOTCAS","value":"[/var/hyperledger/orderer/tls/ca.crt]"},{"name":"ORDERER_CHANNELPARTICIPATION_ENABLED","value":"true"},{"name":"ORDERER_ADMIN_LISTENADDRESS","value":"0.0.0.0:7053"},{"name":"ORDERER_ADMIN_TLS_ENABLED","value":"true"},{"name":"ORDERER_ADMIN_TLS_CERTIFICATE","value":"/var/hyperledger/orderer/tls/server.crt"},{"name":"ORDERER_ADMIN_TLS_PRIVATEKEY","value":"/var/hyperledger/orderer/tls/server.key"},{"name":"ORDERER_ADMIN_TLS_ROOTCAS","value":"[/var/hyperledger/orderer/tls/ca.crt]"}],"image":"hyperledger/fabric-orderer:2.5.4","imagePullPolicy":"IfNotPresent","livenessProbe":{"httpGet":{"path":"/healthz","port":"operations"},"initialDelaySeconds":30,"periodSeconds":10,"timeoutSeconds":3},"name":"orderer","ports":[{"containerPort":7050,"name":"orderer"},{"containerPort":7051,"name":"metrics"},{"containerPort":9443,"name":"operations"}],"readinessProbe":{"httpGet":{"path":"/healthz","port":"operations"},"initialDelaySeconds":10,"periodSeconds":5,"timeoutSeconds":3},"resources":{"requests":{"cpu":"250m","memory":"512Mi"}},"startupProbe":{"failureThreshold":60,"httpGet":{"path":"/healthz","port":"operations"},"periodSeconds":5,"timeoutSeconds":3},"volumeMounts":[{"mountPath":"/var/hyperledger/production","name":"orderer-storage"},{"mountPath":"/etc/hyperledger/fabric/orderer.yaml","name":"orderer-config","subPath":"orderer.yaml"},{"mountPath":"/var/hyperledger/orderer/msp/signcerts/cert.pem","name":"crypto","subPath":"msp-cert.pem"},{"mountPath":"/var/hyperledger/orderer/msp/keystore/priv_sk","name":"crypto","subPath":"msp-key.pem"},{"mountPath":"/var/hyperledger/orderer/msp/cacerts/ca.pem","name":"crypto","subPath":"msp-ca.pem"},{"mountPath":"/var/hyperledger/orderer/msp/admincerts/admin-cert.pem","name":"crypto","subPath":"admin-cert.pem"},{"mountPath":"/var/hyperledger/orderer/tls/server.crt","name":"crypto","subPath":"server.crt"},{"mountPath":"/var/hyperledger/orderer/tls/server.key","name":"crypto","subPath":"server.key"},{"mountPath":"/var/hyperledger/orderer/tls/ca.crt","name":"crypto","subPath":"ca.crt"},{"mountPath":"/var/hyperledger/orderer/orderer.genesis.block","name":"artifacts","subPath":"orderer.genesis.block"},{"mountPath":"/var/hyperledger/orderer/registrar-channel.block","name":"artifacts","subPath":"registrar-channel.block"}]}],"nodeSelector":{"topology.kubernetes.io/zone":"asia-east1-c"},"serviceAccountName":"orderer-sa","volumes":[{"name":"orderer-storage","persistentVolumeClaim":{"claimName":"orderer-3-pvc"}},{"configMap":{"name":"fabric-common-config"},"name":"orderer-config"},{"name":"crypto","secret":{"secretName":"orderer-3-crypto"}},{"name":"artifacts","secret":{"secretName":"fabric-artifacts"}}]}}}}
+  creationTimestamp: "2026-09-14T15:27:43Z"
+  generation: 3
+  name: orderer-3
+  namespace: plv-annex-campus
+  resourceVersion: "1789401431169039017"
+  uid: 78fe3d20-d797-43c5-8e46-9a127fe2b30a
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: orderer-3
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-09-14T23:56:55+08:00"
+      labels:
+        app: orderer-3
+        org: orderer
+    spec:
+      containers:
+      - env:
+        - name: FABRIC_CFG_PATH
+          value: /etc/hyperledger/fabric
+        - name: ORDERER_GENERAL_LISTENADDRESS
+          value: 0.0.0.0
+        - name: ORDERER_GENERAL_LISTENPORT
+          value: "7050"
+        - name: ORDERER_METRICS_PROVIDER
+          value: prometheus
+        - name: ORDERER_OPERATIONS_LISTENADDRESS
+          value: 0.0.0.0:9443
+        - name: ORDERER_GENERAL_BOOTSTRAPMETHOD
+          value: none
+        - name: ORDERER_GENERAL_LOCALMSPID
+          value: OrdererMSP
+        - name: ORDERER_GENERAL_LOCALMSPDIR
+          value: /var/hyperledger/orderer/msp
+        - name: ORDERER_GENERAL_TLS_ENABLED
+          value: "true"
+        - name: ORDERER_GENERAL_TLS_PRIVATEKEY
+          value: /var/hyperledger/orderer/tls/server.key
+        - name: ORDERER_GENERAL_TLS_CERTIFICATE
+          value: /var/hyperledger/orderer/tls/server.crt
+        - name: ORDERER_GENERAL_TLS_ROOTCAS
+          value: '[/var/hyperledger/orderer/tls/ca.crt]'
+        - name: ORDERER_ADMIN_TLS_CLIENTROOTCAS
+          value: '[/var/hyperledger/orderer/tls/ca.crt]'
+        - name: ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE
+          value: /var/hyperledger/orderer/tls/server.crt
+        - name: ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY
+          value: /var/hyperledger/orderer/tls/server.key
+        - name: ORDERER_GENERAL_CLUSTER_ROOTCAS
+          value: '[/var/hyperledger/orderer/tls/ca.crt]'
+        - name: ORDERER_CHANNELPARTICIPATION_ENABLED
+          value: "true"
+        - name: ORDERER_ADMIN_LISTENADDRESS
+          value: 0.0.0.0:7053
+        - name: ORDERER_ADMIN_TLS_ENABLED
+          value: "true"
+        - name: ORDERER_ADMIN_TLS_CERTIFICATE
+          value: /var/hyperledger/orderer/tls/server.crt
+        - name: ORDERER_ADMIN_TLS_PRIVATEKEY
+          value: /var/hyperledger/orderer/tls/server.key
+        - name: ORDERER_ADMIN_TLS_ROOTCAS
+          value: '[/var/hyperledger/orderer/tls/ca.crt]'
+        image: hyperledger/fabric-orderer:2.5.4
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /healthz
+            port: operations
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 3
+        name: orderer
+        ports:
+        - containerPort: 7050
+          name: orderer
+          protocol: TCP
+        - containerPort: 7051
+          name: metrics
+          protocol: TCP
+        - containerPort: 9443
+          name: operations
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /healthz
+            port: operations
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 3
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+        startupProbe:
+          failureThreshold: 60
+          httpGet:
+            path: /healthz
+            port: operations
+            scheme: HTTP
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 3
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /var/hyperledger/production
+          name: orderer-storage
+        - mountPath: /etc/hyperledger/fabric/orderer.yaml
+          name: orderer-config
+          subPath: orderer.yaml
+        - mountPath: /var/hyperledger/orderer/msp/signcerts/cert.pem
+          name: crypto
+          subPath: msp-cert.pem
+        - mountPath: /var/hyperledger/orderer/msp/keystore/priv_sk
+          name: crypto
+          subPath: msp-key.pem
+        - mountPath: /var/hyperledger/orderer/msp/cacerts/ca.pem
+          name: crypto
+          subPath: msp-ca.pem
+        - mountPath: /var/hyperledger/orderer/msp/admincerts/admin-cert.pem
+          name: crypto
+          subPath: admin-cert.pem
+        - mountPath: /var/hyperledger/orderer/tls/server.crt
+          name: crypto
+          subPath: server.crt
+        - mountPath: /var/hyperledger/orderer/tls/server.key
+          name: crypto
+          subPath: server.key
+        - mountPath: /var/hyperledger/orderer/tls/ca.crt
+          name: crypto
+          subPath: ca.crt
+        - mountPath: /var/hyperledger/orderer/orderer.genesis.block
+          name: artifacts
+          subPath: orderer.genesis.block
+        - mountPath: /var/hyperledger/orderer/registrar-channel.block
+          name: artifacts
+          subPath: registrar-channel.block
+      dnsPolicy: ClusterFirst
+      nodeSelector:
+        topology.kubernetes.io/zone: asia-east1-c
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: orderer-sa
+      serviceAccountName: orderer-sa
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: orderer-storage
+        persistentVolumeClaim:
+          claimName: orderer-3-pvc
+      - configMap:
+          defaultMode: 420
+          name: fabric-common-config
+        name: orderer-config
+      - name: crypto
+        secret:
+          defaultMode: 420
+          secretName: orderer-3-crypto
+      - name: artifacts
+        secret:
+          defaultMode: 420
+          secretName: fabric-artifacts
+status:
+  availableReplicas: 1
+  conditions:
+  - lastTransitionTime: "2026-09-14T15:27:43Z"
+    lastUpdateTime: "2026-09-14T15:27:43Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  - lastTransitionTime: "2026-09-14T15:27:43Z"
+    lastUpdateTime: "2026-09-14T15:57:11Z"
+    message: ReplicaSet "orderer-3-bc5bbf55f" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  observedGeneration: 3
+  readyReplicas: 1
+  replicas: 1
+  terminatingReplicas: 0
+  updatedReplicas: 1

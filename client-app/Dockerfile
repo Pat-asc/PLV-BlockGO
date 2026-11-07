@@ -6,13 +6,11 @@ WORKDIR /src
 
 COPY *.csproj ./
 
-RUN --mount=type=cache,id=blockgo-nuget,target=/root/.nuget/packages \
-    dotnet restore
+RUN dotnet restore For_Testing_Only_Capstone.csproj
 
 COPY . .
 
-RUN --mount=type=cache,id=blockgo-nuget,target=/root/.nuget/packages \
-    dotnet publish \
+RUN dotnet publish For_Testing_Only_Capstone.csproj \
         --configuration Release \
         --output /app/publish \
         --no-restore \

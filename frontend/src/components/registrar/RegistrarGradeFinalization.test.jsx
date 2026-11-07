@@ -1,0 +1,116 @@
+import React from 'react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import RegistrarGradeFinalization, { groupApprovedGradeRecords, parseApprovedGradePayload } from './RegistrarGradeFinalization';
+import { fetchRegistrarFinalizationQueue, finalizeApprovedGrades, returnGradeSubmission } from '../../services/api';
+
+jest.mock('../../services/api', () => ({
+  fetchRegistrarFinalizationQueue: jest.fn(),
+  finalizeApprovedGrades: jest.fn(),
+  returnGradeSubmission: jest.fn(),
+}));
+
+jest.mock('../../services/Modal', () => ({ isOpen, title, children }) => isOpen ? (
+  <div role="dialog" aria-label={title}>{children}</div>
+) : null);
+
+const approved = (overrides = {}) => ({
+  id: 'grade-1', assignmentCycleId: '41', studentNo: '26-0001', studentName: 'Student One',
+  facultyId: 'faculty@plv.edu.ph', section: 'BSIT 1-1', course: 'BSIT', program: 'BSIT',
+  subjectCode: 'IT 101', schoolYear: '2026-2027', semester: 'FIRST', term: 'finals',
+  status: 'SubmittedToRegistrar', grade: '{"midterm":"88.50","finals":"91.25","finalAverage":"89.875"}',
+  current_grade: '91.25', reference_grade: '90.00', integrity_status: 'MISMATCH', reference_source: 'FABRIC_FINALIZED',
+  ...overrides,
+});
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  fetchRegistrarFinalizationQueue.mockResolvedValue({ data: [] });
+  returnGradeSubmission.mockResolvedValue({ status: 'Success', message: 'Returned' });
+});
+
+test('preserves approved Midterm, Finals, average, and decimal formatting without recomputation', () => {
+  expect(parseApprovedGradePayload('{"midterm":"88.50","finals":"91.25","finalAverage":"89.875"}', 'finals'))
+    .toEqual({ midterm: '88.50', finals: '91.25', finalAverage: '89.875' });
+  expect(parseApprovedGradePayload('91.50', 'finals'))
+    .toEqual({ midterm: '—', finals: '91.50', finalAverage: '—' });
+});
+
+test('groups by stable academic identity and maps reordered students by record and Student ID', () => {
+  const second = approved({ id: 'grade-2', studentNo: '26-0002', studentName: 'Student Two', grade: '{"midterm":"70.00","finals":"75.00"}' });
+  const firstResult = groupApprovedGradeRecords([second, approved()]);
+  const reloadResult = groupApprovedGradeRecords([approved(), second]);
+
+  expect(firstResult[0].records.map((record) => [record.id, record.studentNo, record.gradePayload]))
+    .toEqual([
+      ['grade-1', '26-0001', '{"midterm":"88.50","finals":"91.25","finalAverage":"89.875"}'],
+      ['grade-2', '26-0002', '{"midterm":"70.00","finals":"75.00"}'],
+    ]);
+  expect(reloadResult[0].records.map((record) => record.id)).toEqual(['grade-1', 'grade-2']);
+});
+
+test('renders the exact approved queue and sends one section request despite repeat clicks', async () => {
+  const records = [approved({ id: 'grade-2', studentNo: '26-0002' }), approved()];
+  fetchRegistrarFinalizationQueue
+    .mockResolvedValueOnce({ data: records })
+    .mockResolvedValue({ data: [] });
+  let complete;
+  finalizeApprovedGrades.mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+
+  render(<RegistrarGradeFinalization />);
+  expect(await screen.findAllByText('88.50')).toHaveLength(2);
+  expect(screen.getAllByText('91.25')).toHaveLength(2);
+  expect(screen.getAllByText('89.875')).toHaveLength(2);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Review Grades' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getAllByText('90.00')).toHaveLength(2);
+  expect(within(dialog).getAllByText('91.25')).toHaveLength(2);
+  const referenceScroll = within(dialog).getByTestId('registrar-reference-comparison-scroll');
+  const submittedScroll = within(dialog).getByTestId('registrar-submitted-comparison-scroll');
+  expect(referenceScroll).toHaveClass('overflow-x-auto', 'overflow-y-hidden');
+  expect(submittedScroll).toHaveClass('overflow-x-auto', 'overflow-y-hidden');
+  expect(referenceScroll).toHaveProperty('scrollLeft', 0);
+  expect(submittedScroll).toHaveProperty('scrollLeft', 0);
+  const referenceCanvas = within(referenceScroll).getByTestId('registrar-reference-comparison-canvas');
+  const submittedCanvas = within(submittedScroll).getByTestId('registrar-submitted-comparison-canvas');
+  expect(referenceCanvas).toHaveAttribute('class', 'box-border w-full min-w-[520px]');
+  expect(submittedCanvas).toHaveAttribute('class', 'box-border w-full min-w-[520px]');
+  expect(within(referenceCanvas).getByRole('table')).toHaveClass('box-border', 'w-full', 'border-collapse');
+  expect(within(submittedCanvas).getByRole('table')).toHaveClass('box-border', 'w-full', 'border-collapse');
+  expect(within(dialog).getByRole('heading', { name: 'Reference / Previous Grade Data' })).toHaveClass('w-full', 'text-white');
+  expect(within(dialog).getByRole('heading', { name: 'Currently Submitted Grade Data' })).toHaveClass('w-full', 'text-white', 'dark:bg-sky-900');
+  const confirm = within(dialog).getByRole('button', { name: 'Approve and Finalize' });
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+  expect(finalizeApprovedGrades).toHaveBeenCalledTimes(1);
+  expect(finalizeApprovedGrades).toHaveBeenCalledWith(['grade-1', 'grade-2']);
+
+  complete({ status: 'Success', message: 'Committed' });
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Committed'));
+});
+
+test('failed Fabric finalization keeps the approved section visible for retry', async () => {
+  fetchRegistrarFinalizationQueue.mockResolvedValue({ data: [approved()] });
+  finalizeApprovedGrades.mockRejectedValue(new Error('Fabric unavailable'));
+  render(<RegistrarGradeFinalization />);
+
+  await screen.findByText('88.50');
+  fireEvent.click(screen.getByRole('button', { name: 'Review Grades' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve and Finalize' }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Fabric unavailable');
+  expect(screen.getAllByText('88.50').length).toBeGreaterThan(0);
+  expect(screen.getByRole('button', { name: 'Review Grades' })).toBeEnabled();
+});
+
+test('Registrar returns one exact submission with a mandatory reason', async () => {
+  fetchRegistrarFinalizationQueue.mockResolvedValueOnce({ data: [approved()] }).mockResolvedValue({ data: [] });
+  render(<RegistrarGradeFinalization />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Review Grades' }));
+  const dialog = screen.getByRole('dialog');
+  const returnButton = within(dialog).getByRole('button', { name: 'Return Grades' });
+  expect(returnButton).toBeDisabled();
+  fireEvent.change(within(dialog).getByPlaceholderText(/Required when returning grades/i), { target: { value: 'Correct the final exam score.' } });
+  fireEvent.click(returnButton);
+  await waitFor(() => expect(returnGradeSubmission).toHaveBeenCalledWith(['grade-1'], 'Correct the final exam score.'));
+});

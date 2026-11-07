@@ -37,6 +37,7 @@ function createMetrics(serviceName) {
     }
 
     function render() {
+        const memory = process.memoryUsage();
         const lines = [
             '# HELP blockgo_service_info Running BlockGo service.',
             '# TYPE blockgo_service_info gauge',
@@ -44,6 +45,12 @@ function createMetrics(serviceName) {
             '# HELP process_uptime_seconds Process uptime in seconds.',
             '# TYPE process_uptime_seconds gauge',
             `process_uptime_seconds ${((Date.now() - startedAt) / 1000).toFixed(3)}`,
+            '# HELP process_resident_memory_bytes Resident memory size in bytes.',
+            '# TYPE process_resident_memory_bytes gauge',
+            `process_resident_memory_bytes ${memory.rss}`,
+            '# HELP nodejs_heap_size_used_bytes Process heap used in bytes.',
+            '# TYPE nodejs_heap_size_used_bytes gauge',
+            `nodejs_heap_size_used_bytes ${memory.heapUsed}`,
             '# HELP http_requests_total Total HTTP requests.',
             '# TYPE http_requests_total counter',
             '# HELP http_request_duration_seconds HTTP request duration.',

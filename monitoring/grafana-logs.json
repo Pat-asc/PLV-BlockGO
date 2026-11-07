@@ -59,7 +59,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "sum by (namespace) (count_over_time({cluster=\"blockgo\"}[$__interval]))",
+                                           "expr":  "sum by (namespace) (count_over_time({cluster=\"blockgo\",namespace=~\"$namespace\",app=~\"$app\"}[$__interval]))",
                                            "queryType":  "range",
                                            "refId":  "A"
                                        }
@@ -113,7 +113,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "sum by (namespace, app) (count_over_time({cluster=\"blockgo\"} |~ \"(?i)(error|exception|failed|42P08)\" [$__interval]))",
+                                           "expr":  "sum by (namespace, app) (count_over_time({cluster=\"blockgo\",namespace=~\"$namespace\",app=~\"$app\"} |~ \"(?i)(error|exception|failed|42P08)\" [$__interval]))",
                                            "queryType":  "range",
                                            "refId":  "A"
                                        }
@@ -163,7 +163,7 @@
                                    },
                        "targets":  [
                                        {
-                                           "expr":  "{cluster=\"blockgo\",namespace=~\"plv-.*\"}",
+                                           "expr":  "{cluster=\"blockgo\",namespace=~\"$namespace\",app=~\"$app\"}",
                                            "queryType":  "range",
                                            "refId":  "A"
                                        }
@@ -220,7 +220,7 @@
                                    ]
                    }
                ],
-    "refresh":  "15s",
+    "refresh":  "30s",
     "schemaVersion":  41,
     "tags":  [
                  "blockgo",
@@ -231,16 +231,55 @@
              ],
     "templating":  {
                        "list":  [
-
+                                    {
+                                        "name":  "namespace",
+                                        "label":  "Namespace",
+                                        "type":  "query",
+                                        "datasource":  {
+                                                           "type":  "loki",
+                                                           "uid":  "loki"
+                                                       },
+                                        "definition":  "label_values({cluster=\"blockgo\"}, namespace)",
+                                        "query":  "label_values({cluster=\"blockgo\"}, namespace)",
+                                        "refresh":  2,
+                                        "includeAll":  true,
+                                        "allValue":  "plv-.*",
+                                        "multi":  true,
+                                        "current":  {
+                                                        "selected":  true,
+                                                        "text":  "All",
+                                                        "value":  "$__all"
+                                                    }
+                                    },
+                                    {
+                                        "name":  "app",
+                                        "label":  "Application",
+                                        "type":  "query",
+                                        "datasource":  {
+                                                           "type":  "loki",
+                                                           "uid":  "loki"
+                                                       },
+                                        "definition":  "label_values({cluster=\"blockgo\",namespace=~\"$namespace\"}, app)",
+                                        "query":  "label_values({cluster=\"blockgo\",namespace=~\"$namespace\"}, app)",
+                                        "refresh":  2,
+                                        "includeAll":  true,
+                                        "allValue":  ".*",
+                                        "multi":  true,
+                                        "current":  {
+                                                        "selected":  true,
+                                                        "text":  "All",
+                                                        "value":  "$__all"
+                                                    }
+                                    }
                                 ]
                    },
     "time":  {
-                 "from":  "now-6h",
+                 "from":  "now-1h",
                  "to":  "now"
              },
     "timezone":  "browser",
     "title":  "BlockGO / Kubernetes \u0026 Application Logs",
     "uid":  "blockgo-logs",
-    "version":  1,
+    "version":  2,
     "weekStart":  ""
 }
