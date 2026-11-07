@@ -40,6 +40,10 @@ updates:
     groups:
       middleware-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: fabric-network
+      - dependency-name: fabric-ca-client
+      - dependency-name: fabric-common
 
   - package-ecosystem: nuget
     directory: /client-app
