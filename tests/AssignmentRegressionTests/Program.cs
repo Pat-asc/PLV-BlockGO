@@ -945,10 +945,65 @@ Check(missingHoursCsv.Subjects == 0 && missingHoursCsv.Errors.Any(error => error
     "A curriculum CSV row with both hour columns missing was accepted.");
 Pass(248, "curriculum CSV rejects zero or missing lecture and laboratory hours by row");
 
+var omittedTrailingPrerequisiteCsv = await ParseCurriculumCsvAsync(
+    "Year Level,Semester,Course Code,Course Title,Units,Lecture Hours,Laboratory Hours,Prerequisite(s)\n1,FIRST,IT 101,Introduction to Computing,3,3,0\n");
+Check(omittedTrailingPrerequisiteCsv.Subjects == 1 && omittedTrailingPrerequisiteCsv.Errors.Length == 0,
+    "A valid CSV row without its optional trailing prerequisite cell was rejected.");
+Pass(250, "curriculum CSV safely treats an omitted trailing optional prerequisite as empty");
+
 Check(curriculumControllerSource.Contains("COALESCE(lecture_hours, 0) + COALESCE(laboratory_hours, 0) <= 0") &&
       curriculumControllerSource.Contains("ValidateCompleteCurriculumAsync(connection, transaction, id, cancellationToken)"),
     "Curriculum submission/publication does not reject legacy zero-hour subject rows.");
 Pass(249, "curriculum submission and publication reject legacy zero-hour rows without rewriting them");
+
+var ensureCurriculumStatusAllowed = typeof(CurriculumsController).GetMethod(
+    "EnsureCurriculumStatusAllowed", BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new Exception("Curriculum edit-status guard was not found.");
+var editableCurriculumStatuses = new[] { "DRAFT", "RETURNED" };
+foreach (var status in editableCurriculumStatuses)
+    ensureCurriculumStatusAllowed.Invoke(null, new object[] { status, editableCurriculumStatuses });
+foreach (var status in new[] { "PUBLISHED", "APPROVED" })
+{
+    try
+    {
+        ensureCurriculumStatusAllowed.Invoke(null, new object[] { status, editableCurriculumStatuses });
+        throw new Exception($"A {status} curriculum was accepted as editable.");
+    }
+    catch (TargetInvocationException exception) when (
+        exception.InnerException is InvalidOperationException &&
+        exception.InnerException.Message.Contains(status, StringComparison.Ordinal))
+    {
+    }
+}
+Pass(253, "curriculum bulk import permits DRAFT and RETURNED but rejects PUBLISHED and APPROVED states");
+
+Check(curriculumControllerSource.Contains("catch (KeyNotFoundException exception)") &&
+      curriculumControllerSource.Contains("return NotFound(new { status = \"Error\", message = exception.Message })") &&
+      curriculumControllerSource.Contains("catch (UnauthorizedAccessException exception)") &&
+      curriculumControllerSource.Contains("StatusCodes.Status403Forbidden") &&
+      curriculumControllerSource.Contains("catch (CurriculumStatusConflictException exception)") &&
+      curriculumControllerSource.Contains("Subjects can be imported only while a curriculum is DRAFT or RETURNED") &&
+      curriculumControllerSource.Contains("await RollbackBulkImportAsync(transaction, id)") &&
+      curriculumControllerSource.Contains("PostgresErrorCodes.CheckViolation") &&
+      curriculumControllerSource.Contains("PostgresErrorCodes.ForeignKeyViolation"),
+    "Curriculum bulk import does not preserve explicit 404/403/409 responses and atomic database-error rollback.");
+Pass(251, "curriculum bulk import maps expected failures and rolls back controlled database errors");
+
+var curriculumHoursMigration = await File.ReadAllTextAsync(
+    FindRepositoryFile("migrations", "030_curriculum_subject_contact_hours.sql"));
+Check(curriculumHoursMigration.Contains("ADD COLUMN IF NOT EXISTS lecture_hours") &&
+      curriculumHoursMigration.Contains("ADD COLUMN IF NOT EXISTS laboratory_hours") &&
+      curriculumHoursMigration.Contains("ALTER TABLE IF EXISTS curriculum_subjects"),
+    "Existing databases are not idempotently upgraded with curriculum contact-hour columns.");
+Pass(252, "curriculum contact-hour migration is safe for existing and already-upgraded databases");
+
+Check(curriculumControllerSource.Contains(".Concat(subjects.Select(item => item.SubjectCode))") &&
+      curriculumControllerSource.Contains("Prerequisite {prerequisite} for {subject.SubjectCode} does not exist in this curriculum") &&
+      curriculumControllerSource.Contains("var pending = subjects.Where(item => !existingSlots.Contains") &&
+      curriculumControllerSource.Contains("message = importedCount == 0 ? \"All uploaded subjects already exist in this curriculum.\"") &&
+      curriculumControllerSource.Contains("skippedCount = subjects.Count - pending.Count"),
+    "Curriculum bulk import no longer accepts same-file prerequisites or safely skips existing subject slots.");
+Pass(254, "curriculum bulk import preserves prerequisite resolution and idempotent duplicate skipping");
 
 Check(curriculumControllerSource.Contains("{id:long}/subjects/bulk") &&
 
