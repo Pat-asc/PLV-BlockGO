@@ -30,12 +30,12 @@ jobs:
   k6-blockchain-load-test:
 
     name: Blockchain Grade Submission Load Test
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
 
     timeout-minutes: 30
 
     env:
-      API_URL: http://localhost:8080/api
+      API_URL: https://plv-blockgo.com/api
       LOAD_TEST_EMAIL: ${{ secrets.LOAD_TEST_EMAIL }}
       LOAD_TEST_PASSWORD: ${{ secrets.LOAD_TEST_PASSWORD }}
       STUDENT_ID_PREFIX: ${{ vars.LOAD_TEST_STUDENT_PREFIX }}
@@ -90,51 +90,33 @@ jobs:
           echo "Configuration OK."
 
 
-      - name: Check BlockGo local server
+      - name: Check BlockGo production API
         shell: bash
         run: |
-          echo "Checking BlockGo at http://localhost:8080..."
+          echo "Checking BlockGo API at ${API_URL}/health..."
 
           for i in {1..20}; do
 
             if curl \
+              --fail \
               --silent \
               --show-error \
               --connect-timeout 5 \
-              http://localhost:8080/ \
+              "${API_URL}/health" \
               > /dev/null; then
 
-              echo "BlockGo is reachable."
+              echo "BlockGo production API is reachable."
               exit 0
 
             fi
 
-            echo "Attempt $i/20 - BlockGo not ready yet."
+            echo "Attempt $i/20 - BlockGo API not ready yet."
             sleep 5
 
           done
 
-          echo "::error::BlockGo is not reachable at http://localhost:8080/"
-          echo "Make sure Docker/Kubernetes and the application are running."
+          echo "::error::BlockGo API is not reachable at ${API_URL}/health"
           exit 1
-
-
-      - name: Check Kubernetes status
-        shell: bash
-        continue-on-error: true
-        run: |
-          echo "=========================================="
-          echo " KUBERNETES STATUS"
-          echo "=========================================="
-
-          kubectl get pods -A
-
-          echo ""
-          echo "=========================================="
-          echo " SERVICES"
-          echo "=========================================="
-
-          kubectl get services -A
 
 
       - name: Setup k6

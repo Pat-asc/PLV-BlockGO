@@ -2,7 +2,7 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import exec from 'k6/execution';
 
-const apiUrl = (__ENV.API_URL || 'http://localhost:8080/api').replace(/\/$/, '');
+const apiUrl = (__ENV.API_URL || 'https://plv-blockgo.com/api').replace(/\/$/, '');
 const targetUsers = Number.parseInt(__ENV.TARGET_USERS || '500', 10);
 const holdDuration = __ENV.HOLD_DURATION || '3m';
 const studentPrefix = __ENV.STUDENT_ID_PREFIX || 'LOAD';
