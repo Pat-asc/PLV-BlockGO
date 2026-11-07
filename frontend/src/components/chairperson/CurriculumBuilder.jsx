@@ -7,6 +7,15 @@ const emptySubject = { subjectCode: '', subjectTitle: '', units: 3, lectureHours
 const years = { 1: '1st Year', 2: '2nd Year', 3: '3rd Year', 4: '4th Year' };
 const semesters = { FIRST: '1st Semester', SECOND: '2nd Semester', MIDYEAR: 'Summer / Midyear' };
 const inputClass = 'mt-1 h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100';
+const subjectHoursError = (subject) => {
+  const lectureHours = Number(subject.lectureHours);
+  const laboratoryHours = Number(subject.laboratoryHours);
+  if (!Number.isFinite(lectureHours) || !Number.isFinite(laboratoryHours) || lectureHours < 0 || laboratoryHours < 0) {
+    return 'Lecture and laboratory hours must be zero or greater.';
+  }
+  if (lectureHours + laboratoryHours <= 0) return 'Assign at least one lecture or laboratory hour.';
+  return '';
+};
 const localCurriculumKey = 'blockgo-local-chairperson-curriculum';
 const itProgramCode = 'BSIT';
 const itDepartmentNames = new Set([
@@ -149,7 +158,10 @@ const CurriculumBuilder = ({ department = '' }) => {
   };
 
   const saveSubject = async (event) => {
-    event.preventDefault(); if (!selected) return; setSaving(true); setNotice(null); setSubjectError('');
+    event.preventDefault(); if (!selected) return;
+    const hoursError = subjectHoursError(subjectForm);
+    if (hoursError) { setSubjectError(hoursError); return; }
+    setSaving(true); setNotice(null); setSubjectError('');
     if (isLocalMode) {
       const nextSubject = { ...subjectForm, subjectId: editingId || `local-subject-${Date.now()}` };
       const nextSubjects = editingId ? subjects.map((item) => item.subjectId === editingId ? nextSubject : item) : [...subjects, nextSubject];
@@ -207,6 +219,7 @@ const CurriculumBuilder = ({ department = '' }) => {
 
   const submit = async () => {
     if (!editable || selected.status !== 'DRAFT') return setNotice({ type: 'error', message: 'Save the curriculum before submitting it.' });
+    if (subjects.some((subject) => subjectHoursError(subject))) return setNotice({ type: 'error', message: 'Assign at least one lecture or laboratory hour to every subject before submission.' });
     if (!await requestSystemConfirmation('Submit this curriculum to the Registrar for review?')) return;
     if (isLocalMode) { saveLocalCurriculum({ ...selected, status: 'PENDING_APPROVAL' }); setNotice({ type: 'success', message: 'Curriculum submitted for review locally.' }); return; }
     setSaving(true); try { await submitCurriculum(selected.curriculumId); startNewCurriculum(); await load(); setNotice({ type: 'success', message: 'Curriculum submitted for Registrar review. You can create another checklist.' }); }
@@ -214,7 +227,7 @@ const CurriculumBuilder = ({ department = '' }) => {
   };
 
   const downloadTemplate = () => {
-    const data = 'Year Level,Semester,Course Code,Course Title,Units,Prerequisite(s)\n1,FIRST,IT 101,Introduction to Computing,3,\n';
+    const data = 'Year Level,Semester,Course Code,Course Title,Units,Lecture Hours,Laboratory Hours,Prerequisite(s)\n1,FIRST,IT 101,Introduction to Computing,3,3,0,\n';
     const url = URL.createObjectURL(new Blob([data], { type: 'text/csv' })); const link = document.createElement('a'); link.href = url; link.download = 'curriculum-template.csv'; link.click(); URL.revokeObjectURL(url);
   };
 
@@ -286,6 +299,8 @@ const CurriculumBuilder = ({ department = '' }) => {
       <label className="text-xs font-semibold text-slate-600">Course Code<input required placeholder="e.g. IT 101" value={subjectForm.subjectCode} onChange={(e) => setSubjectForm({ ...subjectForm, subjectCode: e.target.value })} className={inputClass} /></label>
       <label className="text-xs font-semibold text-slate-600 sm:col-span-2 xl:col-span-2">Course Title<input required placeholder="e.g. Introduction to Computing" value={subjectForm.subjectTitle} onChange={(e) => setSubjectForm({ ...subjectForm, subjectTitle: e.target.value })} className={inputClass} /></label>
       <label className="text-xs font-semibold text-slate-600">Units<input required type="number" min="0.5" step="0.5" value={subjectForm.units} onChange={(e) => setSubjectForm({ ...subjectForm, units: Number(e.target.value) })} className={inputClass} /></label>
+      <label className="text-xs font-semibold text-slate-600">Lecture Hours<input required type="number" min="0" step="0.5" value={subjectForm.lectureHours} onChange={(e) => setSubjectForm({ ...subjectForm, lectureHours: Number(e.target.value) })} className={inputClass} /></label>
+      <label className="text-xs font-semibold text-slate-600">Laboratory Hours<input required type="number" min="0" step="0.5" value={subjectForm.laboratoryHours} onChange={(e) => setSubjectForm({ ...subjectForm, laboratoryHours: Number(e.target.value) })} className={inputClass} /></label>
       <div className="relative sm:col-span-2 xl:col-span-4">
         <label className="text-xs font-semibold text-slate-600">Prerequisite (Choose one or more subjects)</label>
         <button type="button" onClick={() => setPrerequisiteOpen((open) => !open)} className={`${inputClass} flex items-center justify-between text-left`}><span className="truncate">{selectedPrerequisites.length ? selectedPrerequisites.join(', ') : 'None'}</span><span>⌄</span></button>
@@ -339,7 +354,7 @@ const CurriculumBuilder = ({ department = '' }) => {
           </button>
           {!editable && <p className="mt-2 text-xs text-amber-700">Select or create a curriculum in Draft or Returned status before importing subjects.</p>}
         </div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"><h3 className="font-bold">Template Columns</h3>{['Year Level', 'Semester', 'Course Code', 'Course Title', 'Units', 'Prerequisite(s)'].map((item) => <div key={item} className="border-b border-amber-200 py-2 last:border-0">{item}</div>)}</div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"><h3 className="font-bold">Template Columns</h3>{['Year Level', 'Semester', 'Course Code', 'Course Title', 'Units', 'Lecture Hours', 'Laboratory Hours', 'Prerequisite(s)'].map((item) => <div key={item} className="border-b border-amber-200 py-2 last:border-0">{item}</div>)}</div>
       </div>
     </section>}
 
@@ -354,12 +369,12 @@ const CurriculumBuilder = ({ department = '' }) => {
         </div>
       </div>
       {editable && <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3"><button type="button" onClick={selectAllVisible} disabled={!visibleSubjects.length || saving} className="rounded-lg border px-3 py-2 text-xs font-bold disabled:opacity-50">{allVisibleSelected ? 'Clear Visible Selection' : 'Select All'}</button>{selectedSubjectIds.length > 0 && <button type="button" onClick={deleteSelectedSubjects} disabled={saving} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Delete Selected ({selectedSubjectIds.length})</button>}<span className="text-xs text-slate-500">Select All applies only to the currently filtered rows.</span></div>}
-      <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead className="bg-slate-50 text-slate-600 dark:bg-slate-800 dark:text-slate-300"><tr><th className="px-4 py-3">Select</th>{['#', 'Year Level', 'Semester', 'Course Code', 'Course Title', 'Units', 'Prerequisite(s)', 'Actions'].map((item) => <th key={item} className="px-4 py-3">{item}</th>)}</tr></thead><tbody>
+      <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead className="bg-slate-50 text-slate-600 dark:bg-slate-800 dark:text-slate-300"><tr><th className="px-4 py-3">Select</th>{['#', 'Year Level', 'Semester', 'Course Code', 'Course Title', 'Units', 'Lecture Hours', 'Laboratory Hours', 'Prerequisite(s)', 'Actions'].map((item) => <th key={item} className="px-4 py-3">{item}</th>)}</tr></thead><tbody>
         {visibleSubjects.map((item, index) => <React.Fragment key={item.subjectId}>
-          <tr className="border-t border-slate-200 hover:bg-slate-50 dark:border-slate-700 dark:odd:bg-slate-900 dark:even:bg-slate-800/60 dark:text-slate-100 dark:hover:bg-slate-800"><td className="px-4 py-3"><input type="checkbox" aria-label={`Select ${item.subjectCode}`} disabled={!editable} checked={selectedSubjectIds.includes(item.subjectId)} onChange={() => toggleSubjectSelection(item.subjectId)} /></td><td className="px-4 py-3">{index + 1}</td><td className="px-4 py-3">{years[item.yearLevel]}</td><td className="px-4 py-3">{semesters[item.semester]}</td><td className="px-4 py-3 font-bold dark:text-sky-300">{item.subjectCode}</td><td className="px-4 py-3">{item.subjectTitle}</td><td className="px-4 py-3">{item.units}</td><td className="px-4 py-3"><span className={`rounded px-2 py-1 ${item.prerequisite ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'}`}>{item.prerequisite || 'None'}</span></td><td className="whitespace-nowrap px-4 py-3"><button disabled={!editable} onClick={() => editSubject(item)} className="mr-3 font-bold text-blue-700 dark:text-blue-300 disabled:opacity-30">Edit</button><button disabled={!editable} onClick={() => deleteSubject(item)} className="font-bold text-red-600 dark:text-red-300 disabled:opacity-30">Delete</button></td></tr>
-          {editingId === item.subjectId && <tr aria-label={`Editor for ${item.subjectCode}`} className="border-t border-blue-200"><td colSpan="9" className="p-3 align-top">{renderSubjectForm(true)}</td></tr>}
+          <tr className="border-t border-slate-200 hover:bg-slate-50 dark:border-slate-700 dark:odd:bg-slate-900 dark:even:bg-slate-800/60 dark:text-slate-100 dark:hover:bg-slate-800"><td className="px-4 py-3"><input type="checkbox" aria-label={`Select ${item.subjectCode}`} disabled={!editable} checked={selectedSubjectIds.includes(item.subjectId)} onChange={() => toggleSubjectSelection(item.subjectId)} /></td><td className="px-4 py-3">{index + 1}</td><td className="px-4 py-3">{years[item.yearLevel]}</td><td className="px-4 py-3">{semesters[item.semester]}</td><td className="px-4 py-3 font-bold dark:text-sky-300">{item.subjectCode}</td><td className="px-4 py-3">{item.subjectTitle}</td><td className="px-4 py-3">{item.units}</td><td aria-label={`${item.subjectCode} lecture hours`} className="px-4 py-3">{item.lectureHours}</td><td aria-label={`${item.subjectCode} laboratory hours`} className="px-4 py-3">{item.laboratoryHours}</td><td className="px-4 py-3"><span className={`rounded px-2 py-1 ${item.prerequisite ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'}`}>{item.prerequisite || 'None'}</span></td><td className="whitespace-nowrap px-4 py-3"><button disabled={!editable} onClick={() => editSubject(item)} className="mr-3 font-bold text-blue-700 dark:text-blue-300 disabled:opacity-30">Edit</button><button disabled={!editable} onClick={() => deleteSubject(item)} className="font-bold text-red-600 dark:text-red-300 disabled:opacity-30">Delete</button></td></tr>
+          {editingId === item.subjectId && <tr aria-label={`Editor for ${item.subjectCode}`} className="border-t border-blue-200"><td colSpan="11" className="p-3 align-top">{renderSubjectForm(true)}</td></tr>}
         </React.Fragment>)}
-        {!loading && !visibleSubjects.length && <tr><td colSpan="9" className="p-10 text-center text-slate-400">No subjects found in this curriculum.</td></tr>}
+        {!loading && !visibleSubjects.length && <tr><td colSpan="11" className="p-10 text-center text-slate-400">No subjects found in this curriculum.</td></tr>}
       </tbody></table></div>
     </section>
     {selected && <footer className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3"><p className="text-xs"><strong>Reminder:</strong> Save your changes before submitting for Registrar review.</p><div className="flex flex-wrap gap-2"><button disabled={!editable || saving} onClick={saveMetadata} className="rounded-lg border bg-white px-3 py-2 text-xs font-bold disabled:opacity-50">Save Changes</button><button onClick={() => setPreview(true)} className="rounded-lg border bg-white px-3 py-2 text-xs font-bold">Preview Checklist</button><button disabled={!editable || saving || !subjects.length} onClick={submit} className="rounded-lg bg-[#073b82] px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Submit for Review</button></div></footer>}

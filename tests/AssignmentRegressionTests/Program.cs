@@ -4,6 +4,8 @@ using BlockGo.Models;
 
 using Client_app.Models;
 
+using Client_app.Controllers;
+
 using Client_app.Services;
 
 using BlockGo.Services;
@@ -11,6 +13,10 @@ using BlockGo.Services;
 using Microsoft.AspNetCore.Http;
 
 using Npgsql;
+
+using System.Collections;
+
+using System.Reflection;
 
 
 
@@ -863,6 +869,86 @@ Check(curriculumControllerSource.Contains("{id:long}/subjects/bulk-import") &&
     "Existing-curriculum CSV import is not validated and committed transactionally.");
 
 Pass(173, "curriculum multi-year CSV import uses backend transaction and template headers");
+
+var normalizeCurriculumSubject = typeof(CurriculumsController).GetMethod(
+    "NormalizeAndValidateSubject", BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new Exception("Curriculum subject validator was not found.");
+
+CurriculumSubjectRequest CurriculumSubject(decimal lectureHours, decimal laboratoryHours) => new()
+{
+    SubjectCode = "IT 999",
+    SubjectTitle = "Validation Subject",
+    Units = 3,
+    LectureHours = lectureHours,
+    LaboratoryHours = laboratoryHours,
+    YearLevel = 1,
+    Semester = "FIRST"
+};
+
+void ValidateCurriculumSubject(CurriculumSubjectRequest subject) =>
+    normalizeCurriculumSubject.Invoke(null, new object[] { subject });
+
+foreach (var (lectureHours, laboratoryHours) in new[] { (3m, 0m), (0m, 3m), (1.5m, 1.5m) })
+    ValidateCurriculumSubject(CurriculumSubject(lectureHours, laboratoryHours));
+Pass(246, "backend curriculum validation accepts lecture-only lab-only and mixed hours");
+
+foreach (var (lectureHours, laboratoryHours) in new[] { (0m, 0m), (-1m, 2m), (2m, -1m) })
+{
+    try
+    {
+        ValidateCurriculumSubject(CurriculumSubject(lectureHours, laboratoryHours));
+        throw new Exception($"Invalid curriculum hours {lectureHours}/{laboratoryHours} were accepted.");
+    }
+    catch (TargetInvocationException exception) when (exception.InnerException is ArgumentException)
+    {
+    }
+}
+Pass(247, "backend curriculum validation rejects zero-total and negative hours");
+
+var parseCurriculumSubjects = typeof(CurriculumsController).GetMethod(
+    "ParseCurriculumSubjectsAsync", BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new Exception("Curriculum CSV parser was not found.");
+
+async Task<(int Subjects, (int Row, string Message)[] Errors)> ParseCurriculumCsvAsync(string contents)
+{
+    var bytes = System.Text.Encoding.UTF8.GetBytes(contents);
+    await using var stream = new MemoryStream(bytes);
+    var file = new FormFile(stream, 0, bytes.Length, "file", "curriculum.csv")
+    {
+        Headers = new HeaderDictionary(),
+        ContentType = "text/csv"
+    };
+    var parseTask = (Task)(parseCurriculumSubjects.Invoke(null, new object[] { file, CancellationToken.None })
+        ?? throw new Exception("Curriculum CSV parser did not return a task."));
+    await parseTask;
+    var result = parseTask.GetType().GetProperty("Result")?.GetValue(parseTask)
+        ?? throw new Exception("Curriculum CSV parser returned no result.");
+    var resultType = result.GetType();
+    var subjects = ((IEnumerable)(resultType.GetField("Item1")?.GetValue(result)
+        ?? throw new Exception("Curriculum CSV subjects were unavailable."))).Cast<object>().Count();
+    var errors = ((IEnumerable)(resultType.GetField("Item2")?.GetValue(result)
+        ?? throw new Exception("Curriculum CSV errors were unavailable."))).Cast<object>()
+        .Select(error => (
+            Row: (int)(error.GetType().GetProperty("Row")?.GetValue(error) ?? -1),
+            Message: (string)(error.GetType().GetProperty("Message")?.GetValue(error) ?? string.Empty)))
+        .ToArray();
+    return (subjects, errors);
+}
+
+var zeroHoursCsv = await ParseCurriculumCsvAsync(
+    "Year Level,Semester,Course Code,Course Title,Units,Lecture Hours,Laboratory Hours\n1,FIRST,IT 999,Invalid Hours,3,0,0\n");
+Check(zeroHoursCsv.Subjects == 0 && zeroHoursCsv.Errors.Any(error => error.Row == 2 && error.Message.Contains("Assign at least one lecture or laboratory hour")),
+    "A zero-hours curriculum CSV row was accepted or lost its row-specific validation error.");
+var missingHoursCsv = await ParseCurriculumCsvAsync(
+    "Year Level,Semester,Course Code,Course Title,Units\n1,FIRST,IT 999,Missing Hours,3\n");
+Check(missingHoursCsv.Subjects == 0 && missingHoursCsv.Errors.Any(error => error.Row == 2 && error.Message.Contains("Assign at least one lecture or laboratory hour")),
+    "A curriculum CSV row with both hour columns missing was accepted.");
+Pass(248, "curriculum CSV rejects zero or missing lecture and laboratory hours by row");
+
+Check(curriculumControllerSource.Contains("COALESCE(lecture_hours, 0) + COALESCE(laboratory_hours, 0) <= 0") &&
+      curriculumControllerSource.Contains("ValidateCompleteCurriculumAsync(connection, transaction, id, cancellationToken)"),
+    "Curriculum submission/publication does not reject legacy zero-hour subject rows.");
+Pass(249, "curriculum submission and publication reject legacy zero-hour rows without rewriting them");
 
 Check(curriculumControllerSource.Contains("{id:long}/subjects/bulk") &&
 

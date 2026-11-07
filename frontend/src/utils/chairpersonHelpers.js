@@ -177,15 +177,7 @@ export const computeGradeStatus = (record = {}, activeTerm = "finals") => {
     return record.standing;
   }
 
-  const midterm = Number(record.midterm);
-  const finals = Number(record.finals);
-
-  if (activeTerm === "midterm") {
-    if (!midterm) return "pending";
-    return midterm >= 75 ? "passed" : "failed";
-  }
-
-  if (!midterm || !finals) return "pending";
-
-  return (midterm + finals) / 2 >= 75 ? "passed" : "failed";
+  const termGrade = Number(activeTerm === "midterm" ? record.midterm : record.finals);
+  if (!Number.isFinite(termGrade) || termGrade <= 0) return "pending";
+  return termGrade >= 75 ? "passed" : "failed";
 };

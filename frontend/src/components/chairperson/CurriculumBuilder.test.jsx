@@ -325,15 +325,67 @@ test('persists and reloads all four year levels through one transactional import
 const curriculumWithSubjects = () => ({
   ...curriculum,
   subjects: [
-    { subjectId: 11, yearLevel: 1, semester: 'FIRST', subjectCode: 'IT 101', subjectTitle: 'Introduction', units: 2, prerequisite: '' },
-    { subjectId: 12, yearLevel: 1, semester: 'SECOND', subjectCode: 'IT 102', subjectTitle: 'Programming', units: 3, prerequisite: 'IT 101' },
-    { subjectId: 21, yearLevel: 2, semester: 'FIRST', subjectCode: 'IT 201', subjectTitle: 'Data Structures', units: 3, prerequisite: 'IT 102' },
+    { subjectId: 11, yearLevel: 1, semester: 'FIRST', subjectCode: 'IT 101', subjectTitle: 'Introduction', units: 2, lectureHours: 2, laboratoryHours: 0, prerequisite: '' },
+    { subjectId: 12, yearLevel: 1, semester: 'SECOND', subjectCode: 'IT 102', subjectTitle: 'Programming', units: 3, lectureHours: 2, laboratoryHours: 1, prerequisite: 'IT 101' },
+    { subjectId: 21, yearLevel: 2, semester: 'FIRST', subjectCode: 'IT 201', subjectTitle: 'Data Structures', units: 3, lectureHours: 0, laboratoryHours: 3, prerequisite: 'IT 102' },
   ],
+});
+
+test.each([
+  [3, 0],
+  [0, 3],
+  [1.5, 1.5],
+])('accepts curriculum subject hours lecture=%s laboratory=%s', async (lectureHours, laboratoryHours) => {
+  render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);
+  const form = await screen.findByRole('form', { name: 'Add Subject' });
+  fireEvent.change(within(form).getByPlaceholderText('e.g. IT 101'), { target: { value: 'IT 999' } });
+  fireEvent.change(within(form).getByPlaceholderText('e.g. Introduction to Computing'), { target: { value: 'Hours Validation' } });
+  fireEvent.change(within(form).getByLabelText('Lecture Hours'), { target: { value: String(lectureHours) } });
+  fireEvent.change(within(form).getByLabelText('Laboratory Hours'), { target: { value: String(laboratoryHours) } });
+  fireEvent.submit(form);
+  await waitFor(() => expect(addCurriculumSubject).toHaveBeenCalledWith(12, expect.objectContaining({ lectureHours, laboratoryHours })));
+});
+
+test('rejects zero lecture and laboratory hours before an API request', async () => {
+  render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);
+  const form = await screen.findByRole('form', { name: 'Add Subject' });
+  fireEvent.change(within(form).getByPlaceholderText('e.g. IT 101'), { target: { value: 'IT 999' } });
+  fireEvent.change(within(form).getByPlaceholderText('e.g. Introduction to Computing'), { target: { value: 'Invalid Hours' } });
+  fireEvent.change(within(form).getByLabelText('Lecture Hours'), { target: { value: '0' } });
+  fireEvent.change(within(form).getByLabelText('Laboratory Hours'), { target: { value: '0' } });
+  fireEvent.submit(form);
+  expect(await within(form).findByRole('alert')).toHaveTextContent('Assign at least one lecture or laboratory hour.');
+  expect(addCurriculumSubject).not.toHaveBeenCalled();
+});
+
+test('rejects negative curriculum hours before an API request', async () => {
+  render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);
+  const form = await screen.findByRole('form', { name: 'Add Subject' });
+  fireEvent.change(within(form).getByLabelText('Lecture Hours'), { target: { value: '-0.5' } });
+  fireEvent.submit(form);
+  expect(await within(form).findByRole('alert')).toHaveTextContent('Lecture and laboratory hours must be zero or greater.');
+  expect(addCurriculumSubject).not.toHaveBeenCalled();
+});
+
+test('local curriculum mode applies the same zero-hours validation without storing a subject', async () => {
+  localStorage.setItem('token', 'test.local-dev');
+  fetchAcademicPrograms.mockRejectedValue(new Error('offline'));
+  fetchCurriculums.mockRejectedValue(new Error('offline'));
+  render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);
+  const form = await screen.findByRole('form', { name: 'Add Subject' });
+  fireEvent.change(within(form).getByLabelText('Lecture Hours'), { target: { value: '0' } });
+  fireEvent.change(within(form).getByLabelText('Laboratory Hours'), { target: { value: '0' } });
+  fireEvent.submit(form);
+  expect(await within(form).findByRole('alert')).toHaveTextContent('Assign at least one lecture or laboratory hour.');
+  expect(localStorage.getItem('blockgo-local-chairperson-curriculum')).toBeNull();
+  expect(addCurriculumSubject).not.toHaveBeenCalled();
 });
 
 test('selects multiple subjects, confirms once, and bulk deletes only authoritative IDs', async () => {
   fetchCurriculums.mockResolvedValue({ data: [curriculumWithSubjects()] });
   render(<CurriculumBuilder department="Bachelor of Science in Information Technology" />);
+  expect(await screen.findByLabelText('IT 101 lecture hours')).toHaveTextContent('2');
+  expect(screen.getByLabelText('IT 101 laboratory hours')).toHaveTextContent('0');
   fireEvent.click(await screen.findByRole('checkbox', { name: 'Select IT 101' }));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select IT 201' }));
   expect(screen.getByRole('button', { name: 'Delete Selected (2)' })).toBeInTheDocument();

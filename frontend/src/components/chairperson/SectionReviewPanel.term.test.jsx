@@ -90,7 +90,7 @@ test('section review details reports active Midterm outcomes and special standin
   expect(summary).toHaveTextContent(/Flagged\s+1/);
 });
 
-test('section review details uses the combined grade for Finals outcomes', () => {
+test('section review details uses only the active Finals grade for outcomes', () => {
   const selectedSection = {
     ...section,
     totalStudents: 2,
@@ -111,8 +111,8 @@ test('section review details uses the combined grade for Finals outcomes', () =>
   }} />);
 
   const summary = screen.getByLabelText('Review summary');
-  expect(summary).toHaveTextContent(/Passed\s+1/);
-  expect(summary).toHaveTextContent(/Failed\s+1/);
+  expect(summary).toHaveTextContent(/Passed\s+0/);
+  expect(summary).toHaveTextContent(/Failed\s+2/);
 });
 
 test('staged grade IDs do not expose Fabric history before finalization', () => {
