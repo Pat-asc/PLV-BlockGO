@@ -16,6 +16,17 @@ const subjectHoursError = (subject) => {
   if (lectureHours + laboratoryHours <= 0) return 'Assign at least one lecture or laboratory hour.';
   return '';
 };
+const curriculumImportErrorMessage = (error) => {
+  const message = error?.message || 'The curriculum import could not be completed.';
+  const rowErrors = Array.isArray(error?.data?.errors) ? error.data.errors : [];
+  const details = rowErrors.slice(0, 5).map((item) => {
+    const detail = String(item?.message || '').trim();
+    if (!detail) return '';
+    const row = Number(item?.row);
+    return row > 0 && !/^row\s+\d+:/i.test(detail) ? `Row ${row}: ${detail}` : detail;
+  }).filter((detail) => detail && !message.includes(detail));
+  return details.length ? `${message} ${details.join(' ')}` : message;
+};
 const localCurriculumKey = 'blockgo-local-chairperson-curriculum';
 const itProgramCode = 'BSIT';
 const itDepartmentNames = new Set([
@@ -253,7 +264,7 @@ const CurriculumBuilder = ({ department = '' }) => {
           ? `${importedCount} subjects imported successfully.${skippedCount ? ` ${skippedMessage}` : ''}`
           : `All ${skippedCount} subjects already exist in this curriculum.`,
       });
-    } catch (error) { setNotice({ type: 'error', message: error.message }); }
+    } catch (error) { setNotice({ type: 'error', message: curriculumImportErrorMessage(error) }); }
     finally { setSaving(false); }
   };
 
