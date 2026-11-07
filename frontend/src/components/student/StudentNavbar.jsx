@@ -32,7 +32,7 @@ const StudentNavbar = ({ studentData, onLogout, renderSettings }) => {
           <button
             type="button"
             onClick={onLogout}
-            className="h-10 rounded-lg border border-yellow-400 bg-transparent px-3 text-sm font-semibold text-yellow-400 transition hover:bg-yellow-400 hover:text-[#003366] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#001b55] sm:px-4"
+            className="blockgo-bright-hover h-10 rounded-lg border border-yellow-400 bg-transparent px-3 text-sm font-semibold text-yellow-400 transition hover:bg-yellow-400 hover:text-[#003366] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#001b55] sm:px-4"
           >
             Logout
           </button>

@@ -97,7 +97,7 @@ function SystemAdminPortal({ adminData, systemTheme, onLogout }) {
             <button
               type="button"
               onClick={onLogout}
-              className="rounded-md border border-yellow-400 px-4 py-2 text-sm font-semibold text-yellow-300 transition hover:bg-yellow-400 hover:text-[#003366]"
+              className="blockgo-bright-hover rounded-md border border-yellow-400 px-4 py-2 text-sm font-semibold text-yellow-300 transition hover:bg-yellow-400 hover:text-[#003366]"
             >
               Logout
             </button>

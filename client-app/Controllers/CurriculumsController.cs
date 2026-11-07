@@ -1017,7 +1017,9 @@ namespace Client_app.Controllers
         {
             await using var command = new NpgsqlCommand(@"
                 SELECT COUNT(*), COUNT(DISTINCT year_level),
-                       COUNT(*) FILTER (WHERE subject_code IS NULL OR BTRIM(subject_code) = '' OR subject_title IS NULL OR BTRIM(subject_title) = '' OR units <= 0)
+                       COUNT(*) FILTER (WHERE subject_code IS NULL OR BTRIM(subject_code) = '' OR subject_title IS NULL OR BTRIM(subject_title) = '' OR units <= 0
+                           OR COALESCE(lecture_hours, 0) < 0 OR COALESCE(laboratory_hours, 0) < 0
+                           OR COALESCE(lecture_hours, 0) + COALESCE(laboratory_hours, 0) <= 0)
                 FROM curriculum_subjects WHERE curriculum_id = @id;", connection, transaction);
             command.Parameters.AddWithValue("id", id);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -1042,6 +1044,7 @@ namespace Client_app.Controllers
             if (!CurriculumSemesters.All.Contains(request.Semester)) throw new ArgumentException("Semester must be FIRST, SECOND, or MIDYEAR.");
             if (request.Units <= 0 || request.Units > 20) throw new ArgumentException("Units must be greater than 0 and no more than 20.");
             if (request.LectureHours < 0 || request.LaboratoryHours < 0) throw new ArgumentException("Lecture and laboratory hours cannot be negative.");
+            if (request.LectureHours + request.LaboratoryHours <= 0) throw new ArgumentException("Assign at least one lecture or laboratory hour.");
             if (string.Equals(request.Prerequisite, request.SubjectCode, StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("A subject cannot be its own prerequisite.");
         }
 

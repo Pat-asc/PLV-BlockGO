@@ -60,3 +60,24 @@ test('provides explicit readable dark, selected, active, focus, and disabled sta
   expect(disabled).toBeDisabled();
   expect(disabled).toHaveClass('dark:disabled:bg-slate-800', 'dark:disabled:text-slate-500');
 });
+
+test('opens upward with a viewport-bounded trigger-width popup when space below is limited', () => {
+  const originalInnerHeight = window.innerHeight;
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 500 });
+  const rect = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    top: 420, bottom: 460, left: 20, right: 300, width: 280, height: 40,
+  });
+
+  render(<BoundedSelect label="Database" value="" onChange={() => {}} options={[
+    { value: 'world-state', label: 'Student Grade Records', secondary: 'registrar-channel_registrar' },
+  ]} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Database' }));
+
+  const popup = screen.getByTestId('bounded-select-popup');
+  expect(popup).toHaveAttribute('data-placement', 'up');
+  expect(popup).toHaveClass('w-full', 'bottom-full', 'max-w-[calc(100vw-2rem)]', 'overflow-hidden');
+  expect(screen.getByText('registrar-channel_registrar')).toHaveClass('truncate');
+
+  rect.mockRestore();
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight });
+});
