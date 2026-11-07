@@ -1,17 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchCouchDbDatabases, fetchCouchDbDocuments } from '../../services/api';
+import BoundedSelect from '../shared/BoundedSelect';
 
 const targets = [
   { id: 'registrar', label: 'Registrar State' },
   { id: 'faculty', label: 'Faculty State' },
   { id: 'department', label: 'Department State' },
 ];
-
-const preferredDatabaseLabels = {
-  'registrar-channel_registrar': 'Registrar Channel — Registrar World State',
-  'registrar-channel_faculty': 'Registrar Channel — Faculty World State',
-  'registrar-channel_department': 'Registrar Channel — Department World State',
-};
 
 const viewModeStorageKey = 'blockgo-couchdb-view-mode';
 
@@ -27,8 +22,11 @@ const humanize = (value) => String(value || '')
   .replace(/[_-]+/g, ' ')
   .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
-export const databaseDisplayName = (name) => preferredDatabaseLabels[name]
-  || `${humanize(String(name).split('_')[0])} — ${humanize(String(name).split('_').slice(1).join(' ') || 'Application')} World State`;
+export const databaseDisplayName = (database) => database?.label || database?.name || String(database || '');
+
+const normalizeDatabase = (database) => typeof database === 'string'
+  ? { name: database, label: database }
+  : { name: String(database?.name || ''), label: String(database?.label || database?.name || '') };
 
 const field = (record, ...names) => {
   const entries = Object.entries(record || {});
@@ -205,7 +203,7 @@ const JsonRecordCard = ({ item }) => {
 };
 
 function CouchDbBrowser() {
-  const [target, setTarget] = useState('registrar');
+  const [target, setTarget] = useState('');
   const [databases, setDatabases] = useState([]);
   const [database, setDatabase] = useState('');
   const [documents, setDocuments] = useState([]);
@@ -215,6 +213,8 @@ function CouchDbBrowser() {
   const [hasNextPage, setHasNextPage] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [databaseLoading, setDatabaseLoading] = useState(false);
+  const [databaseListLoaded, setDatabaseListLoaded] = useState(false);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -231,21 +231,29 @@ function CouchDbBrowser() {
   };
 
   const loadDatabases = useCallback((signal) => {
+    if (!target) return Promise.resolve();
     setError('');
+    setDatabaseLoading(true);
+    setDatabaseListLoaded(false);
     return fetchCouchDbDatabases(target, { signal })
-      .then((response) => setDatabases(Array.isArray(response?.data) ? response.data : []))
+      .then((response) => {
+        setDatabases(Array.isArray(response?.data) ? response.data.map(normalizeDatabase).filter((item) => item.name) : []);
+        setDatabaseListLoaded(true);
+      })
       .catch((requestError) => {
         if (requestError.name !== 'AbortError') setError('The selected state target is temporarily unavailable.');
-      });
+      })
+      .finally(() => setDatabaseLoading(false));
   }, [target]);
 
   useEffect(() => {
     const controller = new AbortController();
     setDatabase(''); setDocuments([]); setPage(1); setTotalRows(0); setLoaded(false);
+    setDatabases([]); setDatabaseListLoaded(false);
     setSearch(''); setStatusFilter(''); setSubjectFilter('');
-    loadDatabases(controller.signal);
+    if (target) loadDatabases(controller.signal);
     return () => controller.abort();
-  }, [loadDatabases]);
+  }, [loadDatabases, target]);
 
   const loadDocuments = useCallback(async (nextPage = page) => {
     if (!database) return;
@@ -286,20 +294,25 @@ function CouchDbBrowser() {
       <p className="mt-2 text-sm text-slate-600">Browse sanitized Fabric world state records. Credentials, wallets, system databases, and sensitive fields are never returned.</p>
     </div>
 
-    <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2">
-      <label className="text-sm font-semibold">Campus state target
-        <select aria-label="CouchDB target" value={target} onChange={(event) => setTarget(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-slate-300 px-3">{targets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
-      </label>
-      <label className="text-sm font-semibold">Database
-        <select aria-label="CouchDB database" value={database} onChange={(event) => { setDatabase(event.target.value); setDocuments([]); setPage(1); setTotalRows(0); setLoaded(false); }} className="mt-1 min-h-11 w-full rounded-md border border-slate-300 px-3">
-          <option value="">Select a database</option>
-          {databases.map((name) => <option key={name} value={name}>{databaseDisplayName(name)} ({name})</option>)}
-        </select>
-      </label>
-      <button type="button" disabled={!database || loading} onClick={() => loadDocuments(1)} className="min-h-11 rounded-md bg-[#003366] px-5 text-sm font-bold text-white disabled:bg-slate-400">{loading ? 'Loading…' : 'Load records'}</button>
+    <div className="grid min-w-0 gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+      <BoundedSelect label="Campus state target" value={target} onChange={setTarget} placeholder="Select a campus target" options={targets.map((item) => ({ value: item.id, label: item.label }))} />
+      <BoundedSelect
+        label="Database"
+        value={database}
+        disabled={!target || databaseLoading || !databases.length}
+        placeholder={databaseLoading ? 'Loading application databases…' : 'Select an application database'}
+        emptyMessage="No application databases are available."
+        onChange={(value) => { setDatabase(value); setDocuments([]); setPage(1); setTotalRows(0); setLoaded(false); }}
+        options={databases.map((item) => ({ value: item.name, label: databaseDisplayName(item), secondary: item.name }))}
+      />
+      <button type="button" disabled={!database || loading} onClick={() => loadDocuments(1)} className="min-h-10 rounded-md bg-[#003366] px-5 text-sm font-bold text-white disabled:bg-slate-400 md:self-end">{loading ? 'Loading…' : 'Load records'}</button>
     </div>
 
     {error ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-300 bg-red-50 p-4 text-red-900"><div><p className="font-bold">Unable to load records</p><p className="text-sm">{error}</p></div><button type="button" onClick={() => (database ? loadDocuments(page) : loadDatabases())} className="min-h-10 rounded-md border border-red-700 px-4 text-sm font-bold">Retry</button></div> : null}
+
+    {!target ? <p className="rounded-md border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">Select a campus state target to view its application world state.</p> : null}
+    {target && databaseLoading ? <p role="status" className="rounded-md border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">Loading application databases…</p> : null}
+    {target && databaseListLoaded && !databases.length && !error ? <p className="rounded-md border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No application world-state databases are available for this target.</p> : null}
 
     {loaded && documents.length ? <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex flex-wrap items-end justify-between gap-3">

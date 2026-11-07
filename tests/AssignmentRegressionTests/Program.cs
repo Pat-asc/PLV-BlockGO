@@ -41,6 +41,26 @@ static string FindRepositoryFile(params string[] pathParts)
 }
 
 
+var registrarDatabases = CouchDbBrowserPolicy.FilterApplicationDatabases("registrar", new[]
+{
+    "_users",
+    "registrar-channel__lifecycle",
+    "registrar-channel_registrar$$p_implicit_org_RegistrarMSP",
+    "registrar-channel_registrar"
+});
+Check(registrarDatabases.Count == 1
+      && registrarDatabases[0].Name == "registrar-channel_registrar"
+      && registrarDatabases[0].Label == "Student Grade Records (Registrar Peer)",
+    "CouchDB browser policy exposed a Fabric internal database or lost server-owned metadata.");
+Pass(234, "CouchDB browser exposes only application world state with target metadata");
+
+Check(!CouchDbBrowserPolicy.IsBrowsableDatabase("faculty", "registrar-channel__lifecycle")
+      && !CouchDbBrowserPolicy.IsBrowsableDatabase("department", "registrar-channel_registrar$$p_implicit_org_DepartmentMSP")
+      && CouchDbBrowserPolicy.IsBrowsableDatabase("faculty", "registrar-channel_registrar"),
+    "CouchDB direct document policy is not target-aware or permits Fabric internal databases.");
+Pass(235, "CouchDB direct document access uses the same target-aware allowlist");
+
+
 
 Check(new[] { "final", "finals", "FINAL", "FINALS" }.All(term => GradeAcademicTerm.Normalize(term) == GradeAcademicTerm.Finals),
 
