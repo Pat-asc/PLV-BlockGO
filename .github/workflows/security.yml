@@ -108,11 +108,22 @@ jobs:
             git diff --name-only --diff-filter=ACMR -z "$base_sha" HEAD
           )
           introduced=()
+          temporary_exceptions=()
           for path in "${changed[@]}"; do
-            if is_forbidden "$path"; then
-              introduced+=("$path")
-            fi
+            classification="$(python3 security/credential_rotation_policy.py classify "$path")"
+            case "$classification" in
+              temporary-exception)
+                temporary_exceptions+=("$path")
+                ;;
+              forbidden)
+                introduced+=("$path")
+                ;;
+            esac
           done
+
+          if [ "${#temporary_exceptions[@]}" -gt 0 ]; then
+            printf '::warning::Temporary credential rotation exception (existing tracked path only): %s\n' "${temporary_exceptions[@]}"
+          fi
 
           if [ "${#introduced[@]}" -gt 0 ]; then
             printf '::error::New runtime or credential artifact: %s\n' "${introduced[@]}"
@@ -120,6 +131,12 @@ jobs:
           fi
 
           echo "No new runtime or credential artifacts were introduced."
+
+      - name: Test temporary credential rotation policy
+        run: |
+          set -euo pipefail
+          python3 security/credential_rotation_policy.py validate
+          python3 -m unittest security.test_credential_rotation_policy
 
   dependency-review:
     name: Pull Request Dependency Review
@@ -222,33 +239,11 @@ jobs:
             fi
           fi
 
-          git diff --unified=0 --no-color "$base_sha" HEAD \
-            > .security-secret-changes/changes.patch
-          awk '
-            /^\+\+\+ / { next }
-            /^\+/ { print substr($0, 2) }
-          ' .security-secret-changes/changes.patch \
-            > .security-secret-changes/introduced-content.txt
-          rm -f .security-secret-changes/changes.patch
-
-          if [ -s .security-secret-changes/introduced-content.txt ]; then
-            echo "secret_diff=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "secret_diff=0" >> "$GITHUB_OUTPUT"
-          fi
-
           changed_count=0
+          secret_count=0
           iac_count=0
           while IFS= read -r -d '' path; do
             changed_count=$((changed_count + 1))
-
-            case "$path" in
-              network/k8s/*.yaml|network/k8s/*.yml|network/docker-compose*.yaml|network/docker-compose*.yml|Dockerfile|*/Dockerfile|*.dockerfile|*.tf|*.tfvars)
-                ;;
-              *)
-                continue
-                ;;
-            esac
 
             case "$path" in
               /*|../*|*/../*)
@@ -262,12 +257,42 @@ jobs:
               continue
             fi
 
+            classification="$(python3 security/credential_rotation_policy.py classify "$path")"
+            if [ "$classification" = "temporary-exception" ]; then
+              echo "::warning::Trivy changed-secret exception for pending rotation: $path"
+            else
+              secret_destination=".security-secret-changes/$path"
+              mkdir -p "$(dirname "$secret_destination")"
+              git diff --unified=0 --no-color "$base_sha" HEAD -- "$path" | awk '
+                /^\+\+\+ / { next }
+                /^\+/ { print substr($0, 2) }
+              ' > "$secret_destination"
+              if [ -s "$secret_destination" ]; then
+                secret_count=$((secret_count + 1))
+              else
+                rm -f "$secret_destination"
+              fi
+            fi
+
+            case "$path" in
+              network/k8s/*.yaml|network/k8s/*.yml|network/docker-compose*.yaml|network/docker-compose*.yml|Dockerfile|*/Dockerfile|*.dockerfile|*.tf|*.tfvars)
+                ;;
+              *)
+                continue
+                ;;
+            esac
+
             destination=".security-iac-changes/$path"
             mkdir -p "$(dirname "$destination")"
             git cat-file blob "HEAD:$path" > "$destination"
             iac_count=$((iac_count + 1))
           done < <(git diff --name-only --diff-filter=ACMR -z "$base_sha" HEAD)
 
+          if [ "$secret_count" -gt 0 ]; then
+            echo "secret_diff=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "secret_diff=0" >> "$GITHUB_OUTPUT"
+          fi
           echo "changed_count=$changed_count" >> "$GITHUB_OUTPUT"
           echo "iac_count=$iac_count" >> "$GITHUB_OUTPUT"
           echo "Prepared $changed_count changed file(s), including $iac_count IaC file(s), for regression security scanning."

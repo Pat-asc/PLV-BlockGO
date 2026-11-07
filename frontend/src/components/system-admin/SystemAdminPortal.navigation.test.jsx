@@ -13,6 +13,7 @@ test('keeps Data Life Cycle out of primary desktop and mobile navigation', async
   render(<SystemAdminPortal adminData={{ name: 'Admin' }} onLogout={() => {}} />);
   const navigation = await screen.findByRole('navigation', { name: 'System administration views' });
   expect(within(navigation).queryByRole('button', { name: /Data Life Cycle/i })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Logout' })).toHaveClass('blockgo-bright-hover');
   expect(navigation).toHaveClass('lg:flex');
 
   const menu = screen.getByRole('button', { name: 'Open navigation menu' });

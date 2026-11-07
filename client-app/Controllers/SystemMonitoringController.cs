@@ -524,10 +524,9 @@ namespace Client_app.Controllers
             if (!response.IsSuccessStatusCode)
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, new { status = "Error", message = "The selected CouchDB target is unavailable." });
 
-            var databases = JsonSerializer.Deserialize<string[]>(await response.Content.ReadAsStringAsync(cancellationToken))
-                ?.Where(IsBrowsableDatabase)
-                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
-                .ToArray() ?? Array.Empty<string>();
+            var databaseNames = JsonSerializer.Deserialize<string[]>(await response.Content.ReadAsStringAsync(cancellationToken))
+                ?? Array.Empty<string>();
+            var databases = CouchDbBrowserPolicy.FilterApplicationDatabases(target, databaseNames);
             return Ok(new { status = "Success", target = target.ToLowerInvariant(), data = databases });
         }
 
@@ -539,7 +538,7 @@ namespace Client_app.Controllers
             CancellationToken cancellationToken = default)
         {
             if (!TryGetCouchDbTarget(target, out var targetUrl, out var failure)) return failure!;
-            if (!IsBrowsableDatabase(database))
+            if (!CouchDbBrowserPolicy.IsBrowsableDatabase(target, database))
                 return BadRequest(new { status = "Error", message = "A valid application state database is required." });
             page = Math.Clamp(page, 1, 10000);
 
@@ -671,13 +670,6 @@ namespace Client_app.Controllers
             client.Timeout = TimeSpan.FromSeconds(8);
             return await client.SendAsync(request, cancellationToken);
         }
-
-        private static bool IsBrowsableDatabase(string? database) =>
-            !string.IsNullOrWhiteSpace(database)
-            && database.Length <= 238
-            && !database.StartsWith('_')
-            && !database.Contains("wallet", StringComparison.OrdinalIgnoreCase)
-            && database.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '$' or '(' or ')' or '+' or '-');
 
         private static JsonNode? SanitizeDocument(JsonNode? node)
         {

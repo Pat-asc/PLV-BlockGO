@@ -35,7 +35,7 @@ const gradeRecord = {
 beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
-  fetchCouchDbDatabases.mockResolvedValue({ data: ['registrar-channel_registrar'] });
+  fetchCouchDbDatabases.mockResolvedValue({ data: [{ name: 'registrar-channel_registrar', label: 'Student Grade Records (Registrar Peer)' }] });
   fetchCouchDbDocuments.mockResolvedValue({
     data: [gradeRecord], page: 1, pageSize: 10, totalRows: 148, hasNextPage: true,
   });
@@ -52,14 +52,21 @@ test('grade parser safely handles object, JSON string, and malformed values', ()
 });
 
 test('database names retain their technical value and gain a readable label', () => {
-  expect(databaseDisplayName('registrar-channel_registrar')).toBe('Registrar Channel — Registrar World State');
+  expect(databaseDisplayName({ name: 'registrar-channel_registrar', label: 'Student Grade Records (Registrar Peer)' })).toBe('Student Grade Records (Registrar Peer)');
 });
+
+const selectDatabase = async () => {
+  fireEvent.click(screen.getByRole('button', { name: 'Campus state target' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Registrar State' }));
+  await waitFor(() => expect(fetchCouchDbDatabases).toHaveBeenCalledWith('registrar', expect.any(Object)));
+  fireEvent.click(await screen.findByRole('button', { name: 'Database' }));
+  fireEvent.click(screen.getByRole('option', { name: /Student Grade Records/ }));
+};
 
 test('renders a readable, searchable, read-only Fabric world state record', async () => {
   render(<CouchDbBrowser />);
-
-  const database = await screen.findByRole('combobox', { name: /couchdb database/i });
-  fireEvent.change(database, { target: { value: 'registrar-channel_registrar' } });
+  expect(screen.getByText(/Select a campus state target/i)).toBeInTheDocument();
+  await selectDatabase();
   fireEvent.click(screen.getByRole('button', { name: /load records/i }));
 
   expect(await screen.findByText('Adrian Mendoza Tan')).toBeInTheDocument();
@@ -82,8 +89,7 @@ test('renders a readable, searchable, read-only Fabric world state record', asyn
 
 test('switches to original read-only JSON without another request and copies it', async () => {
   render(<CouchDbBrowser />);
-  const database = await screen.findByRole('combobox', { name: /couchdb database/i });
-  fireEvent.change(database, { target: { value: 'registrar-channel_registrar' } });
+  await selectDatabase();
   fireEvent.click(screen.getByRole('button', { name: /load records/i }));
   expect(await screen.findByText('Adrian Mendoza Tan')).toBeInTheDocument();
 
@@ -106,12 +112,29 @@ test('shows a safe fallback for malformed grade JSON and request failures', asyn
     .mockRejectedValueOnce(new Error('internal host detail'));
 
   render(<CouchDbBrowser />);
-  const database = await screen.findByRole('combobox', { name: /couchdb database/i });
-  fireEvent.change(database, { target: { value: 'registrar-channel_registrar' } });
+  await selectDatabase();
   fireEvent.click(screen.getByRole('button', { name: /load records/i }));
   expect(await screen.findByText('Grade information unavailable')).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole('button', { name: /next/i }));
   expect(await screen.findByRole('alert')).toHaveTextContent('The selected state database is temporarily unavailable.');
   expect(screen.queryByText('internal host detail')).not.toBeInTheDocument();
+});
+
+test('shows loading, no-application-database, and target failure states without leaking details', async () => {
+  let resolveDatabases;
+  fetchCouchDbDatabases.mockReturnValueOnce(new Promise((resolve) => { resolveDatabases = resolve; }));
+  render(<CouchDbBrowser />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Campus state target' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Faculty State' }));
+  expect(await screen.findByRole('status')).toHaveTextContent('Loading application databases');
+  resolveDatabases({ data: [] });
+  expect(await screen.findByText(/No application world-state databases/i)).toBeInTheDocument();
+
+  fetchCouchDbDatabases.mockRejectedValueOnce(new Error('private couchdb hostname'));
+  fireEvent.click(screen.getByRole('button', { name: 'Campus state target' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Department State' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('The selected state target is temporarily unavailable.');
+  expect(screen.queryByText('private couchdb hostname')).not.toBeInTheDocument();
 });

@@ -189,13 +189,24 @@ test("saves only the selected professor's pending load", async () => {
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))[0].facultyId).toBe("1");
 });
 test("allows removing a pending assignment without saving", async () => {
+  fetchFacultyAssignmentOptions.mockResolvedValue({
+    subjects: [{ subjectCode: "IT 321", subjectTitle: "Web Systems and Technologies", yearLevel: 3, semester: "SECOND", units: 3 }],
+    sections: [{ id: 31, department: "Bachelor of Science in Information Technology", programCode: "BSIT", yearLevel: 3, section: "3-1" }],
+    schoolYears: ["2026-2027"], enrollmentPeriods: [],
+    activeAcademicPeriod: { schoolYear: "2026-2027", semester: "SECOND" },
+    assignments: [savedAssignment()],
+  });
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   fireEvent.click(await screen.findByRole("button", { name: /Carlos Reyes/ }));
   fireEvent.click(screen.getByRole("radio", { name: "Select IT 321" }));
   fireEvent.click(screen.getByRole("button", { name: "＋ Assign" }));
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("2");
+  expect(pendingTotal("Total Units")).toHaveTextContent("6");
   fireEvent.click(screen.getByRole("button", { name: "Remove IT 321 BSIT 3-1" }));
   expect(screen.getByRole("button", { name: "Save Assignments" })).toBeDisabled();
-  expect(localStorage.getItem("registrarAssignments")).toBeNull();
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("1");
+  expect(pendingTotal("Total Units")).toHaveTextContent("3");
+  expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toHaveLength(1);
 });
 test("renders Assigned Sections before Subject Assigning", async () => {
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
@@ -388,7 +399,8 @@ test("Clear Selection is disabled when the selected faculty has only saved assig
 
   expect(screen.getAllByText("Saved")).toHaveLength(2);
   expect(screen.getByRole("button", { name: /Clear Selection/ })).toBeDisabled();
-  expect(pendingTotal("Total Assignments")).toHaveTextContent("0");
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("2");
+  expect(pendingTotal("Total Units")).toHaveTextContent("6");
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toHaveLength(2);
   expect(assignFacultyLoadToBackend).not.toHaveBeenCalled();
 });
@@ -404,12 +416,14 @@ test("Clear Selection removes pending rows but preserves mixed saved rows", asyn
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   await selectFaculty();
   stageAssignment();
-  expect(pendingTotal("Total Assignments")).toHaveTextContent("1");
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("3");
+  expect(pendingTotal("Total Units")).toHaveTextContent("9");
 
   fireEvent.click(screen.getByRole("button", { name: /Clear Selection/ }));
 
   expect(screen.getAllByText("Saved")).toHaveLength(2);
-  expect(pendingTotal("Total Assignments")).toHaveTextContent("0");
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("2");
+  expect(pendingTotal("Total Units")).toHaveTextContent("6");
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toHaveLength(2);
   expect(assignFacultyLoadToBackend).not.toHaveBeenCalled();
 });
@@ -468,7 +482,8 @@ test("successful Save clears the temporary row and Clear cannot remove the persi
   expect(screen.getAllByText("Saved")).toHaveLength(1);
   expect(screen.queryByLabelText("Remove IT 321 BSIT 3-1")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Clear Selection/ })).toBeDisabled();
-  expect(pendingTotal("Total Assignments")).toHaveTextContent("0");
+  expect(pendingTotal("Total Assignments")).toHaveTextContent("1");
+  expect(pendingTotal("Total Units")).toHaveTextContent("3");
   expect(JSON.parse(localStorage.getItem("registrarAssignments"))).toHaveLength(1);
   expect(assignFacultyLoadToBackend).toHaveBeenCalledTimes(1);
   expect(assignFacultyLoadToBackend).toHaveBeenCalledWith(expect.objectContaining({ academicSectionId: 31 }));
