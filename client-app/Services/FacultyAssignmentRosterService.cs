@@ -17,7 +17,7 @@ public static class FacultyAssignmentRosterService
         }
     }
 
-    public enum ResolutionStatus { Resolved, NotFound, Inactive, UnresolvedLegacy, AmbiguousLegacy }
+    public enum ResolutionStatus { Resolved, NotFound, Inactive, PendingSubject, UnresolvedLegacy, AmbiguousLegacy }
 
     public sealed record Assignment(
         int Id, int FacultyUserId, string FacultyEmail, string Department, string Section,
@@ -110,6 +110,9 @@ public static class FacultyAssignmentRosterService
 
         if (!isActive && !includeInactive)
             return new(ResolutionStatus.Inactive, null, "Faculty assignment is inactive.");
+        if (string.IsNullOrWhiteSpace(subject))
+            return new(ResolutionStatus.PendingSubject, null,
+                "Faculty placement is pending a curriculum subject and is not available for roster or grade workflows.");
         if (academicSectionId.HasValue && !string.IsNullOrWhiteSpace(schoolYear) && !string.IsNullOrWhiteSpace(semester))
             return new(ResolutionStatus.Resolved,
                 new(id, facultyUserId, facultyEmail, department, section, yearLevel, subject,

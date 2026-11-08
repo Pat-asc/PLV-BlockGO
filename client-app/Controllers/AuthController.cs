@@ -3461,6 +3461,7 @@ namespace Client_app.Controllers
                   AND LOWER(u.role) = 'faculty'
                   AND LOWER(u.status) = 'approved'
                   AND u.is_active = TRUE
+                  AND NULLIF(BTRIM(fs.subject), '') IS NOT NULL
                   AND LOWER(p.program_code) = LOWER(@programCode)
                   AND (
                       (
@@ -3546,12 +3547,61 @@ namespace Client_app.Controllers
                         HttpContext.RequestAborted);
                     academicSectionId = resolvedSection.Id;
                 }
+                if (string.IsNullOrWhiteSpace(request.Subject))
+                {
+                    var placement = await FacultyBulkAssignmentService.PlacePendingAsync(
+                        conn, id, academicSectionId, schoolYear, semester,
+                        (program, token) => CanManageAcademicProgramAsync(conn, program, token),
+                        HttpContext.RequestAborted,
+                        User.IsInRole("registrar") || User.IsInRole("department_admin"));
+
+                    if (!placement.AlreadyPlaced)
+                    {
+                        var emailSubject = "PLV Faculty Placement";
+                        var emailContent = $"<p>Hello {placement.FacultyName},</p><p>You have been placed in Section <strong>{placement.Section}</strong> for the <strong>{placement.Program}</strong> program. Your Chairperson will assign the curriculum subject before this becomes a teaching load.</p>";
+                        _ = _emailService.SendEmailAsync(placement.FacultyEmail, emailSubject, CreateHtmlEmail(emailSubject, emailContent), true);
+                    }
+
+                    _cache.Remove("approved_faculties");
+                    await NotifyAcademicDataChangedAsync("faculty_placement_pending_subject", placement.Program, placement.FacultyEmail);
+                    return Ok(new
+                    {
+                        status = placement.AlreadyPlaced ? "Info" : "Success",
+                        message = placement.AlreadyPlaced
+                            ? "Faculty already has a pending subject placement for this section and period."
+                            : "Faculty placement saved. The Chairperson must assign the curriculum subject before grading is available.",
+                        assignment = new
+                        {
+                            id = placement.Id,
+                            placementId = placement.Id,
+                            facultySectionId = (int?)null,
+                            facultyAssignmentId = (int?)null,
+                            assignmentCycleId = (string?)null,
+                            assignmentStatus = "PENDING_SUBJECT",
+                            facultyId = placement.FacultyUserId,
+                            facultyHomeDepartment = placement.FacultyHomeDepartment,
+                            department = placement.Program,
+                            subjectDepartment = placement.Program,
+                            targetProgram = placement.Program,
+                            programCode = placement.ProgramCode,
+                            targetDepartment = placement.Program,
+                            isCrossDepartment = placement.IsCrossDepartment,
+                            section = placement.Section,
+                            yearLevel = placement.YearLevel,
+                            subject = (string?)null,
+                            academicSectionId = placement.AcademicSectionId,
+                            schoolYear = placement.SchoolYear,
+                            semester = placement.Semester,
+                            schedule = (string?)null
+                        }
+                    });
+                }
                 var saved = await FacultyBulkAssignmentService.AssignAsync(
                     conn,
                     new BulkFacultyAssignmentItemRequest
                     {
                         FacultyUserId = id,
-                        SubjectCode = request.Subject ?? string.Empty,
+                        SubjectCode = request.Subject,
                         AcademicSectionId = academicSectionId,
                         SchoolYear = schoolYear,
                         Semester = semester,
@@ -3577,9 +3627,11 @@ namespace Client_app.Controllers
                     assignment = new
                     {
                         id = saved.Id,
+                        placementId = (int?)null,
                         facultySectionId = saved.Id,
                         facultyAssignmentId = saved.Id,
                         assignmentCycleId = saved.AssignmentCycleId,
+                        assignmentStatus = "ASSIGNED",
                         facultyId = saved.FacultyUserId,
                         facultyHomeDepartment = saved.FacultyHomeDepartment,
                         department = saved.Program,
@@ -4312,6 +4364,7 @@ namespace Client_app.Controllers
                       AND LOWER(u.status) = 'approved'
                       AND u.is_active = TRUE
                       AND fs.is_active = TRUE
+                      AND NULLIF(BTRIM(fs.subject), '') IS NOT NULL
                       AND (
                           (
                               fs.academic_section_id IS NOT NULL
