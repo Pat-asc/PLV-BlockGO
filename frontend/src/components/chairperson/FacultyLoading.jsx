@@ -156,12 +156,15 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
   });
 
   const selectedProgram = chairpersonDepartment;
+  const targetProgramAliases = [selectedProgram, assignmentOptions.program?.code, assignmentOptions.program?.name]
+    .filter(Boolean)
+    .map(normalizeText);
   const facultyLoadingGroups = useMemo(() => {
     const groups = new Map();
     facultyLoadingPreview.forEach((item) => {
       const facultyKey = String(item.facultyUserId || item.facultyId || item.facultyEmail || item.id);
       if (!groups.has(facultyKey)) {
-        groups.set(facultyKey, { facultyKey, facultyName: item.facultyName || item.facultyEmail || "Assigned faculty", rows: [] });
+        groups.set(facultyKey, { facultyKey, facultyName: item.facultyName || item.facultyEmail || "Assigned faculty", facultyHomeDepartment: item.facultyHomeDepartment || "Unassigned", isCrossDepartment: Boolean(item.isCrossDepartment), rows: [] });
       }
       groups.get(facultyKey).rows.push(item);
     });
@@ -171,7 +174,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
   useEffect(() => {
     const loadApprovedFaculty = async () => {
       try {
-        const response = await fetchApprovedFaculties();
+        const response = await fetchApprovedFaculties(true);
         if (response.status === "Success") {
           setApprovedFaculties(response.faculties || []);
         }
@@ -183,16 +186,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
     loadApprovedFaculty();
   }, []);
 
-  const programAliases = new Set([
-    normalizeText(selectedProgram),
-    ...assignmentOptions.sections.flatMap((section) => [
-      normalizeText(section.programCode),
-      normalizeText(section.department),
-    ]),
-  ]);
-  const filteredFaculty = approvedFaculties.filter((faculty) =>
-    programAliases.has(normalizeText(getFacultyDepartment(faculty)))
-  );
+  const filteredFaculty = approvedFaculties;
 
   const filteredSections = sectionOptions.filter(
     (section) =>
@@ -281,7 +275,9 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
         facultyId: selectedFacultyId,
         facultyEmail: selectedFaculty.email,
         facultyName: getFacultyDisplayName(selectedFaculty),
+        facultyHomeDepartment: getFacultyDepartment(selectedFaculty),
         program: selectedProgram,
+        targetProgram: selectedProgram,
         academicSectionId: selectedSection.academicSectionId,
         sectionName: selectedSection.section,
         yearLevel: selectedSection.yearLevel,
@@ -313,6 +309,11 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
         facultyAssignmentId: serverResult.assignment?.id,
         assignmentCycleId: serverResult.assignment?.assignmentCycleId || String(serverResult.assignment?.id || ""),
         academicSectionId: serverResult.assignment?.academicSectionId,
+        facultyHomeDepartment: serverResult.assignment?.facultyHomeDepartment ?? newAssignment.facultyHomeDepartment,
+        targetProgram: serverResult.assignment?.targetProgram ?? newAssignment.targetProgram,
+        targetDepartment: serverResult.assignment?.targetDepartment ?? newAssignment.targetProgram,
+        programCode: serverResult.assignment?.programCode,
+        isCrossDepartment: serverResult.assignment?.isCrossDepartment ?? false,
       };
       const updatedAssignments = [...savedAssignments, savedAssignment];
       setSavedAssignments(updatedAssignments);
@@ -591,7 +592,10 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
         facultyUserId: Number(getFacultyKey(faculty)),
         facultyEmail: faculty.email,
         facultyName: getFacultyDisplayName(faculty),
+        facultyHomeDepartment: getFacultyDepartment(faculty),
+        isCrossDepartment: !targetProgramAliases.includes(normalizeText(getFacultyDepartment(faculty))),
         program: selectedProgram,
+        targetProgram: selectedProgram,
         sectionName: canonicalSectionName,
         academicSectionId: section.id,
         yearLevel: formatYearLevel(section.yearLevel),
@@ -719,6 +723,11 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
           facultyUserId: result.assignment.facultyUserId,
           facultyEmail: result.assignment.facultyEmail,
           facultyName: result.assignment.facultyName,
+          facultyHomeDepartment: result.assignment.facultyHomeDepartment,
+          targetProgram: result.assignment.targetProgram,
+          targetDepartment: result.assignment.targetDepartment,
+          programCode: result.assignment.programCode,
+          isCrossDepartment: result.assignment.isCrossDepartment,
           program: result.assignment.program,
           sectionName: result.assignment.section,
           yearLevel: formatYearLevel(result.assignment.yearLevel),
@@ -942,7 +951,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
                   {facultyLoadingGroups.length ? (
                     facultyLoadingGroups.flatMap((facultyGroup) => facultyGroup.rows.map((item, rowIndex) => (
                       <tr key={item.id} data-faculty-group={facultyGroup.facultyKey} className="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-                        {rowIndex === 0 ? <td rowSpan={facultyGroup.rows.length} className="border-r border-slate-200 bg-slate-50 px-4 py-3 align-top font-bold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"><span className="block">{facultyGroup.facultyName}</span><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">{facultyGroup.rows.length} section assignment{facultyGroup.rows.length === 1 ? "" : "s"}</span></td> : null}
+                        {rowIndex === 0 ? <td rowSpan={facultyGroup.rows.length} className="border-r border-slate-200 bg-slate-50 px-4 py-3 align-top font-bold text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"><span className="block">{facultyGroup.facultyName}</span><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Home Department: {facultyGroup.facultyHomeDepartment}</span>{facultyGroup.isCrossDepartment ? <span className="mt-1 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">CROSS-DEPARTMENT</span> : null}<span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">{facultyGroup.rows.length} section assignment{facultyGroup.rows.length === 1 ? "" : "s"}</span></td> : null}
                         <td className="px-4 py-3">
                           {item.subjectCode} - {item.subjectTitle}
                         </td>
@@ -995,7 +1004,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
               <option value="">Choose faculty</option>
               {filteredFaculty.map((faculty) => (
                 <option key={getFacultyKey(faculty)} value={getFacultyKey(faculty)}>
-                  {getFacultyDisplayName(faculty)}
+                  {getFacultyDisplayName(faculty)} — {getFacultyDepartment(faculty) || "Unassigned"}
                 </option>
               ))}
             </select>

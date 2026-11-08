@@ -276,6 +276,9 @@ public static class FacultyBulkAssignmentService
                     var existingId = existingReader.GetInt32(0);
                     var existingSchedule = existingReader.GetString(1);
                     await existingReader.CloseAsync();
+                    await AttachPendingCrossCurriculumStudentsAsync(
+                        connection, transaction, existingId, programCode, subjectCode,
+                        schoolYear, semester, cancellationToken);
                     await transaction.CommitAsync(cancellationToken);
                     return new SavedAssignment(existingId, request.FacultyUserId, facultyEmail, facultyName, facultyHomeDepartment,
                         programName, programCode, sectionLabel, yearLevel, subjectCode,
@@ -359,6 +362,10 @@ public static class FacultyBulkAssignmentService
                 schedule = existingReader.GetString(1);
             }
 
+            await AttachPendingCrossCurriculumStudentsAsync(
+                connection, transaction, Convert.ToInt32(insertedId), programCode, subjectCode,
+                schoolYear, semester, cancellationToken);
+
             await transaction.CommitAsync(cancellationToken);
             return new SavedAssignment(
                 Convert.ToInt32(insertedId), request.FacultyUserId, facultyEmail, facultyName, facultyHomeDepartment,
@@ -371,6 +378,35 @@ public static class FacultyBulkAssignmentService
             await transaction.RollbackAsync(cancellationToken);
             throw;
         }
+    }
+
+    public static async Task<int> AttachPendingCrossCurriculumStudentsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        int facultySectionId,
+        string targetProgramCode,
+        string subjectCode,
+        string schoolYear,
+        string semester,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(@"
+            UPDATE student_non_regular_subjects assignment
+            SET faculty_section_id = @facultySectionId
+            FROM academic_programs source_program
+            WHERE assignment.source_program_id = source_program.program_id
+              AND assignment.faculty_section_id IS NULL
+              AND assignment.status = 'ACTIVE'
+              AND assignment.school_year = @schoolYear
+              AND assignment.semester = @semester
+              AND LOWER(BTRIM(assignment.subject_code)) = LOWER(BTRIM(@subjectCode))
+              AND LOWER(source_program.program_code) = LOWER(@targetProgramCode);", connection, transaction);
+        command.Parameters.AddWithValue("facultySectionId", facultySectionId);
+        command.Parameters.AddWithValue("targetProgramCode", targetProgramCode);
+        command.Parameters.AddWithValue("subjectCode", subjectCode);
+        command.Parameters.AddWithValue("schoolYear", schoolYear);
+        command.Parameters.AddWithValue("semester", semester);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static string NormalizeSchoolYear(string? value)

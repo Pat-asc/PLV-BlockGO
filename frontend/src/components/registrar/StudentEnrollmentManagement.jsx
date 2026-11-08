@@ -482,10 +482,6 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
       return;
     }
     for (const item of selectedCrossSubjectList) {
-      if (!item.facultySectionId) {
-        setCrossOptionsError(`Select a valid current-period Faculty teaching section for ${item.subjectCode}.`);
-        return;
-      }
       if (hasPrerequisiteRequirement(item.prerequisite) && !String(item.overrideReason || '').trim()) {
         setCrossOptionsError(`${item.subjectCode} requires prerequisite '${item.prerequisite}'. Enter a Prerequisite Override Reason.`);
         return;
@@ -498,7 +494,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
     try {
       const payload = selectedCrossSubjectList.map((item) => ({
         subjectId: Number(item.subjectId),
-        facultySectionId: Number(item.facultySectionId),
+        facultySectionId: item.facultySectionId ? Number(item.facultySectionId) : null,
         overrideReason: String(item.overrideReason || '').trim() || undefined,
       }));
       const response = await assignCrossCurriculumSubjects(selectedStudentIds, payload);
@@ -912,14 +908,14 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
                       {selected ? (
                         <div className="mt-3 grid gap-3 sm:grid-cols-2">
                           <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">
-                            Current-Period Faculty Teaching Section *
+                            Current-Period Faculty Teaching Section <span className="font-normal text-slate-500">(Optional)</span>
                             <select
                               aria-label={`Teaching section for ${subject.subjectCode}`}
                               value={currentSelection.facultySectionId || ''}
                               onChange={(event) => updateCrossSubjectField(subject.subjectId, 'facultySectionId', event.target.value)}
                               className="mt-1 h-9 w-full rounded-lg border border-slate-300 bg-white px-2 text-xs font-normal dark:border-slate-600 dark:bg-slate-800"
                             >
-                              <option value="">Select teaching section</option>
+                              <option value="">Faculty assignment pending</option>
                               {subject.teachingSections.map((sec) => (
                                 <option key={sec.facultySectionId} value={sec.facultySectionId}>
                                   {sec.section} · {sec.facultyName}{sec.schedule ? ` (${sec.schedule})` : ''}
@@ -927,8 +923,8 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
                               ))}
                             </select>
                             {subject.teachingSections.length === 0 ? (
-                              <span className="mt-1 block text-[11px] text-red-600">
-                                No active Faculty teaching section exists for {subject.subjectCode} in the current period.
+                              <span className="mt-1 block text-[11px] font-normal text-slate-500 dark:text-slate-400">
+                                No Faculty assigned yet. You can assign this subject now and create the teaching load later.
                               </span>
                             ) : null}
                           </label>
@@ -967,7 +963,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
               <ul className="mt-2 list-disc pl-5 text-slate-700 dark:text-slate-200">
                 {selectedCrossSubjectList.map((item) => (
                   <li key={`review-${item.subjectId}`}>
-                    <strong>{item.subjectCode}</strong> ({item.subjectTitle}) — Source: {item.sourceProgramCode} ({item.sourceCurriculumVersion})
+                    <strong>{item.subjectCode}</strong> ({item.subjectTitle}) — Source: {item.sourceProgramCode} ({item.sourceCurriculumVersion}) · Faculty: {item.facultySectionId ? 'Assigned' : 'Pending'}
                   </li>
                 ))}
               </ul>
@@ -985,7 +981,7 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
                   (ctx.existing || []).map((item) => (
                     <div key={`${ctx.id}-${item.subjectId}`} className="flex items-center justify-between rounded border border-slate-200 bg-white px-3 py-1.5 dark:border-slate-700 dark:bg-slate-900">
                       <span>
-                        <strong>{ctx.studentNo}</strong> · {item.subjectCode} ({item.subjectTitle}) — {item.programCode} · {item.section}
+                        <strong>{ctx.studentNo}</strong> · {item.subjectCode} ({item.subjectTitle}) — {item.programCode} · Faculty: {item.facultyAssignmentStatus === 'ASSIGNED' ? (item.facultyName || item.section || 'Assigned') : 'Pending'}
                       </span>
                       <button
                         type="button"
