@@ -30,6 +30,22 @@ public static class FacultyBulkAssignmentService
         public string AssignmentCycleId => Id.ToString();
     }
 
+    public sealed record SavedPlacement(
+        int Id,
+        int FacultyUserId,
+        string FacultyEmail,
+        string FacultyName,
+        string FacultyHomeDepartment,
+        string Program,
+        string ProgramCode,
+        string Section,
+        int YearLevel,
+        int AcademicSectionId,
+        string SchoolYear,
+        string Semester,
+        bool AlreadyPlaced,
+        bool IsCrossDepartment);
+
     public static async Task<ResolvedAcademicSection> ResolveAcademicSectionAsync(
         NpgsqlConnection connection,
         string? program,
@@ -104,6 +120,171 @@ public static class FacultyBulkAssignmentService
         if (!await canManageProgram(resolved.ProgramCode, cancellationToken))
             throw new UnauthorizedAccessException("Unauthorized department assignment.");
         return resolved;
+    }
+
+    public static async Task<SavedPlacement> PlacePendingAsync(
+        NpgsqlConnection connection,
+        int facultyUserId,
+        int academicSectionId,
+        string? requestedSchoolYear,
+        string? requestedSemester,
+        Func<string, CancellationToken, Task<bool>> canManageProgram,
+        CancellationToken cancellationToken = default,
+        bool allowCrossDepartmentFaculty = false)
+    {
+        if (facultyUserId <= 0) throw new ArgumentException("Faculty not found: a valid facultyUserId is required.");
+        if (academicSectionId <= 0) throw new ArgumentException("Academic section not found: a valid academicSectionId is required.");
+        var normalizedSchoolYear = NormalizeSchoolYear(requestedSchoolYear);
+        var normalizedSemester = NormalizeSemester(requestedSemester);
+
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            string schoolYear;
+            string semester;
+            await using (var period = new NpgsqlCommand(@"
+                SELECT school_year, semester
+                FROM academic_periods
+                WHERE status = 'ACTIVE'
+                ORDER BY opened_at DESC
+                LIMIT 1
+                FOR SHARE;", connection, transaction))
+            await using (var reader = await period.ExecuteReaderAsync(cancellationToken))
+            {
+                if (!await reader.ReadAsync(cancellationToken))
+                    throw new ArgumentException("No authoritative active academic period is configured. Ask the Registrar to open the academic period before assigning faculty placements.");
+                schoolYear = NormalizeSchoolYear(reader.GetString(0));
+                semester = NormalizeSemester(reader.GetString(1));
+            }
+
+            if (!string.Equals(normalizedSchoolYear, schoolYear, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(normalizedSemester, semester, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException($"Faculty placement period {normalizedSchoolYear} {normalizedSemester} does not match the active academic period {schoolYear} {semester}.");
+
+            int yearLevel;
+            int sectionNumber;
+            string programName;
+            string programCode;
+            await using (var section = new NpgsqlCommand(@"
+                SELECT section.year_level, section.section_num, p.program_name, p.program_code
+                FROM academicsections section
+                JOIN academic_programs p
+                  ON LOWER(section.department) IN (LOWER(p.program_code), LOWER(p.program_name))
+                WHERE section.id = @academicSectionId AND section.is_active = TRUE AND p.is_active = TRUE
+                FOR UPDATE OF section;", connection, transaction))
+            {
+                section.Parameters.AddWithValue("academicSectionId", academicSectionId);
+                await using var reader = await section.ExecuteReaderAsync(cancellationToken);
+                if (!await reader.ReadAsync(cancellationToken)) throw new ArgumentException("Academic section not found.");
+                yearLevel = reader.GetInt32(0);
+                sectionNumber = reader.GetInt32(1);
+                programName = reader.GetString(2);
+                programCode = reader.GetString(3);
+            }
+
+            if (!await canManageProgram(programCode, cancellationToken))
+                throw new UnauthorizedAccessException("Unauthorized department assignment.");
+
+            await using (var enrollment = new NpgsqlCommand(@"
+                SELECT school_year, semester
+                FROM student_enrollments
+                WHERE academic_section_id = @academicSectionId
+                  AND UPPER(BTRIM(status)) = 'ENROLLED'
+                  AND (school_year <> @schoolYear OR semester <> @semester)
+                LIMIT 1
+                FOR SHARE;", connection, transaction))
+            {
+                enrollment.Parameters.AddWithValue("academicSectionId", academicSectionId);
+                enrollment.Parameters.AddWithValue("schoolYear", schoolYear);
+                enrollment.Parameters.AddWithValue("semester", semester);
+                await using var reader = await enrollment.ExecuteReaderAsync(cancellationToken);
+                if (await reader.ReadAsync(cancellationToken))
+                    throw new ArgumentException(
+                        $"Section enrollment belongs to {reader.GetString(0)} {reader.GetString(1)}, " +
+                        $"but the active academic period is {schoolYear} {semester}.");
+            }
+
+            string facultyEmail;
+            string facultyName;
+            string facultyHomeDepartment;
+            await using (var faculty = new NpgsqlCommand(@"
+                SELECT u.email, fp.full_name, COALESCE(fp.department, '')
+                FROM users u
+                JOIN facultyprofiles fp ON fp.user_id = u.id
+                WHERE u.id = @facultyUserId
+                  AND LOWER(u.role) = 'faculty'
+                  AND LOWER(u.status) = 'approved'
+                  AND u.is_active = TRUE
+                  AND (@allowCrossDepartmentFaculty = TRUE OR
+                       LOWER(fp.department) IN (LOWER(@programCode), LOWER(@programName)))
+                FOR UPDATE OF u;", connection, transaction))
+            {
+                faculty.Parameters.AddWithValue("facultyUserId", facultyUserId);
+                faculty.Parameters.AddWithValue("programCode", programCode);
+                faculty.Parameters.AddWithValue("programName", programName);
+                faculty.Parameters.AddWithValue("allowCrossDepartmentFaculty", allowCrossDepartmentFaculty);
+                await using var reader = await faculty.ExecuteReaderAsync(cancellationToken);
+                if (!await reader.ReadAsync(cancellationToken))
+                    throw new ArgumentException("Faculty not found in the selected academic program, the account is inactive, or this actor cannot make cross-department placements.");
+                facultyEmail = reader.GetString(0);
+                facultyName = reader.GetString(1);
+                facultyHomeDepartment = reader.GetString(2);
+            }
+
+            var sectionLabel = $"{programCode} {yearLevel}-{sectionNumber}";
+            int? placementId;
+            await using (var existing = new NpgsqlCommand(@"
+                SELECT id
+                FROM facultysections
+                WHERE user_id = @facultyUserId
+                  AND academic_section_id = @academicSectionId
+                  AND school_year = @schoolYear
+                  AND semester = @semester
+                  AND NULLIF(BTRIM(subject), '') IS NULL
+                  AND is_active = TRUE
+                ORDER BY id
+                LIMIT 1
+                FOR UPDATE;", connection, transaction))
+            {
+                existing.Parameters.AddWithValue("facultyUserId", facultyUserId);
+                existing.Parameters.AddWithValue("academicSectionId", academicSectionId);
+                existing.Parameters.AddWithValue("schoolYear", schoolYear);
+                existing.Parameters.AddWithValue("semester", semester);
+                var existingValue = await existing.ExecuteScalarAsync(cancellationToken);
+                placementId = existingValue is null ? null : Convert.ToInt32(existingValue);
+            }
+
+            var alreadyPlaced = placementId.HasValue;
+            if (!placementId.HasValue)
+            {
+                await using var insert = new NpgsqlCommand(@"
+                    INSERT INTO facultysections
+                        (user_id, department, section, year_level, subject,
+                         academic_section_id, school_year, semester, schedule, is_active)
+                    VALUES (@facultyUserId, @programName, @section, @yearLevel, NULL,
+                            @academicSectionId, @schoolYear, @semester, NULL, TRUE)
+                    RETURNING id;", connection, transaction);
+                insert.Parameters.AddWithValue("facultyUserId", facultyUserId);
+                insert.Parameters.AddWithValue("programName", programName);
+                insert.Parameters.AddWithValue("section", sectionLabel);
+                insert.Parameters.AddWithValue("yearLevel", yearLevel.ToString());
+                insert.Parameters.AddWithValue("academicSectionId", academicSectionId);
+                insert.Parameters.AddWithValue("schoolYear", schoolYear);
+                insert.Parameters.AddWithValue("semester", semester);
+                placementId = Convert.ToInt32(await insert.ExecuteScalarAsync(cancellationToken));
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+            return new SavedPlacement(
+                placementId.Value, facultyUserId, facultyEmail, facultyName, facultyHomeDepartment,
+                programName, programCode, sectionLabel, yearLevel, academicSectionId, schoolYear, semester,
+                alreadyPlaced, !FacultyDepartmentMatches(facultyHomeDepartment, programCode, programName));
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
     }
 
     public static async Task<SavedAssignment> AssignAsync(
@@ -287,6 +468,34 @@ public static class FacultyBulkAssignmentService
                 }
             }
 
+            int? pendingPlacementId;
+            await using (var pending = new NpgsqlCommand(@"
+                SELECT fs.id
+                FROM facultysections fs
+                WHERE fs.user_id = @facultyUserId
+                  AND fs.academic_section_id = @academicSectionId
+                  AND fs.school_year = @schoolYear
+                  AND fs.semester = @semester
+                  AND NULLIF(BTRIM(fs.subject), '') IS NULL
+                  AND fs.is_active = TRUE
+                  AND NOT EXISTS (
+                      SELECT 1 FROM pending_grade_records grade
+                      WHERE grade.assignment_cycle_id = fs.id::text)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM grade_assignment_cycles cycle
+                      WHERE cycle.assignment_cycle_id = fs.id::text)
+                ORDER BY fs.id
+                LIMIT 1
+                FOR UPDATE;", connection, transaction))
+            {
+                pending.Parameters.AddWithValue("facultyUserId", request.FacultyUserId);
+                pending.Parameters.AddWithValue("academicSectionId", request.AcademicSectionId);
+                pending.Parameters.AddWithValue("schoolYear", schoolYear);
+                pending.Parameters.AddWithValue("semester", semester);
+                var pendingValue = await pending.ExecuteScalarAsync(cancellationToken);
+                pendingPlacementId = pendingValue is null ? null : Convert.ToInt32(pendingValue);
+            }
+
             var requestedBlocks = FacultyScheduleConflictPolicy.Parse(schedule, false);
             if (requestedBlocks.Count > 0)
             {
@@ -297,6 +506,7 @@ public static class FacultyBulkAssignmentService
                       AND school_year = @schoolYear
                       AND semester = @semester
                       AND is_active = TRUE
+                      AND NULLIF(BTRIM(subject), '') IS NOT NULL
                       AND NULLIF(BTRIM(schedule), '') IS NOT NULL
                     ORDER BY id;", connection, transaction);
                 conflicts.Parameters.AddWithValue("facultyUserId", request.FacultyUserId);
@@ -315,16 +525,59 @@ public static class FacultyBulkAssignmentService
                 }
             }
 
-            object? insertedId;
-            await using (var insert = new NpgsqlCommand(@"
-                INSERT INTO facultysections
-                    (user_id, department, section, year_level, subject,
-                     academic_section_id, school_year, semester, schedule, is_active)
-                VALUES (@facultyUserId, @programName, @section, @yearLevel, @subjectCode,
-                        @academicSectionId, @schoolYear, @semester, @schedule, TRUE)
-                ON CONFLICT DO NOTHING
-                RETURNING id;", connection, transaction))
+            object? insertedId = pendingPlacementId;
+            if (pendingPlacementId.HasValue)
             {
+                await using var convert = new NpgsqlCommand(@"
+                    UPDATE facultysections
+                    SET department = @programName,
+                        section = @section,
+                        year_level = @yearLevel,
+                        subject = @subjectCode,
+                        schedule = @schedule
+                    WHERE id = @id;", connection, transaction);
+                convert.Parameters.AddWithValue("id", pendingPlacementId.Value);
+                convert.Parameters.AddWithValue("programName", programName);
+                convert.Parameters.AddWithValue("section", sectionLabel);
+                convert.Parameters.AddWithValue("yearLevel", yearLevel.ToString());
+                convert.Parameters.AddWithValue("subjectCode", subjectCode);
+                convert.Parameters.AddWithValue("schedule", schedule);
+                await convert.ExecuteNonQueryAsync(cancellationToken);
+
+                await using var retireDuplicates = new NpgsqlCommand(@"
+                    UPDATE facultysections duplicate
+                    SET is_active = FALSE,
+                        deactivated_at = CURRENT_TIMESTAMP
+                    WHERE duplicate.id <> @id
+                      AND duplicate.user_id = @facultyUserId
+                      AND duplicate.academic_section_id = @academicSectionId
+                      AND duplicate.school_year = @schoolYear
+                      AND duplicate.semester = @semester
+                      AND NULLIF(BTRIM(duplicate.subject), '') IS NULL
+                      AND duplicate.is_active = TRUE
+                      AND NOT EXISTS (
+                          SELECT 1 FROM pending_grade_records grade
+                          WHERE grade.assignment_cycle_id = duplicate.id::text)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM grade_assignment_cycles cycle
+                          WHERE cycle.assignment_cycle_id = duplicate.id::text);", connection, transaction);
+                retireDuplicates.Parameters.AddWithValue("id", pendingPlacementId.Value);
+                retireDuplicates.Parameters.AddWithValue("facultyUserId", request.FacultyUserId);
+                retireDuplicates.Parameters.AddWithValue("academicSectionId", request.AcademicSectionId);
+                retireDuplicates.Parameters.AddWithValue("schoolYear", schoolYear);
+                retireDuplicates.Parameters.AddWithValue("semester", semester);
+                await retireDuplicates.ExecuteNonQueryAsync(cancellationToken);
+            }
+            else
+            {
+                await using var insert = new NpgsqlCommand(@"
+                    INSERT INTO facultysections
+                        (user_id, department, section, year_level, subject,
+                         academic_section_id, school_year, semester, schedule, is_active)
+                    VALUES (@facultyUserId, @programName, @section, @yearLevel, @subjectCode,
+                            @academicSectionId, @schoolYear, @semester, @schedule, TRUE)
+                    ON CONFLICT DO NOTHING
+                    RETURNING id;", connection, transaction);
                 insert.Parameters.AddWithValue("facultyUserId", request.FacultyUserId);
                 insert.Parameters.AddWithValue("programName", programName);
                 insert.Parameters.AddWithValue("section", sectionLabel);

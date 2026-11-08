@@ -23,6 +23,16 @@ import RegistrarTranscriptOfRecords from './RegistrarTranscriptOfRecords';
 import RegistrarGradeRelease from './RegistrarGradeRelease';
 import RegistrarGradeFinalization from './RegistrarGradeFinalization';
 
+export const buildFacultyAssignmentRequest = (assignment) => {
+    if (!assignment?.department || !assignment?.section || !assignment?.yearLevel) return null;
+    return {
+        Department: assignment.department,
+        Section: assignment.section,
+        YearLevel: assignment.yearLevel,
+        Subject: assignment.subject?.trim() || null,
+    };
+};
+
 const RegistrarGradesView = ({
     loggedInEmail = '',
     loggedInName = '',
@@ -427,10 +437,11 @@ const RegistrarGradesView = ({
 
     const submitFacultyAssignment = async (id) => {
         const assignment = facultyAssignments[id];
-        if (!assignment || !assignment.department || !assignment.section || !assignment.yearLevel || !assignment.subject) return showSystemNotification("Please provide department, section, year level, and subject.");
+        const request = buildFacultyAssignmentRequest(assignment);
+        if (!request) return showSystemNotification("Please provide department, section, and year level.");
         try {
-            await assignFaculty(id, { Department: assignment.department, Section: assignment.section, YearLevel: assignment.yearLevel, Subject: assignment.subject });
-            showSystemNotification("Faculty assigned successfully!");
+            const response = await assignFaculty(id, request);
+            showSystemNotification(response?.message || (assignment.subject?.trim() ? "Faculty assigned successfully!" : "Faculty placement saved pending subject assignment."));
             loadApprovedFaculties();
         } catch (error) { showSystemNotification(`Failed to assign: ${error.message}`); }
     };
@@ -1282,8 +1293,8 @@ const RegistrarGradesView = ({
                                                             </select>
                                                         </label>
                                                         <label className="block">
-                                                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Subject</span>
-                                                            <input type="text" placeholder="Subject Code" onChange={(e) => setFacultyAssignments(prev => ({...prev, [faculty.id]: {...prev[faculty.id], subject: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]" />
+                                                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Subject (Optional)</span>
+                                                            <input type="text" placeholder="Subject Code — Optional" onChange={(e) => setFacultyAssignments(prev => ({...prev, [faculty.id]: {...prev[faculty.id], subject: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]" />
                                                         </label>
                                                         <div className="flex items-end">
                                                             <button onClick={() => submitFacultyAssignment(faculty.id)} className="w-full rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white hover:bg-[#00264d] xl:w-auto">Assign</button>

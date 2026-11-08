@@ -891,10 +891,17 @@ namespace Client_app.Controllers
         public async Task<IActionResult> GetFacultyCurricula(CancellationToken cancellationToken)
         {
             await using var connection = await OpenConnectionAsync(cancellationToken);
-            var authorizedProgramIds = await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(
+            var programScope = await FacultyCurriculumAuthorizationService.ResolveFacultyProgramScopeAsync(
                 connection, ActorEmail(), cancellationToken);
-            if (authorizedProgramIds.Count == 0)
-                return Ok(new { status = "Success", data = Array.Empty<CurriculumDto>() });
+            if (programScope.AuthorizedProgramIds.Count == 0)
+                return Ok(new
+                {
+                    status = "Success",
+                    homeProgram = programScope.HomeProgram,
+                    homeCurricula = Array.Empty<CurriculumDto>(),
+                    crossDepartmentCurricula = Array.Empty<CurriculumDto>(),
+                    data = Array.Empty<CurriculumDto>()
+                });
 
             var ids = new List<long>();
             await using (var command = new NpgsqlCommand(@"
@@ -906,13 +913,26 @@ namespace Client_app.Controllers
                 WHERE pca.program_id = ANY(@programIds)
                 ORDER BY c.curriculum_id DESC;", connection))
             {
-                command.Parameters.AddWithValue("programIds", authorizedProgramIds.ToArray());
+                command.Parameters.AddWithValue("programIds", programScope.AuthorizedProgramIds.ToArray());
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken);
                 while (await reader.ReadAsync(cancellationToken)) ids.Add(reader.GetInt64(0));
             }
             var curricula = new List<CurriculumDto>();
             foreach (var id in ids) curricula.Add(await LoadCurriculumAsync(connection, id, cancellationToken));
-            return Ok(new { status = "Success", data = curricula });
+            var homeCurricula = programScope.HomeProgram is null
+                ? new List<CurriculumDto>()
+                : curricula.Where(curriculum => curriculum.ProgramId == programScope.HomeProgram.Id).ToList();
+            var crossDepartmentCurricula = curricula
+                .Where(curriculum => programScope.CrossDepartmentProgramIds.Contains(curriculum.ProgramId))
+                .ToList();
+            return Ok(new
+            {
+                status = "Success",
+                homeProgram = programScope.HomeProgram,
+                homeCurricula,
+                crossDepartmentCurricula,
+                data = curricula
+            });
         }
 
         private async Task<IActionResult> TransitionAsync(

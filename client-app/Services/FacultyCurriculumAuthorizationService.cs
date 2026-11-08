@@ -7,7 +7,18 @@ public static class FacultyCurriculumAuthorizationService
 {
     public sealed record AcademicProgram(int Id, string Code, string Name);
 
+    public sealed record FacultyProgramScope(
+        AcademicProgram? HomeProgram,
+        IReadOnlySet<int> AuthorizedProgramIds,
+        IReadOnlySet<int> CrossDepartmentProgramIds);
+
     public static async Task<IReadOnlySet<int>> ResolveAuthorizedProgramIdsAsync(
+        NpgsqlConnection connection,
+        string facultyEmail,
+        CancellationToken cancellationToken = default) =>
+        (await ResolveFacultyProgramScopeAsync(connection, facultyEmail, cancellationToken)).AuthorizedProgramIds;
+
+    public static async Task<FacultyProgramScope> ResolveFacultyProgramScopeAsync(
         NpgsqlConnection connection,
         string facultyEmail,
         CancellationToken cancellationToken = default)
@@ -55,6 +66,7 @@ public static class FacultyCurriculumAuthorizationService
             WHERE LOWER(actor.email) = LOWER(@actor)
               AND LOWER(actor.role) = 'faculty'
               AND LOWER(actor.status) = 'approved'
+              AND NULLIF(BTRIM(fs.subject), '') IS NOT NULL
               AND (fs.academic_section_id IS NULL OR section.id IS NOT NULL)
               AND actor.is_active = TRUE;", connection);
         command.Parameters.AddWithValue("actor", facultyEmail);
@@ -82,10 +94,17 @@ public static class FacultyCurriculumAuthorizationService
             if (resolvedIds.Length == 1) authorizedProgramIds.Add(resolvedIds[0]);
         }
 
-        if (authorizedProgramIds.Count == 0 && profileProgramId.HasValue)
+        if (profileProgramId.HasValue)
             authorizedProgramIds.Add(profileProgramId.Value);
 
-        return authorizedProgramIds;
+        var crossDepartmentProgramIds = authorizedProgramIds.ToHashSet();
+        if (profileProgramId.HasValue)
+            crossDepartmentProgramIds.Remove(profileProgramId.Value);
+
+        return new FacultyProgramScope(
+            profileProgramId.HasValue ? programsById[profileProgramId.Value] : null,
+            authorizedProgramIds,
+            crossDepartmentProgramIds);
     }
 
     public static async Task<IReadOnlySet<int>> ResolveDepartmentAuthorizedProgramIdsAsync(
