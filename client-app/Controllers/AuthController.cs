@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.SignalR;
 using Client_app.Services;
 using Npgsql;
+using NpgsqlTypes;
 using Client_app.Models;
 using System;
 using System.Collections.Generic;
@@ -1884,29 +1885,22 @@ namespace Client_app.Controllers
                 await using var resolve = new NpgsqlCommand(@"
                     SELECT p.program_id, p.program_code, p.program_name,
                            c.curriculum_id, c.curriculum_name, c.curriculum_version,
-                           cs.subject_code, cs.subject_title, COALESCE(cs.prerequisite, ''),
-                           fs.section, COALESCE(fs.schedule, '')
+                           cs.subject_code, cs.subject_title, COALESCE(cs.prerequisite, '')
                     FROM curriculum_subjects cs
                     JOIN curriculums c ON c.curriculum_id = cs.curriculum_id AND c.status = 'PUBLISHED'
                     JOIN academic_programs p ON p.program_id = c.program_id AND p.is_active = TRUE
-                    JOIN facultysections fs ON fs.id = @facultySectionId AND fs.is_active = TRUE
                     WHERE cs.subject_id = @subjectId
                       AND cs.semester = @semester
-                      AND LOWER(fs.subject) = LOWER(cs.subject_code)
-                      AND fs.school_year = @schoolYear AND fs.semester = @semester
-                      AND LOWER(fs.department) IN (LOWER(p.program_code), LOWER(p.program_name))
                     LIMIT 1;", connection, transaction);
-                resolve.Parameters.AddWithValue("facultySectionId", selection.FacultySectionId);
                 resolve.Parameters.AddWithValue("subjectId", selection.SubjectId);
-                resolve.Parameters.AddWithValue("schoolYear", context.Value.SchoolYear);
                 resolve.Parameters.AddWithValue("semester", context.Value.Semester);
                 await using var reader = await resolve.ExecuteReaderAsync(cancellationToken);
                 if (!await reader.ReadAsync(cancellationToken))
                 {
                     await transaction.RollbackAsync(cancellationToken);
                     return new CrossCurriculumAssignmentOutcome(
-                        false, StatusCodes.Status400BadRequest, "INVALID_FACULTY_SECTION",
-                        "A selected subject does not have a valid current-period teaching assignment.",
+                        false, StatusCodes.Status400BadRequest, "INVALID_CROSS_CURRICULUM_SUBJECT",
+                        "A selected subject was not found in an active program's published curriculum for the current semester.",
                         context.Value.StudentNo, context.Value.StudentName, context.Value.ProgramCode, context.Value.ProgramName,
                         0, context.Value.IsIrregular, false, new List<object>());
                 }
@@ -1920,9 +1914,55 @@ namespace Client_app.Controllers
                 var subjectCode = reader.GetString(6);
                 var subjectTitle = reader.GetString(7);
                 var prerequisite = reader.GetString(8);
-                var assignedSection = reader.GetString(9);
-                var schedule = reader.GetString(10);
                 await reader.CloseAsync();
+
+                string? assignedSection = null;
+                string? schedule = null;
+                string? facultyName = null;
+                if (selection.FacultySectionId.HasValue)
+                {
+                    await using var facultySection = new NpgsqlCommand(@"
+                        SELECT fs.section, COALESCE(fs.schedule, ''), COALESCE(fp.full_name, u.email, '')
+                        FROM facultysections fs
+                        JOIN academicsections target_section
+                          ON target_section.id = fs.academic_section_id
+                         AND target_section.is_active = TRUE
+                        JOIN academic_programs target_program
+                          ON LOWER(target_section.department) IN
+                             (LOWER(target_program.program_code), LOWER(target_program.program_name))
+                         AND target_program.is_active = TRUE
+                        JOIN users u
+                          ON u.id = fs.user_id
+                         AND LOWER(u.role) = 'faculty'
+                         AND LOWER(u.status) = 'approved'
+                         AND u.is_active = TRUE
+                        LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
+                        WHERE fs.id = @facultySectionId
+                          AND fs.is_active = TRUE
+                          AND LOWER(fs.subject) = LOWER(@subjectCode)
+                          AND fs.school_year = @schoolYear
+                          AND fs.semester = @semester
+                          AND target_program.program_id = @sourceProgramId
+                        LIMIT 1;", connection, transaction);
+                    facultySection.Parameters.AddWithValue("facultySectionId", selection.FacultySectionId.Value);
+                    facultySection.Parameters.AddWithValue("subjectCode", subjectCode);
+                    facultySection.Parameters.AddWithValue("schoolYear", context.Value.SchoolYear);
+                    facultySection.Parameters.AddWithValue("semester", context.Value.Semester);
+                    facultySection.Parameters.AddWithValue("sourceProgramId", sourceProgramId);
+                    await using var facultyReader = await facultySection.ExecuteReaderAsync(cancellationToken);
+                    if (!await facultyReader.ReadAsync(cancellationToken))
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return new CrossCurriculumAssignmentOutcome(
+                            false, StatusCodes.Status400BadRequest, "INVALID_FACULTY_SECTION",
+                            $"The selected Faculty teaching section is not valid for {subjectCode} in the current period and source program.",
+                            context.Value.StudentNo, context.Value.StudentName, context.Value.ProgramCode, context.Value.ProgramName,
+                            0, context.Value.IsIrregular, false, new List<object>());
+                    }
+                    assignedSection = facultyReader.GetString(0);
+                    schedule = facultyReader.GetString(1);
+                    facultyName = facultyReader.GetString(2);
+                }
 
                 if (!string.IsNullOrWhiteSpace(prerequisite) &&
                     !new[] { "none", "n/a", "na", "-" }.Contains(prerequisite.Trim().ToLowerInvariant()) &&
@@ -1988,7 +2028,8 @@ namespace Client_app.Controllers
                 insert.Parameters.AddWithValue("curriculumId", sourceCurriculumId);
                 insert.Parameters.AddWithValue("subjectId", selection.SubjectId);
                 insert.Parameters.AddWithValue("subjectCode", subjectCode);
-                insert.Parameters.AddWithValue("facultySectionId", selection.FacultySectionId);
+                insert.Parameters.Add("facultySectionId", NpgsqlDbType.Integer).Value =
+                    selection.FacultySectionId.HasValue ? selection.FacultySectionId.Value : DBNull.Value;
                 insert.Parameters.AddWithValue("actor", actorEmail);
                 insert.Parameters.AddWithValue("overrideReason", (object?)selection.OverrideReason?.Trim() ?? DBNull.Value);
                 if (await insert.ExecuteNonQueryAsync(cancellationToken) == 0)
@@ -2029,6 +2070,8 @@ namespace Client_app.Controllers
                         subjectCode,
                         subjectTitle,
                         facultySectionId = selection.FacultySectionId,
+                        facultyAssignmentStatus = selection.FacultySectionId.HasValue ? "ASSIGNED" : "PENDING",
+                        facultyName,
                         section = assignedSection,
                         schoolYear = context.Value.SchoolYear,
                         semester = context.Value.Semester,
@@ -2054,6 +2097,8 @@ namespace Client_app.Controllers
                     sourceCurriculumName,
                     sourceCurriculumVersion,
                     facultySectionId = selection.FacultySectionId,
+                    facultyAssignmentStatus = selection.FacultySectionId.HasValue ? "ASSIGNED" : "PENDING",
+                    facultyName,
                     section = assignedSection,
                     schedule,
                     overrideReason = selection.OverrideReason?.Trim(),
@@ -2116,12 +2161,15 @@ namespace Client_app.Controllers
                        program.program_code, program.program_name,
                        curriculum.curriculum_name, curriculum.curriculum_version,
                        assignment.faculty_section_id, section.section, COALESCE(section.schedule, ''),
-                       assignment.override_reason, assignment.added_at
+                       assignment.override_reason, assignment.added_at,
+                       COALESCE(faculty_profile.full_name, faculty_user.email, '')
                 FROM student_non_regular_subjects assignment
                 JOIN curriculum_subjects subject ON subject.subject_id = assignment.subject_id
                 JOIN academic_programs program ON program.program_id = assignment.source_program_id
                 JOIN curriculums curriculum ON curriculum.curriculum_id = assignment.source_curriculum_id
                 LEFT JOIN facultysections section ON section.id = assignment.faculty_section_id
+                LEFT JOIN users faculty_user ON faculty_user.id = section.user_id
+                LEFT JOIN facultyprofiles faculty_profile ON faculty_profile.user_id = faculty_user.id
                 WHERE assignment.student_user_id = @studentId
                   AND assignment.school_year = @schoolYear
                   AND assignment.semester = @semester
@@ -2143,6 +2191,8 @@ namespace Client_app.Controllers
                     curriculumName = reader.GetString(5),
                     curriculumVersion = reader.GetString(6),
                     facultySectionId = reader.IsDBNull(7) ? (int?)null : reader.GetInt32(7),
+                    facultyAssignmentStatus = reader.IsDBNull(7) ? "PENDING" : "ASSIGNED",
+                    facultyName = reader.GetString(12),
                     section = reader.IsDBNull(8) ? "Unassigned" : reader.GetString(8),
                     schedule = reader.GetString(9),
                     overrideReason = reader.IsDBNull(10) ? null : reader.GetString(10),
@@ -3012,7 +3062,7 @@ namespace Client_app.Controllers
 
         [HttpGet("faculty/approved")]
         [Authorize(Roles = "department_admin,registrar")]
-        public async Task<IActionResult> GetApprovedFaculties()
+        public async Task<IActionResult> GetApprovedFaculties([FromQuery] bool assignmentPool = false)
         {
             var actorEmail = User.Identity?.Name?.Trim().ToLowerInvariant() ?? "unknown";
             try
@@ -3027,7 +3077,7 @@ namespace Client_app.Controllers
                     FROM Users u JOIN FacultyProfiles fp ON u.id = fp.user_id
                     WHERE LOWER(TRIM(u.role)) = 'faculty' AND LOWER(TRIM(u.status)) = 'approved' AND u.is_active = TRUE
                       AND (
-                        @isRegistrar = TRUE OR EXISTS (
+                        @isRegistrar = TRUE OR @assignmentPool = TRUE OR EXISTS (
                           SELECT 1
                           FROM users actor
                           JOIN adminprofiles actor_profile ON actor_profile.user_id = actor.id
@@ -3041,6 +3091,7 @@ namespace Client_app.Controllers
                     ", conn))
                 {
                     cmd.Parameters.AddWithValue("isRegistrar", User.IsInRole("registrar"));
+                    cmd.Parameters.AddWithValue("assignmentPool", assignmentPool);
                     cmd.Parameters.AddWithValue("actorEmail", actorEmail);
                     using var reader = await cmd.ExecuteReaderAsync();
                     while (await reader.ReadAsync())
@@ -3374,7 +3425,8 @@ namespace Client_app.Controllers
             }
             var assignments = new List<object>();
             await using (var command = new NpgsqlCommand(@"
-                SELECT fs.id, fs.user_id, u.email, fp.full_name, p.program_name, fs.section,
+                SELECT fs.id, fs.user_id, u.email, fp.full_name, COALESCE(fp.department, ''),
+                       p.program_name, p.program_code, fs.section,
                        fs.year_level, fs.subject, fs.academic_section_id, fs.school_year,
                        fs.semester, COALESCE(fs.schedule, ''),
                        resolved_subject.subject_title, resolved_subject.units
@@ -3434,14 +3486,19 @@ namespace Client_app.Controllers
                         id = reader.GetInt32(0), facultySectionId = reader.GetInt32(0),
                         facultyAssignmentId = reader.GetInt32(0), assignmentCycleId = reader.GetInt32(0).ToString(),
                         facultyUserId = reader.GetInt32(1), facultyEmail = reader.GetString(2), facultyName = reader.GetString(3),
-                        program = reader.GetString(4), sectionName = reader.GetString(5), yearLevel = reader.GetString(6),
-                        subjectCode = reader.IsDBNull(7) ? "" : reader.GetString(7),
-                        academicSectionId = reader.IsDBNull(8) ? (int?)null : reader.GetInt32(8),
-                        schoolYear = reader.IsDBNull(9) ? "" : reader.GetString(9),
-                        semester = reader.IsDBNull(10) ? "" : reader.GetString(10),
-                        schedule = reader.GetString(11),
-                        subjectTitle = reader.IsDBNull(12) ? null : reader.GetString(12),
-                        units = reader.IsDBNull(13) ? (decimal?)null : reader.GetDecimal(13)
+                        facultyHomeDepartment = reader.GetString(4),
+                        program = reader.GetString(5), targetProgram = reader.GetString(5),
+                        programCode = reader.GetString(6), targetDepartment = reader.GetString(5),
+                        isCrossDepartment = !string.Equals(reader.GetString(4), reader.GetString(5), StringComparison.OrdinalIgnoreCase) &&
+                                            !string.Equals(reader.GetString(4), reader.GetString(6), StringComparison.OrdinalIgnoreCase),
+                        sectionName = reader.GetString(7), yearLevel = reader.GetString(8),
+                        subjectCode = reader.IsDBNull(9) ? "" : reader.GetString(9),
+                        academicSectionId = reader.IsDBNull(10) ? (int?)null : reader.GetInt32(10),
+                        schoolYear = reader.IsDBNull(11) ? "" : reader.GetString(11),
+                        semester = reader.IsDBNull(12) ? "" : reader.GetString(12),
+                        schedule = reader.GetString(13),
+                        subjectTitle = reader.IsDBNull(14) ? null : reader.GetString(14),
+                        units = reader.IsDBNull(15) ? (decimal?)null : reader.GetDecimal(15)
                     });
             }
             return Ok(new
@@ -3502,7 +3559,7 @@ namespace Client_app.Controllers
                     },
                     (program, token) => CanManageAcademicProgramAsync(conn, program, token),
                     HttpContext.RequestAborted,
-                    User.IsInRole("registrar"));
+                    User.IsInRole("registrar") || User.IsInRole("department_admin"));
 
                 if (!saved.AlreadyAssigned)
                 {
@@ -3527,6 +3584,9 @@ namespace Client_app.Controllers
                         facultyHomeDepartment = saved.FacultyHomeDepartment,
                         department = saved.Program,
                         subjectDepartment = saved.Program,
+                        targetProgram = saved.Program,
+                        programCode = saved.ProgramCode,
+                        targetDepartment = saved.Program,
                         isCrossDepartment = saved.IsCrossDepartment,
                         section = saved.Section,
                         yearLevel = saved.YearLevel,
@@ -3628,7 +3688,7 @@ namespace Client_app.Controllers
                         authoritativeItem,
                         (program, token) => CanManageAcademicProgramAsync(connection, program, token),
                         cancellationToken,
-                        User.IsInRole("registrar"));
+                        User.IsInRole("registrar") || User.IsInRole("department_admin"));
                     if (saved.AlreadyAssigned) alreadyAssigned++;
                     else created++;
 
@@ -3665,8 +3725,12 @@ namespace Client_app.Controllers
                             facultyUserId = saved.FacultyUserId,
                             facultyEmail = saved.FacultyEmail,
                             facultyName = saved.FacultyName,
+                            facultyHomeDepartment = saved.FacultyHomeDepartment,
                             program = saved.Program,
+                            targetProgram = saved.Program,
                             programCode = saved.ProgramCode,
+                            targetDepartment = saved.Program,
+                            isCrossDepartment = saved.IsCrossDepartment,
                             section = saved.Section,
                             yearLevel = saved.YearLevel,
                             subjectCode = saved.SubjectCode,
@@ -3807,8 +3871,9 @@ namespace Client_app.Controllers
                         }
                         int facultyUserId;
                         string facultyEmail;
+                        string facultyHomeDepartment;
                         await using (var faculty = new NpgsqlCommand(@"
-                            SELECT u.id, u.email
+                            SELECT u.id, u.email, COALESCE(fp.department, '')
                             FROM users u
                             LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
                             WHERE LOWER(u.role) = 'faculty'
@@ -3827,6 +3892,7 @@ namespace Client_app.Controllers
                                 throw new ArgumentException("Active Faculty account was not found.");
                             facultyUserId = facultyReader.GetInt32(0);
                             facultyEmail = facultyReader.GetString(1);
+                            facultyHomeDepartment = facultyReader.GetString(2);
                         }
 
                         string canonicalProgram;
@@ -3919,6 +3985,30 @@ namespace Client_app.Controllers
                             inserted = await insert.ExecuteNonQueryAsync(cancellationToken);
                         }
 
+                        int facultySectionId;
+                        await using (var assignmentId = new NpgsqlCommand(@"
+                            SELECT id
+                            FROM facultysections
+                            WHERE user_id = @facultyId
+                              AND academic_section_id = @academicSectionId
+                              AND school_year = @schoolYear
+                              AND semester = @semester
+                              AND LOWER(subject) = LOWER(@subject)
+                              AND is_active = TRUE
+                            LIMIT 1;", connection, transaction))
+                        {
+                            assignmentId.Parameters.AddWithValue("facultyId", facultyUserId);
+                            assignmentId.Parameters.AddWithValue("academicSectionId", academicSectionId);
+                            assignmentId.Parameters.AddWithValue("schoolYear", schoolYear);
+                            assignmentId.Parameters.AddWithValue("semester", semester);
+                            assignmentId.Parameters.AddWithValue("subject", subject);
+                            facultySectionId = Convert.ToInt32(await assignmentId.ExecuteScalarAsync(cancellationToken)
+                                ?? throw new InvalidOperationException("Faculty assignment could not be resolved after insertion."));
+                        }
+                        await FacultyBulkAssignmentService.AttachPendingCrossCurriculumStudentsAsync(
+                            connection, transaction, facultySectionId, canonicalProgramCode, subject,
+                            schoolYear, semester, cancellationToken);
+
                         await _auditLog.LogAsync(
                             User.Identity?.Name ?? "department_admin", "department_admin",
                             inserted == 0 ? "FACULTY_LOAD_ALREADY_ASSIGNED" : "FACULTY_LOAD_ASSIGNED",
@@ -3936,7 +4026,25 @@ namespace Client_app.Controllers
                             faculty = facultyIdentifier,
                             success = true,
                             idempotent = inserted == 0,
-                            data = new { facultyUserId, facultyEmail, program = canonicalProgram, section, yearLevel, subject, academicSectionId, schoolYear, semester }
+                            data = new
+                            {
+                                facultySectionId,
+                                facultyUserId,
+                                facultyEmail,
+                                facultyHomeDepartment,
+                                program = canonicalProgram,
+                                targetProgram = canonicalProgram,
+                                programCode = canonicalProgramCode,
+                                targetDepartment = canonicalProgram,
+                                isCrossDepartment = !string.Equals(facultyHomeDepartment, canonicalProgram, StringComparison.OrdinalIgnoreCase) &&
+                                                    !string.Equals(facultyHomeDepartment, canonicalProgramCode, StringComparison.OrdinalIgnoreCase),
+                                section,
+                                yearLevel,
+                                subject,
+                                academicSectionId,
+                                schoolYear,
+                                semester
+                            }
                         });
                     }
                     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or PostgresException)

@@ -46,14 +46,15 @@ const savedAssignment = (overrides = {}) => ({
   semesterCode: "SECOND", subjectCode: "IT 100", subjectTitle: "Saved Subject",
   units: "3", schedule: "Monday 8:00 AM", ...overrides,
 });
-test("limits professors and programs to the chairperson department", async () => {
+test("offers approved cross-department professors while keeping target programs scoped", async () => {
   fetchApprovedFaculties.mockResolvedValue({ faculties: [
     { id: 1, fullname: "Carlos Reyes", department: "Bachelor of Science in Information Technology" },
     { id: 2, fullname: "Other Professor", department: "Bachelor of Science in Accountancy" },
   ] });
   render(<AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/>);
   expect(await screen.findByRole("button", { name: /Carlos Reyes/ })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Other Professor/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Other Professor.*Accountancy/ })).toBeInTheDocument();
+  expect(fetchApprovedFaculties).toHaveBeenCalledWith(true);
   fireEvent.click(screen.getByRole("button", { name: "Academic Program" }));
   expect(within(screen.getByRole("listbox", { name: "Academic Program" })).getAllByRole("option")).toHaveLength(1);
 });
