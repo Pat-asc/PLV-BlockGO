@@ -1065,9 +1065,13 @@ var facultyCurriculumEnd = curriculumControllerSource.IndexOf("TransitionAsync",
 
 var facultyCurriculumSource = curriculumControllerSource[facultyCurriculumStart..facultyCurriculumEnd];
 
-Check(facultyCurriculumSource.Contains("ResolveAuthorizedProgramIdsAsync") &&
+Check(facultyCurriculumSource.Contains("ResolveFacultyProgramScopeAsync") &&
 
       facultyCurriculumSource.Contains("pca.program_id = ANY(@programIds)") &&
+
+      facultyCurriculumSource.Contains("homeCurricula") &&
+
+      facultyCurriculumSource.Contains("crossDepartmentCurricula") &&
 
       !facultyCurriculumSource.Contains("LOWER(subject.subject_code) = LOWER(fs.subject)") &&
 
@@ -1358,7 +1362,7 @@ Pass(234, "cross-curriculum subject requests and storage allow a pending Faculty
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
 
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=197;i++) Skip(i); Skip(206); for (var i=208;i<=228;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=197;i++) Skip(i); Skip(206); for (var i=208;i<=228;i++) Skip(i); for (var i=255;i<=258;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 
 
@@ -1502,7 +1506,9 @@ INSERT INTO facultysections(id,user_id,department,section,year_level,subject,aca
 
   (177,21,'Unknown Department','UNKNOWN 1-1','1','XX 101',NULL,NULL,NULL,TRUE),
 
-  (178,22,'IT Department','BSIT 1-3','1','IT 101',4,'2026-2027','FIRST',TRUE);");
+  (178,22,'IT Department','BSIT 1-3','1','IT 101',4,'2026-2027','FIRST',TRUE),
+
+  (179,23,'BS Computer Science','BSCS 1-1','1',NULL,3,'2026-2027','FIRST',TRUE);");
 
 var bsitFacultyPrograms = await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(db, "profx@plv.edu.ph");
 
@@ -1514,11 +1520,20 @@ Check(bsitFacultyPrograms.SetEquals(new[] { 1 }) &&
 
       multiProgramFacultyPrograms.SetEquals(new[] { 1, 2 }) &&
 
-      bscsFacultyPrograms.SetEquals(new[] { 2 }),
+      bscsFacultyPrograms.SetEquals(new[] { 1, 2 }),
 
     "Active Faculty assignments did not resolve to their exact canonical program set.");
 
 Pass(191, "Faculty curriculum authorization supports one or multiple assigned programs without cross-program leakage");
+
+var profzScope = await FacultyCurriculumAuthorizationService.ResolveFacultyProgramScopeAsync(db, "profz@plv.edu.ph");
+
+Check(profzScope.HomeProgram?.Id == 1 &&
+      profzScope.AuthorizedProgramIds.SetEquals(new[] { 1, 2 }) &&
+      profzScope.CrossDepartmentProgramIds.SetEquals(new[] { 2 }),
+    "Faculty curriculum scope did not preserve the home program while separating cross-department assignments.");
+
+Pass(255, "Faculty curriculum scope always preserves home and separates cross-department programs");
 
 Check((await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(db, "inactive@plv.edu.ph")).Count == 0 &&
 
@@ -1554,11 +1569,16 @@ Pass(196, "unresolved and inactive-section Faculty assignments fail closed");
 
 Check((await FacultyCurriculumAuthorizationService.ResolveAuthorizedProgramIdsAsync(db, "profileonly@plv.edu.ph")).SetEquals(new[] { 1 }),
 
-    "An approved Faculty member without a teaching assignment could not access the published curriculum for their profile program.");
+    "A pending subject placement granted cross-department curriculum access or hid the Faculty home program.");
 
 Pass(197, "Faculty profile membership authorizes its published program without a teaching assignment");
 
-await Exec("DELETE FROM facultysections WHERE id BETWEEN 170 AND 178");
+var profileOnlyScope = await FacultyCurriculumAuthorizationService.ResolveFacultyProgramScopeAsync(db, "profileonly@plv.edu.ph");
+Check(profileOnlyScope.HomeProgram?.Id == 1 && profileOnlyScope.CrossDepartmentProgramIds.Count == 0,
+    "A subjectless pending placement appeared as an active cross-department curriculum assignment.");
+Pass(256, "pending subject placements do not authorize cross-department curricula");
+
+await Exec("DELETE FROM facultysections WHERE id BETWEEN 170 AND 179");
 
 Check(await StudentCurriculumResolver.ResolveAsync(db, "a@plv.edu.ph") == 1,
 
@@ -2004,7 +2024,7 @@ Pass(165,"Save Schedule preserves historical grades");
 
 Check(await Count("SELECT COUNT(*) FROM pg_constraint WHERE conrelid='academic_periods'::regclass AND conname='academic_periods_school_year_semester_term_key' AND contype='u'")==1 &&
 
-      await Count("SELECT COUNT(*) FROM pg_indexes WHERE tablename='academic_periods' AND indexname='ux_academic_period_active'")==1,
+      await Count("SELECT COUNT(*) FROM pg_indexes WHERE schemaname LIKE 'pg_temp_%' AND tablename='academic_periods' AND indexname='ux_academic_period_active'")==1,
 
     "The academic-period tuple or one-ACTIVE uniqueness contract is missing.");
 
@@ -2202,6 +2222,20 @@ catch(ArgumentException ex) { wrongPeriodUploadSectionRejected=ex.Message.Contai
 
 Check(wrongPeriodUploadSectionRejected,"A wrong-period Section context was accepted."); Pass(162,"bulk upload rejects wrong-period Section context");
 
+var pendingPlacement = await FacultyBulkAssignmentService.PlacePendingAsync(
+    db, 1, createdSectionId, "2026-2027", "FIRST", AllowProgram);
+var duplicatePendingPlacement = await FacultyBulkAssignmentService.PlacePendingAsync(
+    db, 1, createdSectionId, "2026-2027", "FIRST", AllowProgram);
+var pendingPlacementResolution = await FacultyAssignmentRosterService.ResolveAsync(db, pendingPlacement.Id);
+
+Check(!pendingPlacement.AlreadyPlaced && duplicatePendingPlacement.AlreadyPlaced &&
+      duplicatePendingPlacement.Id == pendingPlacement.Id &&
+      pendingPlacementResolution.Status == FacultyAssignmentRosterService.ResolutionStatus.PendingSubject &&
+      await Count($"SELECT COUNT(*) FROM facultysections WHERE id={pendingPlacement.Id} AND subject IS NULL AND schedule IS NULL AND is_active=TRUE") == 1 &&
+      await Count($"SELECT COUNT(*) FROM grade_assignment_cycles WHERE assignment_cycle_id='{pendingPlacement.Id}'") == 0,
+    "A pending Faculty placement became grade-ready, used a fake subject, or was duplicated.");
+Pass(257,"blank subject creates one explicit non-grade-ready pending Faculty placement");
+
 var resolvedSectionAssignment = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
 
     ClientId="resolved-section", FacultyUserId=1, SubjectCode="IT 101", AcademicSectionId=createdSectionId,
@@ -2211,8 +2245,13 @@ var resolvedSectionAssignment = await FacultyBulkAssignmentService.AssignAsync(d
 }, AllowProgram);
 
 Check(resolvedSectionAssignment.AcademicSectionId==createdSectionId && !resolvedSectionAssignment.AlreadyAssigned,
-
     "A valid Faculty assignment was not persisted after academic section resolution."); Pass(213,"Faculty assignment succeeds after section resolution");
+
+Check(resolvedSectionAssignment.Id==pendingPlacement.Id &&
+      await Count($"SELECT COUNT(*) FROM facultysections WHERE id={pendingPlacement.Id} AND subject='IT 101' AND is_active=TRUE") == 1 &&
+      await Count($"SELECT COUNT(*) FROM facultysections WHERE user_id=1 AND academic_section_id={createdSectionId} AND school_year='2026-2027' AND semester='FIRST' AND is_active=TRUE") == 1,
+
+    "A valid Faculty assignment did not atomically convert its matching pending placement."); Pass(258,"Chairperson subject assignment atomically converts the pending placement");
 
 var resolvedSectionDuplicate = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
 

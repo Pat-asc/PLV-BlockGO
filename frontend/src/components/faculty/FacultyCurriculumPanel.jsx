@@ -3,7 +3,10 @@ import { fetchFacultyCurriculums } from '../../services/api';
 import CurriculumViewer from '../shared/CurriculumViewer';
 
 const FacultyCurriculumPanel = () => {
-  const [curricula, setCurricula] = useState([]);
+  const [homeProgram, setHomeProgram] = useState(null);
+  const [homeCurricula, setHomeCurricula] = useState([]);
+  const [crossDepartmentCurricula, setCrossDepartmentCurricula] = useState([]);
+  const [activeTab, setActiveTab] = useState('home');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -12,7 +15,12 @@ const FacultyCurriculumPanel = () => {
     setError('');
     try {
       const response = await fetchFacultyCurriculums();
-      setCurricula(Array.isArray(response?.data) ? response.data : []);
+      const flatCurricula = Array.isArray(response?.data) ? response.data : [];
+      const hasStructuredGroups = Array.isArray(response?.homeCurricula) || Array.isArray(response?.crossDepartmentCurricula);
+      setHomeProgram(response?.homeProgram || null);
+      setHomeCurricula(hasStructuredGroups && Array.isArray(response?.homeCurricula) ? response.homeCurricula : flatCurricula);
+      setCrossDepartmentCurricula(Array.isArray(response?.crossDepartmentCurricula) ? response.crossDepartmentCurricula : []);
+      setActiveTab('home');
     } catch (requestError) {
       setError(requestError.message || 'Unable to load the curriculum checklist.');
     } finally {
@@ -23,6 +31,8 @@ const FacultyCurriculumPanel = () => {
   useEffect(() => {
     load();
   }, [load]);
+
+  const curricula = activeTab === 'home' ? homeCurricula : crossDepartmentCurricula;
 
   const summary = useMemo(() => {
     const subjects = curricula.flatMap((curriculum) => Array.isArray(curriculum?.subjects) ? curriculum.subjects : []);
@@ -52,12 +62,35 @@ const FacultyCurriculumPanel = () => {
               <div className="min-w-0">
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-yellow-300">Academic reference</p>
                 <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Program Curriculum</h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">Review the Registrar-published checklist for your academic program, including subject requirements, prerequisites, and unit totals.</p>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">Review your home curriculum and any Registrar-approved cross-department teaching curricula, including subject requirements, prerequisites, and unit totals.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
+
+      {!error ? (
+        <div role="tablist" aria-label="Faculty curriculum groups" className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'home'}
+            onClick={() => setActiveTab('home')}
+            className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === 'home' ? 'bg-[#003366] text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+          >
+            Home Department Curriculum{homeProgram?.code ? ` (${homeProgram.code})` : ''}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'cross'}
+            onClick={() => setActiveTab('cross')}
+            className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === 'cross' ? 'bg-[#003366] text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+          >
+            Cross-Department Curricula
+          </button>
+        </div>
+      ) : null}
 
       {!loading && !error && curricula.length ? (
         <section aria-label="Curriculum summary" className="grid gap-3 sm:grid-cols-3">
@@ -76,7 +109,13 @@ const FacultyCurriculumPanel = () => {
       ) : null}
 
       {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">{error}</div> : null}
-      {!error ? <CurriculumViewer curricula={curricula} loading={loading} emptyMessage="No published curriculum matches your assigned programs." /> : null}
+      {!error ? <CurriculumViewer
+        curricula={curricula}
+        loading={loading}
+        emptyMessage={activeTab === 'home'
+          ? 'No published home department curriculum is available.'
+          : 'No active cross-department curriculum assignments.'}
+      /> : null}
     </div>
   );
 };
