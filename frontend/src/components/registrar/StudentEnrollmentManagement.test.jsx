@@ -391,3 +391,45 @@ test('assigns cross-curriculum subjects to multiple selected students and automa
   await waitFor(() => expect(screen.getByTestId('student-irregular-badge-1')).toHaveTextContent('Irregular'));
   expect(screen.getByTestId('student-irregular-badge-2')).toHaveTextContent('Irregular');
 });
+
+test('assigns a cross-curriculum subject while its Faculty teaching assignment is pending', async () => {
+  fetchCrossCurriculumOptions.mockResolvedValue({
+    status: 'Success',
+    activeAcademicPeriod: { schoolYear: '2026-2027', semester: 'FIRST' },
+    data: [{
+      programId: 2,
+      programCode: 'BSBA',
+      programName: 'Bachelor of Science in Business Administration',
+      curriculumId: 12,
+      curriculumName: 'BSBA Curriculum 2026',
+      curriculumVersion: 'BSBA-2026',
+      subjectId: 205,
+      subjectCode: 'BA101',
+      subjectTitle: 'Principles of Management',
+      units: 3,
+      prerequisite: '',
+      yearLevel: 1,
+      semester: 'FIRST',
+      facultySectionId: null,
+      section: null,
+      schedule: '',
+      facultyName: '',
+    }],
+    students: [],
+  });
+
+  render(<StudentEnrollmentManagement programs={[program]} />);
+  await screen.findByText('Juan Dela Cruz');
+  fireEvent.click(screen.getByLabelText('Select Juan Dela Cruz'));
+  fireEvent.click(screen.getByTestId('open-cross-curriculum-modal'));
+
+  const modal = await screen.findByRole('dialog', { name: /add cross-curriculum subjects/i });
+  fireEvent.click(await within(modal).findByLabelText('Select subject BA101'));
+  expect(within(modal).getByText(/No Faculty assigned yet/i)).toBeInTheDocument();
+  expect(within(modal).getByLabelText('Teaching section for BA101')).toHaveValue('');
+
+  fireEvent.click(within(modal).getByRole('button', { name: /^Assign Cross-Curriculum Subjects$/i }));
+  await waitFor(() => expect(assignCrossCurriculumSubjects).toHaveBeenCalledWith([42], [
+    { subjectId: 205, facultySectionId: null, overrideReason: undefined },
+  ]));
+});

@@ -648,8 +648,8 @@ export const revokeDepartmentAdmin = async (id) => {
     });
 };
 
-export const fetchApprovedFaculties = async () => {
-    return await fetchWithAuth(`/Auth/faculty/approved`);
+export const fetchApprovedFaculties = async (assignmentPool = false) => {
+    return await fetchWithAuth(`/Auth/faculty/approved${assignmentPool ? '?assignmentPool=true' : ''}`);
 };
 
 export const fetchNonRegularSubjectOptions = async (studentUserId) =>

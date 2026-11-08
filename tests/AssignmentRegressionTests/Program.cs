@@ -1279,9 +1279,9 @@ Check(facultyBulkAssignmentSource.Contains("bool allowCrossDepartmentFaculty = f
 
       facultyBulkAssignmentSource.Contains("IsCrossDepartment"),
 
-    "Cross-department Faculty loading is not an explicit Registrar-only opt-in with preserved department metadata.");
+    "Cross-department Faculty loading is not an explicit authorized opt-in with preserved department metadata.");
 
-Pass(230, "Registrar cross-department assignment is explicit and Chairperson remains fail-closed by default");
+Pass(230, "cross-department assignment reuses explicit service opt-in and preserved home-department metadata");
 
 
 
@@ -1335,17 +1335,30 @@ Check(enrollmentControllerSource.Contains("[HttpGet(\"cross-curriculum/options\"
 
       enrollmentControllerSource.Contains("PREREQUISITE_OVERRIDE_REASON_REQUIRED") &&
 
+      enrollmentControllerSource.Contains("facultyAssignmentStatus = selection.FacultySectionId.HasValue ? \"ASSIGNED\" : \"PENDING\"") &&
+
+      enrollmentControllerSource.Contains("if (selection.FacultySectionId.HasValue)") &&
+
       enrollmentControllerSource.Contains("CROSS_CURRICULUM_SUBJECT_ASSIGNED"),
 
     "Cross-curriculum subject assignment is missing single/bulk endpoint support, auto-Irregular update, duplicate/prerequisite guards, or audit logging.");
 
 Pass(233, "Registrar single and bulk cross-curriculum assignment auto-marks Irregular and enforces guards");
 
+var nonRegularRequestSource = await File.ReadAllTextAsync(
+    FindRepositoryFile("client-app", "Models", "NonRegularSubjectAssignmentRequest.cs"));
+
+Check(nonRegularRequestSource.Contains("int? FacultySectionId") &&
+      workflowMigration.Contains("faculty_section_id INTEGER REFERENCES facultysections(id) ON DELETE SET NULL"),
+    "Cross-curriculum Faculty assignment is not optional in the request model and nullable schema.");
+
+Pass(234, "cross-curriculum subject requests and storage allow a pending Faculty assignment");
+
 
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
 
-if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=197;i++) Skip(i); Skip(206); for (var i=208;i<=225;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
+if (string.IsNullOrWhiteSpace(cs)) { for (var i=1;i<=21;i++) Skip(i); for (var i=28;i<=37;i++) Skip(i); for (var i=62;i<=68;i++) Skip(i); for (var i=75;i<=81;i++) Skip(i); for (var i=83;i<=84;i++) Skip(i); Skip(95); for (var i=98;i<=105;i++) Skip(i); for (var i=114;i<=165;i++) Skip(i); Skip(168); for (var i=191;i<=193;i++) Skip(i); for (var i=195;i<=197;i++) Skip(i); Skip(206); for (var i=208;i<=228;i++) Skip(i); Console.WriteLine($"RESULT: {passed} passed, 0 failed, {skipped} skipped"); return; }
 
 
 
@@ -1375,7 +1388,7 @@ CREATE TEMP TABLE studentprofiles(user_id INT PRIMARY KEY,student_no TEXT,full_n
 
 CREATE TEMP TABLE student_enrollments(enrollment_id BIGSERIAL PRIMARY KEY,student_user_id INT,student_no TEXT,program_id INT,curriculum_id INT,academic_section_id INT,school_year TEXT,semester TEXT,year_level INT,status TEXT,section TEXT,batch_year INT,enrollment_state TEXT DEFAULT 'PLANNING',updated_at TIMESTAMPTZ);
 
-CREATE TEMP TABLE student_non_regular_subjects(non_regular_subject_id BIGSERIAL PRIMARY KEY,student_user_id INT,enrollment_id BIGINT,school_year TEXT,semester TEXT,faculty_section_id INT,status TEXT DEFAULT 'ACTIVE');
+CREATE TEMP TABLE student_non_regular_subjects(non_regular_subject_id BIGSERIAL PRIMARY KEY,student_user_id INT,enrollment_id BIGINT,school_year TEXT,semester TEXT,source_program_id INT,subject_code TEXT,faculty_section_id INT,status TEXT DEFAULT 'ACTIVE');
 
 CREATE TEMP TABLE facultyprofiles(user_id INT PRIMARY KEY,faculty_id TEXT,full_name TEXT,department TEXT);
 
@@ -2228,6 +2241,49 @@ Check(resolvedSectionDuplicate.AlreadyAssigned && resolvedSectionDuplicate.Id==r
       await Count($"SELECT COUNT(*) FROM facultysections WHERE id={resolvedSectionAssignment.Id} AND is_active=TRUE")==1,
 
     "Faculty assignment uniqueness or schedule-conflict protection regressed."); Pass(217,"Faculty assignment uniqueness and schedule-conflict protections remain intact");
+
+await Exec(@"
+    INSERT INTO users VALUES(24,'crossdept','crossdept@plv.edu.ph','faculty','APPROVED',TRUE);
+    INSERT INTO facultyprofiles VALUES(24,'FAC-24','Cross Department Professor','BS Computer Science');
+    UPDATE studentprofiles SET is_irregular=TRUE WHERE user_id=2;
+    INSERT INTO student_non_regular_subjects
+        (student_user_id,enrollment_id,school_year,semester,source_program_id,subject_code,faculty_section_id,status)
+    SELECT 2,enrollment_id,'2026-2027','FIRST',1,'IT 102',NULL,'ACTIVE'
+    FROM student_enrollments
+    WHERE student_user_id=2 AND school_year='2026-2027' AND semester='FIRST';");
+
+var crossDepartmentAssignment = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
+    ClientId="cross-department", FacultyUserId=24, SubjectCode="IT 102", AcademicSectionId=2,
+    SchoolYear="2026-2027", Semester="FIRST", Schedule="Monday | 08:00-10:00"
+}, AllowProgram, allowCrossDepartmentFaculty:true);
+
+Check(crossDepartmentAssignment.FacultyHomeDepartment=="BS Computer Science" &&
+      crossDepartmentAssignment.ProgramCode=="BSIT" && crossDepartmentAssignment.IsCrossDepartment &&
+      Convert.ToInt32(await Scalar("SELECT faculty_section_id FROM student_non_regular_subjects WHERE student_user_id=2 AND subject_code='IT 102'"))==crossDepartmentAssignment.Id &&
+      (await FacultyAssignmentRosterService.GetRosterAsync(db,(await FacultyAssignmentRosterService.ResolveAsync(db,crossDepartmentAssignment.Id)).Value!))
+          .Any(student=>student.StudentNo=="26-0001") &&
+      (string?)await Scalar("SELECT department FROM facultyprofiles WHERE user_id=24")=="BS Computer Science",
+    "Cross-department assignment did not preserve the Faculty home department or attach the pending irregular roster.");
+Pass(226,"cross-department Faculty assignment preserves home department and activates pending irregular roster");
+
+var crossDepartmentConflictRejected=false;
+try { await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
+    FacultyUserId=24, SubjectCode="IT 101", AcademicSectionId=1,
+    SchoolYear="2026-2027", Semester="FIRST", Schedule="Monday | 09:00-11:00"
+}, AllowProgram, allowCrossDepartmentFaculty:true); }
+catch(ArgumentException ex) { crossDepartmentConflictRejected=ex.Message.Contains("Schedule conflict",StringComparison.OrdinalIgnoreCase); }
+Check(crossDepartmentConflictRejected,"Cross-department Faculty assignment bypassed schedule-conflict detection.");
+Pass(227,"cross-department Faculty assignment retains schedule-conflict protection");
+
+var unauthorizedCrossDepartmentTarget=false;
+try { await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
+    FacultyUserId=24, SubjectCode="CS 101", AcademicSectionId=3,
+    SchoolYear="2026-2027", Semester="FIRST"
+}, (_,_)=>Task.FromResult(false), allowCrossDepartmentFaculty:true); }
+catch(UnauthorizedAccessException) { unauthorizedCrossDepartmentTarget=true; }
+Check(unauthorizedCrossDepartmentTarget && await Count("SELECT COUNT(*) FROM facultysections WHERE user_id=24 AND academic_section_id=3")==0,
+    "Cross-department Faculty selection weakened target-program authorization.");
+Pass(228,"cross-department Faculty selection cannot cross the target-program authorization boundary");
 
 var bulkOne = await FacultyBulkAssignmentService.AssignAsync(db, new BulkFacultyAssignmentItemRequest {
 
