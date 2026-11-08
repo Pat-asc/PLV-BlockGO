@@ -11,7 +11,7 @@ A highly secure, microservices-based grading ledger and identity management syst
 This system utilizes a clean separation of concerns, splitting standard database orchestration from cryptographic blockchain operations.
 
 ### 1. Frontend (React.js)
-- Serves as the user interface for Students, Faculty, Department Admins (Deans), and the Registrar.
+- Serves as the user interface for Students, Faculty, Department Admins (chairpersons), and the Registrar.
 - Hosted securely behind an **Nginx Reverse Proxy** (Port 80), eliminating the need for users to specify ports.
 - Communicates with backends via JWT authorization.
 
@@ -119,7 +119,7 @@ http {
 - **Assignments (Students):** Routes approved students to a specific Department and Section.
 - **Ledger:** Finalizes grades and commits them permanently to the blockchain.
 
-### 2. Department Admin (Dean)
+### 2. Department Admin (chairperson)
 - **Enrollment:** Reviews students assigned to their department by the Registrar and officially "Enrolls" them.
 - **Grade Verification:** Reviews grades issued by faculty members within their department and "Approves" them for Registrar finalization.
 
