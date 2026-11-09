@@ -93,6 +93,7 @@ namespace Client_app.Models
         public int YearLevel { get; set; }
         public string Semester { get; set; } = string.Empty;
         public string? SubjectType { get; set; }
+        public bool IsCrossDepartmentAssigned { get; set; }
     }
 
     public sealed class CurriculumDto
