@@ -5,6 +5,8 @@ namespace Client_app.Services;
 
 public static class ClientIpResolver
 {
+    private const string SectionName = "ClientIp";
+
     public static string? Resolve(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -17,6 +19,43 @@ public static class ClientIpResolver
 
         return address?.ToString();
     }
+
+    public static void ApplyTrustedClientHeader(HttpContext context, IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var proxyAddress = context.Connection.RemoteIpAddress;
+        var headerName = configuration[$"{SectionName}:TrustedHeader"]?.Trim();
+        var trustedProxyNetworks = configuration[$"{SectionName}:TrustedHeaderProxyNetworks"]?
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (proxyAddress is null || string.IsNullOrWhiteSpace(headerName) || trustedProxyNetworks is not { Length: > 0 })
+        {
+            return;
+        }
+
+        if (proxyAddress.IsIPv4MappedToIPv6)
+        {
+            proxyAddress = proxyAddress.MapToIPv4();
+        }
+        if (!trustedProxyNetworks.Select(ParseNetwork).Any(network => network.Contains(proxyAddress)))
+        {
+            return;
+        }
+
+        var headerValue = context.Request.Headers[headerName];
+        if (headerValue.Count != 1 || !IPAddress.TryParse(headerValue[0], out var clientAddress))
+        {
+            return;
+        }
+
+        context.Connection.RemoteIpAddress = clientAddress.IsIPv4MappedToIPv6
+            ? clientAddress.MapToIPv4()
+            : clientAddress;
+    }
+
+    private static Microsoft.AspNetCore.HttpOverrides.IPNetwork ParseNetwork(string value) =>
+        ForwardedHeadersConfiguration.ParseNetwork(value);
 }
 
 public static class ForwardedHeadersConfiguration
@@ -48,7 +87,7 @@ public static class ForwardedHeadersConfiguration
         }
     }
 
-    private static Microsoft.AspNetCore.HttpOverrides.IPNetwork ParseNetwork(string value)
+    internal static Microsoft.AspNetCore.HttpOverrides.IPNetwork ParseNetwork(string value)
     {
         var parts = value.Split('/', 2, StringSplitOptions.TrimEntries);
         if (parts.Length != 2 || !IPAddress.TryParse(parts[0], out var address) ||

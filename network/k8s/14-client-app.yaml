@@ -59,12 +59,13 @@ data:
   DOTNET_GRADE_SERVICE_URL: http://dotnet-grade-service.plv-fabric.svc.cluster.local:5103
   DOTNET_OPERATIONS_SERVICE_URL: http://dotnet-operations-service.plv-fabric.svc.cluster.local:5104
   DOTNET_REALTIME_SERVICE_URL: http://dotnet-realtime-service.plv-fabric.svc.cluster.local:5105
-  # Process at most the GCP LB/Ingress pair and stop at the first untrusted hop.
+  # Process at most the GCP LB/gateway pair and stop at the first untrusted hop.
   ForwardedHeaders__ForwardLimit: "2"
-  ForwardedHeaders__KnownNetworks__0: 10.72.0.0/16
-  ForwardedHeaders__KnownNetworks__1: 10.96.0.0/16
-  ForwardedHeaders__KnownNetworks__2: 35.191.0.0/16
-  ForwardedHeaders__KnownNetworks__3: 130.211.0.0/22
+  ForwardedHeaders__KnownNetworks__0: 10.76.0.0/14
+  ForwardedHeaders__KnownNetworks__1: 35.191.0.0/16
+  ForwardedHeaders__KnownNetworks__2: 130.211.0.0/22
+  ClientIp__TrustedHeader: CF-Connecting-IP
+  ClientIp__TrustedHeaderProxyNetworks: 173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,2400:cb00::/32,2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,2a06:98c0::/29,2c0f:f248::/32
 ---
 apiVersion: apps/v1
 kind: Deployment
