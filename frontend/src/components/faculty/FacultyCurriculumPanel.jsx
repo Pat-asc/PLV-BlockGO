@@ -2,11 +2,35 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchFacultyCurriculums } from '../../services/api';
 import CurriculumViewer from '../shared/CurriculumViewer';
 
+const normalizeSearch = (value) => String(value || '').trim().toLowerCase();
+
+export const filterFacultyCurricula = (curricula = [], search = '') => {
+  const query = normalizeSearch(search);
+  if (!query) return curricula;
+
+  return curricula.reduce((matches, curriculum) => {
+    const subjects = (Array.isArray(curriculum?.subjects) ? curriculum.subjects : []).filter((subject) =>
+      [
+        subject?.subjectCode,
+        subject?.subjectTitle,
+        curriculum?.programCode,
+        curriculum?.programName,
+        subject?.yearLevel,
+        subject?.semester,
+      ].some((value) => normalizeSearch(value).includes(query))
+    );
+
+    if (subjects.length > 0) matches.push({ ...curriculum, subjects });
+    return matches;
+  }, []);
+};
+
 const FacultyCurriculumPanel = () => {
   const [homeProgram, setHomeProgram] = useState(null);
   const [homeCurricula, setHomeCurricula] = useState([]);
   const [crossDepartmentCurricula, setCrossDepartmentCurricula] = useState([]);
-  const [activeTab, setActiveTab] = useState('home');
+  const [activeTab, setActiveTab] = useState('assigned');
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -20,7 +44,8 @@ const FacultyCurriculumPanel = () => {
       setHomeProgram(response?.homeProgram || null);
       setHomeCurricula(hasStructuredGroups && Array.isArray(response?.homeCurricula) ? response.homeCurricula : flatCurricula);
       setCrossDepartmentCurricula(Array.isArray(response?.crossDepartmentCurricula) ? response.crossDepartmentCurricula : []);
-      setActiveTab('home');
+      setActiveTab('assigned');
+      setSearch('');
     } catch (requestError) {
       setError(requestError.message || 'Unable to load the curriculum checklist.');
     } finally {
@@ -32,18 +57,46 @@ const FacultyCurriculumPanel = () => {
     load();
   }, [load]);
 
-  const curricula = activeTab === 'home' ? homeCurricula : crossDepartmentCurricula;
+  const filteredHomeCurricula = useMemo(
+    () => filterFacultyCurricula(homeCurricula, search),
+    [homeCurricula, search]
+  );
+  const assignedCrossDepartmentCurricula = useMemo(
+    () => crossDepartmentCurricula.reduce((assigned, curriculum) => {
+      const subjects = (curriculum?.subjects || []).filter((subject) => subject?.isCrossDepartmentAssigned === true);
+      if (subjects.length > 0) assigned.push({ ...curriculum, subjects });
+      return assigned;
+    }, []),
+    [crossDepartmentCurricula]
+  );
+  const filteredAssignedCrossDepartmentCurricula = useMemo(
+    () => filterFacultyCurricula(
+      assignedCrossDepartmentCurricula,
+      search
+    ),
+    [assignedCrossDepartmentCurricula, search]
+  );
+  const filteredCrossDepartmentCurricula = useMemo(
+    () => filterFacultyCurricula(crossDepartmentCurricula, search),
+    [crossDepartmentCurricula, search]
+  );
+  const filteredCurricula = useMemo(
+    () => activeTab === 'assigned'
+      ? [...filteredAssignedCrossDepartmentCurricula, ...filteredHomeCurricula]
+      : activeTab === 'home' ? filteredHomeCurricula : filteredCrossDepartmentCurricula,
+    [activeTab, filteredAssignedCrossDepartmentCurricula, filteredCrossDepartmentCurricula, filteredHomeCurricula]
+  );
 
   const summary = useMemo(() => {
-    const subjects = curricula.flatMap((curriculum) => Array.isArray(curriculum?.subjects) ? curriculum.subjects : []);
-    const programCount = new Set(curricula.map((curriculum) => curriculum?.programCode).filter(Boolean)).size;
-    const totalUnits = curricula.reduce((sum, curriculum) => sum + Number(
+    const subjects = filteredCurricula.flatMap((curriculum) => Array.isArray(curriculum?.subjects) ? curriculum.subjects : []);
+    const programCount = new Set(filteredCurricula.map((curriculum) => curriculum?.programCode).filter(Boolean)).size;
+    const totalUnits = filteredCurricula.reduce((sum, curriculum) => sum + Number(
       curriculum?.totalUnits ?? (Array.isArray(curriculum?.subjects)
         ? curriculum.subjects.reduce((subjectTotal, subject) => subjectTotal + Number(subject?.units || 0), 0)
         : 0)
     ), 0);
     return { programCount, subjectCount: subjects.length, totalUnits };
-  }, [curricula]);
+  }, [filteredCurricula]);
 
   return (
     <div className="space-y-5">
@@ -74,6 +127,15 @@ const FacultyCurriculumPanel = () => {
           <button
             type="button"
             role="tab"
+            aria-selected={activeTab === 'assigned'}
+            onClick={() => setActiveTab('assigned')}
+            className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === 'assigned' ? 'bg-[#003366] text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+          >
+            Assigned Curriculum
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeTab === 'home'}
             onClick={() => setActiveTab('home')}
             className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === 'home' ? 'bg-[#003366] text-white' : 'text-slate-600 hover:bg-slate-100'}`}
@@ -92,7 +154,20 @@ const FacultyCurriculumPanel = () => {
         </div>
       ) : null}
 
-      {!loading && !error && curricula.length ? (
+      {!error ? (
+        <label className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="sr-only">Search assigned curriculum subjects</span>
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search subject code or subject name..."
+            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-[#003366] focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+          />
+        </label>
+      ) : null}
+
+      {!loading && !error && filteredCurricula.length ? (
         <section aria-label="Curriculum summary" className="grid gap-3 sm:grid-cols-3">
           {[
             { label: summary.programCount === 1 ? 'Academic Program' : 'Academic Programs', value: summary.programCount, accent: 'bg-blue-600' },
@@ -109,13 +184,35 @@ const FacultyCurriculumPanel = () => {
       ) : null}
 
       {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">{error}</div> : null}
-      {!error ? <CurriculumViewer
-        curricula={curricula}
-        loading={loading}
-        emptyMessage={activeTab === 'home'
-          ? 'No published home department curriculum is available.'
-          : 'No active cross-department curriculum assignments.'}
-      /> : null}
+      {!error && activeTab === 'assigned' ? (
+        <div className="space-y-5">
+          {!loading && filteredCurricula.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              {normalizeSearch(search) ? 'No subjects found.' : 'No assigned curriculum subjects are available.'}
+            </div>
+          ) : null}
+          {filteredAssignedCrossDepartmentCurricula.length > 0 ? (
+            <section aria-labelledby="cross-assigned-subjects-heading" className="space-y-3">
+              <h2 id="cross-assigned-subjects-heading" className="text-lg font-bold text-[#003366] dark:text-sky-300">Cross-Department Assigned Subjects</h2>
+              <CurriculumViewer curricula={filteredAssignedCrossDepartmentCurricula} loading={loading} emptyMessage="No cross-department subjects found." />
+            </section>
+          ) : null}
+          {filteredHomeCurricula.length > 0 ? (
+            <section aria-labelledby="regular-curriculum-heading" className="space-y-3">
+              <h2 id="regular-curriculum-heading" className="text-lg font-bold text-[#003366] dark:text-sky-300">Regular Curriculum</h2>
+              <CurriculumViewer curricula={filteredHomeCurricula} loading={loading} emptyMessage="No regular curriculum subjects found." />
+            </section>
+          ) : null}
+        </div>
+      ) : !error ? <CurriculumViewer
+          curricula={filteredCurricula}
+          loading={loading}
+          emptyMessage={normalizeSearch(search)
+            ? 'No subjects found.'
+            : activeTab === 'home'
+              ? 'No published home department curriculum is available.'
+              : 'No active cross-department curriculum assignments.'}
+        /> : null}
     </div>
   );
 };

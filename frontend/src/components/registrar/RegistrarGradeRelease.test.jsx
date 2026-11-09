@@ -29,9 +29,17 @@ beforeEach(() => {
 test('previews finalized students and releases the exact program batch after confirmation', async () => {
   render(<RegistrarGradeRelease />);
   expect(await screen.findByRole('button', { name: 'Release BSIT Grades' })).toBeInTheDocument();
+  const search = screen.getByPlaceholderText('Program name');
+  fireEvent.change(search, { target: { value: 'bs' } });
   fireEvent.click(screen.getByRole('button', { name: 'View Students (1)' }));
+  expect(screen.getByRole('dialog', { name: 'BSIT Finalized Students' })).toBeInTheDocument();
+  expect(screen.getAllByTestId('grade-release-modal-details')).toHaveLength(1);
   expect(screen.getByText('Juan Dela Cruz')).toBeInTheDocument();
   expect(screen.getByText('IT 101')).toBeInTheDocument();
+  expect(screen.getByRole('article', { hidden: true })).not.toHaveTextContent('Juan Dela Cruz');
+  fireEvent.click(screen.getByRole('button', { name: 'Close BSIT Finalized Students' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(search).toHaveValue('bs');
   fireEvent.click(screen.getByRole('button', { name: 'Release BSIT Grades' }));
 
   await waitFor(() => expect(releaseProgramGrades).toHaveBeenCalledWith({

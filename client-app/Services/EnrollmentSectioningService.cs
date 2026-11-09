@@ -250,7 +250,7 @@ public static class EnrollmentSectioningService
             throw new InvalidOperationException("The planning enrollment was not found in that section or is already finalized.");
 
         await using var profile = new NpgsqlCommand(@"
-            UPDATE studentprofiles SET section = NULL, assignment_status = 'Unassigned'
+            UPDATE studentprofiles SET section = NULL, assignment_status = 'Enrolled'
             WHERE user_id = @userId AND NOT EXISTS (
                 SELECT 1 FROM student_enrollments newer
                 WHERE newer.student_user_id = @userId

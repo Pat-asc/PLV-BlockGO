@@ -925,6 +925,20 @@ namespace Client_app.Controllers
             var crossDepartmentCurricula = curricula
                 .Where(curriculum => programScope.CrossDepartmentProgramIds.Contains(curriculum.ProgramId))
                 .ToList();
+            var activeAssignments = await FacultyCurriculumAuthorizationService.ResolveActiveSubjectAssignmentsAsync(
+                connection, ActorEmail(), cancellationToken);
+            var assignedCrossSubjects = activeAssignments
+                .Where(assignment => programScope.CrossDepartmentProgramIds.Contains(assignment.ProgramId))
+                .Select(assignment => (assignment.ProgramId, SubjectCode: assignment.SubjectCode.Trim()))
+                .ToHashSet(new ProgramSubjectComparer());
+            foreach (var curriculum in crossDepartmentCurricula)
+            {
+                foreach (var subject in curriculum.Subjects)
+                {
+                    subject.IsCrossDepartmentAssigned = assignedCrossSubjects.Contains(
+                        (curriculum.ProgramId, subject.SubjectCode.Trim()));
+                }
+            }
             return Ok(new
             {
                 status = "Success",
@@ -933,6 +947,16 @@ namespace Client_app.Controllers
                 crossDepartmentCurricula,
                 data = curricula
             });
+        }
+
+        private sealed class ProgramSubjectComparer : IEqualityComparer<(int ProgramId, string SubjectCode)>
+        {
+            public bool Equals((int ProgramId, string SubjectCode) left, (int ProgramId, string SubjectCode) right) =>
+                left.ProgramId == right.ProgramId &&
+                string.Equals(left.SubjectCode, right.SubjectCode, StringComparison.OrdinalIgnoreCase);
+
+            public int GetHashCode((int ProgramId, string SubjectCode) value) =>
+                HashCode.Combine(value.ProgramId, StringComparer.OrdinalIgnoreCase.GetHashCode(value.SubjectCode));
         }
 
         private async Task<IActionResult> TransitionAsync(
