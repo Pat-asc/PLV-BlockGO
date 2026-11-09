@@ -6,11 +6,7 @@ metadata:
   namespace: plv-fabric
 data:
   NODE_ENV: production
-  # Exact production GKE pod range plus Google Front End proxy ranges. Internal
-  # services can trust the gateway pod while rejecting every other source.
   TRUST_PROXY_CIDRS: 10.76.0.0/14,35.191.0.0/16,130.211.0.0/22
-  # GCP first verifies the transport client in X-Forwarded-For. Only when that
-  # client is a Cloudflare edge may the gateway use Cloudflare's visitor header.
   TRUSTED_CLIENT_IP_HEADER: cf-connecting-ip
   TRUSTED_CLIENT_IP_PROXY_CIDRS: 173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,2400:cb00::/32,2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,2a06:98c0::/29,2c0f:f248::/32
   AUTH_SERVICE_URL: http://auth-service.plv-fabric.svc.cluster.local:4001
@@ -79,18 +75,32 @@ spec:
         prometheus.io/port: "4000"
     spec:
       terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: api-gateway
         image: registry.example.com/plv-repo/fabric-middleware:latest
         imagePullPolicy: Always
         command: ["npm", "run", "start:gateway"]
         ports: [{ name: api, containerPort: 4000 }]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         envFrom:
         - configMapRef: { name: middleware-service-config }
         - configMapRef: { name: blockgo-public-hosting }
         env:
         - { name: PORT, value: "4000" }
         - { name: NODE_OPTIONS, value: "--max-old-space-size=160" }
+        volumeMounts:
+        - name: runtime-tmp
+          mountPath: /tmp
         startupProbe: &gateway-health
           httpGet: { path: /api/health, port: 4000 }
           periodSeconds: 5
@@ -105,6 +115,10 @@ spec:
         resources:
           requests: { memory: 128Mi, cpu: 100m }
           limits: { memory: 192Mi, cpu: 300m }
+      volumes:
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
@@ -146,12 +160,23 @@ spec:
       annotations: { prometheus.io/scrape: "true", prometheus.io/path: /metrics, prometheus.io/port: "4001" }
     spec:
       terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: auth-service
         image: registry.example.com/plv-repo/fabric-middleware:latest
         imagePullPolicy: Always
         command: ["npm", "run", "start:auth"]
         ports: [{ name: api, containerPort: 4001 }]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         envFrom:
         - configMapRef: { name: middleware-service-config }
         - configMapRef: { name: blockgo-public-hosting }
@@ -190,6 +215,9 @@ spec:
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: SMTP_SECURE, optional: true } }
         - name: EMAIL_FROM
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: EMAIL_FROM, optional: true } }
+        volumeMounts:
+        - name: runtime-tmp
+          mountPath: /tmp
         startupProbe: &auth-health
           httpGet: { path: /api/health, port: 4001 }
           periodSeconds: 5
@@ -203,6 +231,10 @@ spec:
         resources:
           requests: { memory: 128Mi, cpu: 100m }
           limits: { memory: 256Mi, cpu: 400m }
+      volumes:
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
@@ -233,9 +265,22 @@ spec:
     spec:
       serviceAccountName: fabric-sa
       terminationGracePeriodSeconds: 40
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
       - name: wait-for-wallets
         image: busybox:1.36.1
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          runAsGroup: 65534
+          capabilities:
+            drop:
+            - ALL
         resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {cpu: 100m, memory: 64Mi}}
         command: ["/bin/sh", "-ec", "for e in couchdb-wallet-registrar.plv-main-campus.svc.cluster.local:5985 couchdb-wallet-faculty.plv-annex-campus.svc.cluster.local:5985 couchdb-wallet-department.plv-pubad-campus.svc.cluster.local:5985; do until nc -w 2 ${e%:*} ${e##*:} </dev/null; do sleep 2; done; done"]
       containers:
@@ -244,6 +289,13 @@ spec:
         imagePullPolicy: Always
         command: ["npm", "run", "start:identity"]
         ports: [{ name: api, containerPort: 4002 }]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         envFrom:
         - configMapRef: { name: middleware-service-config }
         env:
@@ -265,6 +317,8 @@ spec:
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: BOOTSTRAP_REGISTRAR_PASS } }
         volumeMounts:
         - { name: fabric-ca-roots, mountPath: /etc/hyperledger/fabric-ca-roots, readOnly: true }
+        - name: runtime-tmp
+          mountPath: /tmp
         startupProbe: &identity-health
           httpGet: { path: /api/health, port: 4002 }
           periodSeconds: 5
@@ -281,6 +335,9 @@ spec:
       volumes:
       - name: fabric-ca-roots
         secret: { secretName: fabric-ca-roots }
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
@@ -311,9 +368,22 @@ spec:
     spec:
       serviceAccountName: fabric-sa
       terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
       - name: wait-for-wallets
         image: busybox:1.36.1
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          runAsGroup: 65534
+          capabilities:
+            drop:
+            - ALL
         resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {cpu: 100m, memory: 64Mi}}
         command: ["/bin/sh", "-ec", "for e in couchdb-wallet-registrar.plv-main-campus.svc.cluster.local:5985 couchdb-wallet-faculty.plv-annex-campus.svc.cluster.local:5985 couchdb-wallet-department.plv-pubad-campus.svc.cluster.local:5985; do until nc -w 2 ${e%:*} ${e##*:} </dev/null; do sleep 2; done; done"]
       containers:
@@ -322,6 +392,13 @@ spec:
         imagePullPolicy: Always
         command: ["npm", "run", "start:ledger"]
         ports: [{ name: api, containerPort: 4003 }]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         envFrom:
         - configMapRef: { name: middleware-service-config }
         env:
@@ -337,6 +414,8 @@ spec:
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: WALLET_ENCRYPTION_KEY, optional: true } }
         volumeMounts:
         - { name: fabric-gateway-tls-roots, mountPath: /etc/hyperledger/fabric-gateway-tls, readOnly: true }
+        - name: runtime-tmp
+          mountPath: /tmp
         startupProbe: &ledger-health
           httpGet: { path: /api/health, port: 4003 }
           periodSeconds: 5
@@ -353,6 +432,9 @@ spec:
       volumes:
       - name: fabric-gateway-tls-roots
         secret: { secretName: fabric-gateway-tls-roots }
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
@@ -382,12 +464,23 @@ spec:
       annotations: { prometheus.io/scrape: "true", prometheus.io/path: /metrics, prometheus.io/port: "4004" }
     spec:
       terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: upload-service
         image: registry.example.com/plv-repo/fabric-middleware:latest
         imagePullPolicy: Always
         command: ["npm", "run", "start:upload"]
         ports: [{ name: api, containerPort: 4004 }]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         envFrom:
         - configMapRef: { name: middleware-service-config }
         env:
@@ -397,7 +490,11 @@ spec:
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: INTERNAL_API_KEY } }
         - name: IPFS_ENCRYPTION_KEY
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: IPFS_ENCRYPTION_KEY } }
-        volumeMounts: [{ name: uploads, mountPath: /app/uploads }]
+        volumeMounts:
+        - name: uploads
+          mountPath: /app/uploads
+        - name: runtime-tmp
+          mountPath: /tmp
         startupProbe: &upload-health
           httpGet: { path: /api/health, port: 4004 }
           periodSeconds: 5
@@ -414,6 +511,9 @@ spec:
       volumes:
       - name: uploads
         emptyDir: { sizeLimit: 512Mi }
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
@@ -443,12 +543,23 @@ spec:
       annotations: { prometheus.io/scrape: "true", prometheus.io/path: /metrics, prometheus.io/port: "4005" }
     spec:
       terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: settings-service
         image: registry.example.com/plv-repo/fabric-middleware:latest
         imagePullPolicy: Always
         command: ["npm", "run", "start:settings"]
         ports: [{ name: api, containerPort: 4005 }]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         envFrom:
         - configMapRef: { name: middleware-service-config }
         env:
@@ -460,6 +571,9 @@ spec:
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: POSTGRES_USER } }
         - name: POSTGRES_PASS
           valueFrom: { secretKeyRef: { name: blockgo-secrets, key: POSTGRES_PASS } }
+        volumeMounts:
+        - name: runtime-tmp
+          mountPath: /tmp
         startupProbe: &settings-health
           httpGet: { path: /api/health, port: 4005 }
           periodSeconds: 5
@@ -473,6 +587,10 @@ spec:
         resources:
           requests: { memory: 128Mi, cpu: 100m }
           limits: { memory: 192Mi, cpu: 300m }
+      volumes:
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
