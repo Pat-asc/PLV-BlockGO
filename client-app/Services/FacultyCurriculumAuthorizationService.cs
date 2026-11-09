@@ -12,6 +12,61 @@ public static class FacultyCurriculumAuthorizationService
         IReadOnlySet<int> AuthorizedProgramIds,
         IReadOnlySet<int> CrossDepartmentProgramIds);
 
+    public sealed record ActiveSubjectAssignment(int ProgramId, string SubjectCode);
+
+    public static async Task<IReadOnlyCollection<ActiveSubjectAssignment>> ResolveActiveSubjectAssignmentsAsync(
+        NpgsqlConnection connection,
+        string facultyEmail,
+        CancellationToken cancellationToken = default)
+    {
+        var programs = await LoadActiveProgramsAsync(connection, cancellationToken);
+        var programIds = programs.Select(program => program.Id).ToHashSet();
+        var assignments = new HashSet<ActiveSubjectAssignment>();
+        await using var command = new NpgsqlCommand(@"
+            SELECT fs.department, section.department, enrolled_program.program_id, BTRIM(fs.subject)
+            FROM users actor
+            JOIN facultysections fs ON fs.user_id = actor.id AND fs.is_active = TRUE
+            LEFT JOIN academicsections section
+              ON section.id = fs.academic_section_id AND section.is_active = TRUE
+            LEFT JOIN LATERAL (
+                SELECT MIN(enrollment.program_id)::int AS program_id
+                FROM student_enrollments enrollment
+                JOIN academic_programs enrolled
+                  ON enrolled.program_id = enrollment.program_id AND enrolled.is_active = TRUE
+                WHERE enrollment.academic_section_id = section.id
+                  AND enrollment.school_year = fs.school_year
+                  AND enrollment.semester = fs.semester
+                  AND UPPER(BTRIM(enrollment.status)) = 'ENROLLED'
+                HAVING COUNT(DISTINCT enrollment.program_id) = 1
+            ) enrolled_program ON TRUE
+            WHERE LOWER(actor.email) = LOWER(@actor)
+              AND LOWER(actor.role) = 'faculty'
+              AND LOWER(actor.status) = 'approved'
+              AND actor.is_active = TRUE
+              AND NULLIF(BTRIM(fs.subject), '') IS NOT NULL
+              AND (fs.academic_section_id IS NULL OR section.id IS NOT NULL);", connection);
+        command.Parameters.AddWithValue("actor", facultyEmail);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            int? programId = !reader.IsDBNull(2) && programIds.Contains(reader.GetInt32(2))
+                ? reader.GetInt32(2)
+                : null;
+            if (!programId.HasValue)
+            {
+                var resolved = new[]
+                {
+                    ResolveUniqueProgramId(reader.IsDBNull(1) ? null : reader.GetString(1), programs),
+                    ResolveUniqueProgramId(reader.IsDBNull(0) ? null : reader.GetString(0), programs)
+                }.Where(value => value.HasValue).Select(value => value!.Value).Distinct().ToArray();
+                if (resolved.Length == 1) programId = resolved[0];
+            }
+            if (programId.HasValue)
+                assignments.Add(new ActiveSubjectAssignment(programId.Value, reader.GetString(3)));
+        }
+        return assignments;
+    }
+
     public static async Task<IReadOnlySet<int>> ResolveAuthorizedProgramIdsAsync(
         NpgsqlConnection connection,
         string facultyEmail,

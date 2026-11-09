@@ -3,6 +3,7 @@ import { fetchGradeReleaseCandidates, releaseProgramGrades } from '../../service
 import { showSystemNotification } from '../../services/NotificationContext';
 import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import StatusBadge from '../shared/StatusBadge';
+import Modal from '../../services/Modal';
 
 const valueOptions = (rows, field) => [...new Set(rows.map((row) => row[field]).filter(Boolean))]
   .sort((left, right) => String(left).localeCompare(String(right), undefined, { numeric: true }));
@@ -27,7 +28,7 @@ const RegistrarGradeRelease = () => {
   const [candidates, setCandidates] = useState([]);
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState(initialFilters);
-  const [expandedKey, setExpandedKey] = useState('');
+  const [selectedGroupKey, setSelectedGroupKey] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [releasingKey, setReleasingKey] = useState('');
@@ -71,6 +72,7 @@ const RegistrarGradeRelease = () => {
     groups[key].candidates.push(candidate);
     return groups;
   }, {})), [filtered]);
+  const selectedGroup = releaseGroups.find((group) => group.key === selectedGroupKey) || null;
 
   const release = async (group) => {
     const confirmed = await requestSystemConfirmation({
@@ -131,7 +133,6 @@ const RegistrarGradeRelease = () => {
       <div className="space-y-3">
         {releaseGroups.map((group) => {
           const key = group.key;
-          const expanded = expandedKey === key;
           const isReleased = group.candidates.every((candidate) => candidate.releaseStatus === 'Released');
           const subjectCount = group.candidates.reduce((sum, candidate) => sum + (candidate.subjects?.length || 0), 0);
           return <article key={key} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -141,12 +142,31 @@ const RegistrarGradeRelease = () => {
               <div><p className="text-xs font-semibold uppercase text-slate-400">School year</p><p className="mt-1 text-sm text-slate-700">{group.schoolYear || '—'}</p></div>
               <div><p className="text-xs font-semibold uppercase text-slate-400">Period</p><p className="mt-1 text-sm capitalize text-slate-700">{group.semester || '—'} · {group.term || '—'}</p></div>
               <div><p className="text-xs font-semibold uppercase text-slate-400">Status</p><div className="mt-1"><StatusBadge status={isReleased ? 'Released' : 'Ready for Release'} /></div></div>
-              <div className="flex flex-wrap gap-2 lg:justify-end"><button type="button" onClick={() => setExpandedKey(expanded ? '' : key)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">{expanded ? 'Hide Students' : `View Students (${group.candidates.length})`}</button><button type="button" onClick={() => release(group)} disabled={isReleased || releasingKey === key} className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#00264d] disabled:cursor-not-allowed disabled:bg-slate-300">{releasingKey === key ? 'Releasing…' : isReleased ? 'Released' : `Release ${group.program} Grades`}</button></div>
+              <div className="flex flex-wrap gap-2 lg:justify-end"><button type="button" onClick={() => setSelectedGroupKey(key)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">{`View Students (${group.candidates.length})`}</button><button type="button" onClick={() => release(group)} disabled={isReleased || releasingKey === key} className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#00264d] disabled:cursor-not-allowed disabled:bg-slate-300">{releasingKey === key ? 'Releasing…' : isReleased ? 'Released' : `Release ${group.program} Grades`}</button></div>
             </div>
-            {expanded ? <div className="border-t border-slate-200 bg-slate-50/70 p-4"><div className="overflow-x-auto rounded-xl border border-slate-200 bg-white"><table className="min-w-full divide-y divide-slate-200 text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Student</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Units</th><th className="px-4 py-3">Midterm</th><th className="px-4 py-3">Final</th><th className="px-4 py-3">Final Grade</th><th className="px-4 py-3">Ledger Status</th></tr></thead><tbody className="divide-y divide-slate-100">{group.candidates.flatMap((candidate) => (candidate.subjects || []).map((subject) => ({ ...subject, studentId: candidate.studentId, studentName: candidate.studentName }))).map((subject) => { const values = gradeValues(subject.grade); return <tr key={subject.recordId}><td className="px-4 py-3"><span className="block font-semibold">{subject.studentName || 'Student'}</span><span className="text-xs text-slate-500">{subject.studentId}</span></td><td className="px-4 py-3"><span className="block font-bold text-[#003366]">{subject.subjectCode}</span><span className="text-slate-600">{subject.subjectTitle}</span></td><td className="px-4 py-3">{subject.units || '—'}</td><td className="px-4 py-3">{values.midterm}</td><td className="px-4 py-3">{values.finals}</td><td className="px-4 py-3 font-bold text-[#003366]">{values.finalAverage}</td><td className="px-4 py-3"><StatusBadge status={subject.status} /></td></tr>; })}</tbody></table></div></div> : null}
           </article>;
         })}
       </div>
+
+      <Modal
+        isOpen={Boolean(selectedGroup)}
+        onClose={() => setSelectedGroupKey('')}
+        title={selectedGroup ? `${selectedGroup.program} Finalized Students` : 'Finalized Students'}
+        description={selectedGroup ? `${selectedGroup.schoolYear} · ${selectedGroup.semester} · ${selectedGroup.term}` : ''}
+        panelClassName="max-h-[calc(100dvh-1rem)] max-w-6xl overflow-y-auto"
+      >
+        <div className="max-h-[70vh] overflow-auto rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900" data-testid="grade-release-modal-details">
+          <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-700">
+            <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-300"><tr><th className="px-4 py-3">Student</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Units</th><th className="px-4 py-3">Midterm</th><th className="px-4 py-3">Final</th><th className="px-4 py-3">Final Grade</th><th className="px-4 py-3">Ledger Status</th></tr></thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {(selectedGroup?.candidates || []).flatMap((candidate) => (candidate.subjects || []).map((subject) => ({ ...subject, studentId: candidate.studentId, studentName: candidate.studentName }))).map((subject) => {
+                const values = gradeValues(subject.grade);
+                return <tr key={subject.recordId} className="text-slate-700 dark:text-slate-200"><td className="px-4 py-3"><span className="block font-semibold">{subject.studentName || 'Student'}</span><span className="text-xs text-slate-500 dark:text-slate-400">{subject.studentId}</span></td><td className="px-4 py-3"><span className="block font-bold text-[#003366] dark:text-sky-300">{subject.subjectCode}</span><span>{subject.subjectTitle}</span></td><td className="px-4 py-3">{subject.units || '—'}</td><td className="px-4 py-3">{values.midterm}</td><td className="px-4 py-3">{values.finals}</td><td className="px-4 py-3 font-bold text-[#003366] dark:text-sky-300">{values.finalAverage}</td><td className="px-4 py-3"><StatusBadge status={subject.status} /></td></tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Modal>
     </section>
   );
 };

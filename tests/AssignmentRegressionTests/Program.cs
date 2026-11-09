@@ -682,6 +682,24 @@ Pass(167, "QA curriculum seed is idempotent and does not overwrite production cu
 
 var enrollmentControllerSource = await File.ReadAllTextAsync(FindRepositoryFile("client-app", "Controllers", "AuthController.cs"));
 
+Check(enrollmentControllerSource.Contains("var studentAssignmentStatus = shouldSaveEnrollment ? \"Enrolled\" : null") &&
+      enrollmentControllerSource.Contains("curriculum_id = @curriculumId, section = NULL, assignment_status = 'Enrolled'") &&
+      enrollmentControllerSource.Contains("WHEN latest.status = 'ENROLLED' THEN 'Enrolled'"),
+    "Manual, CSV, or promoted enrollment still labels an enrolled unsectioned student as not enrolled.");
+Pass(259, "manual CSV and promotion enrollment preserve enrolled status before section placement");
+
+var promotionStart = enrollmentControllerSource.IndexOf("PromoteStudentEnrollments(", StringComparison.Ordinal);
+var promotionEnd = enrollmentControllerSource.IndexOf("[HttpDelete(\"sections/{id:int}/students/{studentId}\")]", promotionStart, StringComparison.Ordinal);
+var promotionSource = enrollmentControllerSource[promotionStart..promotionEnd];
+Check(promotionSource.Contains("BeginTransactionAsync") &&
+      promotionSource.Contains("FOR UPDATE OF u, enrollment") &&
+      promotionSource.Contains("JOIN users u ON u.id = enrollment.student_user_id") &&
+      !promotionSource.Contains("INSERT INTO Users", StringComparison.OrdinalIgnoreCase) &&
+      promotionSource.Contains("UpsertStudentEnrollmentAsync") &&
+      promotionSource.Contains("await transaction.CommitAsync"),
+    "Promotion no longer preserves identity and commits the exact next-period enrollment atomically.");
+Pass(260, "promotion reuses student identity and commits the next enrollment atomically");
+
 var ensureSectionStart = enrollmentControllerSource.IndexOf("EnsureEnrollmentSectionAsync", StringComparison.Ordinal);
 
 var ensureSectionEnd = enrollmentControllerSource.IndexOf("AllocateStudentNumberAsync", ensureSectionStart, StringComparison.Ordinal);
@@ -1098,6 +1116,18 @@ Check(facultyCurriculumAuthorizationSource.Contains("LEFT JOIN academicsections 
     "Faculty curriculum authorization does not combine profile membership with safe active-assignment access.");
 
 Pass(194, "Faculty curriculum authorization supports profile membership and safe legacy assignments");
+
+Check(facultyCurriculumSource.Contains("ResolveActiveSubjectAssignmentsAsync") &&
+
+      facultyCurriculumSource.Contains("IsCrossDepartmentAssigned") &&
+
+      facultyCurriculumAuthorizationSource.Contains("NULLIF(BTRIM(fs.subject), '') IS NOT NULL") &&
+
+      facultyCurriculumAuthorizationSource.Contains("new ActiveSubjectAssignment(programId.Value, reader.GetString(3))"),
+
+    "Assigned curriculum no longer distinguishes exact cross-department subjects from the broader authorized reference curriculum.");
+
+Pass(262, "Faculty assigned curriculum marks only exact active cross-department subjects");
 
 
 
@@ -2639,6 +2669,15 @@ Check(sectionedAfterMove.Any(student=>student.StudentNo=="26-0004" && student.Ac
       !sectionedAfterMove.Any(student=>student.StudentNo=="26-0004" && student.AcademicSectionId==1),
 
     "Moved student remained in the old section or did not appear in the new section."); Pass(64,"Registrar Section List reflects exact section move");
+
+await EnrollmentSectioningService.UnassignAsync(db,2,"26-0004","2026-2027","FIRST");
+var unassignedAfterRemoval=await EnrollmentSectioningService.GetUnassignedAsync(db,"BSIT",1,"2026-2027","FIRST",null);
+Check(unassignedAfterRemoval.Any(student=>student.StudentNo=="26-0004") &&
+      await Count("SELECT COUNT(*) FROM studentprofiles WHERE user_id=6 AND assignment_status='Enrolled' AND section IS NULL")==1,
+    "Removing a section assignment changed the student's enrollment identity or hid the student from random sectioning.");
+Pass(261,"section removal keeps the student enrolled and immediately eligible for reassignment");
+
+await EnrollmentSectioningService.AssignAsync(db,2,new[]{"26-0004"},"2026-2027","FIRST",null);
 
 var computerScienceSectioned=await EnrollmentSectioningService.GetSectionedAsync(db,"BSCS",1,"2026-2027","FIRST",null);
 
