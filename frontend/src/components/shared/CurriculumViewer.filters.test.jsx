@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import CurriculumViewer from './CurriculumViewer';
 
 const curriculum = {
@@ -67,4 +67,89 @@ test('renders phone and tablet labels without duplicating curriculum rows', () =
   expect(screen.getAllByText('Subject title')).toHaveLength(curriculum.subjects.length);
   expect(screen.queryByText(/swipe horizontally/i)).not.toBeInTheDocument();
   expect(screen.getAllByRole('row', { name: /IT10[12]|IT201/ })).toHaveLength(curriculum.subjects.length);
+});
+
+test('places Registrar-assigned cross-department subjects first before regular curriculum subjects', () => {
+  const mixedCurriculum = {
+    ...curriculum,
+    subjects: [
+      { subjectId: 1, subjectCode: 'IT101', subjectTitle: 'First', units: 3, yearLevel: 1, semester: 'FIRST', priority: 1 },
+      { subjectId: 2, subjectCode: 'BSA201', subjectTitle: 'Intermediate Accounting', units: 3, yearLevel: 3, semester: 'FIRST', isCrossAssigned: true, priority: 0, sourceProgramCode: 'BSA' },
+      { subjectId: 3, subjectCode: 'IT102', subjectTitle: 'Second', units: 3, yearLevel: 1, semester: 'SECOND', priority: 1 },
+    ],
+  };
+  render(<CurriculumViewer curricula={[mixedCurriculum]} />);
+
+  const crossSection = screen.getByTestId('cross-assigned-curriculum-subjects');
+  expect(within(crossSection).getByText('BSA201')).toBeInTheDocument();
+  const allRows = screen.getAllByRole('row', { name: /Subject code/i });
+  expect(allRows[0]).toHaveTextContent('BSA201');
+  expect(allRows[1]).toHaveTextContent('IT101');
+  expect(allRows[2]).toHaveTextContent('IT102');
+});
+
+test('supports real-time search by code and title without mutating curriculum and keeps cross subjects first', () => {
+  const mixedCurriculum = {
+    ...curriculum,
+    subjects: [
+      { subjectId: 1, subjectCode: 'IT201', subjectTitle: 'Data Structures and Algorithms', units: 3, yearLevel: 2, semester: 'FIRST', priority: 1 },
+      { subjectId: 2, subjectCode: 'BSA201', subjectTitle: 'Accounting Data Systems', units: 3, yearLevel: 3, semester: 'FIRST', isCrossAssigned: true, priority: 0 },
+      { subjectId: 3, subjectCode: 'IT101', subjectTitle: 'Introduction to Computing', units: 3, yearLevel: 1, semester: 'FIRST', priority: 1 },
+    ],
+  };
+  const original = JSON.stringify(mixedCurriculum);
+  render(<CurriculumViewer curricula={[mixedCurriculum]} />);
+
+  const searchInput = screen.getByPlaceholderText('Search subject code or subject name...');
+  fireEvent.change(searchInput, { target: { value: 'data' } });
+  const matchingRows = screen.getAllByRole('row', { name: /Subject code/i });
+  expect(matchingRows).toHaveLength(2);
+  expect(matchingRows[0]).toHaveTextContent('BSA201');
+  expect(matchingRows[1]).toHaveTextContent('IT201');
+
+  fireEvent.change(searchInput, { target: { value: 'nonexistent-subject-xyz' } });
+  expect(screen.getByText('No subjects found.')).toBeInTheDocument();
+
+  fireEvent.change(searchInput, { target: { value: '' } });
+  expect(screen.getAllByRole('row', { name: /Subject code/i })).toHaveLength(3);
+  expect(JSON.stringify(mixedCurriculum)).toBe(original);
+});
+
+test('keeps shifter credits and historical subjects in recorded year-semester tables without inflating curriculum units', () => {
+  const shiftedBsaCurriculum = {
+    curriculumId: 10,
+    programCode: 'BSA',
+    programName: 'Bachelor of Science in Accountancy',
+    curriculumName: 'BSA 2026',
+    status: 'PUBLISHED',
+    subjects: [
+      { subjectId: 1, subjectCode: 'GE 101', subjectTitle: 'Understanding the Self', units: 3, yearLevel: 1, semester: 'FIRST', isCompleted: true, isCredited: true, isShifterCredit: true, sourceProgramCode: 'BSIT', completionStatus: 'COMPLETED', finalGrade: 1.75 },
+      { subjectId: 2, subjectCode: 'PE 101', subjectTitle: 'Movement Enhancement', units: 2, yearLevel: 1, semester: 'FIRST', isCompleted: true, isCredited: true, completionStatus: 'COMPLETED', finalGrade: 1.5 },
+      { subjectId: 3, subjectCode: 'BSA 101', subjectTitle: 'Financial Accounting 1', units: 3, yearLevel: 1, semester: 'FIRST', isCompleted: false, completionStatus: 'REMAINING' },
+      { subjectId: 4, subjectCode: 'MATH 101', subjectTitle: 'Business Mathematics', units: 3, yearLevel: 1, semester: 'FIRST', isCompleted: false, completionStatus: 'REMAINING' },
+      { subjectId: 0, subjectCode: 'IT 101', subjectTitle: 'Introduction to Computing', units: 3, yearLevel: 1, semester: 'FIRST', isCompleted: true, isHistorical: true, countsTowardCurriculum: false, sourceProgramCode: 'BSIT', completionStatus: 'COMPLETED', finalGrade: 1.25 },
+    ],
+    totalUnits: 11,
+  };
+  render(<CurriculumViewer curricula={[shiftedBsaCurriculum]} showInternalMetadata={false} />);
+
+  const remainingSection = screen.getByTestId('remaining-curriculum-subjects');
+  for (const code of ['GE 101', 'PE 101', 'BSA 101', 'MATH 101', 'IT 101']) {
+    expect(within(remainingSection).getAllByText(code)).toHaveLength(1);
+  }
+  expect(screen.queryByTestId('completed-curriculum-subjects')).not.toBeInTheDocument();
+  expect(within(remainingSection).getByText('Shifter Credit · From BSIT')).toBeInTheDocument();
+  expect(within(remainingSection).getByText('Historical · From BSIT')).toBeInTheDocument();
+  expect(screen.getByText('Total Units: 11')).toBeInTheDocument();
+  expect(screen.getByText('Overall Curriculum Units: 11')).toBeInTheDocument();
+  expect(screen.getByText(/Historical subjects remain part of the academic record but do not add to current curriculum units/i)).toBeInTheDocument();
+});
+
+test('renders an exact-code failed prior attempt as Needs Retake', () => {
+  const failedCurriculum = {
+    ...curriculum,
+    subjects: [{ ...curriculum.subjects[0], needsRetake: true, completionStatus: 'NEEDS_RETAKE', displayStatus: 'Needs Retake', finalGrade: 5 }],
+  };
+  render(<CurriculumViewer curricula={[failedCurriculum]} progressBySubject={{ IT101: { status: 'Needs Retake', grade: '5' } }} />);
+  expect(screen.getByRole('row', { name: /IT101.*Needs Retake.*5/i })).toBeInTheDocument();
 });

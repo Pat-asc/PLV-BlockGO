@@ -94,6 +94,26 @@ namespace Client_app.Models
         public string Semester { get; set; } = string.Empty;
         public string? SubjectType { get; set; }
         public bool IsCrossDepartmentAssigned { get; set; }
+        public bool IsCrossAssigned { get; set; }
+        public bool IsNonRegular { get; set; }
+        public int Priority { get; set; } = 1;
+        public string? SourceProgramCode { get; set; }
+        public string? SourceProgramName { get; set; }
+        public string? AssignedSection { get; set; }
+        public string? AssignedFaculty { get; set; }
+        public bool IsCompleted { get; set; }
+        public bool IsCredited { get; set; }
+        public bool IsShifterCredit { get; set; }
+        public bool IsHistorical { get; set; }
+        public bool NeedsRetake { get; set; }
+        public bool CountsTowardCurriculum { get; set; } = true;
+        public string CompletionStatus { get; set; } = "REMAINING";
+        public string DisplayStatus { get; set; } = "Not Yet Taken";
+        public decimal? FinalGrade { get; set; }
+        public string? TransactionId { get; set; }
+        public string? SourceSchoolYear { get; set; }
+        public string? SourceSemester { get; set; }
+        public int? SourceYearLevel { get; set; }
     }
 
     public sealed class CurriculumDto
@@ -117,6 +137,10 @@ namespace Client_app.Models
         public DateTimeOffset? PublishedAt { get; set; }
         public string? RegistrarComment { get; set; }
         public IReadOnlyCollection<CurriculumSubjectDto> Subjects { get; set; } = Array.Empty<CurriculumSubjectDto>();
-        public decimal TotalUnits => Subjects.Sum(subject => subject.Units);
+        public IReadOnlyCollection<CurriculumSubjectDto>? RemainingSubjects { get; set; }
+        public IReadOnlyCollection<CurriculumSubjectDto>? CompletedSubjects { get; set; }
+        public decimal TotalUnits => Subjects
+            .Where(subject => !subject.IsCrossAssigned && !subject.IsNonRegular && !subject.IsHistorical && subject.CountsTowardCurriculum)
+            .Sum(subject => subject.Units);
     }
 }

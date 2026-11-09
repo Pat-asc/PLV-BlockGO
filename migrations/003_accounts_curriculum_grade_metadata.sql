@@ -1,7 +1,4 @@
--- Additive schema for managed accounts, enriched grade records, and curricula.
 -- This migration is intentionally idempotent so it can be applied to existing
--- installations whose runtime-created tables differ slightly.
-
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS academic_programs (

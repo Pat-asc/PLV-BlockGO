@@ -2,7 +2,6 @@
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- Create Users table (core authentication)
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(100) UNIQUE,
@@ -28,7 +27,6 @@ ALTER TABLE users
 ALTER TABLE users
     ADD CONSTRAINT ck_users_auth_version_positive CHECK (auth_version > 0);
 
--- Create StudentProfiles table
 CREATE TABLE IF NOT EXISTS studentprofiles (
     user_id SERIAL PRIMARY KEY,
     full_name VARCHAR(100),
@@ -52,7 +50,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_studentprofiles_normalized_full_name
     ON studentprofiles ((LOWER(REGEXP_REPLACE(BTRIM(full_name), '\s+', ' ', 'g'))))
     WHERE NULLIF(BTRIM(full_name), '') IS NOT NULL;
 
--- Create FacultyProfiles table
 CREATE TABLE IF NOT EXISTS facultyprofiles (
     user_id SERIAL PRIMARY KEY,
     full_name VARCHAR(100),
@@ -62,7 +59,6 @@ CREATE TABLE IF NOT EXISTS facultyprofiles (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- Create AdminProfiles table
 CREATE TABLE IF NOT EXISTS adminprofiles (
     user_id SERIAL PRIMARY KEY,
     full_name VARCHAR(100),
@@ -71,7 +67,6 @@ CREATE TABLE IF NOT EXISTS adminprofiles (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- Create User Requests table (registration requests)
 CREATE TABLE IF NOT EXISTS userrequests (
     requestid SERIAL PRIMARY KEY,
     email VARCHAR(100) UNIQUE NOT NULL,
@@ -82,7 +77,6 @@ CREATE TABLE IF NOT EXISTS userrequests (
     createdat TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create Grade Correction Logs table
 CREATE TABLE IF NOT EXISTS gradecorrectionlogs (
     logid SERIAL PRIMARY KEY,
     recordid VARCHAR(100),
@@ -93,7 +87,6 @@ CREATE TABLE IF NOT EXISTS gradecorrectionlogs (
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create Academic Records table
 CREATE TABLE IF NOT EXISTS academic_records (
     record_id SERIAL PRIMARY KEY,
     student_id VARCHAR(100) NOT NULL,
@@ -109,7 +102,6 @@ CREATE TABLE IF NOT EXISTS academic_records (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create Grade Records table
 CREATE TABLE IF NOT EXISTS grade_records (
     grade_id SERIAL PRIMARY KEY,
     academic_record_id INTEGER REFERENCES academic_records(record_id),
@@ -120,7 +112,6 @@ CREATE TABLE IF NOT EXISTS grade_records (
     recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create Registration Requests table
 CREATE TABLE IF NOT EXISTS registration_requests (
     registration_id SERIAL PRIMARY KEY,
     student_id VARCHAR(100) NOT NULL,
@@ -131,7 +122,6 @@ CREATE TABLE IF NOT EXISTS registration_requests (
     approved_at TIMESTAMP
 );
 
--- Create Verification Records table
 CREATE TABLE IF NOT EXISTS verification_records (
     verification_id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id),
@@ -142,7 +132,6 @@ CREATE TABLE IF NOT EXISTS verification_records (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create Audit Logs table
 CREATE TABLE IF NOT EXISTS audit_logs (
     audit_id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id),
@@ -155,7 +144,6 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Canonical academic programs and versioned curriculum checklists.
 CREATE TABLE IF NOT EXISTS academic_programs (
     program_id SERIAL PRIMARY KEY,
     program_code VARCHAR(40) NOT NULL UNIQUE,
@@ -284,8 +272,6 @@ CREATE TABLE IF NOT EXISTS password_reset_requests (
 CREATE INDEX IF NOT EXISTS idx_password_reset_requests_email
     ON password_reset_requests(LOWER(email), created_at DESC);
 
--- Active self-service email verification codes. This is separate from the
--- Registrar-managed password_reset_requests workflow above.
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     token_id BIGSERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -392,8 +378,6 @@ CREATE TABLE IF NOT EXISTS shared_client_state (
     updated_by VARCHAR(255)
 );
 
--- Academic enrollment is period-specific. StudentProfiles remains the current
--- profile snapshot, while this table preserves enrollment history.
 CREATE TABLE IF NOT EXISTS student_enrollments (
     enrollment_id BIGSERIAL PRIMARY KEY,
     student_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -555,7 +539,6 @@ ALTER TABLE studentprofiles ADD COLUMN IF NOT EXISTS student_email VARCHAR(255);
 ALTER TABLE studentprofiles ADD COLUMN IF NOT EXISTS batch_year INTEGER;
 ALTER TABLE student_enrollments ADD COLUMN IF NOT EXISTS batch_year INTEGER;
 
--- Chat Messages table
 CREATE TABLE IF NOT EXISTS chat_messages (
     id SERIAL PRIMARY KEY,
     sender_email VARCHAR(100) NOT NULL,
@@ -567,7 +550,6 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     FOREIGN KEY (receiver_email) REFERENCES users(email)
 );
 
--- Online Status table
 CREATE TABLE IF NOT EXISTS online_status (
     email VARCHAR(100) PRIMARY KEY,
     is_online BOOLEAN DEFAULT false,

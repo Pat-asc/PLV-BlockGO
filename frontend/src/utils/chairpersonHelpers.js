@@ -107,9 +107,9 @@ export const getSectionReviewRecord = ({ reviewData = {}, reviewKey }) =>
 
 export const getReviewStatusLabel = (status = "pending") => {
   if (status === "returned") return "Returned to Faculty";
-  if (status === "approved") return "Approved by Chairperson";
+  if (status === "approved") return "Approved by Registrar";
   if (status === "forwarded") return "Finalized";
-  if (status === "submitted") return "Submitted to Chairperson";
+  if (status === "submitted") return "Waiting for Registrar Review";
   return "Not Yet Submitted";
 };
 

@@ -174,14 +174,17 @@ export const persistPromotedBatchesToBackend = async (batches = []) => {
     (batch.students || []).map((student) => ({
       studentId: student.studentId,
       program: batch.program,
-      sourceSchoolYear: student.sourceSchoolYear,
-      sourceSemester: student.sourceSemester,
-      sourceYearLevel: yearLevelNumberFrom(student.sourceYearLevel, student.originSectionCode),
-      sourceSection: student.originSectionCode,
-      targetSchoolYear: batch.schoolYear,
+      sourceSchoolYear: student.sourceSchoolYear || student.promotedFromSchoolYear || student.originBatchYear || batch.schoolYear || batch.batchYear,
+      sourceSemester: student.sourceSemester || student.promotedFromSemester || student.originSemester || batch.semester,
+      sourceYearLevel: yearLevelNumberFrom(
+        student.sourceYearLevel || student.promotedFromYearLevel || student.originYearLevel,
+        student.originSectionCode || student.promotedFromSectionCode
+      ),
+      sourceSection: student.originSectionCode || student.promotedFromSectionCode || "",
+      targetSchoolYear: batch.schoolYear || batch.batchYear,
       targetSemester: batch.semester,
       targetYearLevel: yearLevelNumberFrom(student.yearLevel, student.sectionCode),
-      targetSection: student.sectionCode,
+      targetSection: student.sectionCode || null,
     }))
   );
 

@@ -92,7 +92,7 @@ test.each([
   expect(screen.getByRole('button', { name: action })).toBeInTheDocument();
 });
 
-test('shows an empty current-season finalized state after reset filtering', () => {
+test('shows a program-wide finalized-history empty state', () => {
   render(<FacultyStatusTable rows={[]} allRows={[]} viewMode="forwarded" />);
-  expect(screen.getByText(/No finalized submissions exist in the current encoding season/i)).toBeInTheDocument();
+  expect(screen.getByText(/No finalized grade history is available for this program/i)).toBeInTheDocument();
 });

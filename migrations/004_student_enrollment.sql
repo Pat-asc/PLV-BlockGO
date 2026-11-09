@@ -1,6 +1,3 @@
--- Durable, period-specific student enrollment records.
--- StudentProfiles remains the current-profile snapshot used by existing pages.
-
 CREATE TABLE IF NOT EXISTS academicsections (
     id SERIAL PRIMARY KEY,
     department VARCHAR(255) NOT NULL,

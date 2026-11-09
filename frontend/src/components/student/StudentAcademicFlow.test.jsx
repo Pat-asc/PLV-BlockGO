@@ -73,8 +73,16 @@ test('only finalized grades determine completed or failed status', () => {
   const progress = curriculumProgress(subjects, enrolled, [...draft, ...finalized]);
   expect(progress['IT 101'].status).toBe('In Progress');
   expect(progress['IT 201'].status).toBe('Not Yet Taken');
-  expect(progress['IT 301']).toEqual({ status: 'Completed', grade: '90' });
-  expect(progress['IT 401']).toEqual({ status: 'Failed', grade: '70' });
+  expect(progress['IT 301']).toEqual({ status: 'Completed', grade: '90', isCredited: false });
+  expect(progress['IT 401']).toEqual({ status: 'Failed', grade: '70', isCredited: false });
+});
+
+test('backend exact-code failed attempts remain Needs Retake in the shifted curriculum', () => {
+  const shiftedSubjects = [{
+    ...subjects[0], needsRetake: true, completionStatus: 'NEEDS_RETAKE',
+    displayStatus: 'Needs Retake', finalGrade: 5,
+  }];
+  expect(curriculumProgress(shiftedSubjects, [], [])['IT 101']).toEqual({ status: 'Needs Retake', grade: '5' });
 });
 
 test('curriculum checklist uses actual unit values and no generic current-year highlight', () => {

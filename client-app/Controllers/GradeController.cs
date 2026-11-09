@@ -3096,7 +3096,6 @@ namespace BlockGo.Controllers
                 if (jwtRole == "department_admin")
                 {
                     HashSet<string> currentVisibleRecordIds;
-                    HashSet<string> currentFinalizedRecordIds;
                     ActiveGradeEncodingPeriod? activeEncodingPeriod = null;
                     try
                     {
@@ -3107,14 +3106,10 @@ namespace BlockGo.Controllers
                         currentVisibleRecordIds = await ChairpersonReviewScopeService
                             .GetCurrentVisibleRecordIdsAsync(conn, activeEncodingPeriod.Term,
                                 activeEncodingPeriod.Semester, HttpContext.RequestAborted);
-                        currentFinalizedRecordIds = await ChairpersonReviewScopeService
-                            .GetCurrentFinalizedRecordIdsAsync(conn, activeEncodingPeriod.Semester,
-                                HttpContext.RequestAborted);
                     }
                     catch (GradeEncodingPeriodException)
                     {
                         currentVisibleRecordIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        currentFinalizedRecordIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     }
 
                     static bool IsCurrentWorkflowStatus(string? status)
@@ -3128,18 +3123,14 @@ namespace BlockGo.Controllers
                     {
                         if (!IsCurrentWorkflowStatus(grade.Status)) return true;
                         if (string.Equals(grade.Status, "Finalized", StringComparison.OrdinalIgnoreCase))
-                            return activeEncodingPeriod != null &&
-                                   currentFinalizedRecordIds.Contains(grade.Id ?? string.Empty) &&
-                                   string.Equals(GradeAcademicTerm.Normalize(grade.Term, string.Empty), activeEncodingPeriod.Term, StringComparison.OrdinalIgnoreCase) &&
-                                   string.Equals(GradeAcademicPeriod.Semester(grade.Semester), activeEncodingPeriod.Semester, StringComparison.OrdinalIgnoreCase);
+                            return true;
                         return currentVisibleRecordIds.Contains(grade.Id ?? string.Empty);
                     }).ToList();
 
                     if (activeEncodingPeriod != null)
                     {
                         diagnosticSchoolYear = string.Join(",", allGrades
-                            .Where(grade => currentVisibleRecordIds.Contains(grade.Id ?? string.Empty) ||
-                                            currentFinalizedRecordIds.Contains(grade.Id ?? string.Empty))
+                            .Where(grade => currentVisibleRecordIds.Contains(grade.Id ?? string.Empty))
                             .Select(grade => grade.SchoolYear)
                             .Where(value => !string.IsNullOrWhiteSpace(value))
                             .Distinct(StringComparer.OrdinalIgnoreCase)

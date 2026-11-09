@@ -144,6 +144,56 @@ namespace Client_app.Controllers
             var sectionToken = $"{yearLevel}-{sectionNumber}";
             var canonicalSection = $"{programCode} {sectionToken}";
             var subjectRows = new List<CurrentSubjectRow>();
+            var addedSubjectCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            await using (var nonRegularCommand = new NpgsqlCommand(@"
+                SELECT cs.subject_code, cs.subject_title, cs.units,
+                       COALESCE(fp.full_name, u.email, 'To be assigned') AS faculty_name,
+                       COALESCE(fs.id::text, '') AS assignment_cycle_id,
+                       COALESCE(NULLIF(TRIM(fs.section), ''), CASE WHEN asec.id IS NOT NULL THEN CONCAT(p.program_code, ' ', asec.year_level, '-', asec.section_num) ELSE @canonicalSection END) AS section,
+                       p.program_code AS source_program_code,
+                       p.program_name AS source_program_name
+                FROM student_non_regular_subjects assignment
+                JOIN curriculum_subjects cs ON cs.subject_id = assignment.subject_id
+                LEFT JOIN academic_programs p ON p.program_id = assignment.source_program_id
+                LEFT JOIN facultysections fs ON fs.id = assignment.faculty_section_id AND fs.is_active = TRUE
+                LEFT JOIN academicsections asec ON asec.id = fs.academic_section_id
+                LEFT JOIN users u ON u.id = fs.user_id AND LOWER(u.role) = 'faculty'
+                LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
+                WHERE assignment.student_user_id = (
+                    SELECT id FROM users WHERE LOWER(email) = LOWER(@studentEmail) LIMIT 1)
+                  AND (assignment.enrollment_id = @enrollmentId OR (assignment.school_year = @schoolYear AND assignment.semester = @semester))
+                  AND UPPER(BTRIM(COALESCE(assignment.status, 'ACTIVE'))) = 'ACTIVE'
+                ORDER BY cs.year_level,
+                         CASE cs.semester WHEN 'FIRST' THEN 1 WHEN 'SECOND' THEN 2 ELSE 3 END,
+                         cs.subject_code;", connection))
+            {
+                nonRegularCommand.Parameters.AddWithValue("studentEmail", email);
+                nonRegularCommand.Parameters.AddWithValue("enrollmentId", enrollmentId);
+                nonRegularCommand.Parameters.AddWithValue("schoolYear", schoolYear);
+                nonRegularCommand.Parameters.AddWithValue("semester", semester);
+                nonRegularCommand.Parameters.AddWithValue("canonicalSection", canonicalSection);
+                await using var reader = await nonRegularCommand.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    var code = reader.GetString(0);
+                    if (addedSubjectCodes.Add(code))
+                    {
+                        subjectRows.Add(new CurrentSubjectRow(
+                            code,
+                            reader.GetString(1),
+                            reader.GetDecimal(2),
+                            reader.GetString(3),
+                            reader.GetString(4),
+                            reader.GetString(5),
+                            true,
+                            0,
+                            reader.IsDBNull(6) ? null : reader.GetString(6),
+                            reader.IsDBNull(7) ? null : reader.GetString(7)));
+                    }
+                }
+            }
+
             await using var command = new NpgsqlCommand(@"
                 SELECT cs.subject_code, cs.subject_title, cs.units,
                        faculty.full_name, faculty.assignment_cycle_id
@@ -177,39 +227,29 @@ namespace Client_app.Controllers
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             {
                 while (await reader.ReadAsync(cancellationToken))
-                    subjectRows.Add(new CurrentSubjectRow(
-                        reader.GetString(0), reader.GetString(1), reader.GetDecimal(2),
-                        reader.IsDBNull(3) ? "To be assigned" : reader.GetString(3),
-                        reader.IsDBNull(4) ? "" : reader.GetString(4), canonicalSection, false));
+                {
+                    var code = reader.GetString(0);
+                    if (addedSubjectCodes.Add(code))
+                    {
+                        subjectRows.Add(new CurrentSubjectRow(
+                            code,
+                            reader.GetString(1),
+                            reader.GetDecimal(2),
+                            reader.IsDBNull(3) ? "To be assigned" : reader.GetString(3),
+                            reader.IsDBNull(4) ? "" : reader.GetString(4),
+                            canonicalSection,
+                            false,
+                            1,
+                            programCode,
+                            department));
+                    }
+                }
             }
 
-            await using (var nonRegularCommand = new NpgsqlCommand(@"
-                SELECT cs.subject_code, cs.subject_title, cs.units,
-                       COALESCE(fp.full_name, u.email) AS faculty_name,
-                       fs.id::text AS assignment_cycle_id, fs.section
-                FROM student_non_regular_subjects assignment
-                JOIN curriculum_subjects cs ON cs.subject_id = assignment.subject_id
-                JOIN facultysections fs ON fs.id = assignment.faculty_section_id AND fs.is_active = TRUE
-                JOIN users u ON u.id = fs.user_id AND LOWER(u.role) = 'faculty'
-                LEFT JOIN facultyprofiles fp ON fp.user_id = u.id
-                WHERE assignment.student_user_id = (
-                    SELECT id FROM users WHERE LOWER(email) = LOWER(@studentEmail) LIMIT 1)
-                  AND assignment.enrollment_id = @enrollmentId
-                  AND assignment.school_year = @schoolYear
-                  AND assignment.semester = @semester
-                  AND assignment.status = 'ACTIVE'
-                ORDER BY cs.subject_code;", connection))
-            {
-                nonRegularCommand.Parameters.AddWithValue("studentEmail", email);
-                nonRegularCommand.Parameters.AddWithValue("enrollmentId", enrollmentId);
-                nonRegularCommand.Parameters.AddWithValue("schoolYear", schoolYear);
-                nonRegularCommand.Parameters.AddWithValue("semester", semester);
-                await using var reader = await nonRegularCommand.ExecuteReaderAsync(cancellationToken);
-                while (await reader.ReadAsync(cancellationToken))
-                    subjectRows.Add(new CurrentSubjectRow(
-                        reader.GetString(0), reader.GetString(1), reader.GetDecimal(2),
-                        reader.GetString(3), reader.GetString(4), reader.GetString(5), true));
-            }
+            subjectRows = subjectRows
+                .OrderBy(row => row.Priority)
+                .ThenBy(row => row.SubjectCode, StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
             var ledgerAvailable = true;
             var finalizedRecords = new List<AcademicRecord>();
@@ -281,6 +321,11 @@ namespace Client_app.Controllers
                     section = subject.Section,
                     subjectClassification = subject.IsNonRegular ? "NON-REGULAR" : "REGULAR",
                     isNonRegular = subject.IsNonRegular,
+                    isCrossAssigned = subject.IsNonRegular,
+                    priority = subject.Priority,
+                    sourceProgramCode = subject.SourceProgramCode,
+                    sourceProgramName = subject.SourceProgramName,
+                    assignedDepartment = subject.SourceProgramCode ?? programCode,
                     professor = subject.FacultyName,
                     facultyName = subject.FacultyName,
                     enrollmentId,
@@ -633,14 +678,30 @@ namespace Client_app.Controllers
         {
             var email = User.Identity?.Name;
             if (string.IsNullOrWhiteSpace(email)) return Unauthorized();
-            var finalized = await LoadFinalizedRecordsAsync(email);
-            var completed = finalized
-                .Where(record => FinalNumericGrade(record.Grade) is decimal grade && GradeEquivalent(grade) < 5m)
-                .GroupBy(record => record.SubjectCode, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
 
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
+
+            var dbCompleted = await StudentSubjectGradeResolver.LoadDatabaseCompletedSubjectGradesAsync(connection, email, cancellationToken);
+            try
+            {
+                var finalized = await LoadFinalizedRecordsAsync(email);
+                foreach (var record in finalized)
+                {
+                    if (!string.IsNullOrWhiteSpace(record.SubjectCode) &&
+                        StudentSubjectGradeResolver.IsPassingFinalizedGrade(record.Grade, out var numericGrade) &&
+                        numericGrade.HasValue)
+                    {
+                        var code = record.SubjectCode.Trim();
+                        dbCompleted[code] = new CompletedSubjectGrade(code, numericGrade.Value, record.Id, record.TransactionId);
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "Ledger finalized grade lookup failed during curriculum-progress for {Email}; using PostgreSQL finalized grades.", email);
+            }
+
             await using var command = new NpgsqlCommand(@"
                 SELECT c.curriculum_id, c.curriculum_code, c.curriculum_name, c.curriculum_version,
                        cs.subject_id, cs.subject_code, cs.subject_title, cs.units, cs.year_level, cs.semester,
@@ -651,12 +712,16 @@ namespace Client_app.Controllers
                     SELECT se.program_id, se.curriculum_id
                     FROM student_enrollments se
                     WHERE se.student_user_id = u.id
-                    ORDER BY se.updated_at DESC, se.enrollment_id DESC LIMIT 1
+                      AND UPPER(BTRIM(se.status)) = 'ENROLLED'
+                    ORDER BY se.school_year DESC,
+                             CASE se.semester WHEN 'MIDYEAR' THEN 3 WHEN 'SECOND' THEN 2 ELSE 1 END DESC,
+                             se.enrollment_id DESC LIMIT 1
                 ) enrollment ON TRUE
                 JOIN academic_programs p ON p.program_id = enrollment.program_id
                     OR (enrollment.program_id IS NULL AND
                         (LOWER(p.program_name) = LOWER(sp.department) OR LOWER(p.program_code) = LOWER(sp.department)))
-                JOIN curriculums c ON c.curriculum_id = enrollment.curriculum_id
+                JOIN curriculums c ON c.curriculum_id = COALESCE(enrollment.curriculum_id, sp.curriculum_id)
+                    AND c.program_id = p.program_id
                 JOIN curriculum_subjects cs ON cs.curriculum_id = c.curriculum_id
                 WHERE LOWER(u.email) = LOWER(@email)
                   AND c.status IN ('PUBLISHED', 'ARCHIVED')
@@ -665,9 +730,63 @@ namespace Client_app.Controllers
                          cs.subject_code;", connection);
             command.Parameters.AddWithValue("email", email);
             var subjects = new List<object>();
+            var remainingSubjects = new List<object>();
+            var completedSubjects = new List<object>();
+            var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             long curriculumId = 0;
             string curriculumCode = "", curriculumName = "", curriculumVersion = "";
             var completedCount = 0;
+
+            try
+            {
+                await using var crossCommand = new NpgsqlCommand(@"
+                    SELECT cs.subject_id, cs.subject_code, cs.subject_title, cs.units, cs.year_level, cs.semester,
+                           cs.prerequisite, cs.subject_type, p.program_code, p.program_name
+                    FROM users u
+                    JOIN student_non_regular_subjects nrs ON nrs.student_user_id = u.id
+                    JOIN curriculum_subjects cs ON cs.subject_id = nrs.subject_id
+                    LEFT JOIN academic_programs p ON p.program_id = nrs.source_program_id
+                    WHERE LOWER(u.email) = LOWER(@email)
+                      AND UPPER(BTRIM(COALESCE(nrs.status, 'ACTIVE'))) = 'ACTIVE'
+                    ORDER BY cs.year_level,
+                             CASE cs.semester WHEN 'FIRST' THEN 1 WHEN 'SECOND' THEN 2 ELSE 3 END,
+                             cs.subject_code;", connection);
+                crossCommand.Parameters.AddWithValue("email", email);
+                await using var crossReader = await crossCommand.ExecuteReaderAsync(cancellationToken);
+                while (await crossReader.ReadAsync(cancellationToken))
+                {
+                    var subjectCode = crossReader.GetString(1).Trim();
+                    if (!seenCodes.Add(subjectCode)) continue;
+                    var isCompleted = dbCompleted.TryGetValue(subjectCode, out var grade);
+                    if (isCompleted) completedCount++;
+                    var entry = new
+                    {
+                        subjectId = crossReader.GetInt64(0),
+                        subjectCode,
+                        subjectTitle = crossReader.GetString(2),
+                        units = crossReader.GetDecimal(3),
+                        yearLevel = Convert.ToInt32(crossReader.GetValue(4), CultureInfo.InvariantCulture),
+                        semester = crossReader.GetString(5),
+                        prerequisite = crossReader.IsDBNull(6) ? null : crossReader.GetString(6),
+                        subjectType = crossReader.IsDBNull(7) ? null : crossReader.GetString(7),
+                        sourceProgramCode = crossReader.IsDBNull(8) ? null : crossReader.GetString(8),
+                        sourceProgramName = crossReader.IsDBNull(9) ? null : crossReader.GetString(9),
+                        isCrossAssigned = true,
+                        isNonRegular = true,
+                        priority = 0,
+                        isCompleted,
+                        isCredited = isCompleted,
+                        completionStatus = isCompleted ? "COMPLETED" : "REMAINING",
+                        finalGrade = isCompleted ? (decimal?)grade!.FinalGrade : null,
+                        transactionId = isCompleted ? grade!.TransactionId : null
+                    };
+                    subjects.Add(entry);
+                    if (isCompleted) completedSubjects.Add(entry);
+                    else remainingSubjects.Add(entry);
+                }
+            }
+            catch (PostgresException) { }
+
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
@@ -675,25 +794,37 @@ namespace Client_app.Controllers
                 curriculumCode = reader.GetString(1);
                 curriculumName = reader.GetString(2);
                 curriculumVersion = reader.GetString(3);
-                var subjectCode = reader.GetString(5);
-                var isCompleted = completed.TryGetValue(subjectCode, out var grade);
+                var subjectCode = reader.GetString(5).Trim();
+                if (!seenCodes.Add(subjectCode)) continue;
+                var isCompleted = dbCompleted.TryGetValue(subjectCode, out var grade);
                 if (isCompleted) completedCount++;
-                subjects.Add(new
+                var entry = new
                 {
                     subjectId = reader.GetInt64(4), subjectCode, subjectTitle = reader.GetString(6), units = reader.GetDecimal(7),
-                    yearLevel = reader.GetInt16(8), semester = reader.GetString(9),
+                    yearLevel = (int)reader.GetInt16(8), semester = reader.GetString(9),
                     prerequisite = reader.IsDBNull(10) ? null : reader.GetString(10),
                     subjectType = reader.IsDBNull(11) ? null : reader.GetString(11),
+                    sourceProgramCode = (string?)null,
+                    sourceProgramName = (string?)null,
+                    isCrossAssigned = false,
+                    isNonRegular = false,
+                    priority = 1,
+                    isCompleted,
+                    isCredited = isCompleted,
                     completionStatus = isCompleted ? "COMPLETED" : "REMAINING",
-                    finalGrade = isCompleted ? FinalNumericGrade(grade!.Grade) : null,
+                    finalGrade = isCompleted ? (decimal?)grade!.FinalGrade : null,
                     transactionId = isCompleted ? grade!.TransactionId : null
-                });
+                };
+                subjects.Add(entry);
+                if (isCompleted) completedSubjects.Add(entry);
+                else remainingSubjects.Add(entry);
             }
             if (curriculumId == 0) return NotFound(new { status = "Error", message = "No curriculum is assigned to this student." });
             return Ok(new
             {
                 status = "Success",
                 data = new { curriculumId, curriculumCode, curriculumName, curriculumVersion, subjects,
+                    remainingSubjects, completedSubjects,
                     completedCount, remainingCount = subjects.Count - completedCount }
             });
         }
@@ -949,7 +1080,10 @@ namespace Client_app.Controllers
             string FacultyName,
             string AssignmentCycleId,
             string Section,
-            bool IsNonRegular);
+            bool IsNonRegular,
+            int Priority = 1,
+            string? SourceProgramCode = null,
+            string? SourceProgramName = null);
     }
 
     public class UpdateProfileRequest

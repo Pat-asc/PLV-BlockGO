@@ -5,27 +5,111 @@ const ordinal = (year) => `${year}${year === 1 ? 'st' : year === 2 ? 'nd' : year
 const semesterLabels = { FIRST: 'First Semester', SECOND: 'Second Semester', MIDYEAR: 'Summer / Midyear' };
 const semesterOrder = { FIRST: 1, SECOND: 2, MIDYEAR: 3 };
 
-const CurriculumViewer = ({ curricula = [], currentYear = 0, loading = false, emptyMessage = 'No published curriculum is available.', progressBySubject = null, showInternalMetadata = true }) => {
+const isCrossSubject = (subject) =>
+  Boolean(
+    subject?.isCrossAssigned ||
+    subject?.isNonRegular ||
+    subject?.isCrossDepartmentAssigned ||
+    Number(subject?.priority) === 0 ||
+    String(subject?.subjectClassification || '').toUpperCase() === 'NON-REGULAR'
+  );
+
+const isCreditedCompletedSubject = (subject) =>
+  Boolean(
+    subject?.isCompleted ||
+    subject?.isCredited ||
+    String(subject?.completionStatus || '').toUpperCase() === 'COMPLETED'
+  );
+
+const countsTowardCurriculum = (subject) =>
+  !subject?.isHistorical && subject?.countsTowardCurriculum !== false;
+
+const subjectCategory = (subject, curriculum) => {
+  const source = subject?.sourceProgramCode || subject?.sourceProgramName;
+  if (subject?.isShifterCredit) return source ? `Shifter Credit · From ${source}` : 'Shifter Credit';
+  if (subject?.isHistorical) return source ? `Historical · From ${source}` : 'Historical';
+  if (isCrossSubject(subject)) return source ? `Cross-Curriculum · ${source}` : 'Cross-Curriculum';
+  return subject?.subjectType || (curriculum?.programCode ? `${curriculum.programCode} Curriculum` : 'Curriculum');
+};
+
+const sortSubjects = (list = []) =>
+  [...list].sort((a, b) => {
+    const priorityDiff = (isCrossSubject(a) ? 0 : 1) - (isCrossSubject(b) ? 0 : 1);
+    if (priorityDiff !== 0) return priorityDiff;
+    const yearDiff = (Number(a?.yearLevel) || 0) - (Number(b?.yearLevel) || 0);
+    if (yearDiff !== 0) return yearDiff;
+    const semDiff = (semesterOrder[String(a?.semester || '').toUpperCase()] || 99) - (semesterOrder[String(b?.semester || '').toUpperCase()] || 99);
+    if (semDiff !== 0) return semDiff;
+    return String(a?.subjectCode || '').localeCompare(String(b?.subjectCode || ''));
+  });
+
+const CurriculumViewer = ({ curricula = [], currentYear = 0, loading = false, emptyMessage = 'No published curriculum is available.', progressBySubject = null, showInternalMetadata = true, searchable = true }) => {
   const [selectedId, setSelectedId] = useState('');
   const [yearFilter, setYearFilter] = useState('all');
   const [semesterFilter, setSemesterFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   useEffect(() => { if (curricula.length && !curricula.some((item) => String(item.curriculumId) === String(selectedId))) setSelectedId(String(curricula[0].curriculumId)); }, [curricula, selectedId]);
   const curriculum = useMemo(() => curricula.find((item) => String(item.curriculumId) === String(selectedId)) || curricula[0], [curricula, selectedId]);
   const subjects = useMemo(() => Array.isArray(curriculum?.subjects) ? curriculum.subjects : [], [curriculum]);
   const years = useMemo(() => [...new Set(subjects.map((subject) => Number(subject.yearLevel)).filter(Number.isInteger))].sort((a, b) => a - b), [subjects]);
   const semesters = useMemo(() => [...new Set(subjects.map((subject) => String(subject.semester || '').toUpperCase()).filter(Boolean))]
     .sort((a, b) => (semesterOrder[a] || 99) - (semesterOrder[b] || 99)), [subjects]);
-  const filteredSubjects = useMemo(() => subjects.filter((subject) =>
-    (yearFilter === 'all' || String(subject.yearLevel) === yearFilter) &&
-    (semesterFilter === 'all' || String(subject.semester).toUpperCase() === semesterFilter)), [subjects, yearFilter, semesterFilter]);
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredSubjects = useMemo(() => sortSubjects(subjects.filter((subject) => {
+    if (yearFilter !== 'all' && String(subject.yearLevel) !== yearFilter) return false;
+    if (semesterFilter !== 'all' && String(subject.semester).toUpperCase() !== semesterFilter) return false;
+    if (!normalizedSearch) return true;
+    return [
+      subject?.subjectCode,
+      subject?.subjectTitle,
+      subject?.subjectName,
+      curriculum?.programCode,
+      curriculum?.programName,
+      subject?.sourceProgramCode,
+      subject?.sourceProgramName,
+      subject?.yearLevel,
+      subject?.semester,
+    ].some((value) => String(value || '').toLowerCase().includes(normalizedSearch));
+  })), [subjects, yearFilter, semesterFilter, normalizedSearch, curriculum]);
 
   if (loading) return <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm dark:border-slate-700 dark:bg-slate-900"><div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-blue-100 border-t-[#003366] dark:border-slate-700 dark:border-t-sky-300" /><p className="mt-3 text-sm font-medium text-slate-500 dark:text-slate-400">Loading curriculum checklist...</p></div>;
   if (!curriculum) return <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm dark:border-slate-700 dark:bg-slate-900"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-xl text-slate-400 dark:bg-slate-800 dark:text-slate-500">▤</div><p className="mt-3 text-sm font-medium text-slate-500 dark:text-slate-400">{emptyMessage}</p></div>;
 
+  const topCrossSubjects = filteredSubjects.filter(isCrossSubject);
+  const mainSubjectsPool = filteredSubjects.filter((subject) => !isCrossSubject(subject));
+  const hasShiftedAcademicRecords = subjects.some((subject) => subject?.isShifterCredit || subject?.isHistorical);
+
   const groups = years.filter((year) => yearFilter === 'all' || yearFilter === String(year)).flatMap((year) => semesters
     .filter((semester) => semesterFilter === 'all' || semesterFilter === semester)
-    .map((semester) => ({ year, semester, rows: filteredSubjects.filter((subject) => Number(subject.yearLevel) === year && String(subject.semester).toUpperCase() === semester) })))
+    .map((semester) => ({ year, semester, rows: mainSubjectsPool.filter((subject) => Number(subject.yearLevel) === year && String(subject.semester).toUpperCase() === semester) })))
     .filter((group) => group.rows.length > 0);
+
+  const renderSubjectTable = (rows) => (
+    <div className="max-w-full xl:overflow-x-auto xl:rounded-xl xl:border xl:border-slate-200 xl:shadow-sm dark:xl:border-slate-700">
+      <table className="block w-full text-sm xl:table xl:min-w-[820px] xl:table-fixed xl:divide-y xl:divide-slate-200 dark:xl:divide-slate-700">
+        <thead className="hidden bg-slate-100/95 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 backdrop-blur dark:bg-slate-800 dark:text-slate-300 xl:table-header-group">
+          <tr><th className="w-28 px-4 py-3">Code</th><th className="w-56 px-4 py-3">Subject</th><th className="w-20 px-4 py-3 text-center">Units</th><th className="w-24 px-4 py-3 text-center">Lecture</th><th className="w-28 px-4 py-3 text-center">Laboratory</th><th className="w-40 px-4 py-3">Prerequisite</th><th className="w-32 px-4 py-3">Category</th>{progressBySubject ? <><th className="w-32 px-4 py-3">Status</th><th className="w-28 px-4 py-3">Grade</th></> : null}</tr>
+        </thead>
+        <tbody className="grid gap-3 xl:table-row-group xl:divide-y xl:divide-slate-100 dark:xl:divide-slate-700">{rows.map((subject, index) => {
+          const progress = progressBySubject?.[String(subject.subjectCode).trim().toUpperCase()];
+          const status = progress?.status || subject?.displayStatus || (subject?.needsRetake ? 'Needs Retake' : isCreditedCompletedSubject(subject) ? 'Completed' : 'Not Yet Taken');
+          const progressClass = status === 'Completed' ? 'bg-emerald-50/60 text-slate-800 dark:bg-emerald-950/40 dark:text-slate-100' : status === 'In Progress' ? 'bg-amber-50/70 text-slate-800 dark:bg-amber-950/40 dark:text-slate-100' : status === 'Not Yet Taken' ? 'bg-slate-200/80 text-slate-600 dark:bg-slate-800/60 dark:text-slate-200' : 'bg-red-50/60 text-slate-800 dark:bg-red-950/40 dark:text-slate-100';
+          const rowClass = (progressBySubject || isCreditedCompletedSubject(subject)) ? progressClass : `${index % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50/70 dark:bg-slate-800/60'} text-slate-700 hover:bg-blue-50/60 dark:text-slate-200 dark:hover:bg-slate-800`;
+          const mobileLabelClass = 'mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500 xl:hidden';
+          return <tr key={subject.subjectId || subject.subjectCode} data-progress-status={progressBySubject || isCreditedCompletedSubject(subject) ? status : undefined} className={`${rowClass} grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-slate-200 p-4 shadow-sm transition-colors dark:border-slate-700 sm:grid-cols-4 xl:table-row xl:rounded-none xl:border-0 xl:p-0 xl:shadow-none`}>
+            <td className="col-span-1 break-words font-bold text-[#003366] dark:text-sky-300 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Subject code</span>{subject.subjectCode}</td>
+            <td className="col-span-2 break-words font-medium sm:col-span-3 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Subject title</span>{subject.subjectTitle}</td>
+            <td className="tabular-nums xl:table-cell xl:px-4 xl:py-3.5 xl:text-center"><span className={mobileLabelClass}>Units</span>{subject.units}</td>
+            <td className="tabular-nums xl:table-cell xl:px-4 xl:py-3.5 xl:text-center"><span className={mobileLabelClass}>Lecture hours</span>{subject.lectureHours}</td>
+            <td className="tabular-nums xl:table-cell xl:px-4 xl:py-3.5 xl:text-center"><span className={mobileLabelClass}>Laboratory hours</span>{subject.laboratoryHours}</td>
+            <td className="break-words text-slate-600 dark:text-slate-300 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Prerequisite</span>{subject.prerequisite || 'None'}</td>
+            <td className="break-words text-slate-600 dark:text-slate-300 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Category</span><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${subject?.isShifterCredit ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300' : subject?.isHistorical ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300' : isCrossSubject(subject) ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}`}>{subjectCategory(subject, curriculum)}</span></td>
+            {progressBySubject ? <><td className="break-words font-semibold xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Status</span>{status}</td><td className="col-span-2 break-words sm:col-span-1 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Grade</span>{progress?.grade || (subject.finalGrade != null ? String(subject.finalGrade) : 'Not Yet Available')}</td></> : null}
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>
+  );
 
   return <section data-testid="curriculum-viewer" className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
     <div className="border-b border-slate-200 px-4 py-5 dark:border-slate-700 sm:px-6">
@@ -44,45 +128,53 @@ const CurriculumViewer = ({ curricula = [], currentYear = 0, loading = false, em
     </div>
 
     <div className="p-4 sm:p-6">
+    {hasShiftedAcademicRecords ? (
+      <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm leading-6 text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
+        Subjects completed before the program shift remain visible in their recorded year and semester. Shifter credits satisfy exact-code requirements in this curriculum; historical subjects remain part of the academic record but do not add to current curriculum units.
+      </div>
+    ) : null}
+    {searchable ? (
+      <div className="mb-4">
+        <label className="block">
+          <span className="sr-only">Search curriculum subjects</span>
+          <input
+            type="search"
+            aria-label="Search curriculum subjects"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search subject code or subject name..."
+            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-[#003366] focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+          />
+        </label>
+      </div>
+    ) : null}
     <div className="mb-6 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60 sm:grid-cols-2 sm:p-4" aria-label="Curriculum filters">
       <BoundedSelect label="Year Level" value={yearFilter} onChange={setYearFilter} options={[{ value: 'all', label: 'All Year Levels' }, ...years.map((year) => ({ value: String(year), label: `${ordinal(year)}${Number(currentYear) === year ? ' · Current' : ''}` }))]} />
       <BoundedSelect label="Semester" value={semesterFilter} onChange={setSemesterFilter} options={[{ value: 'all', label: 'All Semesters' }, ...semesters.map((semester) => ({ value: semester, label: semesterLabels[semester] || semester }))]} />
     </div>
-    {groups.map(({ year, semester, rows }) => {
-      const total = rows.reduce((sum, subject) => sum + Number(subject.units || 0), 0);
-      return <div key={`${year}-${semester}`} className="mb-8 last:mb-0">
+    {topCrossSubjects.length > 0 ? (
+      <div data-testid="cross-assigned-curriculum-subjects" className="mb-8">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">{ordinal(year)} <span className="mx-1 text-slate-300 dark:text-slate-600">/</span> {semesterLabels[semester] || semester}</h3>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">Total Units: {total}</span>
+          <h3 className="text-base font-bold text-[#003366] dark:text-sky-300">Cross-Department Assigned Subjects</h3>
+          <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">Total Units: {topCrossSubjects.reduce((sum, subject) => sum + (countsTowardCurriculum(subject) ? Number(subject.units || 0) : 0), 0)}</span>
         </div>
-        <div className="max-w-full xl:overflow-x-auto xl:rounded-xl xl:border xl:border-slate-200 xl:shadow-sm dark:xl:border-slate-700">
-          <table className="block w-full text-sm xl:table xl:min-w-[820px] xl:table-fixed xl:divide-y xl:divide-slate-200 dark:xl:divide-slate-700">
-            <thead className="hidden bg-slate-100/95 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 backdrop-blur dark:bg-slate-800 dark:text-slate-300 xl:table-header-group">
-              <tr><th className="w-28 px-4 py-3">Code</th><th className="w-56 px-4 py-3">Subject</th><th className="w-20 px-4 py-3 text-center">Units</th><th className="w-24 px-4 py-3 text-center">Lecture</th><th className="w-28 px-4 py-3 text-center">Laboratory</th><th className="w-40 px-4 py-3">Prerequisite</th><th className="w-32 px-4 py-3">Category</th>{progressBySubject ? <><th className="w-32 px-4 py-3">Status</th><th className="w-28 px-4 py-3">Grade</th></> : null}</tr>
-            </thead>
-            <tbody className="grid gap-3 xl:table-row-group xl:divide-y xl:divide-slate-100 dark:xl:divide-slate-700">{rows.map((subject, index) => {
-              const progress = progressBySubject?.[String(subject.subjectCode).trim().toUpperCase()];
-              const status = progress?.status || 'Not Yet Taken';
-              const progressClass = status === 'Completed' ? 'bg-emerald-50/60 text-slate-800 dark:bg-emerald-950/40 dark:text-slate-100' : status === 'In Progress' ? 'bg-amber-50/70 text-slate-800 dark:bg-amber-950/40 dark:text-slate-100' : status === 'Not Yet Taken' ? 'bg-slate-200/80 text-slate-600 dark:bg-slate-800/60 dark:text-slate-200' : 'bg-red-50/60 text-slate-800 dark:bg-red-950/40 dark:text-slate-100';
-              const rowClass = progressBySubject ? progressClass : `${index % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50/70 dark:bg-slate-800/60'} text-slate-700 hover:bg-blue-50/60 dark:text-slate-200 dark:hover:bg-slate-800`;
-              const mobileLabelClass = 'mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500 xl:hidden';
-              return <tr key={subject.subjectId} data-progress-status={progressBySubject ? status : undefined} className={`${rowClass} grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-slate-200 p-4 shadow-sm transition-colors dark:border-slate-700 sm:grid-cols-4 xl:table-row xl:rounded-none xl:border-0 xl:p-0 xl:shadow-none`}>
-                <td className="col-span-1 break-words font-bold text-[#003366] dark:text-sky-300 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Subject code</span>{subject.subjectCode}</td>
-                <td className="col-span-2 break-words font-medium sm:col-span-3 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Subject title</span>{subject.subjectTitle}</td>
-                <td className="tabular-nums xl:table-cell xl:px-4 xl:py-3.5 xl:text-center"><span className={mobileLabelClass}>Units</span>{subject.units}</td>
-                <td className="tabular-nums xl:table-cell xl:px-4 xl:py-3.5 xl:text-center"><span className={mobileLabelClass}>Lecture hours</span>{subject.lectureHours}</td>
-                <td className="tabular-nums xl:table-cell xl:px-4 xl:py-3.5 xl:text-center"><span className={mobileLabelClass}>Laboratory hours</span>{subject.laboratoryHours}</td>
-                <td className="break-words text-slate-600 dark:text-slate-300 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Prerequisite</span>{subject.prerequisite || 'None'}</td>
-                <td className="break-words text-slate-600 dark:text-slate-300 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Category</span>{subject.subjectType || '—'}</td>
-                {progressBySubject ? <><td className="break-words font-semibold xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Status</span>{status}</td><td className="col-span-2 break-words sm:col-span-1 xl:table-cell xl:px-4 xl:py-3.5"><span className={mobileLabelClass}>Grade</span>{progress?.grade || 'Not Yet Available'}</td></> : null}
-              </tr>;
-            })}</tbody>
-          </table>
-        </div>
-      </div>;
-    })}
-    {!filteredSubjects.length ? <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-7 text-center text-sm font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400">No subjects match the selected Year Level and Semester.</div> : null}
-    <div className="mt-5 flex justify-end border-t border-slate-200 pt-4 dark:border-slate-700"><span className="rounded-lg bg-blue-50 px-4 py-2 text-sm font-bold text-[#003366] dark:bg-blue-950/60 dark:text-blue-300">Overall Curriculum Units: {curriculum.totalUnits ?? subjects.reduce((sum, subject) => sum + Number(subject.units || 0), 0)}</span></div>
+        {renderSubjectTable(topCrossSubjects)}
+      </div>
+    ) : null}
+    <div data-testid="remaining-curriculum-subjects">
+      {groups.map(({ year, semester, rows }) => {
+        const total = rows.reduce((sum, subject) => sum + (countsTowardCurriculum(subject) ? Number(subject.units || 0) : 0), 0);
+        return <div key={`${year}-${semester}`} className="mb-8 last:mb-0">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">{ordinal(year)} <span className="mx-1 text-slate-300 dark:text-slate-600">/</span> {semesterLabels[semester] || semester}</h3>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">Total Units: {total}</span>
+          </div>
+          {renderSubjectTable(rows)}
+        </div>;
+      })}
+    </div>
+    {!filteredSubjects.length ? <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-7 text-center text-sm font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400">{normalizedSearch ? 'No subjects found.' : 'No subjects match the selected Year Level and Semester.'}</div> : null}
+    <div className="mt-5 flex justify-end border-t border-slate-200 pt-4 dark:border-slate-700"><span className="rounded-lg bg-blue-50 px-4 py-2 text-sm font-bold text-[#003366] dark:bg-blue-950/60 dark:text-blue-300">Overall Curriculum Units: {curriculum.totalUnits ?? subjects.reduce((sum, subject) => sum + (countsTowardCurriculum(subject) ? Number(subject.units || 0) : 0), 0)}</span></div>
     </div>
   </section>;
 };

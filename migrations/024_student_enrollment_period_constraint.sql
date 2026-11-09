@@ -1,6 +1,3 @@
--- Repair deployments where student_enrollments existed before migration 004.
--- CREATE TABLE IF NOT EXISTS does not add constraints to an existing table,
--- but the assignment upsert requires this exact enrollment-period identity.
 DO $migration$
 BEGIN
     IF to_regclass('student_enrollments') IS NULL THEN

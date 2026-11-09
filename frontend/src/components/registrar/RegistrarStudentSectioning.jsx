@@ -18,7 +18,7 @@ import {
   syncSectionedStudentsToStorage,
 } from "../../utils/studentSectioningHelpers";
 import { deleteAcademicSection, fetchDepartmentSections, fetchNextStudentId, fetchSectionedEnrolledStudents, fetchUnassignedEnrolledStudents, finalizeEnrollmentRoster, getSystemSetting, removeStudentFromSection } from "../../services/api";
-import { syncSectioningBatchToBackend } from "../../utils/registrarSectioningBackendSync";
+import { persistPromotedBatchesToBackend, syncSectioningBatchToBackend } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
 import { validateCsvUpload } from "../../utils/csvUploadValidation";
 
@@ -1742,6 +1742,16 @@ function RegistrarStudentSectioning({
       ...archivedSourceBatches,
       ...targetBatches,
     ];
+
+    try {
+      const result = await persistPromotedBatchesToBackend(targetBatches);
+      if (Number(result?.promotedCount) !== allPromotedStudents.length) {
+        throw new Error("The server did not confirm every promoted student.");
+      }
+    } catch (error) {
+      showSystemNotification(`Promotion was not saved: ${error.message || "Please retry."}`);
+      return;
+    }
 
     persistSectioningData(nextBatches, nextGraduatingStudents);
     setIrregularSubjectAssignments(nextIrregularAssignments);

@@ -40,7 +40,6 @@ def normalize_route(route: str, controller_name: str | None = None):
             flags=re.IGNORECASE,
         )
 
-    # Only public API routes matter here.
     if route.startswith("api/"):
         route = "/" + route
     elif not route.startswith("/api/") and route != "/api":
@@ -48,8 +47,6 @@ def normalize_route(route: str, controller_name: str | None = None):
 
     route = route.split("?")[0]
 
-    # Ingress Prefix paths cannot contain ASP.NET placeholders.
-    # /api/foo/{id}/bar -> /api/foo
     parts = route.split("/")
     clean = []
 
@@ -85,7 +82,6 @@ def extract_controller_routes(path: Path):
     if controller_name.endswith("Controller"):
         controller_name = controller_name[:-10]
 
-    # Controller and method route attributes.
     patterns = [
         r'\[Route\(\s*"([^"]+)"\s*\)\]',
         r'\[HttpGet\(\s*"([^"]+)"\s*\)\]',
@@ -104,7 +100,6 @@ def extract_controller_routes(path: Path):
             controller_prefixes.append(r)
             routes.add(r)
 
-    # Absolute API paths declared on action methods.
     for pattern in patterns[1:]:
         for match in re.finditer(pattern, text, flags=re.IGNORECASE):
             raw = match.group(1).strip()
@@ -114,7 +109,6 @@ def extract_controller_routes(path: Path):
                 if r:
                     routes.add(r)
 
-    # If a controller has api/[controller], its base route is enough.
     return routes
 
 
@@ -126,9 +120,6 @@ def extract_topology_routes():
 
     routes = set()
 
-    # DotnetServiceTopology contains route strings such as:
-    # "/api/password-reset-requests"
-    # "/api/password-reset-requests/{**catch-all}"
     for match in re.finditer(r'"(/api/[^"]+)"', text):
         r = normalize_route(match.group(1))
 

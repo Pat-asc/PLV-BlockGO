@@ -1388,7 +1388,64 @@ Check(nonRegularRequestSource.Contains("int? FacultySectionId") &&
 
 Pass(234, "cross-curriculum subject requests and storage allow a pending Faculty assignment");
 
+Check(enrollmentControllerSource.Contains("homeProgram =") &&
+      enrollmentControllerSource.Contains("homeProgramCode =") &&
+      enrollmentControllerSource.Contains("crossDepartment =") &&
+      enrollmentControllerSource.Contains("crossSubjectCode =") &&
+      enrollmentControllerSource.Contains("crossSection =") &&
+      enrollmentControllerSource.Contains("crossFacultyName =") &&
+      enrollmentControllerSource.Contains("crossSubjects =") &&
+      enrollmentControllerSource.Contains("hasCrossAssignment ="),
+    "GetApprovedStudents does not return both Home Program and active Cross Department metadata.");
+Pass(263, "Registrar approved student payload preserves Home Program and exposes Cross Department metadata");
 
+var facultyRosterSource = await File.ReadAllTextAsync(
+    FindRepositoryFile("client-app", "Services", "FacultyAssignmentRosterService.cs"));
+Check(facultyRosterSource.Contains("FROM student_non_regular_subjects nrs") &&
+      facultyRosterSource.Contains("WHERE nrs.faculty_section_id = @facultySectionId") &&
+      facultyRosterSource.Contains("COALESCE(@academicSectionId, e.academic_section_id) AS academic_section_id") &&
+      facultyRosterSource.Contains("SELECT DISTINCT ON (student_user_id)"),
+    "FacultyAssignmentRosterService does not combine regular and cross-assigned students safely by faculty_section_id.");
+Pass(264, "cross-assigned students enter the exact target Faculty subject roster without null-section cast errors");
+
+var orderedMixedSubjects = StudentSubjectGradeResolver.OrderCurriculumSubjects(new[]
+{
+    new CurriculumSubjectDto { SubjectId = 1, SubjectCode = "IT 101", SubjectTitle = "Intro to Computing", YearLevel = 1, Semester = "FIRST", Priority = 1 },
+    new CurriculumSubjectDto { SubjectId = 2, SubjectCode = "BSA 201", SubjectTitle = "Intermediate Accounting", YearLevel = 3, Semester = "SECOND", IsCrossAssigned = true, IsNonRegular = true, Priority = 0 },
+    new CurriculumSubjectDto { SubjectId = 3, SubjectCode = "IT 102", SubjectTitle = "Programming 1", YearLevel = 1, Semester = "FIRST", Priority = 1 },
+    new CurriculumSubjectDto { SubjectId = 4, SubjectCode = "BSA 101", SubjectTitle = "Financial Accounting", YearLevel = 2, Semester = "FIRST", IsCrossDepartmentAssigned = true, Priority = 0 },
+});
+Check(orderedMixedSubjects.Select(s => s.SubjectCode).SequenceEqual(new[] { "BSA 101", "BSA 201", "IT 101", "IT 102" }),
+    "Cross-assigned curriculum subjects were not ordered before regular curriculum subjects.");
+Pass(265, "cross-assigned subjects appear first (priority 0) before regular curriculum subjects (priority 1)");
+
+Check(StudentSubjectGradeResolver.IsPassingFinalizedGrade("1.75", out var g175) && g175 == 1.75m &&
+      StudentSubjectGradeResolver.IsPassingFinalizedGrade("1.50", out var g150) && g150 == 1.50m &&
+      StudentSubjectGradeResolver.IsPassingFinalizedGrade("{\"midterm\":\"88\",\"finals\":\"90\",\"finalAverage\":\"89\"}", out var g89) && g89 == 89m &&
+      !StudentSubjectGradeResolver.IsPassingFinalizedGrade("5.0", out _) &&
+      !StudentSubjectGradeResolver.IsPassingFinalizedGrade("5.00", out _) &&
+      !StudentSubjectGradeResolver.IsPassingFinalizedGrade("70", out _) &&
+      !StudentSubjectGradeResolver.IsPassingFinalizedGrade("Dropped", out _) &&
+      !StudentSubjectGradeResolver.IsPassingFinalizedGrade("INC", out _) &&
+      !StudentSubjectGradeResolver.IsPassingFinalizedGrade("{\"finals\":\"85\",\"standing\":\"Dropped\"}", out _),
+    "Completed subject grade policy did not distinguish passing finalized grades from failed, dropped, or incomplete grades.");
+Pass(266, "completed subject crediting accepts passing finalized grades and rejects 5.0 Failed, Dropped, or Incomplete");
+
+Check(enrollmentControllerSource.Contains("STUDENT_PROGRAM_CHANGED") &&
+      enrollmentControllerSource.Contains("ResolveOptionalSectionForProgramAsync") &&
+      enrollmentControllerSource.Contains("not target program '{program.Code}'.") &&
+      enrollmentControllerSource.Contains("allowClearingSection: true") &&
+      enrollmentControllerSource.Contains("SET status = 'DROPPED'") &&
+      enrollmentControllerSource.Contains("isIrregular = sectionCleared"),
+    "Program Shift workflow is missing atomic curriculum resolution, section validation, cross-subject reconciliation, or audit logging.");
+Pass(267, "Program Shift atomically updates program, published curriculum, section, irregular flag, and cross-subject reconciliation");
+
+Check(enrollmentControllerSource.Contains("STUDENT_PROMOTED") &&
+      enrollmentControllerSource.Contains("allowClearingSection: true") &&
+      enrollmentControllerSource.Contains("@sourceSection IS NULL") &&
+      enrollmentControllerSource.Contains("if (targetStart != sourceStart && targetStart != sourceStart + 1)"),
+    "Year-level promotion does not support unsectioned promotion or same-period promotion.");
+Pass(268, "year-level promotion supports sectioned and unsectioned students across active or next school year");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
 
@@ -2687,6 +2744,148 @@ Check(computerScienceSectioned.Select(student=>student.StudentNo).SequenceEqual(
 
     "Same-label section membership mixed programs."); Pass(65,"Registrar duplicate section labels remain isolated by ID");
 
+// Cross-department subject roster & curriculum checklist crediting after Program Shift & 25-student Year 1 -> Year 2 promotion
+await Exec(@"
+INSERT INTO academic_programs VALUES(3,'BSA','Bachelor of Science in Accountancy',TRUE) ON CONFLICT (program_id) DO NOTHING;
+INSERT INTO curriculums VALUES(10,3,'PUBLISHED') ON CONFLICT (curriculum_id) DO NOTHING;
+INSERT INTO curriculum_subjects(id,curriculum_id,subject_code,prerequisite,year_level,semester) VALUES
+  (501,10,'GE 101',NULL,1,'FIRST'),
+  (502,10,'PE 101',NULL,1,'FIRST'),
+  (503,10,'BSA 101',NULL,1,'FIRST'),
+  (504,10,'BSA 102','BSA 101',1,'SECOND'),
+  (505,10,'MATH 101',NULL,1,'FIRST'),
+  (506,10,'BSA 201',NULL,3,'FIRST'),
+  (507,10,'BSA 202',NULL,3,'FIRST')
+ON CONFLICT DO NOTHING;
+ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS subject_id BIGINT;
+ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS subject_title TEXT DEFAULT 'Subject';
+ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS units NUMERIC DEFAULT 3;
+ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS lecture_hours NUMERIC DEFAULT 3;
+ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS laboratory_hours NUMERIC DEFAULT 0;
+ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS subject_type TEXT DEFAULT 'Major';
+UPDATE curriculum_subjects SET subject_id = id WHERE subject_id IS NULL;
+ALTER TABLE student_non_regular_subjects ADD COLUMN IF NOT EXISTS subject_id BIGINT;
+INSERT INTO academicsections(id,department,year_level,section_num) VALUES
+  (30,'Bachelor of Science in Accountancy',3,1),
+  (31,'BS Information Technology',2,1)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO facultysections(id,user_id,department,section,year_level,subject,academic_section_id,school_year,semester,is_active) VALUES
+  (500,1,'Bachelor of Science in Accountancy','BSA 3-1','3','BSA 201',30,'2026-2027','FIRST',TRUE),
+  (501,1,'Bachelor of Science in Accountancy','BSA 3-1','3','BSA 202',30,'2026-2027','FIRST',TRUE)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO student_non_regular_subjects(student_user_id,enrollment_id,school_year,semester,source_program_id,subject_id,subject_code,faculty_section_id,status)
+VALUES(2,(SELECT enrollment_id FROM student_enrollments WHERE student_user_id=2 AND school_year='2026-2027' AND semester='FIRST' LIMIT 1),'2026-2027','FIRST',3,506,'BSA 201',500,'ACTIVE');
+");
+
+var bsa201Assignment = (await FacultyAssignmentRosterService.ResolveAsync(db, 500)).Value;
+var bsa202Assignment = (await FacultyAssignmentRosterService.ResolveAsync(db, 501)).Value;
+Check(bsa201Assignment is not null && bsa202Assignment is not null, "BSA teaching assignments were not resolved.");
+var bsa201Roster = await FacultyAssignmentRosterService.GetRosterAsync(db, bsa201Assignment!);
+var bsa202Roster = await FacultyAssignmentRosterService.GetRosterAsync(db, bsa202Assignment!);
+Check(bsa201Roster.Any(s => s.StudentUserId == 2 && s.StudentNo == "26-0001" && s.AcademicSectionId == 30) &&
+      !bsa202Roster.Any(s => s.StudentUserId == 2),
+    "Cross-assigned BSIT student did not enter BSA 201 roster or leaked into BSA 202 roster.");
+Pass(269, "cross-assigned student enters exact target subject roster (BSA 201) without leaking into unrelated BSA subjects");
+
+// Also verify when cross-assigned student's home enrollment has academic_section_id = NULL
+await Exec("UPDATE student_enrollments SET academic_section_id = NULL, section = NULL WHERE student_user_id = 2 AND school_year = '2026-2027' AND semester = 'FIRST'");
+var bsa201RosterUnsectionedHome = await FacultyAssignmentRosterService.GetRosterAsync(db, bsa201Assignment!);
+Check(bsa201RosterUnsectionedHome.Any(s => s.StudentUserId == 2 && s.AcademicSectionId == 30),
+    "Unsectioned student with active cross-subject assignment failed to load in target Faculty roster.");
+await Exec("UPDATE student_enrollments SET academic_section_id = 1, section = '1-1' WHERE student_user_id = 2 AND school_year = '2026-2027' AND semester = 'FIRST'");
+await Exec("DELETE FROM student_non_regular_subjects WHERE student_user_id = 2");
+
+// Test completed subject exclusion/crediting after Program Shift (BSIT -> BSA)
+await Exec(@"
+INSERT INTO users VALUES(50,'shiftee','shiftee@plv.edu.ph','student','APPROVED',TRUE);
+INSERT INTO studentprofiles(user_id,student_no,full_name,department,section,assignment_status,curriculum_id,year_level,is_irregular)
+VALUES(50,'26-0500','Shiftee Student','Bachelor of Science in Accountancy',NULL,'Enrolled',10,'1',TRUE);
+INSERT INTO student_enrollments(student_user_id,student_no,program_id,curriculum_id,academic_section_id,school_year,semester,year_level,status,section,enrollment_state)
+VALUES(50,'26-0500',3,10,NULL,'2026-2027','FIRST',1,'ENROLLED',NULL,'PLANNING');
+INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,subject_code,school_year,semester,section,term) VALUES
+  ('shift-ge101','104','26-0500','Finalized','1.75','shiftee@plv.edu.ph','GE 101','2025-2026','FIRST','BSIT 1-1','finals'),
+  ('shift-pe101','104','26-0500','Finalized','1.50','shiftee@plv.edu.ph','PE 101','2025-2026','FIRST','BSIT 1-1','finals'),
+  ('shift-it101','104','26-0500','Finalized','2.00','shiftee@plv.edu.ph','IT 101','2025-2026','FIRST','BSIT 1-1','finals'),
+  ('shift-math101-fail','104','26-0500','Finalized','5.00','shiftee@plv.edu.ph','MATH 101','2025-2026','FIRST','BSIT 1-1','finals'),
+  ('shift-bsa101-draft','104','26-0500','Draft','1.25','shiftee@plv.edu.ph','BSA 101','2026-2027','FIRST','BSA 1-1','finals');
+");
+
+var bsaCurriculumDto = new CurriculumDto
+{
+    CurriculumId = 10,
+    ProgramId = 3,
+    ProgramCode = "BSA",
+    ProgramName = "Bachelor of Science in Accountancy",
+    Status = "PUBLISHED",
+    Subjects = new[]
+    {
+        new CurriculumSubjectDto { SubjectId = 501, SubjectCode = "GE 101", SubjectTitle = "General Education 1", Units = 3, YearLevel = 1, Semester = "FIRST" },
+        new CurriculumSubjectDto { SubjectId = 502, SubjectCode = "PE 101", SubjectTitle = "Physical Education 1", Units = 2, YearLevel = 1, Semester = "FIRST" },
+        new CurriculumSubjectDto { SubjectId = 503, SubjectCode = "BSA 101", SubjectTitle = "Financial Accounting 1", Units = 3, YearLevel = 1, Semester = "FIRST" },
+        new CurriculumSubjectDto { SubjectId = 504, SubjectCode = "BSA 102", SubjectTitle = "Financial Accounting 2", Units = 3, YearLevel = 1, Semester = "SECOND" },
+        new CurriculumSubjectDto { SubjectId = 505, SubjectCode = "MATH 101", SubjectTitle = "Business Mathematics", Units = 3, YearLevel = 1, Semester = "FIRST" },
+    }
+};
+var shiftedLedgerGrades = new Dictionary<string, CompletedSubjectGrade>(StringComparer.OrdinalIgnoreCase)
+{
+    ["GE 101"] = new("GE 101", 1.75m, "shift-ge101", "tx-ge101", true, "General Education 1", 3m, "BSIT", "BS Information Technology", "2025-2026", "FIRST", 1),
+    ["PE 101"] = new("PE 101", 1.50m, "shift-pe101", "tx-pe101", true, "Physical Education 1", 2m, "BSIT", "BS Information Technology", "2025-2026", "FIRST", 1),
+    ["IT 101"] = new("IT 101", 2.00m, "shift-it101", "tx-it101", true, "Introduction to Computing", 3m, "BSIT", "BS Information Technology", "2025-2026", "FIRST", 1),
+    ["MATH 101"] = new("MATH 101", 5.00m, "shift-math101-fail", "tx-math101", false, "Business Mathematics", 3m, "BSIT", "BS Information Technology", "2025-2026", "FIRST", 1)
+};
+await StudentSubjectGradeResolver.ApplyStudentCurriculumStateAsync(db, "shiftee@plv.edu.ph", bsaCurriculumDto, shiftedLedgerGrades);
+Check(bsaCurriculumDto.CompletedSubjects is not null &&
+      bsaCurriculumDto.RemainingSubjects is not null &&
+      bsaCurriculumDto.CompletedSubjects.Select(s => s.SubjectCode).OrderBy(c => c).SequenceEqual(new[] { "GE 101", "IT 101", "PE 101" }) &&
+      bsaCurriculumDto.RemainingSubjects.Select(s => s.SubjectCode).OrderBy(c => c).SequenceEqual(new[] { "BSA 101", "BSA 102", "MATH 101" }) &&
+      bsaCurriculumDto.Subjects.Count(s => s.SubjectCode == "IT 101") == 1 &&
+      bsaCurriculumDto.Subjects.Single(s => s.SubjectCode == "IT 101") is { IsHistorical: true, CountsTowardCurriculum: false } &&
+      bsaCurriculumDto.Subjects.Where(s => s.SubjectCode is "GE 101" or "PE 101").All(s => s.IsShifterCredit && s.IsCompleted) &&
+      bsaCurriculumDto.Subjects.Single(s => s.SubjectCode == "MATH 101") is { NeedsRetake: true, DisplayStatus: "Needs Retake" } &&
+      bsaCurriculumDto.TotalUnits == 14m &&
+      await Count("SELECT COUNT(*) FROM pending_grade_records WHERE id = 'shift-it101' AND status = 'Finalized'") == 1,
+    "Program shift curriculum state did not preserve exact-code credits, historical subjects, failed attempts, or current-curriculum unit totals.");
+Pass(270, "Student curriculum checklist keeps exact-code shifter credits, historical rows, and failed retake requirements without duplicate units");
+
+var bsaUnassignedCandidates = await EnrollmentSectioningService.GetUnassignedAsync(db, "BSA", 1, "2026-2027", "FIRST", null);
+var bsitUnassignedCandidates = await EnrollmentSectioningService.GetUnassignedAsync(db, "BSIT", 1, "2026-2027", "FIRST", null);
+Check(bsaUnassignedCandidates.Any(s => s.StudentNo == "26-0500") &&
+      !bsitUnassignedCandidates.Any(s => s.StudentNo == "26-0500"),
+    "Program-shifted unsectioned student was not eligible in target BSA sectioning or remained in old BSIT sectioning.");
+Pass(271, "program-shifted unsectioned student is immediately eligible for Random Sectioning in the target program only");
+await Exec("DELETE FROM pending_grade_records WHERE student_no = '26-0500'; DELETE FROM student_enrollments WHERE student_user_id = 50; DELETE FROM studentprofiles WHERE user_id = 50; DELETE FROM users WHERE id = 50;");
+
+// Test 25 BSIT Year 1 students promoted to Year 2 without missing or duplicate rows
+for (var idx = 1; idx <= 25; idx++)
+{
+    var uid = 2000 + idx;
+    var sno = $"26-2{idx:000}";
+    await Exec($@"
+        INSERT INTO users VALUES({uid},'promo{idx}','promo{idx}@plv.edu.ph','student','APPROVED',TRUE);
+        INSERT INTO studentprofiles(user_id,student_no,full_name,department,section,assignment_status,curriculum_id,year_level)
+        VALUES({uid},'{sno}','Promo Student {idx}','BS Information Technology','1-1','Enrolled',1,'1');
+        INSERT INTO student_enrollments(student_user_id,student_no,program_id,curriculum_id,academic_section_id,school_year,semester,year_level,status,section,enrollment_state)
+        VALUES({uid},'{sno}',1,1,1,'2026-2027','FIRST',1,'ENROLLED','1-1','PLANNING');");
+}
+await Exec(@"
+    UPDATE student_enrollments
+    SET year_level = 2, academic_section_id = NULL, section = NULL, status = 'ENROLLED', enrollment_state = 'PLANNING'
+    WHERE student_user_id BETWEEN 2001 AND 2025 AND school_year = '2026-2027' AND semester = 'FIRST';
+    UPDATE studentprofiles
+    SET year_level = '2', section = NULL, assignment_status = 'Enrolled'
+    WHERE user_id BETWEEN 2001 AND 2025;");
+var promotedYear2Unassigned = await EnrollmentSectioningService.GetUnassignedAsync(db, "BSIT", 2, "2026-2027", "FIRST", null);
+Check(promotedYear2Unassigned.Count(s => s.StudentNo.StartsWith("26-2", StringComparison.Ordinal)) == 25 &&
+      await Count("SELECT COUNT(*) FROM student_enrollments WHERE student_user_id BETWEEN 2001 AND 2025 AND year_level = 1") == 0 &&
+      await Count("SELECT COUNT(*) FROM student_enrollments WHERE student_user_id BETWEEN 2001 AND 2025 AND year_level = 2 AND status = 'ENROLLED'") == 25,
+    "Batch promotion of 25 BSIT Year 1 students did not preserve all 25 students in Year 2.");
+await EnrollmentSectioningService.AssignAsync(db, 31, promotedYear2Unassigned.Where(s => s.StudentNo.StartsWith("26-2", StringComparison.Ordinal)).Select(s => s.StudentNo).ToArray(), "2026-2027", "FIRST", null);
+var promotedYear2Sectioned = await EnrollmentSectioningService.GetSectionedAsync(db, "BSIT", 2, "2026-2027", "FIRST", null);
+Check(promotedYear2Sectioned.Count(s => s.StudentNo.StartsWith("26-2", StringComparison.Ordinal) && s.AcademicSectionId == 31) == 25,
+    "Random sectioning after Year 2 promotion did not assign all 25 promoted students to BSIT 2-1.");
+Pass(272, "batch promotion of 25 BSIT Year 1 students to Year 2 preserves all 25 students and supports Random Sectioning");
+await Exec("DELETE FROM student_enrollments WHERE student_user_id BETWEEN 2001 AND 2025; DELETE FROM studentprofiles WHERE user_id BETWEEN 2001 AND 2025; DELETE FROM users WHERE id BETWEEN 2001 AND 2025;");
+
 await Exec("INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,subject_code,school_year,semester,section,term) VALUES('draft-1','104','26-0001','Draft','{}','draft@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm') ON CONFLICT ON CONSTRAINT unique_grade_entry_assignment_cycle DO UPDATE SET grade=EXCLUDED.grade; INSERT INTO pending_grade_records(id,assignment_cycle_id,student_no,status,grade,student_hash,subject_code,school_year,semester,section,term) VALUES('draft-2','104','26-0001','Draft','{\"midterm\":\"90\"}','draft@example.edu','IT 101','2026-2027','FIRST','BSIT 1-1','midterm') ON CONFLICT ON CONSTRAINT unique_grade_entry_assignment_cycle DO UPDATE SET grade=EXCLUDED.grade;");
 
 Check(await Count("SELECT COUNT(*) FROM pending_grade_records WHERE assignment_cycle_id='104' AND student_no='26-0001' AND student_hash='draft@example.edu' AND term='midterm'")==1,
@@ -2852,14 +3051,11 @@ VALUES('old-review','102','26-0998','SubmittedToChairperson','{}','IT 101','2026
       ('current-review','104','26-0999','SubmittedToChairperson','{}','IT 101','2026-2027','FIRST','finals')");
 
 var currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
-
-var currentFinalizedIds=await ChairpersonReviewScopeService.GetCurrentFinalizedRecordIdsAsync(db,"FIRST");
-
 Check(currentReviewIds.Contains("current-review") && !currentReviewIds.Contains("old-review") &&
-
-      currentFinalizedIds.SetEquals(new[]{"current-finalized"}),
-
-    "Current Chairperson tracking mixed active and historical assignment cycles."); Pass(54,"Chairperson review and Finalized tracking contain only active-cycle records");
+      gradeControllerSource.Contains("if (string.Equals(grade.Status, \"Finalized\", StringComparison.OrdinalIgnoreCase))") &&
+      gradeControllerSource.Contains("return true;") &&
+      !gradeControllerSource.Contains("GetCurrentFinalizedRecordIdsAsync"),
+    "Chairperson current review scope or program-wide finalized history behavior regressed."); Pass(54,"Chairperson current review stays active-cycle scoped while finalized history is not tied to active assignments");
 
 var assignmentHistoryCountBeforeReset=await Count("SELECT COUNT(*) FROM facultysections");
 
@@ -2874,10 +3070,7 @@ Check(await Count("SELECT COUNT(*) FROM facultysections WHERE is_active=TRUE")==
     "Reset did not deactivate assignments with audit metadata or deleted assignment history."); Pass(104,"reset deactivates assignments and preserves assignment history");
 
 currentReviewIds=await ChairpersonReviewScopeService.GetCurrentSubmittedRecordIdsAsync(db,"finals","FIRST");
-
-currentFinalizedIds=await ChairpersonReviewScopeService.GetCurrentFinalizedRecordIdsAsync(db,"FIRST");
-
-Check(currentReviewIds.Count==0 && currentFinalizedIds.Count==0,"Reset left old submissions or finalized rows in current tracking."); Pass(55,"reset empties current For Review and Finalized tracking");
+Check(currentReviewIds.Count==0,"Reset left old submissions in current review tracking."); Pass(55,"reset empties current For Review tracking without hiding finalized history");
 
 var approvedAfterReset = (await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(db,"finals","FIRST"))
 

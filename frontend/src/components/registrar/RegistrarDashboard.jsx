@@ -3,8 +3,6 @@ import { fetchRegistrarDashboardOverview } from '../../services/api';
 
 const emptyCounts = {
   submittedToRegistrar: 0,
-  submittedToChairperson: 0,
-  chairpersonApproved: 0,
   departmentApproved: 0,
   returned: 0,
 };
@@ -52,8 +50,6 @@ function RegistrarDashboard({ filters = {} }) {
   const overviewCards = [
     { title: 'Awaiting Registrar', value: awaitingRegistrar, subtitle: 'Faculty submissions ready for Registrar review and finalization' },
     { title: 'Returned to Faculty', value: counts.returned, subtitle: 'Sections sent back for correction' },
-    { title: 'Legacy Chairperson Review', value: counts.submittedToChairperson, subtitle: 'Compatibility rows from the former approval workflow' },
-    { title: 'Legacy Chairperson Approved', value: counts.chairpersonApproved, subtitle: 'Compatibility rows not yet migrated to Registrar review' },
   ];
 
   return (
@@ -69,7 +65,7 @@ function RegistrarDashboard({ filters = {} }) {
 
       {error ? <div role="alert" className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200">{error}</div> : null}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {overviewCards.map((card) => (
           <article key={card.title} aria-label={card.title} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{card.title}</p>

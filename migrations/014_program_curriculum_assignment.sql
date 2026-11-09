@@ -1,6 +1,3 @@
--- One active curriculum applies to every student in an academic program.
--- Per-student and intake-year curriculum values remain compatibility snapshots;
--- reads and new enrollments resolve this program-level assignment first.
 CREATE TABLE IF NOT EXISTS program_curriculum_assignments (
     program_id INTEGER PRIMARY KEY REFERENCES academic_programs(program_id) ON DELETE CASCADE,
     curriculum_id BIGINT NOT NULL REFERENCES curriculums(curriculum_id) ON DELETE RESTRICT,

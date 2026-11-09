@@ -3,13 +3,32 @@ import { fetchFacultyCurriculums } from '../../services/api';
 import CurriculumViewer from '../shared/CurriculumViewer';
 
 const normalizeSearch = (value) => String(value || '').trim().toLowerCase();
+const semesterOrder = { FIRST: 1, SECOND: 2, MIDYEAR: 3 };
+
+const sortFacultyCurriculumSubjects = (subjects = []) =>
+  [...(Array.isArray(subjects) ? subjects : [])].sort((a, b) => {
+    const aCross = Boolean(a?.isCrossDepartmentAssigned || a?.isCrossAssigned || a?.isNonRegular || Number(a?.priority) === 0);
+    const bCross = Boolean(b?.isCrossDepartmentAssigned || b?.isCrossAssigned || b?.isNonRegular || Number(b?.priority) === 0);
+    if (aCross !== bCross) return aCross ? -1 : 1;
+    const yearDiff = (Number(a?.yearLevel) || 0) - (Number(b?.yearLevel) || 0);
+    if (yearDiff !== 0) return yearDiff;
+    const semDiff = (semesterOrder[String(a?.semester || '').toUpperCase()] || 99) - (semesterOrder[String(b?.semester || '').toUpperCase()] || 99);
+    if (semDiff !== 0) return semDiff;
+    return String(a?.subjectCode || '').localeCompare(String(b?.subjectCode || ''));
+  });
 
 export const filterFacultyCurricula = (curricula = [], search = '') => {
   const query = normalizeSearch(search);
-  if (!query) return curricula;
+  if (!query) {
+    return curricula.map((curriculum) =>
+      Array.isArray(curriculum?.subjects)
+        ? { ...curriculum, subjects: sortFacultyCurriculumSubjects(curriculum.subjects) }
+        : curriculum
+    );
+  }
 
   return curricula.reduce((matches, curriculum) => {
-    const subjects = (Array.isArray(curriculum?.subjects) ? curriculum.subjects : []).filter((subject) =>
+    const subjects = sortFacultyCurriculumSubjects((Array.isArray(curriculum?.subjects) ? curriculum.subjects : []).filter((subject) =>
       [
         subject?.subjectCode,
         subject?.subjectTitle,
@@ -18,7 +37,7 @@ export const filterFacultyCurricula = (curricula = [], search = '') => {
         subject?.yearLevel,
         subject?.semester,
       ].some((value) => normalizeSearch(value).includes(query))
-    );
+    ));
 
     if (subjects.length > 0) matches.push({ ...curriculum, subjects });
     return matches;
@@ -194,19 +213,20 @@ const FacultyCurriculumPanel = () => {
           {filteredAssignedCrossDepartmentCurricula.length > 0 ? (
             <section aria-labelledby="cross-assigned-subjects-heading" className="space-y-3">
               <h2 id="cross-assigned-subjects-heading" className="text-lg font-bold text-[#003366] dark:text-sky-300">Cross-Department Assigned Subjects</h2>
-              <CurriculumViewer curricula={filteredAssignedCrossDepartmentCurricula} loading={loading} emptyMessage="No cross-department subjects found." />
+              <CurriculumViewer curricula={filteredAssignedCrossDepartmentCurricula} loading={loading} emptyMessage="No cross-department subjects found." searchable={false} />
             </section>
           ) : null}
           {filteredHomeCurricula.length > 0 ? (
             <section aria-labelledby="regular-curriculum-heading" className="space-y-3">
               <h2 id="regular-curriculum-heading" className="text-lg font-bold text-[#003366] dark:text-sky-300">Regular Curriculum</h2>
-              <CurriculumViewer curricula={filteredHomeCurricula} loading={loading} emptyMessage="No regular curriculum subjects found." />
+              <CurriculumViewer curricula={filteredHomeCurricula} loading={loading} emptyMessage="No regular curriculum subjects found." searchable={false} />
             </section>
           ) : null}
         </div>
       ) : !error ? <CurriculumViewer
           curricula={filteredCurricula}
           loading={loading}
+          searchable={false}
           emptyMessage={normalizeSearch(search)
             ? 'No subjects found.'
             : activeTab === 'home'

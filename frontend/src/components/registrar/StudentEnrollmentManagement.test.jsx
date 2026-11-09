@@ -433,3 +433,73 @@ test('assigns a cross-curriculum subject while its Faculty teaching assignment i
     { subjectId: 205, facultySectionId: null, overrideReason: undefined },
   ]));
 });
+
+test('displays both Home Program and active Cross Department metadata without overwriting Home Program', async () => {
+  fetchApprovedStudents.mockResolvedValue({
+    status: 'Success',
+    students: [{
+      id: 42,
+      fullname: 'Juan Dela Cruz',
+      studentno: '26-0001',
+      department: program,
+      programCode: 'BSIT',
+      homeProgram: program,
+      homeProgramCode: 'BSIT',
+      crossDepartment: 'BSA',
+      crossSubjectCode: 'BSA 201',
+      crossSection: 'BSA 3-1',
+      crossFacultyName: 'Prof. Cruz',
+      yearLevel: '3',
+      section: '3-1',
+      schoolYear: '2026-2027',
+      semester: 'FIRST',
+      isIrregular: true,
+      nonRegularSubjectCount: 1,
+    }],
+  });
+
+  render(<StudentEnrollmentManagement programs={[program]} />);
+  await screen.findByText('Juan Dela Cruz');
+  expect(screen.getByText('BSIT')).toBeInTheDocument();
+  const crossBadge = screen.getByTestId('student-cross-dept-42');
+  expect(crossBadge).toHaveTextContent('Cross Dept: BSA');
+  expect(crossBadge).toHaveTextContent('BSA 201');
+  expect(crossBadge).toHaveTextContent('BSA 3-1');
+  expect(crossBadge).toHaveTextContent('Faculty: Prof. Cruz');
+});
+
+test('renders BSA · 1st Year, Section 1-1, BSA CC, and Irregular after an official BSIT -> BSA program transfer for 26-0009', async () => {
+  fetchApprovedStudents.mockResolvedValue({
+    status: 'Success',
+    students: [{
+      id: 9,
+      fullname: 'Adrian Paul Gonzales',
+      studentno: '26-0009',
+      department: 'Bachelor of Science in Accountancy',
+      programCode: 'BSA',
+      homeProgram: 'Bachelor of Science in Accountancy',
+      homeProgramCode: 'BSA',
+      yearLevel: '1',
+      section: '1-1',
+      academicSectionId: 201,
+      schoolYear: '2026-2027',
+      semester: 'FIRST',
+      curriculumId: 88,
+      curriculumName: 'BSA CC',
+      curriculumVersion: '1',
+      isIrregular: true,
+      enrollmentStatus: 'ENROLLED',
+    }],
+  });
+
+  render(<StudentEnrollmentManagement programs={[program, 'Bachelor of Science in Accountancy']} />);
+  const nameCell = await screen.findByText('Adrian Paul Gonzales');
+  const row = nameCell.closest('tr');
+  expect(within(row).getByText('26-0009')).toBeInTheDocument();
+  expect(within(row).getByText('BSA')).toBeInTheDocument();
+  expect(within(row).getByText('1st Year')).toBeInTheDocument();
+  expect(within(row).getByText('1-1')).toBeInTheDocument();
+  expect(within(row).getByText('BSA CC')).toBeInTheDocument();
+  expect(within(row).getByTestId('student-irregular-badge-9')).toHaveTextContent('Irregular');
+  expect(within(row).queryByText('BSIT CC')).not.toBeInTheDocument();
+});

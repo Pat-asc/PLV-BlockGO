@@ -1,5 +1,3 @@
--- A new FacultySections row is a new workflow cycle. Historical staged and
--- finalized grades remain intact, but cannot be mistaken for that new cycle.
 ALTER TABLE pending_grade_records
     ADD COLUMN IF NOT EXISTS assignment_cycle_id VARCHAR(100) NOT NULL DEFAULT 'legacy';
 

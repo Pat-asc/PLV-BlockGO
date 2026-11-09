@@ -1,5 +1,3 @@
--- Complete compatibility columns that older databases previously received
--- from request-time controller DDL, then index the actual lookup patterns.
 
 ALTER TABLE studentprofiles ADD COLUMN IF NOT EXISTS date_of_birth DATE;
 ALTER TABLE studentprofiles ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
@@ -40,7 +38,6 @@ CREATE TABLE IF NOT EXISTS shared_client_state (
     updated_by VARCHAR(255)
 );
 
--- The application upserts by section as well as academic period.
 DO $$
 BEGIN
     IF EXISTS (

@@ -33,6 +33,22 @@ export const buildFacultyAssignmentRequest = (assignment) => {
     };
 };
 
+export const buildStudentAssignmentRequest = (assignment) => {
+    if (!assignment?.department || !assignment?.yearLevel) return null;
+    const rawSection = String(assignment.sectionNum ?? assignment.section ?? '').trim();
+    const isUnassigned = !rawSection || rawSection.toLowerCase() === 'unassigned';
+    const combinedSection = isUnassigned
+        ? null
+        : rawSection.includes('-')
+        ? rawSection
+        : `${assignment.yearLevel}-${rawSection}`;
+    return {
+        Department: assignment.department,
+        YearLevel: String(assignment.yearLevel),
+        Section: combinedSection,
+    };
+};
+
 const RegistrarGradesView = ({
     loggedInEmail = '',
     loggedInName = '',
@@ -318,9 +334,9 @@ const RegistrarGradesView = ({
 
                 next[student.id] = {
                     ...existing,
-                    department: existing.department || importedDepartment,
-                    yearLevel: existing.yearLevel || importedYear,
-                    sectionNum: existing.sectionNum || importedSection,
+                    department: importedDepartment || existing.department || '',
+                    yearLevel: importedYear || existing.yearLevel || '',
+                    sectionNum: importedSection,
                 };
             });
 
@@ -416,12 +432,16 @@ const RegistrarGradesView = ({
 
     const submitStudentAssignment = async (id) => {
         const assignment = studentAssignments[id];
-        if (!assignment || !assignment.department || !assignment.yearLevel || !assignment.sectionNum) return showSystemNotification("Please provide department, year, and section.");
+        const request = buildStudentAssignmentRequest(assignment);
+        if (!request) return showSystemNotification("Please provide department and year level.");
+        const matchedStudent = approvedStudents.find((item) => Number(item.id) === Number(id));
+        const payload = matchedStudent?.schoolYear && matchedStudent?.semester
+            ? { ...request, SchoolYear: matchedStudent.schoolYear, Semester: matchedStudent.semester }
+            : request;
         try {
-            const combinedSection = `${assignment.yearLevel}-${assignment.sectionNum}`;
-            await assignStudent(id, { Department: assignment.department, Section: combinedSection });
+            await assignStudent(id, payload);
             showSystemNotification("Student assigned successfully!");
-            loadApprovedStudents();
+            await loadApprovedStudents();
         } catch (error) { showSystemNotification(`Failed to assign: ${error.message}`); }
     };
 
@@ -1150,15 +1170,45 @@ const RegistrarGradesView = ({
                                             <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-slate-500">
                                                 No approved students waiting for assignment.
                                             </div>
-                                        ) : approvedStudents.map((student) => (
+                                        ) : approvedStudents.map((student) => {
+                                            const crossList = Array.isArray(student.crossSubjects) && student.crossSubjects.length > 0
+                                                ? student.crossSubjects
+                                                : Array.isArray(student.nonRegularSubjects) && student.nonRegularSubjects.length > 0
+                                                ? student.nonRegularSubjects
+                                                : [];
+                                            const crossDept = student.crossDepartment || crossList[0]?.crossDepartment || crossList[0]?.programCode || '';
+                                            const crossSubject = student.crossSubjectCode || crossList[0]?.subjectCode || '';
+                                            const crossSection = student.crossSection || crossList[0]?.section || '';
+                                            const crossFaculty = student.crossFacultyName || crossList[0]?.facultyName || '';
+                                            const homeProgramLabel = student.homeProgramCode || student.programCode || student.homeProgram || student.department || 'Unassigned';
+                                            const isEnrolled = String(student.enrollmentStatus || '').toUpperCase() === 'ENROLLED' ||
+                                                student.assignmentStatus === 'Assigned' ||
+                                                student.assignmentStatus === 'Enrolled';
+                                            const enrollmentBadgeLabel = isEnrolled ? 'Enrolled' : (student.assignmentStatus || 'Unassigned');
+                                            const sectionBadgeLabel = String(student.section || '').trim() ? `Section: ${student.section}` : 'Section: Unassigned';
+                                            return (
                                             <div key={student.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                                                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                     <div className="space-y-2">
                                                         <div>
                                                             <p className="text-base font-bold text-slate-800">{student.fullname}</p>
                                                             <p className="text-sm text-slate-500">Student No. {student.studentno}</p>
+                                                            <p className="mt-1 text-xs font-semibold text-slate-600">Home Program: <span className="text-[#003366]">{homeProgramLabel}</span></p>
+                                                            {(crossDept || crossSubject) ? (
+                                                                <div data-testid={`account-cross-assignment-${student.id}`} className="mt-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900">
+                                                                    <p className="font-bold">Cross Department: {crossDept || 'Assigned'}</p>
+                                                                    {crossSubject ? <p>Cross Subject: {crossSubject}{crossSection ? ` · Cross Section: ${crossSection}` : ''}</p> : null}
+                                                                    {crossFaculty ? <p>Assigned Faculty: {crossFaculty}</p> : null}
+                                                                </div>
+                                                            ) : null}
                                                         </div>
-                                                        <span className={`inline-block rounded-full px-3 py-1 text-xs font-bold ${student.assignmentStatus === 'Unassigned' ? 'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800'}`}>{student.assignmentStatus}</span>
+                                                        <div className="flex flex-wrap gap-1.5">
+                                                            <span className={`inline-block rounded-full px-3 py-1 text-xs font-bold ${!isEnrolled ? 'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800'}`}>{enrollmentBadgeLabel}</span>
+                                                            <span className={`inline-block rounded-full px-3 py-1 text-xs font-bold ${String(student.section || '').trim() ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>{sectionBadgeLabel}</span>
+                                                            {(student.isIrregular || crossDept || crossSubject) ? (
+                                                                <span className="inline-block rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">Irregular</span>
+                                                            ) : null}
+                                                        </div>
                                                     </div>
 
                                                     <div className="grid flex-1 gap-3 lg:max-w-3xl lg:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)_auto]">
@@ -1180,7 +1230,7 @@ const RegistrarGradesView = ({
                                                             <label className="block">
                                                                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Section</span>
                                                                 <select value={studentAssignments[student.id]?.sectionNum || ''} onChange={(e) => setStudentAssignments(prev => ({...prev, [student.id]: {...prev[student.id], sectionNum: e.target.value}}))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366]">
-                                                                    <option value="" disabled>Select section</option>
+                                                                    <option value="">Unassigned</option>
                                                                     {[...Array(15)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
                                                                 </select>
                                                             </label>
@@ -1192,7 +1242,8 @@ const RegistrarGradesView = ({
                                                     </div>
                                                 </div>
                                             </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}

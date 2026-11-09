@@ -52,8 +52,8 @@ const getViewCopy = (viewMode) => {
   };
   if (viewMode === "forwarded") return {
     title: "Finalized Grades",
-    description: "Current encoding season and active assignment cycles only.",
-    empty: "No finalized submissions exist in the current encoding season.",
+    description: "Authoritative finalized grade history for this Chairperson's program.",
+    empty: "No finalized grade history is available for this program.",
     action: "View Details",
   };
   return {

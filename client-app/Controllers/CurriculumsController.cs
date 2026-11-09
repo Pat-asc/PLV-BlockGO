@@ -8,6 +8,7 @@ using Npgsql;
 using NpgsqlTypes;
 using CsvHelper;
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Client_app.Controllers
@@ -878,11 +879,14 @@ namespace Client_app.Controllers
         public async Task<IActionResult> GetStudentCurriculum(CancellationToken cancellationToken)
         {
             await using var connection = await OpenConnectionAsync(cancellationToken);
-            var resolvedId = await StudentCurriculumResolver.ResolveAsync(connection, ActorEmail(), cancellationToken);
+            var actorEmail = ActorEmail();
+            var resolvedId = await StudentCurriculumResolver.ResolveAsync(connection, actorEmail, cancellationToken);
             if (!resolvedId.HasValue) return NotFound(new { status = "Error", message = "No published curriculum checklist is assigned to this student." });
             var curriculum = await LoadCurriculumAsync(connection, resolvedId.Value, cancellationToken);
             if (curriculum.Status is not (CurriculumStatuses.Published or CurriculumStatuses.Archived))
                 return NotFound(new { status = "Error", message = "Your program curriculum is not available." });
+            var ledgerCompleted = await TryLoadLedgerCompletedSubjectsAsync(connection, actorEmail, cancellationToken);
+            await StudentSubjectGradeResolver.ApplyStudentCurriculumStateAsync(connection, actorEmail, curriculum, ledgerCompleted, cancellationToken);
             return Ok(new { status = "Success", data = curriculum });
         }
 
@@ -937,7 +941,18 @@ namespace Client_app.Controllers
                 {
                     subject.IsCrossDepartmentAssigned = assignedCrossSubjects.Contains(
                         (curriculum.ProgramId, subject.SubjectCode.Trim()));
+                    subject.IsCrossAssigned = subject.IsCrossDepartmentAssigned;
+                    subject.Priority = subject.IsCrossDepartmentAssigned ? 0 : 1;
                 }
+                curriculum.Subjects = StudentSubjectGradeResolver.OrderCurriculumSubjects(curriculum.Subjects);
+            }
+            foreach (var curriculum in homeCurricula)
+            {
+                foreach (var subject in curriculum.Subjects)
+                {
+                    subject.Priority = 1;
+                }
+                curriculum.Subjects = StudentSubjectGradeResolver.OrderCurriculumSubjects(curriculum.Subjects);
             }
             return Ok(new
             {
@@ -1017,6 +1032,140 @@ namespace Client_app.Controllers
                 _logger.LogWarning(ex, "Curriculum event {EventType} for {CurriculumId} was not recorded on Fabric.", eventType, curriculumId);
             }
         }
+
+        private async Task<Dictionary<string, CompletedSubjectGrade>> TryLoadLedgerCompletedSubjectsAsync(
+            NpgsqlConnection connection,
+            string studentEmail,
+            CancellationToken cancellationToken)
+        {
+            var completed = new Dictionary<string, CompletedSubjectGrade>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                string studentNo = string.Empty;
+                await using (var studentCmd = new NpgsqlCommand(@"
+                    SELECT COALESCE(sp.student_no, '')
+                    FROM users u
+                    JOIN studentprofiles sp ON sp.user_id = u.id
+                    WHERE LOWER(u.email) = LOWER(@email)
+                    LIMIT 1;", connection))
+                {
+                    studentCmd.Parameters.AddWithValue("email", studentEmail);
+                    studentNo = (await studentCmd.ExecuteScalarAsync(cancellationToken))?.ToString()?.Trim() ?? string.Empty;
+                }
+
+                var released = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var identifiers = new[] { studentEmail.Trim(), studentEmail.Split('@')[0].Trim(), studentNo }
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Select(value => value.ToLowerInvariant())
+                    .ToArray();
+                await using (var releaseCmd = new NpgsqlCommand(@"
+                    SELECT record_id, grade_version
+                    FROM grade_releases
+                    WHERE LOWER(student_identifier) = ANY(@identifiers);", connection))
+                {
+                    releaseCmd.Parameters.AddWithValue("identifiers", identifiers);
+                    await using var reader = await releaseCmd.ExecuteReaderAsync(cancellationToken);
+                    while (await reader.ReadAsync(cancellationToken))
+                        released.Add($"{reader.GetString(0)}|{reader.GetInt32(1)}");
+                }
+                if (released.Count == 0) return completed;
+
+                var responseJson = await _blockchain.GetAllGradesAsync(studentEmail);
+                using var document = JsonDocument.Parse(responseJson);
+                var data = document.RootElement.TryGetProperty("data", out var nested) ? nested : document.RootElement;
+                var records = JsonSerializer.Deserialize<List<AcademicRecord>>(data.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? new List<AcademicRecord>();
+
+                var programs = new List<(string Code, string Name)>();
+                await using (var programCmd = new NpgsqlCommand(@"
+                    SELECT program_code, program_name
+                    FROM academic_programs
+                    WHERE is_active = TRUE;", connection))
+                await using (var programReader = await programCmd.ExecuteReaderAsync(cancellationToken))
+                {
+                    while (await programReader.ReadAsync(cancellationToken))
+                        programs.Add((programReader.GetString(0), programReader.GetString(1)));
+                }
+
+                foreach (var record in records)
+                {
+                    if (!StudentSubjectGradeResolver.MatchesStudent(record, studentEmail, studentNo) ||
+                        !GradeReleasePolicy.IsVisibleToStudent(record, released) ||
+                        !string.Equals(GradeAcademicTerm.Normalize(record.Term, string.Empty), "finals", StringComparison.OrdinalIgnoreCase) ||
+                        string.IsNullOrWhiteSpace(record.SubjectCode))
+                    {
+                        continue;
+                    }
+
+                    var sourceProgram = FirstNonBlankValue(record.Program, record.Course);
+                    var matchedProgram = programs.FirstOrDefault(program =>
+                        string.Equals(program.Code, sourceProgram, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(program.Name, sourceProgram, StringComparison.OrdinalIgnoreCase));
+                    var sourceCode = string.IsNullOrWhiteSpace(matchedProgram.Code)
+                        ? (Regex.IsMatch(sourceProgram, @"^[A-Z0-9-]{2,20}$", RegexOptions.IgnoreCase) ? sourceProgram : string.Empty)
+                        : matchedProgram.Code;
+                    var sourceName = string.IsNullOrWhiteSpace(matchedProgram.Name) ? sourceProgram : matchedProgram.Name;
+                    var sourceYearLevel = ParseHistoricalYearLevel(record.YearLevel, record.Section);
+                    var isPassing = StudentSubjectGradeResolver.IsPassingFinalizedGrade(record.Grade, out var numericGrade);
+                    var recordedAt = ParseHistoricalTimestamp(record);
+                    var code = record.SubjectCode.Trim();
+                    var candidate = new CompletedSubjectGrade(
+                        code,
+                        numericGrade,
+                        record.Id,
+                        record.TransactionId,
+                        isPassing,
+                        record.SubjectTitle,
+                        record.Units,
+                        sourceCode,
+                        sourceName,
+                        record.SchoolYear,
+                        record.Semester,
+                        sourceYearLevel,
+                        record.Grade,
+                        recordedAt);
+
+                    if (!completed.TryGetValue(code, out var existing) ||
+                        (candidate.IsPassing && !existing.IsPassing) ||
+                        (candidate.IsPassing == existing.IsPassing &&
+                         (candidate.RecordedAt ?? DateTimeOffset.MinValue) >= (existing.RecordedAt ?? DateTimeOffset.MinValue)))
+                    {
+                        completed[code] = candidate;
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Ledger completed subject lookup skipped for student {StudentEmail}.", studentEmail);
+            }
+            return completed;
+        }
+
+        private static int? ParseHistoricalYearLevel(string? yearLevel, string? section)
+        {
+            if (int.TryParse(yearLevel?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) && parsed is >= 1 and <= 4)
+                return parsed;
+            var match = Regex.Match(section ?? string.Empty, @"\b([1-4])\s*-\s*\d+\b");
+            return match.Success ? int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : null;
+        }
+
+        private static DateTimeOffset ParseHistoricalTimestamp(AcademicRecord record)
+        {
+            foreach (var value in new[] { record.FinalizedAt, record.Timestamp, record.Date })
+            {
+                if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
+                    return parsed.ToUniversalTime();
+            }
+            return DateTimeOffset.MinValue;
+        }
+
+        private static string FirstNonBlankValue(params string?[] values) =>
+            values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
 
         private async Task<bool> CanViewAsync(NpgsqlConnection connection, CurriculumDto curriculum, CancellationToken cancellationToken)
         {

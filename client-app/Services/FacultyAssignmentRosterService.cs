@@ -148,18 +148,21 @@ public static class FacultyAssignmentRosterService
             UNION ALL
             SELECT e.enrollment_id, u.id AS student_user_id, NULLIF(BTRIM(sp.student_no), '') AS student_no,
                    COALESCE(sp.full_name, ''), u.email,
-                   e.academic_section_id, e.program_id, e.school_year, e.semester, e.status,
+                   COALESCE(@academicSectionId, e.academic_section_id) AS academic_section_id, e.program_id, e.school_year, e.semester, e.status,
                    NULLIF(BTRIM(e.student_no), '')
             FROM student_non_regular_subjects nrs
-            JOIN student_enrollments e ON e.enrollment_id = nrs.enrollment_id
+            JOIN student_enrollments e
+              ON (e.enrollment_id = nrs.enrollment_id
+                  OR (e.student_user_id = nrs.student_user_id
+                      AND e.school_year = nrs.school_year
+                      AND e.semester = nrs.semester))
             JOIN users u ON u.id = nrs.student_user_id
             LEFT JOIN studentprofiles sp ON sp.user_id = u.id
             WHERE nrs.faculty_section_id = @facultySectionId
               AND nrs.school_year = @schoolYear
               AND nrs.semester = @semester
-              AND nrs.status = 'ACTIVE'
+              AND UPPER(BTRIM(nrs.status)) = 'ACTIVE'
               AND UPPER(BTRIM(e.status)) = 'ENROLLED'
-              AND sp.is_irregular = TRUE
               AND LOWER(u.role) = 'student'
               AND LOWER(u.status) = 'approved'
               AND u.is_active = TRUE

@@ -1,7 +1,3 @@
--- Durable, idempotent metadata for automatically generated finalized grading
--- sheets. Grade values remain authoritative on Fabric; this table stores only
--- the protected IPFS artifact association and retry state.
-
 CREATE TABLE IF NOT EXISTS finalized_grade_archives (
     archive_id BIGSERIAL PRIMARY KEY,
     dataset_hash CHAR(64) NOT NULL,

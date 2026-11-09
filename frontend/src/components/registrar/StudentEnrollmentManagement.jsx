@@ -161,7 +161,25 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
       if (sectionFilter && String(student.section || '') !== sectionFilter) return false;
       if (statusFilter && enrollmentDisplayStatus(student) !== statusFilter) return false;
       if (!query) return true;
-      return [student.fullname, student.firstName, student.middleName, student.lastName, student.studentno, student.email, student.studentEmail, student.department, student.programCode, student.section, student.yearLevel]
+      return [
+        student.fullname,
+        student.firstName,
+        student.middleName,
+        student.lastName,
+        student.studentno,
+        student.email,
+        student.studentEmail,
+        student.department,
+        student.programCode,
+        student.homeProgram,
+        student.homeProgramCode,
+        student.crossDepartment,
+        student.crossDepartmentName,
+        student.crossSubjectCode,
+        student.crossSection,
+        student.section,
+        student.yearLevel,
+      ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(query));
     });
@@ -714,9 +732,29 @@ const StudentEnrollmentManagement = ({ programs = [] }) => {
                       <span className="text-xs text-slate-500 dark:text-slate-400">{student.studentno}</span>
                     </td>
                     <td className="break-words px-4 py-3">
-                      <span className="font-medium">{student.programCode || student.department || 'Unassigned'}</span>
+                      <span className="font-medium">{student.homeProgramCode || student.programCode || student.department || 'Unassigned'}</span>
                       <span className="text-slate-400"> · </span>
                       <span>{formatYearLevel(student.yearLevel)}</span>
+                      {(() => {
+                        const crossItems = Array.isArray(student.crossSubjects) && student.crossSubjects.length > 0
+                          ? student.crossSubjects
+                          : Array.isArray(student.nonRegularSubjects) && student.nonRegularSubjects.length > 0
+                          ? student.nonRegularSubjects
+                          : [];
+                        const crossDept = student.crossDepartment || crossItems[0]?.crossDepartment || crossItems[0]?.programCode;
+                        const crossSubj = student.crossSubjectCode || crossItems[0]?.subjectCode;
+                        const crossSec = student.crossSection || crossItems[0]?.section;
+                        const crossFac = student.crossFacultyName || crossItems[0]?.facultyName;
+                        if (!crossDept && !crossSubj) return null;
+                        return (
+                          <div data-testid={`student-cross-dept-${student.id}`} className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
+                            <span className="font-bold">Cross Dept: {crossDept || 'Assigned'}</span>
+                            {crossSubj ? <span> · {crossSubj}</span> : null}
+                            {crossSec ? <span> ({crossSec})</span> : null}
+                            {crossFac ? <span className="block text-[10px] text-amber-800 dark:text-amber-300">Faculty: {crossFac}</span> : null}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3">{student.section || 'Not sectioned'}</td>
                     <td className="px-4 py-3">

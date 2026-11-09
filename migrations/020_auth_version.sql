@@ -1,5 +1,3 @@
--- Incrementing auth_version revokes every JWT issued before a password reset or
--- administrator-managed password replacement. Existing accounts and tokens begin at 1.
 ALTER TABLE users
     ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1;
 

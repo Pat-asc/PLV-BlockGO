@@ -1,5 +1,3 @@
--- Bind student visibility to an explicitly released finalized grade version.
--- Existing releases refer to legacy finalized version 1 without rewriting Fabric.
 ALTER TABLE grade_releases
     ADD COLUMN IF NOT EXISTS grade_version INTEGER NOT NULL DEFAULT 1;
 

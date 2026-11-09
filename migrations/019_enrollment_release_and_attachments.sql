@@ -1,6 +1,3 @@
--- Additive production migration for enrollment planning/finalization, section
--- capacity, grade publication, configurable NSTP data, and support attachments.
-
 ALTER TABLE academicsections ADD COLUMN IF NOT EXISTS max_capacity INTEGER;
 ALTER TABLE academicsections
     ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,

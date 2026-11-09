@@ -1,6 +1,4 @@
 -- Migration: Add Bulk Upload Approval Workflow
--- Purpose: Implement 3-stage approval for bulk grade uploads (Faculty -> DeptAdmin -> Registrar)
-
 CREATE TABLE IF NOT EXISTS bulk_grade_uploads (
     upload_id SERIAL PRIMARY KEY,
     batch_id UUID UNIQUE DEFAULT gen_random_uuid(),

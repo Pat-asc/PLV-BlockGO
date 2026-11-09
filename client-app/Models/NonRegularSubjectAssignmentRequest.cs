@@ -10,5 +10,7 @@ public sealed class NonRegularSubjectSelection
 {
     public long SubjectId { get; set; }
     public int? FacultySectionId { get; set; }
+    public int? AcademicSectionId { get; set; }
+    public string? Section { get; set; }
     public string? OverrideReason { get; set; }
 }

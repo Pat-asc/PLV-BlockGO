@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import RegistrarGradesLedger, { flattenLedgerItems } from './RegistrarGradesLedger';
 import { buildLedgerHierarchy, canonicalizeLedgerPrograms, filterLedgerRecords } from '../../utils/registrarGradesLedger';
@@ -69,29 +69,46 @@ test('search filters viewing items without opening editable controls', async () 
   expect(await screen.findByText('No grade ledger items match the current search and filters.')).toBeInTheDocument();
 });
 
-test('detail modal preserves program, faculty, and section PDF export scopes', async () => {
+test('detail modal exposes exactly one section PDF export and the page keeps one general export', async () => {
   const onExport = jest.fn();
   render(<RegistrarGradesLedger loggedInEmail="registrar@plv.edu.ph" onExport={onExport} />);
+  expect(await screen.findByRole('button', { name: 'Export PDF' })).toBeInTheDocument();
   fireEvent.click(await screen.findByRole('button', { name: /IT101.*View details/i }));
   const dialog = screen.getByRole('dialog');
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Export Professor A faculty PDF' }));
+  expect(within(dialog).getAllByRole('button', { name: /Export.*PDF/i })).toHaveLength(1);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Export Section PDF' }));
   expect(onExport).toHaveBeenCalledWith(
     [expect.objectContaining({ id: 'grade-1' })],
     expect.objectContaining({ programId: 'all' }),
-    { type: 'faculty', programId: '1', facultyUserId: '10' }
-  );
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Export BSIT 1-1 section PDF' }));
-  expect(onExport.mock.calls[1][2]).toEqual({
+    {
     type: 'section', programId: '1', facultyUserId: '10', academicSectionId: '20',
     schoolYear: '2026-2027', semester: 'FIRST',
-  });
+    }
+  );
+});
+
+test('a grade finalization event refreshes the authoritative ledger without a page reload', async () => {
+  render(<RegistrarGradesLedger loggedInEmail="registrar@plv.edu.ph" />);
+  await screen.findByText('Available grade ledgers');
+  expect(fetchAllGrades).toHaveBeenCalledTimes(1);
+  fireEvent(window, new CustomEvent('blockgo:academic-data-changed', { detail: { reason: 'grade_finalized' } }));
+  await waitFor(() => expect(fetchAllGrades).toHaveBeenCalledTimes(2));
+});
+
+test('finalized records with incomplete relational metadata remain browsable through their ledger values', async () => {
+  fetchAllGrades.mockResolvedValue({ data: [record({
+    program_id: 0, program_code: '', program_name: '', program: 'BSA',
+    assignment_cycle_id: '', academic_section_id: 0, subject_title: '',
+  })] });
+  render(<RegistrarGradesLedger loggedInEmail="registrar@plv.edu.ph" />);
+  expect(await screen.findByRole('button', { name: /IT101.*View details/i })).toBeInTheDocument();
 });
 
 test('empty finalized export is blocked with the existing message', async () => {
   const onExport = jest.fn();
   fetchAllGrades.mockResolvedValue({ data: [record({ status: 'Draft' })] });
   render(<RegistrarGradesLedger loggedInEmail="registrar@plv.edu.ph" onExport={onExport} />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Export all filtered grade records PDF' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Export PDF' }));
   expect(onExport).not.toHaveBeenCalled();
   expect(showSystemNotification).toHaveBeenCalledWith('No finalized grade records are available for this export.');
 });

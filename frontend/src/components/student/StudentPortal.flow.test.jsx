@@ -104,3 +104,29 @@ test('keeps only primary academic destinations in main navigation and moves seco
   openSecondaryView('Blockchain Transactions');
   expect(await screen.findByRole('heading', { name: 'Blockchain Transactions' })).toBeInTheDocument();
 });
+
+test('places cross-assigned subjects before regular subjects in Current Subjects', async () => {
+  fetchStudentHistoricalGrades.mockResolvedValue({ data: [] });
+  fetchStudentCurrentSubjects.mockResolvedValue({
+    data: {
+      studentNo: '26-0035',
+      schoolYear: '2026-2027',
+      semester: 'FIRST',
+      section: 'BSIT 3-1',
+      yearLevel: 3,
+      subjects: [
+        { subjectCode: 'IT 301', subjectTitle: 'Systems Integration', units: 3, isNonRegular: false, priority: 1 },
+        { subjectCode: 'BSA 201', subjectTitle: 'Intermediate Accounting', units: 3, isNonRegular: true, isCrossAssigned: true, priority: 0, sourceProgramCode: 'BSA', section: 'BSA 3-1' },
+        { subjectCode: 'IT 101', subjectTitle: 'Introduction to Computing', units: 3, isNonRegular: false, priority: 1 },
+      ],
+    },
+  });
+
+  render(<StudentPortal studentData={{ name: 'Juan Dela Cruz', studentNo: '26-0035', email: '26-0035', department: 'BSIT' }} onLogout={() => {}} />);
+  openSecondaryView('Current Subjects');
+
+  const buttons = await screen.findAllByRole('button', { name: /BSA 201|IT 101|IT 301/ });
+  expect(buttons[0]).toHaveTextContent('BSA 201');
+  expect(buttons[1]).toHaveTextContent('IT 101');
+  expect(buttons[2]).toHaveTextContent('IT 301');
+});

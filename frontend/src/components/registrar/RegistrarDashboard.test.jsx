@@ -31,8 +31,8 @@ test('renders authoritative non-zero workflow counts without mixing statuses', a
   expect(await screen.findByText('2026-2027 • FIRST • finals')).toBeInTheDocument();
   expect(within(screen.getByRole('article', { name: 'Awaiting Registrar' })).getByText('9')).toBeInTheDocument();
   expect(within(screen.getByRole('article', { name: 'Returned to Faculty' })).getByText('1')).toBeInTheDocument();
-  expect(within(screen.getByRole('article', { name: 'Legacy Chairperson Review' })).getByText('3')).toBeInTheDocument();
-  expect(within(screen.getByRole('article', { name: 'Legacy Chairperson Approved' })).getByText('2')).toBeInTheDocument();
+  expect(screen.queryByText(/Legacy Chairperson/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Compatibility rows/i)).not.toBeInTheDocument();
 });
 
 test('passes academic and organizational filters to the API', async () => {

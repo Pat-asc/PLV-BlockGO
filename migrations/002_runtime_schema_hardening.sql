@@ -1,6 +1,3 @@
--- Migration: Move request-time schema creation into database migrations
--- Purpose: Auth, sectioning, settings, chat, and staged-grade controllers assume this schema exists.
-
 CREATE TABLE IF NOT EXISTS academicsections (
     id SERIAL PRIMARY KEY,
     department VARCHAR(50) NOT NULL,

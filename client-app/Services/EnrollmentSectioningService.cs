@@ -24,7 +24,8 @@ public static class EnrollmentSectioningService
             JOIN users u ON u.id = e.student_user_id
             JOIN studentprofiles sp ON sp.user_id = u.id
             JOIN academic_programs p ON p.program_id = e.program_id
-            WHERE e.status = 'ENROLLED' AND (e.academic_section_id IS NULL OR NULLIF(TRIM(COALESCE(e.section, '')), '') IS NULL)
+            WHERE UPPER(BTRIM(e.status)) = 'ENROLLED'
+              AND (e.academic_section_id IS NULL OR NULLIF(TRIM(COALESCE(e.section, '')), '') IS NULL)
               AND LOWER(u.role) = 'student' AND LOWER(u.status) = 'approved' AND u.is_active
               AND (@department IS NULL OR LOWER(p.program_code) = LOWER(@department)
                    OR LOWER(p.program_name) = LOWER(@department))
@@ -66,7 +67,7 @@ public static class EnrollmentSectioningService
             JOIN studentprofiles sp ON sp.user_id = u.id
             JOIN academic_programs p ON p.program_id = e.program_id
             JOIN academicsections section ON section.id = e.academic_section_id AND section.is_active = TRUE
-            WHERE e.status = 'ENROLLED'
+            WHERE UPPER(BTRIM(e.status)) = 'ENROLLED'
               AND LOWER(u.role) = 'student' AND LOWER(u.status) = 'approved' AND u.is_active
               AND (@department IS NULL OR LOWER(p.program_code) = LOWER(@department)
                    OR LOWER(p.program_name) = LOWER(@department))
@@ -130,7 +131,7 @@ public static class EnrollmentSectioningService
         await using var countCommand = new NpgsqlCommand(@"
             SELECT COUNT(*) FROM student_enrollments
             WHERE academic_section_id = @sectionId AND school_year = @schoolYear
-              AND semester = @semester AND status = 'ENROLLED';", connection, transaction);
+              AND semester = @semester AND UPPER(BTRIM(status)) = 'ENROLLED';", connection, transaction);
         countCommand.Parameters.AddWithValue("sectionId", sectionId);
         countCommand.Parameters.AddWithValue("schoolYear", schoolYear);
         countCommand.Parameters.AddWithValue("semester", semester);
@@ -161,7 +162,7 @@ public static class EnrollmentSectioningService
                 SELECT academic_section_id, enrollment_state
                 FROM student_enrollments
                 WHERE student_user_id = @userId AND school_year = @schoolYear AND semester = @semester
-                  AND status = 'ENROLLED' AND program_id = @programId AND year_level = @yearLevel
+                  AND UPPER(BTRIM(status)) = 'ENROLLED' AND program_id = @programId AND year_level = @yearLevel
                 FOR UPDATE;", connection, transaction))
             {
                 current.Parameters.AddWithValue("userId", userId);
@@ -183,9 +184,9 @@ public static class EnrollmentSectioningService
                 UPDATE student_enrollments
                 SET academic_section_id = @sectionId, section = @section, updated_at = CURRENT_TIMESTAMP
                 WHERE student_user_id = @userId AND school_year = @schoolYear AND semester = @semester
-                  AND status = 'ENROLLED' AND program_id = @programId AND year_level = @yearLevel
+                  AND UPPER(BTRIM(status)) = 'ENROLLED' AND program_id = @programId AND year_level = @yearLevel
                   AND (academic_section_id = @sectionId
-                       OR (@expectedSectionId IS NULL AND academic_section_id IS NULL)
+                       OR (@expectedSectionId IS NULL AND (academic_section_id IS NULL OR NULLIF(TRIM(COALESCE(section, '')), '') IS NULL))
                        OR academic_section_id = @expectedSectionId)
                 RETURNING enrollment_id;", connection, transaction);
             update.Parameters.AddWithValue("sectionId", sectionId);
@@ -234,7 +235,7 @@ public static class EnrollmentSectioningService
             SET academic_section_id = NULL, section = NULL, updated_at = CURRENT_TIMESTAMP
             WHERE enrollment.academic_section_id = @sectionId
               AND enrollment.school_year = @schoolYear AND enrollment.semester = @semester
-              AND enrollment.status = 'ENROLLED' AND enrollment.enrollment_state = 'PLANNING'
+              AND UPPER(BTRIM(enrollment.status)) = 'ENROLLED' AND enrollment.enrollment_state = 'PLANNING'
               AND EXISTS (
                   SELECT 1 FROM studentprofiles profile
                   WHERE profile.user_id = enrollment.student_user_id
@@ -270,7 +271,7 @@ public static class EnrollmentSectioningService
         await using (var incomplete = new NpgsqlCommand(@"
             SELECT COUNT(*) FROM student_enrollments
             WHERE program_id = @programId AND school_year = @schoolYear AND semester = @semester
-              AND status = 'ENROLLED' AND enrollment_state = 'PLANNING'
+              AND UPPER(BTRIM(status)) = 'ENROLLED' AND enrollment_state = 'PLANNING'
               AND academic_section_id IS NULL;", connection, transaction))
         {
             incomplete.Parameters.AddWithValue("programId", programId);
@@ -285,7 +286,7 @@ public static class EnrollmentSectioningService
             SET enrollment_state = 'FINALIZED', finalized_at = CURRENT_TIMESTAMP,
                 finalized_by = @actorId, updated_at = CURRENT_TIMESTAMP
             WHERE program_id = @programId AND school_year = @schoolYear AND semester = @semester
-              AND status = 'ENROLLED' AND enrollment_state = 'PLANNING';", connection, transaction);
+              AND UPPER(BTRIM(status)) = 'ENROLLED' AND enrollment_state = 'PLANNING';", connection, transaction);
         command.Parameters.AddWithValue("programId", programId);
         command.Parameters.AddWithValue("schoolYear", schoolYear);
         command.Parameters.AddWithValue("semester", semester);

@@ -56,9 +56,14 @@ function ChairpersonHeader({
                 ))}
               </select>
             ) : (
-              <p className="text-sm font-semibold text-white">
-                {chairpersonData?.department || "Department"}
-              </p>
+              <div>
+                <p className="text-sm font-semibold text-white">
+                  {chairpersonData?.department || "Department"}
+                </p>
+                {departmentCount !== null && departmentCount !== undefined ? (
+                  <p className="mt-0.5 text-xs text-white/70">{departmentCount} active Faculty</p>
+                ) : null}
+              </div>
             )}
           </div>
 

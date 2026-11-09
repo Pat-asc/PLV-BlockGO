@@ -1,6 +1,3 @@
--- Keep each program's active curriculum pointer aligned with its current
--- published version. This repairs databases where migration 014 ran before a
--- later curriculum was published, while preserving cohort-specific mappings.
 INSERT INTO program_curriculum_assignments
     (program_id, curriculum_id, assigned_by, assigned_at, updated_at)
 SELECT DISTINCT ON (curriculum.program_id)

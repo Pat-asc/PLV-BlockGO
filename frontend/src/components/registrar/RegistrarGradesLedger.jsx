@@ -25,7 +25,7 @@ const DownloadIcon = () => (
 
 const ExportButton = ({ label, onClick }) => (
   <button type="button" aria-label={label} onClick={onClick} className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-[#003366] transition hover:bg-amber-50">
-    <DownloadIcon /> Export PDF
+    <DownloadIcon /> {label}
   </button>
 );
 
@@ -110,11 +110,7 @@ const LedgerDetailsDialog = ({ item, onClose, onViewIpfs, onExport }) => {
             <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700">{subject.students.length} student{subject.students.length === 1 ? '' : 's'}</span>
             {subject.statuses.map((status) => <StatusBadge key={status} status={status} />)}
           </div>
-          {onExport ? <div className="flex flex-wrap gap-2">
-            <ExportButton label={`Export ${program.code} program PDF`} onClick={() => onExport({ type: 'program', programId: program.id })} />
-            <ExportButton label={`Export ${faculty.name} faculty PDF`} onClick={() => onExport({ type: 'faculty', programId: program.id, facultyUserId: faculty.userId })} />
-            <ExportButton label={`Export ${section.section} section PDF`} onClick={() => onExport({ type: 'section', programId: program.id, facultyUserId: faculty.userId, academicSectionId: section.academicSectionId, schoolYear: section.schoolYear, semester: section.semester })} />
-          </div> : null}
+          {onExport ? <ExportButton label="Export Section PDF" onClick={() => onExport({ type: 'section', programId: program.id, facultyUserId: faculty.userId, academicSectionId: section.academicSectionId, schoolYear: section.schoolYear, semester: section.semester })} /> : null}
         </div>
         <div className="min-h-0 overflow-auto"><StudentLedgerTable subject={subject} onViewIpfs={onViewIpfs} /></div>
       </section>
@@ -145,6 +141,15 @@ const RegistrarGradesLedger = ({ loggedInEmail, onViewIpfs, onExport }) => {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    const handleAcademicDataChanged = (event) => {
+      const reason = String(event.detail?.reason || event.detail?.Reason || '').trim().toLowerCase();
+      if (reason === 'grade_finalized') load();
+    };
+    window.addEventListener('blockgo:academic-data-changed', handleAcademicDataChanged);
+    return () => window.removeEventListener('blockgo:academic-data-changed', handleAcademicDataChanged);
+  }, [load]);
+
   const canonicalPrograms = useMemo(() => Array.from(new Map(programs.map((program) => [String(program.programId), program])).values()), [programs]);
   const canonicalRecords = useMemo(() => canonicalizeLedgerPrograms(records, canonicalPrograms), [records, canonicalPrograms]);
   const options = useMemo(() => getLedgerFilterOptions(canonicalRecords), [canonicalRecords]);
@@ -167,7 +172,7 @@ const RegistrarGradesLedger = ({ loggedInEmail, onViewIpfs, onExport }) => {
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div><h2 className="text-2xl font-bold text-[#003366]">Grades Ledger</h2><p className="mt-1 text-sm text-slate-500">Select a ledger item to view its students and finalized grade details.</p></div>
           <div className="flex flex-wrap gap-2">
-            {onExport ? <ExportButton label="Export all filtered grade records PDF" onClick={() => requestExport({ type: 'all' })} /> : null}
+            {onExport ? <ExportButton label="Export PDF" onClick={() => requestExport({ type: 'all' })} /> : null}
             <button type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((value) => !value)} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-[#003366]">Filters</button>
             <button type="button" onClick={load} className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white">Refresh</button>
           </div>

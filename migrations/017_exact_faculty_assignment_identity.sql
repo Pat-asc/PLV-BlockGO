@@ -1,5 +1,4 @@
 -- Teaching assignments must identify one academic section and period. Legacy
--- rows remain readable, but ambiguous rows are deliberately left unresolved.
 ALTER TABLE facultysections
     ADD COLUMN IF NOT EXISTS academic_section_id INTEGER REFERENCES academicsections(id) ON DELETE RESTRICT,
     ADD COLUMN IF NOT EXISTS school_year VARCHAR(20),

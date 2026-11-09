@@ -14,10 +14,23 @@ const gradeDisplay = (subject) => {
   return { primary: equivalent, secondary: numeric > 5 ? `(${numeric.toFixed(2)} final average)` : '' };
 };
 
+const isCrossSubject = (subject) =>
+  Boolean(
+    subject?.isCrossAssigned ||
+    subject?.isNonRegular ||
+    subject?.isCrossDepartmentAssigned ||
+    Number(subject?.priority) === 0 ||
+    String(subject?.subjectClassification || '').toUpperCase() === 'NON-REGULAR'
+  );
+
 function StudentCurrentSubjects({ subjects: enrolledSubjects = [], schoolYear = '', semester = '', loading = false, error = '' }) {
   const [openSubject, setOpenSubject] = useState('');
   const subjects = useMemo(() => [...enrolledSubjects]
-    .sort((a, b) => String(a.subjectCode).localeCompare(String(b.subjectCode))), [enrolledSubjects]);
+    .sort((a, b) => {
+      const priorityDiff = (isCrossSubject(a) ? 0 : 1) - (isCrossSubject(b) ? 0 : 1);
+      if (priorityDiff !== 0) return priorityDiff;
+      return String(a.subjectCode || '').localeCompare(String(b.subjectCode || ''));
+    }), [enrolledSubjects]);
 
   if (loading) return <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500">Loading current subjects…</div>;
 
@@ -43,7 +56,17 @@ function StudentCurrentSubjects({ subjects: enrolledSubjects = [], schoolYear = 
               : transaction || 'Not Yet Available';
           return <article key={key}>
             <button type="button" onClick={() => setOpenSubject(expanded ? '' : key)} className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-slate-50" aria-expanded={expanded}>
-              <span><span className="block font-bold text-[#003366]">{subject.subjectCode || 'Subject'}</span><span className="text-sm text-slate-600">{subject.subjectTitle || 'Untitled subject'}</span></span>
+              <span>
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="font-bold text-[#003366]">{subject.subjectCode || 'Subject'}</span>
+                  {isCrossSubject(subject) ? (
+                    <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-bold text-amber-800">
+                      Cross-Department{subject.sourceProgramCode ? ` · ${subject.sourceProgramCode}` : ''}{subject.section ? ` · ${subject.section}` : ''}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="text-sm text-slate-600">{subject.subjectTitle || 'Untitled subject'}</span>
+              </span>
               <span className="flex items-center gap-3"><span className="hidden rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 sm:inline">{subject.units || 0} units</span><span className={`text-xl text-slate-500 transition ${expanded ? 'rotate-180' : ''}`}>⌄</span></span>
             </button>
             {expanded ? <div className="grid gap-3 bg-slate-50 px-5 py-4 text-sm sm:grid-cols-2 xl:grid-cols-4">

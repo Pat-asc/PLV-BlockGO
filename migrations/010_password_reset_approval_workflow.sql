@@ -1,5 +1,3 @@
--- Replace the legacy public OTP/email reset flow with an authenticated,
--- Registrar-approved password-change workflow for Faculty and Department Admins.
 ALTER TABLE password_reset_requests
     ADD COLUMN IF NOT EXISTS request_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
     ADD COLUMN IF NOT EXISTS request_reason TEXT,

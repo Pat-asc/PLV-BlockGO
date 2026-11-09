@@ -1,41 +1,37 @@
 import React from "react";
 
 function ChairpersonOverview({ metrics }) {
+  const facultyValue = metrics.facultyLoading || metrics.facultyError ? "—" : metrics.totalFaculty;
   const cards = [
     {
       title: "Faculty in Department",
-      value: metrics.totalFaculty,
-      subtitle: "Faculty members under chairperson monitoring",
+      value: facultyValue,
+      subtitle: metrics.facultyError || (metrics.facultyLoading ? "Loading active Faculty accounts…" : "Faculty members under chairperson monitoring"),
     },
     {
-      title: "Sections for Review",
-      value: metrics.totalSections,
-      subtitle: "Assigned sections awaiting monitoring or review",
-    },
-    {
-      title: "Submitted Sections",
+      title: "Grade Review",
       value: metrics.submittedSections,
-      subtitle: "Faculty submissions waiting for chairperson review",
+      subtitle: "Faculty submissions waiting for Registrar review",
     },
     {
-      title: "Returned Sections",
+      title: "Returned Grades",
       value: metrics.returnedSections,
-      subtitle: "Sections sent back to faculty for correction",
+      subtitle: "Sections returned to Faculty",
     },
     {
-      title: "Approved Sections",
+      title: "Approved Grades",
       value: metrics.approvedSections,
-      subtitle: "Sections approved and awaiting finalization",
+      subtitle: "Approved submissions waiting for finalization",
     },
     {
-      title: "Finalized Sections",
+      title: "Finalized Grades",
       value: metrics.forwardedSections,
-      subtitle: "Sections finalized and verified on the ledger",
+      subtitle: "Sections finalized by the Registrar",
     },
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
       {cards.map((card) => (
         <div
           key={card.title}

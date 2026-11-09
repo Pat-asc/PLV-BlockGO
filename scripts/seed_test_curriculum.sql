@@ -1,6 +1,4 @@
--- Opt-in BlockGo QA/demo fixture. This is intentionally not a migration:
--- production deployments must choose explicitly whether to install test data.
--- Re-running the script is safe and never updates an existing curriculum or subject.
+-- Opt-in BlockGo QA/demo fixture. This is intentionally not a migration: for testing to
 DO $seed$
 DECLARE
     target_program_id INTEGER;

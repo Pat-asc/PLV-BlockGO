@@ -779,7 +779,7 @@ function FacultyLoading({ chairpersonDepartment = "", assignmentMode = "all", se
 
   const handleDeleteAssignment = async (item) => {
     if (!item.id || !item.facultyEmail) {
-      showSystemNotification("This legacy browser-only record has no authoritative server assignment ID and cannot be removed here.");
+      showSystemNotification("This browser-only record has no authoritative server assignment ID and cannot be removed here.");
       return;
     }
     try {
