@@ -197,6 +197,11 @@ try
 
         var gatewayApp = builder.Build();
         gatewayApp.UseForwardedHeaders();
+        gatewayApp.Use(async (context, next) =>
+        {
+            ClientIpResolver.ApplyTrustedClientHeader(context, builder.Configuration);
+            await next();
+        });
         gatewayApp.UseSerilogRequestLogging(options => options.GetLevel = HttpRequestLogLevel);
         gatewayApp.UseCors("AllowFrontend");
         gatewayApp.Use(async (context, next) =>
@@ -521,6 +526,11 @@ try
     var app = builder.Build();
 
     app.UseForwardedHeaders();
+    app.Use(async (context, next) =>
+    {
+        ClientIpResolver.ApplyTrustedClientHeader(context, builder.Configuration);
+        await next();
+    });
     app.UseWebSockets(new WebSocketOptions
     {
         KeepAliveInterval = TimeSpan.FromSeconds(30)

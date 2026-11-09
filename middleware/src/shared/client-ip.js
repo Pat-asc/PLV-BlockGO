@@ -1,4 +1,8 @@
 const net = require('net');
+const proxyaddr = require('proxy-addr');
+
+let trustedClientHeaderProxySetting;
+let trustedClientHeaderProxyCidrs;
 
 function normalizeIp(value) {
     const address = String(value || '').trim();
@@ -8,7 +12,24 @@ function normalizeIp(value) {
 }
 
 function clientIp(req) {
-    return normalizeIp(req.ip) || normalizeIp(req.socket?.remoteAddress);
+    const proxyResolvedIp = normalizeIp(req.ip) || normalizeIp(req.socket?.remoteAddress);
+    if (!proxyResolvedIp) return null;
+
+    const headerName = String(process.env.TRUSTED_CLIENT_IP_HEADER || '').trim().toLowerCase();
+    const trustedProxyCidrs = String(process.env.TRUSTED_CLIENT_IP_PROXY_CIDRS || '').trim();
+    if (!headerName || !trustedProxyCidrs) return proxyResolvedIp;
+
+    if (trustedClientHeaderProxyCidrs !== trustedProxyCidrs) {
+        trustedClientHeaderProxyCidrs = trustedProxyCidrs;
+        trustedClientHeaderProxySetting = proxyaddr.compile(
+            trustedProxyCidrs.split(',').map((value) => value.trim()).filter(Boolean)
+        );
+    }
+    if (!trustedClientHeaderProxySetting(proxyResolvedIp, 0)) return proxyResolvedIp;
+
+    const headerValue = req.headers?.[headerName];
+    if (Array.isArray(headerValue)) return proxyResolvedIp;
+    return normalizeIp(headerValue) || proxyResolvedIp;
 }
 
 function trustProxySetting() {
