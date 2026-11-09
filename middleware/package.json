@@ -34,7 +34,8 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.5.0",
     "nodemailer": "^10.3.1",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "proxy-addr": "^2.0.8"
   },
   "overrides": {
     "brace-expansion": "5.0.11",

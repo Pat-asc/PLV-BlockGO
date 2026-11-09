@@ -177,12 +177,20 @@ test('GKE public API backends replace spoofable forwarding headers with the veri
     }
 });
 
-test('application gateways trust the Kubernetes service proxy range for verified forwarding', () => {
+test('application gateways trust the exact production GKE pod range for verified forwarding', () => {
     const middlewareConfig = byKey.get('plv-fabric/ConfigMap/middleware-service-config');
     const dotnetConfig = byKey.get('plv-fabric/ConfigMap/dotnet-service-config');
 
-    assert.ok(String(middlewareConfig?.data?.TRUST_PROXY_CIDRS || '').split(',').includes('10.96.0.0/16'));
-    assert.ok(Object.values(dotnetConfig?.data || {}).includes('10.96.0.0/16'));
+    const middlewareTrustedNetworks = String(middlewareConfig?.data?.TRUST_PROXY_CIDRS || '').split(',');
+    const dotnetTrustedNetworks = Object.values(dotnetConfig?.data || {});
+    assert.ok(middlewareTrustedNetworks.includes('10.76.0.0/14'));
+    assert.ok(dotnetTrustedNetworks.includes('10.76.0.0/14'));
+    assert.ok(!middlewareTrustedNetworks.includes('10.72.0.0/16'));
+    assert.ok(!dotnetTrustedNetworks.includes('10.72.0.0/16'));
+    assert.equal(middlewareConfig?.data?.TRUSTED_CLIENT_IP_HEADER, 'cf-connecting-ip');
+    assert.equal(dotnetConfig?.data?.ClientIp__TrustedHeader, 'CF-Connecting-IP');
+    assert.ok(String(middlewareConfig?.data?.TRUSTED_CLIENT_IP_PROXY_CIDRS || '').includes('104.16.0.0/13'));
+    assert.ok(String(dotnetConfig?.data?.ClientIp__TrustedHeaderProxyNetworks || '').includes('104.16.0.0/13'));
 });
 
 test('all ASP.NET API aliases are represented by YARP and GKE Ingress routes', () => {

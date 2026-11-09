@@ -59,12 +59,13 @@ data:
   DOTNET_GRADE_SERVICE_URL: http://dotnet-grade-service.plv-fabric.svc.cluster.local:5103
   DOTNET_OPERATIONS_SERVICE_URL: http://dotnet-operations-service.plv-fabric.svc.cluster.local:5104
   DOTNET_REALTIME_SERVICE_URL: http://dotnet-realtime-service.plv-fabric.svc.cluster.local:5105
-  # Process at most the GCP LB/Ingress pair and stop at the first untrusted hop.
+  # Process at most the GCP LB/gateway pair and stop at the first untrusted hop.
   ForwardedHeaders__ForwardLimit: "2"
-  ForwardedHeaders__KnownNetworks__0: 10.72.0.0/16
-  ForwardedHeaders__KnownNetworks__1: 10.96.0.0/16
-  ForwardedHeaders__KnownNetworks__2: 35.191.0.0/16
-  ForwardedHeaders__KnownNetworks__3: 130.211.0.0/22
+  ForwardedHeaders__KnownNetworks__0: 10.76.0.0/14
+  ForwardedHeaders__KnownNetworks__1: 35.191.0.0/16
+  ForwardedHeaders__KnownNetworks__2: 130.211.0.0/22
+  ClientIp__TrustedHeader: CF-Connecting-IP
+  ClientIp__TrustedHeaderProxyNetworks: 173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,2400:cb00::/32,2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,2a06:98c0::/29,2c0f:f248::/32
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -83,11 +84,22 @@ spec:
     metadata:
       labels: { app: dotnet-api-gateway, tier: application, runtime: dotnet }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       terminationGracePeriodSeconds: 35
       containers:
       - name: dotnet-api-gateway
         image: registry.example.com/plv-repo/client-app:latest
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         ports: [{ name: http, containerPort: 5000 }]
         envFrom:
         - configMapRef: { name: dotnet-service-config }
@@ -96,6 +108,9 @@ spec:
         - { name: DOTNET_SERVICE_NAME, value: gateway }
         - { name: DOTNET_SERVICE_PORT, value: "5000" }
         - { name: ASPNETCORE_URLS, value: "http://+:5000" }
+        volumeMounts:
+        - { name: app-logs, mountPath: /app/logs }
+        - { name: runtime-tmp, mountPath: /tmp }
         startupProbe:
           httpGet: { path: /health, port: 5000 }
           periodSeconds: 5
@@ -114,6 +129,13 @@ spec:
         resources:
           requests: { memory: 64Mi, cpu: 50m }
           limits: { memory: 192Mi, cpu: 300m }
+      volumes:
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 128Mi
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
@@ -155,11 +177,22 @@ spec:
     metadata:
       labels: { app: dotnet-auth-service, tier: application, runtime: dotnet }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       terminationGracePeriodSeconds: 35
       containers:
       - name: dotnet-auth-service
         image: registry.example.com/plv-repo/client-app:latest
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         ports: [{ name: http, containerPort: 5101 }]
         envFrom:
         - configMapRef: { name: dotnet-service-config }
@@ -168,6 +201,9 @@ spec:
         - { name: DOTNET_SERVICE_NAME, value: auth }
         - { name: DOTNET_SERVICE_PORT, value: "5101" }
         - { name: ASPNETCORE_URLS, value: "http://+:5101" }
+        volumeMounts:
+        - { name: app-logs, mountPath: /app/logs }
+        - { name: runtime-tmp, mountPath: /tmp }
         startupProbe: &auth-startup
           httpGet: { path: /health, port: 5101 }
           periodSeconds: 5
@@ -182,6 +218,13 @@ spec:
         resources:
           requests: { memory: 128Mi, cpu: 75m }
           limits: { memory: 384Mi, cpu: 500m }
+      volumes:
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 128Mi
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
@@ -210,11 +253,22 @@ spec:
     metadata:
       labels: { app: dotnet-academic-service, tier: application, runtime: dotnet }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       terminationGracePeriodSeconds: 35
       containers:
       - name: dotnet-academic-service
         image: registry.example.com/plv-repo/client-app:latest
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         ports: [{ name: http, containerPort: 5102 }]
         envFrom:
         - configMapRef: { name: dotnet-service-config }
@@ -223,6 +277,9 @@ spec:
         - { name: DOTNET_SERVICE_NAME, value: academic }
         - { name: DOTNET_SERVICE_PORT, value: "5102" }
         - { name: ASPNETCORE_URLS, value: "http://+:5102" }
+        volumeMounts:
+        - { name: app-logs, mountPath: /app/logs }
+        - { name: runtime-tmp, mountPath: /tmp }
         startupProbe: &academic-startup
           httpGet: { path: /health, port: 5102 }
           periodSeconds: 5
@@ -237,6 +294,13 @@ spec:
         resources:
           requests: { memory: 128Mi, cpu: 75m }
           limits: { memory: 384Mi, cpu: 500m }
+      volumes:
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 128Mi
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
@@ -265,11 +329,22 @@ spec:
     metadata:
       labels: { app: dotnet-grade-service, tier: application, runtime: dotnet }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       terminationGracePeriodSeconds: 35
       containers:
       - name: dotnet-grade-service
         image: registry.example.com/plv-repo/client-app:latest
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         ports: [{ name: http, containerPort: 5103 }]
         envFrom:
         - configMapRef: { name: dotnet-service-config }
@@ -278,6 +353,9 @@ spec:
         - { name: DOTNET_SERVICE_NAME, value: grade }
         - { name: DOTNET_SERVICE_PORT, value: "5103" }
         - { name: ASPNETCORE_URLS, value: "http://+:5103" }
+        volumeMounts:
+        - { name: app-logs, mountPath: /app/logs }
+        - { name: runtime-tmp, mountPath: /tmp }
         startupProbe: &grade-startup
           httpGet: { path: /health, port: 5103 }
           periodSeconds: 5
@@ -292,6 +370,13 @@ spec:
         resources:
           requests: { memory: 192Mi, cpu: 100m }
           limits: { memory: 512Mi, cpu: 750m }
+      volumes:
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 128Mi
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
@@ -321,11 +406,22 @@ spec:
       labels: { app: dotnet-operations-service, tier: application, runtime: dotnet }
     spec:
       serviceAccountName: operations-monitor
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       terminationGracePeriodSeconds: 35
       containers:
       - name: dotnet-operations-service
         image: registry.example.com/plv-repo/client-app:latest
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         ports: [{ name: http, containerPort: 5104 }]
         envFrom:
         - configMapRef: { name: dotnet-service-config }
@@ -334,6 +430,9 @@ spec:
         - { name: DOTNET_SERVICE_NAME, value: operations }
         - { name: DOTNET_SERVICE_PORT, value: "5104" }
         - { name: ASPNETCORE_URLS, value: "http://+:5104" }
+        volumeMounts:
+        - { name: app-logs, mountPath: /app/logs }
+        - { name: runtime-tmp, mountPath: /tmp }
         startupProbe: &operations-startup
           httpGet: { path: /health, port: 5104 }
           periodSeconds: 5
@@ -348,6 +447,13 @@ spec:
         resources:
           requests: { memory: 128Mi, cpu: 75m }
           limits: { memory: 384Mi, cpu: 500m }
+      volumes:
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 128Mi
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
@@ -376,11 +482,22 @@ spec:
     metadata:
       labels: { app: dotnet-realtime-service, tier: application, runtime: dotnet }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       terminationGracePeriodSeconds: 60
       containers:
       - name: dotnet-realtime-service
         image: registry.example.com/plv-repo/client-app:latest
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         ports: [{ name: http, containerPort: 5105 }]
         envFrom:
         - configMapRef: { name: dotnet-service-config }
@@ -389,6 +506,9 @@ spec:
         - { name: DOTNET_SERVICE_NAME, value: realtime }
         - { name: DOTNET_SERVICE_PORT, value: "5105" }
         - { name: ASPNETCORE_URLS, value: "http://+:5105" }
+        volumeMounts:
+        - { name: app-logs, mountPath: /app/logs }
+        - { name: runtime-tmp, mountPath: /tmp }
         startupProbe: &realtime-startup
           httpGet: { path: /health, port: 5105 }
           periodSeconds: 5
@@ -403,6 +523,13 @@ spec:
         resources:
           requests: { memory: 128Mi, cpu: 75m }
           limits: { memory: 384Mi, cpu: 500m }
+      volumes:
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 128Mi
+      - name: runtime-tmp
+        emptyDir:
+          sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
