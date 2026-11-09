@@ -729,7 +729,7 @@ function RegistrarSectionsCreated() {
         id: Number(`${createdAt.replace(/\D/g, "").slice(0, 13)}${targetBatches.length}`),
         key: [sourceBatch.program, targetSchoolYear, TARGET_SEMESTER, "promotion"].join("|"),
         program: sourceBatch.program,
-        batchYear: sourceBatch.batchYear,
+        batchYear: targetSchoolYear.slice(0, 4),
         schoolYear: targetSchoolYear,
         semester: TARGET_SEMESTER,
         submittedTo: `${sourceBatch.program} Chairperson`,

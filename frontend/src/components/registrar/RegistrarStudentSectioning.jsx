@@ -2,6 +2,7 @@ import { showSystemNotification } from '../../services/NotificationContext';
 import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Modal from "../../services/Modal";
+import GraduatingSectionModal from "../shared/GraduatingSectionModal";
 import {
   AVAILABLE_YEAR_LEVELS,
   STUDENT_BATCHES_KEY,
@@ -233,9 +234,7 @@ function RegistrarStudentSectioning({
     useState(() => getStoredArray(IRREGULAR_SUBJECTS_KEY));
   const [graduatingStatusFilter, setGraduatingStatusFilter] =
     useState("Needs Checking");
-  const [expandedGraduatingSections, setExpandedGraduatingSections] = useState(
-    {}
-  );
+  const [graduatingSectionViewKey, setGraduatingSectionViewKey] = useState("");
   const [irregularSubjectForm, setIrregularSubjectForm] = useState({
     studentKey: "",
     subjectAssignmentId: "",
@@ -518,6 +517,9 @@ function RegistrarStudentSectioning({
       sections: Object.values(batch.sections),
     }));
   }, [visibleGraduatingStudents]);
+  const graduatingSectionView = graduatingBatchGroups
+    .flatMap((batch) => batch.sections)
+    .find((section) => section.key === graduatingSectionViewKey) || null;
   const graduatingReviewStats = useMemo(
     () => ({
       all: departmentGraduatingStudents.length,
@@ -2046,13 +2048,6 @@ function RegistrarStudentSectioning({
     persistSectioningData(batches, nextGraduatingStudents);
   };
 
-  const toggleGraduatingSection = (sectionKey) => {
-    setExpandedGraduatingSections((current) => ({
-      ...current,
-      [sectionKey]: !current[sectionKey],
-    }));
-  };
-
   return (
     <div className="space-y-6">
 
@@ -2300,83 +2295,12 @@ function RegistrarStudentSectioning({
                         <div className="mt-4">
                           <button
                             type="button"
-                            onClick={() => toggleGraduatingSection(section.key)}
+                            onClick={() => setGraduatingSectionViewKey(section.key)}
                             className="rounded-lg border border-[#003366] bg-white px-3 py-2 text-sm font-semibold text-[#003366] hover:bg-[#003366] hover:text-white"
                           >
-                            {expandedGraduatingSections[section.key]
-                              ? "Hide Students"
-                              : "View Students"}
+                            View Students
                           </button>
                         </div>
-
-                        {expandedGraduatingSections[section.key] ? (
-                          <div className="mt-4 overflow-x-auto">
-                          <table className="min-w-full">
-                            <thead>
-                              <tr className="bg-[#003366] text-white">
-                                <th className="px-4 py-3 text-left text-sm">Student</th>
-                                <th className="px-4 py-3 text-left text-sm">Origin</th>
-                                <th className="px-4 py-3 text-left text-sm">Status</th>
-                                <th className="px-4 py-3 text-left text-sm">Remarks</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {section.students.map((student) => (
-                                <tr
-                                  key={`${student.studentId}-${student.targetSchoolYear}`}
-                                  className="border-b bg-white"
-                                >
-                                  <td className="px-4 py-3">
-                                    <p className="font-semibold text-slate-800">
-                                      {student.studentId}
-                                    </p>
-                                    <p className="text-sm text-slate-500">
-                                      {buildStudentName(student)}
-                                    </p>
-                                  </td>
-                                  <td className="px-4 py-3 text-slate-700">
-                                    Batch {student.originBatchYear || student.sourceSchoolYear}
-                                    <span className="block text-xs text-slate-500">
-                                      {student.originYearLevel || student.yearLevel}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    <select
-                                      value={student.status || "Incomplete"}
-                                      onChange={(event) =>
-                                        handleGraduatingStatusChange(student.studentId, {
-                                          status: event.target.value,
-                                          reviewedAt: new Date().toISOString(),
-                                        })
-                                      }
-                                      className="min-w-48 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#003366]"
-                                    >
-                                      {GRADUATING_STATUSES.map((status) => (
-                                        <option key={status} value={status}>
-                                          {status}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    <input
-                                      type="text"
-                                      value={student.remarks || ""}
-                                      onChange={(event) =>
-                                        handleGraduatingStatusChange(student.studentId, {
-                                          remarks: event.target.value,
-                                        })
-                                      }
-                                      placeholder="Review note"
-                                      className="min-w-64 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#003366]"
-                                    />
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -3399,6 +3323,13 @@ function RegistrarStudentSectioning({
             </Modal>
           </main>
       </div>
+      <GraduatingSectionModal
+        section={graduatingSectionView}
+        statuses={GRADUATING_STATUSES}
+        buildStudentName={buildStudentName}
+        onUpdateStudent={handleGraduatingStatusChange}
+        onClose={() => setGraduatingSectionViewKey("")}
+      />
     </div>
   );
 }

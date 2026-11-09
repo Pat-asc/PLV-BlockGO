@@ -608,9 +608,9 @@ namespace Client_app.Controllers
                 SET section = latest.section, department = p.program_name,
                     year_level = latest.year_level::text, curriculum_id = latest.curriculum_id,
                     assignment_status = CASE
+                        WHEN latest.status = 'ENROLLED' THEN 'Enrolled'
                         WHEN NULLIF(TRIM(COALESCE(latest.section, '')), '') IS NULL THEN 'Unassigned'
                         WHEN latest.enrollment_state = 'PLANNING' THEN 'Planning'
-                        WHEN latest.status = 'ENROLLED' THEN 'Enrolled'
                         ELSE latest.status
                     END
                 FROM student_enrollments latest JOIN academic_programs p ON p.program_id = latest.program_id
@@ -1320,7 +1320,7 @@ namespace Client_app.Controllers
 
                     UPDATE studentprofiles
                     SET department = @programName, year_level = CAST(@yearLevel AS text),
-                        curriculum_id = @curriculumId, section = NULL, assignment_status = 'Unassigned'
+                        curriculum_id = @curriculumId, section = NULL, assignment_status = 'Enrolled'
                     WHERE user_id = @id;", connection, transaction))
                 {
                     insertCommand.Parameters.AddWithValue("id", id);
@@ -4943,7 +4943,10 @@ namespace Client_app.Controllers
                             }
                         }
 
-                        var studentAssignmentStatus = string.IsNullOrWhiteSpace(rowSection) ? "Unassigned" : "Enrolled";
+                        // Section placement is independent from enrollment. An imported
+                        // student with no section is still enrolled and must remain
+                        // eligible for the Registrar's unassigned-enrollment pool.
+                        var studentAssignmentStatus = shouldSaveEnrollment ? "Enrolled" : null;
                         var userId = existingUserId;
 
                         if (exists)
@@ -4987,7 +4990,8 @@ namespace Client_app.Controllers
                                     updateProfile.Parameters.AddWithValue("address", string.IsNullOrEmpty(address) ? DBNull.Value : (object)address);
                                     updateProfile.Parameters.AddWithValue("yearLevel", shouldSaveEnrollment ? (object)resolvedYearLevel.ToString() : DBNull.Value);
                                     updateProfile.Parameters.AddWithValue("curriculumId", (object?)resolvedCurriculumId ?? DBNull.Value);
-                                    updateProfile.Parameters.AddWithValue("assignStatus", studentAssignmentStatus);
+                                    updateProfile.Parameters.Add("assignStatus", NpgsqlTypes.NpgsqlDbType.Varchar).Value =
+                                        (object?)studentAssignmentStatus ?? DBNull.Value;
                                     updateProfile.Parameters.AddWithValue("uid", userId);
                                     await updateProfile.ExecuteNonQueryAsync();
                                 }
@@ -5009,7 +5013,7 @@ namespace Client_app.Controllers
                                     insertProfile.Parameters.AddWithValue("address", string.IsNullOrEmpty(address) ? DBNull.Value : (object)address);
                                     insertProfile.Parameters.AddWithValue("yearLevel", shouldSaveEnrollment ? (object)resolvedYearLevel.ToString() : DBNull.Value);
                                     insertProfile.Parameters.AddWithValue("curriculumId", (object?)resolvedCurriculumId ?? DBNull.Value);
-                                    insertProfile.Parameters.AddWithValue("assignStatus", studentAssignmentStatus);
+                                    insertProfile.Parameters.AddWithValue("assignStatus", studentAssignmentStatus ?? "Pending");
                                     await insertProfile.ExecuteNonQueryAsync();
                                 }
                             }
@@ -5038,7 +5042,7 @@ namespace Client_app.Controllers
                             cmdProfile.Parameters.AddWithValue("address", string.IsNullOrEmpty(address) ? DBNull.Value : (object)address);
                             cmdProfile.Parameters.AddWithValue("yearLevel", resolvedYearLevel.ToString());
                             cmdProfile.Parameters.AddWithValue("curriculumId", (object?)resolvedCurriculumId ?? DBNull.Value);
-                            cmdProfile.Parameters.AddWithValue("assignStatus", studentAssignmentStatus);
+                            cmdProfile.Parameters.AddWithValue("assignStatus", studentAssignmentStatus ?? "Pending");
                             await cmdProfile.ExecuteNonQueryAsync();
                         }
 

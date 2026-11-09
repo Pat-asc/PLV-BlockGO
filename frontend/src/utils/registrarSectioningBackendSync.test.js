@@ -59,6 +59,48 @@ test('persists promoted section rosters with source and target concurrency field
   }]);
 });
 
+test('promotes a 25-student roster once while preserving every student identity', async () => {
+  const students = Array.from({ length: 25 }, (_, index) => ({
+    studentId: `27-${String(index + 1).padStart(4, '0')}`,
+    sourceSchoolYear: '2027-2028',
+    sourceSemester: 'FIRST',
+    sourceYearLevel: '1st Year',
+    originSectionCode: '1-1',
+    yearLevel: '2nd Year',
+    sectionCode: '2-1',
+  }));
+  const promotedBatch = {
+    program: 'Bachelor of Science in Information Technology',
+    schoolYear: '2028-2029',
+    semester: 'FIRST',
+    students,
+  };
+  promoteStudentEnrollments.mockResolvedValue({ status: 'Success', promotedCount: 25 });
+
+  await expect(persistPromotedBatchesToBackend([promotedBatch])).resolves.toEqual({
+    status: 'Success', promotedCount: 25,
+  });
+
+  expect(promoteStudentEnrollments).toHaveBeenCalledTimes(1);
+  const payload = promoteStudentEnrollments.mock.calls[0][0];
+  expect(payload).toHaveLength(25);
+  expect(new Set(payload.map((student) => student.studentId))).toEqual(
+    new Set(students.map((student) => student.studentId))
+  );
+  expect(payload).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      studentId: '27-0001',
+      sourceSchoolYear: '2027-2028',
+      sourceYearLevel: '1',
+      targetSchoolYear: '2028-2029',
+      targetYearLevel: '2',
+      targetSection: '2-1',
+    }),
+    expect.objectContaining({ studentId: '27-0025' }),
+  ]));
+  expect(promotedBatch.students).toEqual(students);
+});
+
 test('uses an existing section returned for a program alias and assigns saved student IDs with their period', async () => {
   expect(await syncSectioningBatchToBackend(batch)).toEqual({ sectionsSynced: 0, studentsSynced: 1 });
   expect(createSection).not.toHaveBeenCalled();
