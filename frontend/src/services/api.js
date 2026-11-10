@@ -54,6 +54,7 @@ const fetchWithAuth = async (endpoint, options = {}) => {
         if (sessionRejected) expireAuthSession(response.status === 401 ? 'unauthorized' : 'revoked');
         const apiError = new Error(errorMessage);
         apiError.status = response.status;
+        apiError.code = errorData.code;
         apiError.data = errorData;
         throw apiError;
     }
@@ -818,6 +819,17 @@ export const removeStudentFromSection = async (sectionId, studentId, period) => 
 export const finalizeEnrollmentRoster = async (payload) => fetchWithAuth('/Auth/enrollments/finalize', {
     method: 'POST', body: JSON.stringify(payload),
 });
+
+export const unlockAllEnrollmentSections = async (payload) =>
+    fetchWithAuth('/Auth/sections/unlock-all-enrollments', {
+        method: 'POST', body: JSON.stringify(payload),
+    });
+
+export const unlockEnrollmentSection = async (sectionId, payload) =>
+    fetchWithAuth(`/Auth/sections/${encodeURIComponent(sectionId)}/unlock-enrollments`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
 export const bulkCreateStaffAccounts = async (file) => {
     await assertValidCsvUpload(file);
     const formData = new FormData();

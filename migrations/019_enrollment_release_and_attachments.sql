@@ -20,8 +20,6 @@ ALTER TABLE student_enrollments
     ADD COLUMN IF NOT EXISTS finalized_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     ADD COLUMN IF NOT EXISTS nstp_option VARCHAR(100);
 
--- Existing rows predate the planning workflow and remain official. New rows
--- begin in PLANNING until the Registrar explicitly finalizes the period.
 UPDATE student_enrollments
 SET enrollment_state = 'FINALIZED',
     finalized_at = COALESCE(finalized_at, updated_at, enrolled_at)

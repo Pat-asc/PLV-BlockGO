@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using BlockGo.Models;
+using BlockGo.Services;
 using Client_app.Models;
 using Npgsql;
 
@@ -81,17 +82,20 @@ public static class StudentSubjectGradeResolver
         {
             var exactCycle = candidates.Where(record =>
                 !IsLegacyCycle(record.AssignmentCycleId) && Same(record.AssignmentCycleId, attempt.AssignmentCycleId)).ToList();
-            if (exactCycle.Count == 1) return Matched(exactCycle[0], "assignment-cycle");
-            if (exactCycle.Count > 1) return new(null, null, Ambiguous, "assignment-cycle-ambiguous");
+            var preferredCycleTerm = PreferMostCompleteTerm(exactCycle);
+            if (preferredCycleTerm.Count == 1) return Matched(preferredCycleTerm[0], "assignment-cycle");
+            if (preferredCycleTerm.Count > 1) return new(null, null, Ambiguous, "assignment-cycle-ambiguous");
         }
 
         var sameSection = candidates.Where(record => SectionsMatch(record.Section, attempt.Section)).ToList();
-        if (sameSection.Count == 1) return Matched(sameSection[0], "section");
-        if (sameSection.Count > 1) return new(null, null, Ambiguous, "section-ambiguous");
+        var preferredSectionTerm = PreferMostCompleteTerm(sameSection);
+        if (preferredSectionTerm.Count == 1) return Matched(preferredSectionTerm[0], "section");
+        if (preferredSectionTerm.Count > 1) return new(null, null, Ambiguous, "section-ambiguous");
 
         var legacy = candidates.Where(record => IsLegacyCycle(record.AssignmentCycleId)).ToList();
-        if (candidates.Count == 1 && legacy.Count == 1)
-            return Matched(candidates[0], "legacy-unambiguous");
+        var preferredLegacyTerm = PreferMostCompleteTerm(legacy);
+        if (preferredLegacyTerm.Count == 1 && legacy.Count == candidates.Count)
+            return Matched(preferredLegacyTerm[0], "legacy-unambiguous");
 
         return new(null, null, Ambiguous, "finalized-records-ambiguous");
     }
@@ -525,6 +529,18 @@ public static class StudentSubjectGradeResolver
 
     private static StudentSubjectGradeResolution Matched(AcademicRecord record, string basis) =>
         new(record, ParseFinalGrade(record.Grade), Finalized, basis);
+
+    private static List<AcademicRecord> PreferMostCompleteTerm(IReadOnlyCollection<AcademicRecord> records)
+    {
+        if (records.Count <= 1) return records.ToList();
+        var highestRank = records.Max(TermRank);
+        return records.Where(record => TermRank(record) == highestRank).ToList();
+    }
+
+    private static int TermRank(AcademicRecord record) =>
+        string.Equals(GradeAcademicTerm.Normalize(record.Term), GradeAcademicTerm.Finals, StringComparison.Ordinal)
+            ? 2
+            : 1;
 
     private static bool SamePeriod(string? recordYear, string? recordSemester, string? attemptYear, string? attemptSemester) =>
         string.Equals(GradeAcademicPeriod.SchoolYear(recordYear), GradeAcademicPeriod.SchoolYear(attemptYear), StringComparison.Ordinal) &&

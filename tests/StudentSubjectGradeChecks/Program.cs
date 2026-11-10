@@ -19,12 +19,13 @@ static StudentSubjectAttempt Attempt(
 
 static AcademicRecord Grade(
     string id, string status = "Finalized", string year = "2026-2027", string semester = "FIRST",
-    string cycle = "20", string section = "BSIT 1-1", string grade = "{\"midterm\":\"88\",\"finals\":\"90\",\"finalAverage\":\"89\"}") =>
+    string cycle = "20", string section = "BSIT 1-1", string grade = "{\"midterm\":\"88\",\"finals\":\"90\",\"finalAverage\":\"89\"}",
+    string term = "finals") =>
     new()
     {
         Id = id, StudentHash = "student@plv.edu.ph", StudentNo = "26-0035", StudentId = "26-0035",
         SubjectCode = "IT 101", SchoolYear = year, Semester = semester, Section = section,
-        AssignmentCycleId = cycle, Status = status, Grade = grade,
+        AssignmentCycleId = cycle, Status = status, Grade = grade, Term = term,
         TransactionId = $"tx-{id}", TransactionHash = $"hash-{id}", Timestamp = "2026-09-19T01:00:00Z"
     };
 
@@ -101,6 +102,33 @@ var outage = StudentSubjectGradeResolver.Resolve(Attempt(), new[] { Grade("known
 Check(!outage.IsFinalized && outage.Availability == StudentSubjectGradeResolver.LedgerUnavailable,
     "12: Fabric outage was reported as no finalized grade.");
 
-Console.WriteLine("PASS: 12 Student Subject List finalized-grade association scenarios.");
+// 13. Midterm and Finals are two valid finalized records for one assignment, not a conflict.
+var exactCycleTerms = StudentSubjectGradeResolver.Resolve(Attempt(), new[]
+{
+    Grade("midterm-cycle", grade: "88", term: "midterm"),
+    Grade("finals-cycle", grade: "91", term: "finals")
+});
+Check(exactCycleTerms.Record?.Id == "finals-cycle" && exactCycleTerms.Availability == StudentSubjectGradeResolver.Finalized,
+    "13: finalized Midterm and Finals in one assignment were incorrectly marked ambiguous.");
+
+// 14. The same Finals preference applies when a recreated/missing assignment falls back to section identity.
+var sectionTerms = StudentSubjectGradeResolver.Resolve(Attempt(cycle: "44"), new[]
+{
+    Grade("midterm-section", cycle: "43", grade: "87", term: "midterm"),
+    Grade("finals-section", cycle: "43", grade: "92", term: "finals")
+});
+Check(sectionTerms.Record?.Id == "finals-section" && sectionTerms.MatchBasis == "section",
+    "14: section fallback treated separate Midterm and Finals as conflicting grades.");
+
+// 15. Two competing Finals records remain ambiguous and require manual reconciliation.
+var duplicateFinals = StudentSubjectGradeResolver.Resolve(Attempt(), new[]
+{
+    Grade("finals-a", grade: "90", term: "finals"),
+    Grade("finals-b", grade: "91", term: "finals")
+});
+Check(!duplicateFinals.IsFinalized && duplicateFinals.Availability == StudentSubjectGradeResolver.Ambiguous,
+    "15: competing Finals records were silently selected instead of remaining ambiguous.");
+
+Console.WriteLine("PASS: 15 Student Subject List finalized-grade association scenarios.");
 }
 }

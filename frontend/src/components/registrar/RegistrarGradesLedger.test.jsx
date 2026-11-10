@@ -49,6 +49,7 @@ test('clicking a ledger item opens grade details and close keeps the Registrar o
   fireEvent.click(await screen.findByRole('button', { name: /IT101.*View details/i }));
   const dialog = screen.getByRole('dialog', { name: /IT101.*Introduction to Computing/i });
   expect(within(dialog).getByRole('columnheader', { name: 'Student No.' })).toBeInTheDocument();
+  expect(within(dialog).queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
   expect(within(dialog).getByText('Student One')).toBeInTheDocument();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Close grade ledger details' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -93,6 +94,17 @@ test('a grade finalization event refreshes the authoritative ledger without a pa
   expect(fetchAllGrades).toHaveBeenCalledTimes(1);
   fireEvent(window, new CustomEvent('blockgo:academic-data-changed', { detail: { reason: 'grade_finalized' } }));
   await waitFor(() => expect(fetchAllGrades).toHaveBeenCalledTimes(2));
+});
+
+test('Grades Ledger load never exposes a technical finalization exception', async () => {
+  fetchAllGrades.mockRejectedValue(
+    new Error('Npgsql.PostgresException 23502: null value in column year_level of relation grade_submission_snapshots')
+  );
+  render(<RegistrarGradesLedger loggedInEmail="registrar@plv.edu.ph" />);
+
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('Unable to finalize this section because some academic information is incomplete. No approved grades were lost. Please refresh and try again.');
+  expect(alert.textContent).not.toMatch(/23502|year_level|grade_submission_snapshots|Npgsql|null value/i);
 });
 
 test('finalized records with incomplete relational metadata remain browsable through their ledger values', async () => {

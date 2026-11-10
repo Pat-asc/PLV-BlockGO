@@ -117,6 +117,23 @@ test('long roster uses repeated headers, avoids split rows, paginates, and write
   expect(doc.textCalls.filter(([text]) => /^Page \d+ of \d+$/.test(text))).toHaveLength(result.pageCount);
 });
 
+test('PDF omits redundant status labels and prints the actual Faculty name above the signature role', () => {
+  exportRegistrarGradesLedgerPdf({
+    records: [record()],
+    filters: { status: 'Finalized' },
+    jsPDF: MockJsPdf,
+    generatedAt: new Date('2026-09-24T00:00:00Z'),
+  });
+  const doc = createdDocuments[0];
+  const printedText = doc.textCalls.map(([text]) => String(text));
+  expect(doc.tableCalls[0].head[0]).not.toContain('Status');
+  expect(doc.tableCalls[0].body[0]).toHaveLength(6);
+  expect(printedText.some((text) => text.startsWith('Status:'))).toBe(false);
+  expect(printedText.some((text) => text.includes('|  Status:'))).toBe(false);
+  expect(printedText).toEqual(expect.arrayContaining(['JUAN DELA CRUZ', 'Faculty Signature']));
+  expect(printedText.indexOf('JUAN DELA CRUZ')).toBeLessThan(printedText.indexOf('Faculty Signature'));
+});
+
 test('PDF filename is meaningful for every scope', () => {
   const hierarchy = [{
     code: 'BSIT',

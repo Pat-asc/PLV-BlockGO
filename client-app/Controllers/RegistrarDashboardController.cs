@@ -62,11 +62,15 @@ namespace Client_app.Controllers
                 var counts = await RegistrarWorkflowOverviewService.GetAsync(
                     conn, normalizedYear, normalizedSemester, normalizedTerm,
                     department, program, cancellationToken);
+                var facultyEncoding = await RegistrarFacultyEncodingOverviewService.GetAsync(
+                    conn, normalizedYear, normalizedSemester, normalizedTerm,
+                    department, program, cancellationToken);
                 return Ok(new
                 {
                     status = "Success",
                     filters = new { schoolYear = normalizedYear, semester = normalizedSemester, term = normalizedTerm, department, program },
-                    counts
+                    counts,
+                    facultyEncoding
                 });
             }
             catch (GradeEncodingPeriodException ex)

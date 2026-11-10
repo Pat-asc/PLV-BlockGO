@@ -21,13 +21,17 @@ public static class RegistrarFinalizationScopeService
                    COALESCE(pgr.professor_name, ''), COALESCE(pgr.program, ''),
                    COALESCE(pgr.units, 0), COALESCE(pgr.submitted_by, ''),
                    COALESCE(pgr.submitted_at, pgr.recorded_at), COALESCE(pgr.transaction_id, ''),
-                   COALESCE(pgr.transaction_hash, '')
+                   COALESCE(pgr.transaction_hash, ''),
+                   COALESCE(NULLIF(BTRIM(academic_section.year_level::text), ''), NULLIF(BTRIM(fs.year_level), ''), ''),
+                   fs.academic_section_id
             FROM pending_grade_records pgr
             JOIN facultysections fs
               ON fs.id::text = pgr.assignment_cycle_id
              AND LOWER(TRIM(fs.school_year)) = LOWER(TRIM(pgr.school_year))
              AND LOWER(TRIM(fs.semester)) = LOWER(TRIM(pgr.semester))
              AND LOWER(TRIM(fs.subject)) = LOWER(TRIM(pgr.subject_code))
+            LEFT JOIN academicsections academic_section
+              ON academic_section.id = fs.academic_section_id
             WHERE LOWER(TRIM(pgr.status)) IN ('submittedtoregistrar', 'departmentapproved')
               AND LOWER(TRIM(pgr.semester)) = LOWER(TRIM(@semester))
               AND LOWER(TRIM(pgr.term)) = LOWER(TRIM(@term))
@@ -72,6 +76,8 @@ public static class RegistrarFinalizationScopeService
                     : reader.GetFieldValue<DateTimeOffset>(22).ToString("O"),
                 TransactionId = reader.GetString(23),
                 TransactionHash = reader.GetString(24),
+                YearLevel = reader.GetString(25),
+                AcademicSectionId = reader.IsDBNull(26) ? (int?)null : reader.GetInt32(26),
                 University = "PLV",
                 Version = 1
             });

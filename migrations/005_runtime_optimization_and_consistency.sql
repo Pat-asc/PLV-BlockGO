@@ -1,4 +1,3 @@
-
 ALTER TABLE studentprofiles ADD COLUMN IF NOT EXISTS date_of_birth DATE;
 ALTER TABLE studentprofiles ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
 ALTER TABLE studentprofiles ADD COLUMN IF NOT EXISTS sex VARCHAR(20);

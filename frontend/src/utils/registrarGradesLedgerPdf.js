@@ -68,7 +68,6 @@ const studentRows = (students) => students.map((student) => [
   display(student.gradePayload?.midterm, '--'),
   display(student.gradePayload?.finals ?? student.gradePayload?.final, '--'),
   display(student.gradePayload?.finalAverage ?? student.gradePayload?.grade, '--'),
-  display(student.status, 'N/A'),
   displayDate(student),
 ]);
 
@@ -110,7 +109,6 @@ export const exportRegistrarGradesLedgerPdf = ({
     `School Year: ${display(activeFilter(filters.schoolYear) ? filters.schoolYear : '', 'All')}`,
     `Semester: ${display(activeFilter(filters.semester) ? filters.semester : '', 'All')}`,
     `Term: ${display(activeFilter(filters.term) ? filters.term : '', 'All')}`,
-    `Status: ${display(activeFilter(filters.status) ? filters.status : '', 'All')}`,
   ];
   if (activeFilter(filters.search)) filterLines.push(`Search: ${filters.search}`);
   filterLines.forEach((line, index) => doc.text(line, left + ((index % 3) * 90), cursorY + (Math.floor(index / 3) * 5)));
@@ -158,13 +156,13 @@ export const exportRegistrarGradesLedgerPdf = ({
           doc.setTextColor(30, 30, 30);
           doc.setFontSize(8);
           doc.text(
-            `Subject: ${subject.subjectCode} - ${subject.subjectName || 'Title unavailable'}  |  Term: ${subject.term || '--'}  |  Status: ${subject.statuses.join(', ') || 'N/A'}`,
+            `Subject: ${subject.subjectCode} - ${subject.subjectName || 'Title unavailable'}  |  Term: ${subject.term || '--'}`,
             left + 9,
             cursorY
           );
 
           doc.autoTable({
-            head: [['Student No.', 'Student Name', 'Midterm', 'Final', 'Final Grade / Rating', 'Status', 'Submitted / Finalized']],
+            head: [['Student No.', 'Student Name', 'Midterm', 'Final', 'Final Grade / Rating', 'Submitted / Finalized']],
             body: studentRows(subject.students),
             startY: cursorY + 4,
             theme: 'grid',
@@ -180,13 +178,26 @@ export const exportRegistrarGradesLedgerPdf = ({
               2: { cellWidth: 19, halign: 'center' },
               3: { cellWidth: 19, halign: 'center' },
               4: { cellWidth: 29, halign: 'center' },
-              5: { cellWidth: 34 },
-              6: { cellWidth: 48 },
+              5: { cellWidth: 48 },
             },
           });
           cursorY = (doc.lastAutoTable?.finalY || cursorY + 16) + 9;
         });
       });
+
+      ensureRoom(25);
+      cursorY += 4;
+      doc.setTextColor(30, 30, 30);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.text(String(faculty.name || 'Faculty name unavailable').toUpperCase(), left + 3, cursorY);
+      cursorY += 5;
+      doc.setDrawColor?.(70, 70, 70);
+      doc.line?.(left + 3, cursorY, left + 68, cursorY);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text('Faculty Signature', left + 3, cursorY + 5);
+      cursorY += 14;
     });
   });
 

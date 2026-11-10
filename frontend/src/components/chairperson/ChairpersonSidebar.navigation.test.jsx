@@ -1,16 +1,19 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import ChairpersonSidebar from './ChairpersonSidebar';
 
-test('clearer Chairperson labels preserve the workflow tab identifiers', () => {
+test('remaining Chairperson navigation preserves the existing tab identifiers', () => {
   const setActiveTab = jest.fn();
   render(<ChairpersonSidebar activeTab="forReview" setActiveTab={setActiveTab} />);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Grade Review' }));
-  expect(setActiveTab).toHaveBeenCalledWith('forReview');
-  fireEvent.click(screen.getByRole('button', { name: 'Returned Grades' }));
-  expect(setActiveTab).toHaveBeenCalledWith('returned');
-  fireEvent.click(screen.getByRole('button', { name: 'Approved Grades' }));
-  expect(setActiveTab).toHaveBeenCalledWith('approved');
-  fireEvent.click(screen.getByRole('button', { name: 'Finalized Grades' }));
-  expect(setActiveTab).toHaveBeenCalledWith('forwarded');
+  for (const [label, tab] of [
+    ['Encoding Monitoring', 'dashboard'], ['Department Sections', 'sectioning'],
+    ['Faculty Assignments', 'assignment'], ['Curriculum Builder', 'curriculum'],
+    ['Grade Review', 'forReview'],
+  ]) {
+    fireEvent.click(screen.getByRole('button', { name: label }));
+    expect(setActiveTab).toHaveBeenLastCalledWith(tab);
+  }
+  expect(setActiveTab).not.toHaveBeenCalledWith('returned');
+  expect(setActiveTab).not.toHaveBeenCalledWith('approved');
+  expect(setActiveTab).not.toHaveBeenCalledWith('forwarded');
 });

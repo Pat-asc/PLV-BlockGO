@@ -14,6 +14,7 @@ import { getGradeEquivalent } from '../../utils/gradingHelpers';
 import { canonicalAcademicSchoolYear, canonicalAcademicSemester } from '../../utils/studentAcademicHelpers';
 import BackButton from '../shared/BackButton';
 import { createAcademicEventGuard, getAcademicEventKeys } from '../../utils/academicEventGuard';
+import { sanitizeAcademicErrorMessage } from '../../utils/academicErrorSanitizer';
 
 const SECTION_CHANGE_REASONS = new Set([
     'section_created', 'section_deleted', 'section_archived', 'department_sections_deleted',
@@ -968,9 +969,6 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
         facultyLoading: facultyDirectoryState.loading,
         facultyError: facultyDirectoryState.error,
         submittedSections: facultyRows.filter((row) => row.reviewStatus === 'submitted').length,
-        returnedSections: facultyRows.filter((row) => row.reviewStatus === 'returned').length,
-        approvedSections: facultyRows.filter((row) => row.reviewStatus === 'approved').length,
-        forwardedSections: facultyRows.filter((row) => row.reviewStatus === 'forwarded').length,
     }), [departmentFaculties, facultyDirectoryState, facultyRows]);
 
     useEffect(() => {
@@ -1454,7 +1452,10 @@ const DeptAdminGradesView = ({ loggedInEmail = '', loggedInName = '', userRole =
                 setIpfsModalOpen(false);
             } catch (error) {
                 if (viewerWindow) viewerWindow.close();
-                addNotification(error.message, "error");
+                addNotification(sanitizeAcademicErrorMessage(
+                    error,
+                    "The grading sheet could not be opened right now. Please refresh and try again."
+                ), "error");
             }
         } else {
             addNotification("Vault Password is required", "error");

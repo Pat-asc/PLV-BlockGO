@@ -27,6 +27,10 @@ test('switches between card and table views and remembers the choice for the ses
   expect(screen.getByRole('columnheader', { name: 'Subject Code' })).toBeInTheDocument();
   expect(screen.getByRole('columnheader', { name: 'Final Grade' })).toBeInTheDocument();
   expect(screen.getByRole('columnheader', { name: 'Equivalent' })).toBeInTheDocument();
+  const gradeRow = screen.getByRole('row', { name: /IT101 Introduction to Computing/ });
+  expect(gradeRow).toHaveClass('dark:text-slate-100', 'dark:hover:bg-slate-800');
+  expect(screen.getByRole('columnheader', { name: 'Subject Code' }).closest('thead'))
+    .toHaveClass('dark:bg-slate-800', 'dark:text-slate-300');
   expect(sessionStorage.getItem('blockgo.student.grades.view')).toBe('table');
 });
 

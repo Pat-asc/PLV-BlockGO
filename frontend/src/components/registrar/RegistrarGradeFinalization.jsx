@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchRegistrarFinalizationQueue, finalizeApprovedGrades, returnGradeSubmission } from '../../services/api';
+import { fetchRegistrarFinalizationQueue, finalizeApprovedGrades } from '../../services/api';
+import { sanitizeAcademicErrorMessage } from '../../utils/academicErrorSanitizer';
+import { showSystemNotification } from '../../services/NotificationContext';
+import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 import Modal from '../../services/Modal';
 
 const valueOrDash = (value) => value === null || value === undefined || String(value) === ''
@@ -47,10 +50,11 @@ export const groupApprovedGradeRecords = (records = []) => {
     const semester = recordValue(record, 'semester', 'semester', 'Semester');
     const term = recordValue(record, 'term', 'term', 'Term');
     const facultyId = recordValue(record, 'facultyId', 'faculty_id', 'FacultyId');
+    const program = recordValue(record, 'program', 'program', 'Program') || recordValue(record, 'course', 'course', 'Course');
     const key = [assignmentCycleId, subjectCode, section, schoolYear, semester, term, facultyId]
       .map((value) => String(value).trim().toLowerCase()).join('|');
     if (!groups.has(key)) {
-      groups.set(key, { key, assignmentCycleId, subjectCode, section, schoolYear, semester, term, facultyId, records: [] });
+      groups.set(key, { key, assignmentCycleId, subjectCode, section, schoolYear, semester, term, facultyId, program, records: [] });
     }
     groups.get(key).records.push({
       ...record,
@@ -79,15 +83,35 @@ export const groupApprovedGradeRecords = (records = []) => {
       .join('|').localeCompare([right.schoolYear, right.semester, right.section, right.subjectCode, right.term].join('|'), undefined, { numeric: true }));
 };
 
+export const buildFinalizationHierarchy = (groups = []) => {
+  const departments = new Map();
+  groups.forEach((group) => {
+    const departmentName = String(group.program || 'Department unavailable').trim();
+    const departmentKey = departmentName.toLowerCase();
+    const facultyName = group.records[0]?.professorName || group.facultyId || 'Assigned Faculty';
+    const facultyKey = String(group.facultyId || facultyName).trim().toLowerCase();
+    if (!departments.has(departmentKey)) departments.set(departmentKey, { key: departmentKey, name: departmentName, facultyMap: new Map() });
+    const department = departments.get(departmentKey);
+    if (!department.facultyMap.has(facultyKey)) department.facultyMap.set(facultyKey, { key: facultyKey, name: facultyName, groups: [] });
+    department.facultyMap.get(facultyKey).groups.push(group);
+  });
+  return [...departments.values()].map((department) => ({
+    key: department.key,
+    name: department.name,
+    faculties: [...department.facultyMap.values()].map((faculty) => ({
+      ...faculty,
+      groups: [...faculty.groups].sort((left, right) =>
+        [left.section, left.subjectCode, left.term].join('|').localeCompare([right.section, right.subjectCode, right.term].join('|'), undefined, { numeric: true })),
+    })).sort((left, right) => left.name.localeCompare(right.name)),
+  })).sort((left, right) => left.name.localeCompare(right.name));
+};
+
 function RegistrarGradeFinalization() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [finalizingKey, setFinalizingKey] = useState('');
-  const [returningKey, setReturningKey] = useState('');
-  const [returnNote, setReturnNote] = useState('');
   const requestGeneration = useRef(0);
   const requestController = useRef(null);
   const finalizationInFlight = useRef(false);
@@ -105,7 +129,7 @@ function RegistrarGradeFinalization() {
       setRecords(Array.isArray(response) ? response : (response?.data || []));
     } catch (loadError) {
       if (generation !== requestGeneration.current || loadError?.name === 'AbortError') return;
-      setError(loadError?.message || 'The approved grade queue could not be loaded.');
+      setError(sanitizeAcademicErrorMessage(loadError, 'The approved grade queue could not be loaded. Please refresh and try again.'));
     } finally {
       if (generation === requestGeneration.current) setLoading(false);
     }
@@ -126,41 +150,47 @@ function RegistrarGradeFinalization() {
   }, [loadQueue]);
 
   const groups = useMemo(() => groupApprovedGradeRecords(records), [records]);
+  const hierarchy = useMemo(() => buildFinalizationHierarchy(groups), [groups]);
 
-  const confirmFinalization = async () => {
-    if (!selectedGroup || finalizationInFlight.current) return;
+  const finalizeAllDepartments = async () => {
+    if (groups.length === 0 || finalizationInFlight.current) return;
     finalizationInFlight.current = true;
-    setFinalizingKey(selectedGroup.key);
+    const totalRecords = groups.reduce((count, group) => count + group.records.length, 0);
+    const confirmed = await requestSystemConfirmation({
+      title: 'Finalize all ready grades?',
+      message: `${hierarchy.length} department(s) · ${groups.length} encoded section(s) · ${totalRecords} grade record(s)\n\nEach exact section will be verified and finalized through the existing protected workflow.`,
+      confirmLabel: 'Finalize All Departments',
+      tone: 'primary',
+    });
+    if (!confirmed) {
+      finalizationInFlight.current = false;
+      return;
+    }
+    setFinalizingKey('all');
     setError('');
-    setNotice('');
+    let completedGroups = 0;
+    let archivePending = false;
     try {
-      const result = await finalizeApprovedGrades(selectedGroup.records.map((record) => record.id));
-      setNotice(result?.message || `${selectedGroup.records.length} approved grades were finalized.`);
+      for (const group of groups) {
+        const result = await finalizeApprovedGrades(group.records.map((record) => record.id));
+        completedGroups += 1;
+        archivePending = archivePending || Boolean(result?.ipfsArchiveStatus && result.ipfsArchiveStatus !== 'AVAILABLE');
+      }
+      showSystemNotification(archivePending
+        ? 'All ready grades were finalized, but one or more grading sheets are still being prepared. They can be retried without finalizing the grades again.'
+        : 'All ready grades were finalized successfully. The Grades Ledger has been updated.', archivePending ? 'warning' : 'success', {
+        title: archivePending ? 'Grades finalized — grading sheets pending' : 'All grades finalized',
+      });
       setSelectedGroup(null);
       await loadQueue();
     } catch (finalizeError) {
-      setError(finalizeError?.message || 'The approved section could not be finalized. Its staging data was preserved.');
+      const safeMsg = sanitizeAcademicErrorMessage(finalizeError, 'The grades could not be finalized right now. Your approved grades were preserved. Please try again.');
+      const progress = completedGroups > 0 ? ` ${completedGroups} of ${groups.length} section batches were completed before the interruption.` : '';
+      showSystemNotification(`${safeMsg}${progress}`, 'error', { title: 'Finalization could not be completed' });
+      await loadQueue();
     } finally {
       finalizationInFlight.current = false;
       setFinalizingKey('');
-    }
-  };
-
-  const confirmReturn = async () => {
-    if (!selectedGroup || returnNote.trim().length < 3 || returningKey) return;
-    setReturningKey(selectedGroup.key);
-    setError('');
-    setNotice('');
-    try {
-      const result = await returnGradeSubmission(selectedGroup.records.map((record) => record.id), returnNote.trim());
-      setNotice(result?.message || 'The submission was returned to Faculty.');
-      setSelectedGroup(null);
-      setReturnNote('');
-      await loadQueue();
-    } catch (returnError) {
-      setError(returnError?.message || 'The submission could not be returned.');
-    } finally {
-      setReturningKey('');
     }
   };
 
@@ -170,38 +200,40 @@ function RegistrarGradeFinalization() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-2xl font-bold text-[#003366]">Finalize Grades</h2>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Review the exact Faculty-submitted PostgreSQL snapshot, then return it or commit it through the verified Fabric pipeline.</p>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Review the exact Faculty-submitted PostgreSQL snapshot before committing it through the verified Fabric pipeline.</p>
           </div>
-          <button type="button" onClick={loadQueue} disabled={loading || Boolean(finalizingKey)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50">Refresh</button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={loadQueue} disabled={loading || Boolean(finalizingKey)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50">Refresh</button>
+            <button type="button" onClick={finalizeAllDepartments} disabled={loading || groups.length === 0 || Boolean(finalizingKey)} className="rounded-xl bg-[#003366] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{finalizingKey === 'all' ? 'Finalizing All…' : 'Finalize All Departments'}</button>
+          </div>
         </div>
       </div>
 
       {error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p> : null}
       {loading ? <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500">Loading approved grades…</div> : null}
       {!loading && !error && groups.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">No Faculty submissions are waiting for Registrar review.</div> : null}
 
-      {!loading && groups.map((group) => (
-        <article key={group.key} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-3 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="font-bold text-[#003366]">{group.subjectCode || 'Subject'} · {group.section || 'Section'}</h3>
-              <p className="text-sm text-slate-600">{group.schoolYear} · {group.semester} · {group.term} · {group.records.length} student(s)</p>
-            </div>
-            <button type="button" onClick={() => { setSelectedGroup(group); setReturnNote(''); }} disabled={Boolean(finalizingKey || returningKey)} className="rounded-xl bg-[#003366] px-4 py-2 text-sm font-bold text-white disabled:bg-slate-300">
-              {finalizingKey === group.key ? 'Finalizing…' : 'Review Grades'}
-            </button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-white text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Student ID</th><th className="px-4 py-3">Student</th><th className="px-4 py-3">Midterm</th><th className="px-4 py-3">Finals</th><th className="px-4 py-3">Final Average</th><th className="px-4 py-3">Record ID</th></tr></thead>
-              <tbody className="divide-y divide-slate-100">{group.records.map((record) => { const grade = parseApprovedGradePayload(record.gradePayload, group.term); return <tr key={record.id}><td className="px-4 py-3 font-mono text-xs">{record.studentNo || '—'}</td><td className="px-4 py-3 font-medium">{record.studentName || 'Student'}</td><td className="px-4 py-3">{grade.midterm}</td><td className="px-4 py-3">{grade.finals}</td><td className="px-4 py-3 font-semibold">{grade.finalAverage}</td><td className="px-4 py-3 font-mono text-xs text-slate-500">{record.id}</td></tr>; })}</tbody>
-            </table>
-          </div>
+      {!loading && hierarchy.map((department) => (
+        <article key={department.key} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <header className="border-b border-slate-200 bg-[#003366] px-5 py-4 text-white dark:border-slate-700 dark:bg-slate-800">
+            <h3 className="text-lg font-bold">{department.name}</h3>
+            <p className="text-sm text-blue-100">{department.faculties.length} faculty · {department.faculties.reduce((count, faculty) => count + faculty.groups.length, 0)} encoded section(s)</p>
+          </header>
+          <div className="divide-y divide-slate-200 dark:divide-slate-700">{department.faculties.map((faculty) => (
+            <section key={faculty.key} className="p-4">
+              <div className="mb-3"><h4 className="font-bold text-slate-900 dark:text-slate-100">{faculty.name}</h4><p className="text-xs text-slate-500 dark:text-slate-400">{faculty.groups.length} encoded section(s)</p></div>
+              <div className="grid gap-3">{faculty.groups.map((group) => (
+                <div key={group.key} className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700 dark:bg-slate-800">
+                  <div><p className="font-bold text-[#003366] dark:text-sky-300">{group.section || 'Section'} · {group.subjectCode || 'Subject'}</p><p className="text-sm text-slate-600 dark:text-slate-300">{group.schoolYear} · {group.semester} · {group.term} · {group.records.length} student(s)</p></div>
+                  <button type="button" onClick={() => setSelectedGroup(group)} disabled={Boolean(finalizingKey)} className="rounded-xl border border-[#003366] px-4 py-2 text-sm font-bold text-[#003366] disabled:opacity-50 dark:border-sky-500 dark:text-sky-300">Review Students</button>
+                </div>
+              ))}</div>
+            </section>
+          ))}</div>
         </article>
       ))}
 
-      <Modal isOpen={Boolean(selectedGroup)} onClose={() => { if (!finalizingKey && !returningKey) setSelectedGroup(null); }} title="Review Faculty Grade Submission" description="Compare the submitted snapshot before returning it or approving and finalizing it on Hyperledger Fabric." closeOnBackdrop={!finalizingKey && !returningKey} closeOnEscape={!finalizingKey && !returningKey} panelClassName="flex max-h-[92vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6" bodyClassName="min-h-0 flex-1 overflow-y-auto">
+      <Modal isOpen={Boolean(selectedGroup)} onClose={() => { if (!finalizingKey) setSelectedGroup(null); }} title="Review Faculty Grade Submission" description="Compare the exact submitted section. Finalization is performed for all ready departments from the main action." closeOnBackdrop={!finalizingKey} closeOnEscape={!finalizingKey} panelClassName="flex max-h-[92vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6" bodyClassName="min-h-0 flex-1 overflow-y-auto">
         {selectedGroup ? <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2 lg:grid-cols-7">
             {[
@@ -230,13 +262,8 @@ function RegistrarGradeFinalization() {
               </div>
             </div>
           </div>
-          <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">Return remarks
-            <textarea value={returnNote} onChange={(event) => setReturnNote(event.target.value)} rows={3} placeholder="Required when returning grades to Faculty" className="mt-1 w-full resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#003366] focus:ring-2 focus:ring-[#003366]/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100" />
-          </label>
           <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end dark:border-slate-700">
-            <button type="button" onClick={() => setSelectedGroup(null)} disabled={Boolean(finalizingKey || returningKey)} className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200">Close</button>
-            <button type="button" onClick={confirmReturn} disabled={returnNote.trim().length < 3 || Boolean(finalizingKey || returningKey)} className="rounded-xl bg-red-700 px-5 py-2.5 text-sm font-bold text-white disabled:bg-slate-400">{returningKey ? 'Returning…' : 'Return Grades'}</button>
-            <button type="button" onClick={confirmFinalization} disabled={Boolean(finalizingKey || returningKey)} className="rounded-xl bg-[#003366] px-5 py-2.5 text-sm font-bold text-white disabled:bg-slate-400">{finalizingKey ? 'Finalizing…' : 'Approve and Finalize'}</button>
+            <button type="button" onClick={() => setSelectedGroup(null)} disabled={Boolean(finalizingKey)} className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200">Close</button>
           </div>
         </div> : null}
       </Modal>

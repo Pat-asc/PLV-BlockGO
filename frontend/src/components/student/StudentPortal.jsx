@@ -11,6 +11,7 @@ import BackButton from '../shared/BackButton';
 import TextSizeControl from '../shared/TextSizeControl';
 import { getGradeEquivalent } from '../../utils/gradingHelpers';
 import { curriculumProgress } from '../../utils/studentAcademicHelpers';
+import { sanitizeAcademicErrorMessage } from '../../utils/academicErrorSanitizer';
 
 const StudentPortal = ({ studentData, onLogout }) => {
   const [grades, setGrades] = useState([]);
@@ -50,7 +51,10 @@ const StudentPortal = ({ studentData, onLogout }) => {
         : '');
     } catch (error) {
       console.error('Unable to load finalized student grade history:', error);
-      setGradeError(error.message || 'Unable to retrieve grade records from the blockchain. Please try again later.');
+      setGradeError(sanitizeAcademicErrorMessage(
+        error,
+        'Unable to load your finalized grades right now. Please refresh and try again.'
+      ));
       setGradeMessage('');
       if (!background) setGrades([]);
     } finally { if (!background) setLoading(false); }
@@ -82,7 +86,10 @@ const StudentPortal = ({ studentData, onLogout }) => {
       setCurrentSubjects(Array.isArray(response?.data?.subjects) ? response.data.subjects : []);
     } catch (error) {
       setCurrentEnrollment(null); setCurrentSubjects([]);
-      setSubjectError(error.message || 'Unable to load your enrolled subjects.');
+      setSubjectError(sanitizeAcademicErrorMessage(
+        error,
+        'Unable to load your enrolled subjects right now. Please refresh and try again.'
+      ));
     } finally { setSubjectLoading(false); }
   }, []);
 

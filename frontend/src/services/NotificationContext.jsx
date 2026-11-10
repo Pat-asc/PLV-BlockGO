@@ -1,4 +1,5 @@
 import React, { createContext, useState, useCallback, useContext, useRef } from 'react';
+import { isTechnicalAcademicError, sanitizeAcademicErrorMessage } from '../utils/academicErrorSanitizer';
 
 const NotificationContext = createContext({
     addNotification: (message, type) => console.warn("NotificationProvider missing! Message:", message)
@@ -85,10 +86,17 @@ export const NotificationProvider = ({ children }) => {
                 seenEventKeysRef.current.delete(seenEventOrderRef.current.shift());
             }
         }
+        const rawMsg = String(message || '');
+        const isTechnical = isTechnicalAcademicError(rawMsg);
+        const cleanMsg = isTechnical ? sanitizeAcademicErrorMessage(rawMsg) : rawMsg;
+        let cleanTitle = resolvedOptions.title;
+        if (!cleanTitle && isTechnical) {
+            cleanTitle = /submit/i.test(rawMsg) ? 'Submission could not be completed' : 'Finalization could not be completed';
+        }
         nextIdRef.current += 1;
         const id = `notification-${nextIdRef.current}`;
         setNotifications((prev) => {
-            const next = [...prev, { id, message: String(message || ''), type, title: resolvedOptions.title, onClick: resolvedOptions.onClick, duration: resolvedOptions.duration, createdAt: Date.now(), exiting: false }];
+            const next = [...prev, { id, message: cleanMsg, type, title: cleanTitle, onClick: resolvedOptions.onClick, duration: resolvedOptions.duration, createdAt: Date.now(), exiting: false }];
             if (next.length <= 20) return next;
             const disposableIndex = next.findIndex((notification) => notification.type !== 'error');
             next.splice(disposableIndex >= 0 ? disposableIndex : 0, 1);

@@ -284,9 +284,6 @@ function ChairpersonPortal({ onLogout, allGrades = {} }) {
       totalFaculty: departmentFaculty.length,
       totalSections: monitoredRows.length,
       submittedSections: monitoredRows.filter((row) => row.reviewStatus === "submitted").length,
-      approvedSections: monitoredRows.filter((row) => row.reviewStatus === "approved").length,
-      returnedSections: monitoredRows.filter((row) => row.reviewStatus === "returned").length,
-      forwardedSections: monitoredRows.filter((row) => row.reviewStatus === "forwarded").length,
       completedFaculty: facultySummaries.filter((status) => status === "Completed").length,
     };
   }, [activeTerm, departmentFaculty, monitoredRows]);

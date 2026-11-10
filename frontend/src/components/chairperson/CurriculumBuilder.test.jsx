@@ -439,6 +439,16 @@ test('uses readable dark surfaces for the editable curriculum checklist rows', a
 
   await screen.findByRole('checkbox', { name: 'Select IT 101' });
   const row = screen.getByRole('row', { name: /Select IT 101/ });
+  const curriculumInformation = screen.getByTestId('curriculum-information');
+  const programInput = within(curriculumInformation).getByLabelText('Program');
+  expect(curriculumInformation).toHaveClass('dark:border-slate-700', 'dark:bg-slate-900');
+  expect(programInput).toHaveClass(
+    'dark:bg-slate-800',
+    'dark:text-slate-100',
+    'dark:disabled:bg-slate-950',
+    'dark:disabled:text-slate-300'
+  );
+  expect(programInput.closest('label')).toHaveClass('dark:text-slate-300');
   expect(screen.getByTestId('curriculum-builder-checklist')).toHaveClass('dark:border-slate-700', 'dark:bg-slate-900');
   expect(row).toHaveClass('dark:odd:bg-slate-900', 'dark:even:bg-slate-800/60', 'dark:text-slate-100');
   expect(within(row).getByText('IT 101')).toHaveClass('dark:text-sky-300');

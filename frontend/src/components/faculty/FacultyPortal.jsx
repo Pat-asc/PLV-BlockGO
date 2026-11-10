@@ -1,6 +1,7 @@
 import { showSystemNotification } from '../../services/NotificationContext';
+import { sanitizeAcademicErrorMessage } from '../../utils/academicErrorSanitizer';
 import { requestSystemConfirmation } from '../../services/SystemDialogContext';
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { fetchFacultySections, fetchFacultyStudents, fetchAllGrades, batchUploadGrades, downloadGradingSheet, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
 import Modal from '../../services/Modal';
 import FacultyHeader from './FacultyHeader';
@@ -176,6 +177,49 @@ const hasEncodedGradeForTerm = (student = {}, term = "midterm") =>
     ? hasEncodedGrade(student.finals)
     : hasEncodedGrade(student.midterm);
 
+export const groupSubmittedSnapshotsBySection = (snapshots = []) => {
+  const groups = new Map();
+
+  snapshots.forEach((snapshot) => {
+    const assignmentCycleId = String(snapshot.assignmentCycleId || '').trim();
+    const key = [
+      assignmentCycleId || snapshot.section,
+      snapshot.subjectCode,
+      snapshot.schoolYear,
+      snapshot.semester,
+      snapshot.term,
+    ].map(normalizeText).join('|');
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        assignmentCycleId,
+        department: snapshot.department,
+        subjectCode: snapshot.subjectCode,
+        subjectTitle: snapshot.subjectTitle,
+        section: snapshot.section,
+        schoolYear: snapshot.schoolYear,
+        semester: snapshot.semester,
+        term: snapshot.term,
+        records: [],
+      });
+    }
+    groups.get(key).records.push(snapshot);
+  });
+
+  return [...groups.values()].map((group) => {
+    const records = [...group.records].sort((left, right) =>
+      String(left.studentId || '').localeCompare(String(right.studentId || ''), undefined, { numeric: true }) ||
+      String(left.id || '').localeCompare(String(right.id || '')));
+    const statuses = [...new Set(records.map((record) => record.status).filter(Boolean))];
+    const submittedAt = records.reduce((latest, record) =>
+      parseTimestamp(record.submittedAt) > parseTimestamp(latest) ? record.submittedAt : latest, '');
+    return { ...group, records, statuses, submittedAt };
+  }).sort((left, right) =>
+    [left.schoolYear, left.semester, left.section, left.subjectCode, left.term].join('|')
+      .localeCompare([right.schoolYear, right.semester, right.section, right.subjectCode, right.term].join('|'), undefined, { numeric: true }));
+};
+
 const getAcademicStatus = (student = {}) => {
   const finalAverage = calculateFinalAverage(student);
   if (finalAverage === null) return "-";
@@ -199,6 +243,7 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
 
   const [sections, setSections] = useState({});
   const [submittedSnapshots, setSubmittedSnapshots] = useState([]);
+  const [selectedSnapshotGroup, setSelectedSnapshotGroup] = useState(null);
   const sectionStatusStorageKey = `facultySectionStatuses:${normalizeText(facultyData?.email || "faculty")}`;
   const facultyGradeSnapshotStorageKey = buildFacultyGradeSnapshotKey(facultyData?.email || "");
 
@@ -565,9 +610,13 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
           const parsed = parseFacultyGradePayload(immutableRaw, term);
           return {
             id: record.id || `${record.studentId || record.student_no}-${record.subject_code}-${term}`,
+            assignmentCycleId: record.assignment_cycle_id || record.assignmentCycleId || record.faculty_section_id || '',
+            department: record.program || record.Program || record.course || record.Course || '',
             subjectCode: record.subject_code || record.subjectCode || "—",
             subjectTitle: record.subject_title || record.subjectTitle || record.subject_name || "",
             section: record.section || record.record_section || "—",
+            schoolYear: record.school_year || record.schoolYear || '',
+            semester: record.semester || record.Semester || '',
             studentId: record.student_no || record.studentNo || record.studentId || record.student_hash || "—",
             studentName: record.student_name || record.studentName || "—",
             term,
@@ -720,6 +769,10 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
   }, []);
 
   const totalSections = Object.keys(sections).length;
+  const submittedSnapshotGroups = useMemo(
+    () => groupSubmittedSnapshotsBySection(submittedSnapshots),
+    [submittedSnapshots]
+  );
 
   const now            = new Date();
   const msLeft         = encodingEnd ? encodingEnd - now : 0;
@@ -1047,7 +1100,10 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       updateSectionTermStatus(sectionName, encodingTerm, 'draft');
     } catch (error) {
       console.error(error);
-      showSystemNotification(`Failed to save all grades: ${error.message}`);
+      showSystemNotification(sanitizeAcademicErrorMessage(
+        error,
+        'Unable to save all grades right now. Your current entries remain on this page. Please refresh and try again.'
+      ));
       const idle = {};
       students.forEach((_, i) => { idle[i] = 'idle'; });
       setRowSaveState(prev => ({ ...prev, [sectionName]: idle }));
@@ -1097,7 +1153,11 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
       updateSectionTermStatus(sectionName, encodingTerm, 'submitted');
       setSubmitConfirmSection(null);
       loadFacultyData(true);
-    } catch (e) { showSystemNotification("Error submitting section: " + e.message); }
+      showSystemNotification(submitResponse?.message || "Section submitted to the Registrar for review.", "success", { title: "Section Submitted" });
+    } catch (e) {
+      const safeMsg = sanitizeAcademicErrorMessage(e, "Unable to submit this section right now. Your encoded grades were preserved. Please refresh and try again.");
+      showSystemNotification(safeMsg, "error", { title: "Submission could not be completed" });
+    }
   };
 
   const hasValidationErrors = (sectionName) => {
@@ -1166,43 +1226,43 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
               </p>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[850px] text-left text-sm">
+              <table className="w-full min-w-[900px] text-left text-sm">
                 <thead className="bg-[#003366] text-white">
                   <tr>
                     <th className="p-4">Subject</th>
                     <th className="p-4">Section</th>
-                    <th className="p-4">Student</th>
-                    <th className="p-4 text-center">Midterm Grade</th>
-                    <th className="p-4 text-center">Final Grade</th>
+                    <th className="p-4">Academic Period</th>
+                    <th className="p-4 text-center">Students</th>
                     <th className="p-4 text-center">Submission Status</th>
                     <th className="p-4">Submitted At</th>
+                    <th className="p-4 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {submittedSnapshots.map((item, idx) => (
-                    <tr key={`${item.id}-${idx}`} className="border-b border-slate-100 hover:bg-slate-50">
+                  {submittedSnapshotGroups.map((group) => (
+                    <tr key={group.key} className="border-b border-slate-100 hover:bg-slate-50">
                       <td className="p-4">
-                        <div className="font-bold text-[#003366]">{item.subjectCode}</div>
-                        {item.subjectTitle ? <div className="text-xs text-slate-500">{item.subjectTitle}</div> : null}
+                        <div className="font-bold text-[#003366]">{group.subjectCode}</div>
+                        {group.subjectTitle ? <div className="text-xs text-slate-500">{group.subjectTitle}</div> : null}
                       </td>
-                      <td className="p-4 font-semibold text-slate-700">{item.section}</td>
-                      <td className="p-4">
-                        <div className="font-semibold text-slate-800">{item.studentName}</div>
-                        <div className="text-xs text-slate-500">{item.studentId}</div>
+                      <td className="p-4 font-semibold text-slate-700">{group.section}</td>
+                      <td className="p-4 text-sm text-slate-600">
+                        <span className="block">{group.schoolYear || 'Not available'}</span>
+                        <span className="capitalize">{group.semester || 'Not available'} · {group.term || 'midterm'}</span>
                       </td>
-                      <td className="p-4 text-center font-bold text-slate-800">{item.midterm}</td>
-                      <td className="p-4 text-center font-bold text-slate-800">{item.finals}</td>
+                      <td className="p-4 text-center font-bold text-slate-800">{group.records.length}</td>
                       <td className="p-4 text-center">
                         <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-[#003366]">
-                          {item.status} (v{item.submissionVersion})
+                          {group.statuses.join(', ') || 'Submitted'}
                         </span>
                       </td>
                       <td className="p-4 text-xs font-medium text-slate-600" data-testid="submitted-snapshot-timestamp">
-                        {formatSubmittedTimestamp(item.submittedAt)}
+                        {formatSubmittedTimestamp(group.submittedAt)}
                       </td>
+                      <td className="p-4 text-right"><button type="button" onClick={() => setSelectedSnapshotGroup(group)} className="rounded-lg bg-[#003366] px-3 py-2 text-sm font-bold text-white hover:bg-[#00264d]">View Students</button></td>
                     </tr>
                   ))}
-                  {submittedSnapshots.length === 0 && (
+                  {submittedSnapshotGroups.length === 0 && (
                     <tr>
                       <td colSpan="7" className="p-8 text-center text-slate-500">
                         No submitted grade snapshots found yet.
@@ -1213,6 +1273,21 @@ const FacultyPortal = ({ facultyData, onLogout }) => {
               </table>
             </div>
           </section>
+          <Modal
+            isOpen={Boolean(selectedSnapshotGroup)}
+            onClose={() => setSelectedSnapshotGroup(null)}
+            title={selectedSnapshotGroup ? `${selectedSnapshotGroup.subjectCode} · ${selectedSnapshotGroup.section}` : 'Submitted Section'}
+            description={selectedSnapshotGroup ? `${selectedSnapshotGroup.schoolYear || 'Academic year unavailable'} · ${selectedSnapshotGroup.semester || 'Semester unavailable'} · ${selectedSnapshotGroup.term || 'midterm'}` : ''}
+            panelClassName="flex max-h-[90vh] max-w-6xl flex-col overflow-hidden p-4 sm:p-6"
+            bodyClassName="min-h-0 flex-1 overflow-y-auto"
+          >
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[760px] text-left text-sm">
+                <thead className="bg-[#003366] text-white"><tr><th className="p-3">Student ID</th><th className="p-3">Student</th><th className="p-3 text-center">Midterm</th><th className="p-3 text-center">Final</th><th className="p-3 text-center">Status</th><th className="p-3">Submitted</th></tr></thead>
+                <tbody className="divide-y divide-slate-100">{(selectedSnapshotGroup?.records || []).map((item) => <tr key={item.id}><td className="p-3 font-mono text-xs">{item.studentId}</td><td className="p-3 font-semibold">{item.studentName}</td><td className="p-3 text-center font-bold">{item.midterm}</td><td className="p-3 text-center font-bold">{item.finals}</td><td className="p-3 text-center"><StatusBadge status={item.status} /></td><td className="p-3 text-xs text-slate-600">{formatSubmittedTimestamp(item.submittedAt)}</td></tr>)}</tbody>
+              </table>
+            </div>
+          </Modal>
         </main>
       </div>
     );

@@ -90,6 +90,11 @@ export const getProgramSectionPrefix = (program = "") => {
   const normalizedProgram = String(program).trim();
   if (/^[A-Z][A-Z0-9-]{1,19}$/.test(normalizedProgram)) return normalizedProgram;
 
+  const matched = Object.entries(PROGRAM_SECTION_PREFIXES).find(
+    ([fullName]) => fullName.toLowerCase() === normalizedProgram.toLowerCase()
+  );
+  if (matched) return matched[1];
+
   return PROGRAM_SECTION_PREFIXES[normalizedProgram] ||
   normalizedProgram
     .split(/\s+/)
@@ -97,6 +102,147 @@ export const getProgramSectionPrefix = (program = "") => {
     .map((word) => word[0])
     .join("") ||
   "SECTION";
+};
+
+export const getCanonicalProgramName = (program = "") => {
+  const trimmed = String(program || "").trim();
+  if (!trimmed) return "";
+  if (/^bac$/i.test(trimmed) || /^bachelor of arts in communication$/i.test(trimmed)) {
+    return "Bachelor of Arts in Communication";
+  }
+  const exactKey = Object.keys(PROGRAM_SECTION_PREFIXES).find(
+    (key) => key.toLowerCase() === trimmed.toLowerCase()
+  );
+  if (exactKey) return exactKey;
+
+  return trimmed;
+};
+
+export const areProgramsEquivalent = (progA = "", progB = "") => {
+  const rawA = String(progA || "").trim();
+  const rawB = String(progB || "").trim();
+  if (!rawA || !rawB) return false;
+  if (rawA.toLowerCase() === rawB.toLowerCase()) return true;
+
+  const normA = getCanonicalProgramName(rawA);
+  const normB = getCanonicalProgramName(rawB);
+  if (normA.toLowerCase() === normB.toLowerCase()) return true;
+
+  const prefixA = getProgramSectionPrefix(normA).toLowerCase();
+  const prefixB = getProgramSectionPrefix(normB).toLowerCase();
+  return prefixA === prefixB;
+};
+
+export const consolidateSectioningBatches = (batches = []) => {
+  if (!Array.isArray(batches) || batches.length === 0) return [];
+
+  const groups = new Map();
+
+  batches.forEach((batch) => {
+    if (!batch) return;
+    const canonicalProgram = getCanonicalProgramName(batch.program);
+    const schoolYear = batch.schoolYear || batch.batchYear || "";
+    const semester = batch.semester || "";
+    const isPromotion = batch.status === "Promoted" || String(batch.key || "").includes("promotion");
+    const groupKey = [
+      canonicalProgram.toLowerCase(),
+      schoolYear.toLowerCase(),
+      semester.toLowerCase(),
+      isPromotion ? "promotion" : "active",
+    ].join("|");
+
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, []);
+    }
+    groups.get(groupKey).push({ ...batch, program: canonicalProgram });
+  });
+
+  const consolidated = [];
+
+  groups.forEach((groupBatches) => {
+    const primary = groupBatches.reduce((best, curr) => {
+      const bestTime = new Date(best.lastSectionedAt || best.submittedAt || 0).getTime();
+      const currTime = new Date(curr.lastSectionedAt || curr.submittedAt || 0).getTime();
+      return currTime >= bestTime ? curr : best;
+    }, groupBatches[0]);
+
+    const canonicalProgram = primary.program;
+    const sectionPlansMap = new Map();
+    groupBatches.forEach((batch) => {
+      (batch.sectionPlans || []).forEach((section) => {
+        const idKey = section.academicSectionId || section.id || section.sectionCode;
+        if (!sectionPlansMap.has(idKey)) {
+          sectionPlansMap.set(idKey, {
+            ...section,
+            sectionName: section.sectionName || getDefaultSectionName(canonicalProgram, section.sectionCode),
+          });
+        }
+      });
+    });
+
+    const removedStudentsMap = new Map();
+    groupBatches.forEach((batch) => {
+      (batch.removedStudents || []).forEach((student) => {
+        const id = String(student?.studentId || "").trim().toLowerCase();
+        if (!id) return;
+        if (!removedStudentsMap.has(id)) {
+          removedStudentsMap.set(id, { ...student });
+        } else {
+          const existing = removedStudentsMap.get(id);
+          if (!existing.removalReason && student.removalReason) {
+            removedStudentsMap.set(id, { ...existing, ...student });
+          }
+        }
+      });
+    });
+
+    const removedStudentIds = new Set(removedStudentsMap.keys());
+
+    const studentsMap = new Map();
+    groupBatches.forEach((batch) => {
+      (batch.students || []).forEach((student) => {
+        const id = String(student?.studentId || "").trim().toLowerCase();
+        if (!id || removedStudentIds.has(id)) return;
+        if (
+          student.isActive === false ||
+          student.is_active === false ||
+          String(student.status || "").toUpperCase() === "DROPPED" ||
+          String(student.accountStatus || "").toUpperCase() === "REVOKED"
+        ) {
+          return;
+        }
+        if (!studentsMap.has(id)) {
+          studentsMap.set(id, {
+            ...student,
+            sectionName: student.sectionName || getDefaultSectionName(canonicalProgram, student.sectionCode),
+          });
+        }
+      });
+    });
+
+    const consolidatedBatch = {
+      ...primary,
+      program: canonicalProgram,
+      key: primary.key
+        ? (primary.key.startsWith("BAC|") || primary.key.startsWith("bac|")
+            ? primary.key.replace(/^bac\|/i, `${canonicalProgram}|`)
+            : primary.key)
+        : [
+            canonicalProgram,
+            primary.schoolYear || primary.batchYear,
+            primary.semester,
+            primary.status === "Promoted" ? "promotion" : "",
+          ].filter(Boolean).join("|"),
+      submittedTo: `${canonicalProgram} Chairperson`,
+      sectionPlans: Array.from(sectionPlansMap.values()),
+      students: Array.from(studentsMap.values()),
+      removedStudents: Array.from(removedStudentsMap.values()),
+    };
+
+    consolidated.push(consolidatedBatch);
+  });
+
+  return consolidated;
 };
 
 export const getDefaultSectionName = (program = "", sectionCode = "") =>

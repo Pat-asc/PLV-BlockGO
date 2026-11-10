@@ -107,6 +107,89 @@ try
     Check((string?)await Scalar("SELECT section FROM studentprofiles WHERE user_id = 9") == "1-1", "Current snapshot did not update.");
     Check((await EnrollmentSectioningService.AssignAsync(connection, 1, new[] { "26-0009" }, "2026-2027", "FIRST", null)).Count == 1, "Retry is not idempotent.");
 
+    var sourceEnrollmentId = Convert.ToInt64(await Scalar(
+        "SELECT enrollment_id FROM student_enrollments WHERE student_user_id = 9 AND school_year = '2026-2027' AND semester = 'FIRST'"));
+    await using (var sourceTransaction = await connection.BeginTransactionAsync())
+    {
+        var source = await EnrollmentSectioningService.GetPromotionSourceForUpdateAsync(
+            connection, sourceTransaction, sourceEnrollmentId);
+        Check(source is not null && source.EnrollmentId == sourceEnrollmentId &&
+              source.StudentUserId == 9 && source.AcademicSectionId == 1 &&
+              source.ProgramCode == "BSIT" && source.YearLevel == 1 &&
+              source.SchoolYear == "2026-2027" && source.Semester == "FIRST" &&
+              source.EnrollmentState == "PLANNING",
+            "Promotion source lookup did not preserve exact immutable enrollment identity.");
+        await sourceTransaction.RollbackAsync();
+    }
+
+    await Execute("UPDATE student_enrollments SET enrollment_state = 'FINALIZED', finalized_at = CURRENT_TIMESTAMP, finalized_by = 1 WHERE academic_section_id IN (1, 2) AND school_year = '2026-2027' AND semester = 'FIRST';");
+    await Execute("UPDATE student_enrollments SET academic_section_id = 1, section = '1-1', enrollment_state = 'FINALIZED', finalized_at = CURRENT_TIMESTAMP, finalized_by = 1 WHERE student_user_id = 4 AND school_year = '2026-2027' AND semester = 'FIRST';");
+    await Reject(() => EnrollmentSectioningService.AssignAsync(connection, 1, new[] { "26-0009" }, "2026-2027", "FIRST", null),
+        "A finalized section remained assignable before explicit unlock.");
+    await Reject(() => EnrollmentSectioningService.UnassignAsync(connection, 1, "26-0021", "2026-2027", "FIRST"),
+        "A browser-only orphan bypassed the finalized section guard.");
+    await using (var unlockTransaction = await connection.BeginTransactionAsync())
+    {
+        var unlocked = await EnrollmentSectioningService.UnlockSectionAsync(
+            connection, unlockTransaction, 1, "2026-2027", "FIRST");
+        Check(unlocked.MatchedCount == 3 && unlocked.UnlockedCount == 3 && !unlocked.AlreadyUnlocked,
+            "Exact section unlock did not reopen only its finalized enrollment rows.");
+        await unlockTransaction.CommitAsync();
+    }
+    await using (var repeatedUnlockTransaction = await connection.BeginTransactionAsync())
+    {
+        var repeated = await EnrollmentSectioningService.UnlockSectionAsync(
+            connection, repeatedUnlockTransaction, 1, "2026-2027", "FIRST");
+        Check(repeated.MatchedCount == 3 && repeated.UnlockedCount == 0 && repeated.AlreadyUnlocked,
+            "Repeated section unlock was not idempotent.");
+        await repeatedUnlockTransaction.CommitAsync();
+    }
+    Check((string?)await Scalar("SELECT enrollment_state FROM student_enrollments WHERE student_user_id = 5 AND school_year = '2026-2027' AND semester = 'FIRST'") == "FINALIZED",
+        "Unlocking one section modified a different section's lock state.");
+    Check((string?)await Scalar("SELECT status || ':' || enrollment_state FROM student_enrollments WHERE student_user_id = 4 AND school_year = '2026-2027' AND semester = 'FIRST'") == "COMPLETED:PLANNING",
+        "Unlock skipped retained section enrollments or changed their enrollment status.");
+    await using (var refreshedSourceTransaction = await connection.BeginTransactionAsync())
+    {
+        var refreshedSource = await EnrollmentSectioningService.GetPromotionSourceForUpdateAsync(
+            connection, refreshedSourceTransaction, sourceEnrollmentId);
+        Check(refreshedSource is not null && refreshedSource.StudentUserId == 9 &&
+              refreshedSource.AcademicSectionId == 1 && refreshedSource.EnrollmentState == "PLANNING" &&
+              refreshedSource.FinalizedAt is null && refreshedSource.FinalizedBy is null,
+            "Unlock changed immutable source identity or left stale finalization metadata.");
+        await refreshedSourceTransaction.RollbackAsync();
+    }
+    Check((await EnrollmentSectioningService.AssignAsync(connection, 1, new[] { "26-0009" }, "2026-2027", "FIRST", null)).Count == 1,
+        "Section assignment did not become eligible after a valid unlock.");
+    var enrollmentCountBeforeOrphanRemoval = Convert.ToInt64(await Scalar("SELECT COUNT(*) FROM student_enrollments"));
+    var orphanRemoval = await EnrollmentSectioningService.UnassignAsync(connection, 1, "26-0021", "2026-2027", "FIRST");
+    Check(orphanRemoval.AlreadyAbsent && !orphanRemoval.Unassigned,
+        "Removing a browser-only orphan did not return AlreadyAbsent = true.");
+    Check(Convert.ToInt64(await Scalar("SELECT COUNT(*) FROM student_enrollments")) == enrollmentCountBeforeOrphanRemoval,
+        "Removing a browser-only orphan recreated or deleted enrollment history.");
+
+    var unassignActive = await EnrollmentSectioningService.UnassignAsync(connection, 1, "26-0009", "2026-2027", "FIRST");
+    Check(unassignActive.Unassigned && !unassignActive.AlreadyAbsent,
+        "Unassigning an existing active student enrollment did not return Unassigned = true.");
+    Check(await Scalar("SELECT academic_section_id FROM student_enrollments WHERE student_user_id = 9 AND school_year = '2026-2027' AND semester = 'FIRST'") == DBNull.Value,
+        "Active student enrollment was not unassigned from section.");
+
+    await Execute("UPDATE student_enrollments SET academic_section_id = 1, section = '1-1' WHERE student_user_id = 8 AND school_year = '2026-2027' AND semester = 'FIRST';");
+    var unassignInactive = await EnrollmentSectioningService.UnassignAsync(connection, 1, "26-0008", "2026-2027", "FIRST");
+    Check(unassignInactive.Unassigned && !unassignInactive.AlreadyAbsent,
+        "Unassigning an inactive student with an existing enrollment failed.");
+    Check(await Scalar("SELECT academic_section_id FROM student_enrollments WHERE student_user_id = 8 AND school_year = '2026-2027' AND semester = 'FIRST'") == DBNull.Value,
+        "Inactive student enrollment was not unassigned from section.");
+
+    await Execute("INSERT INTO student_enrollments (student_user_id, student_no, program_id, academic_section_id, school_year, semester, year_level, section) VALUES (NULL, '26-0021', 1, 1, '2026-2027', 'FIRST', 1, '1-1');");
+    var unassignDeleted = await EnrollmentSectioningService.UnassignAsync(connection, 1, "26-0021", "2026-2027", "FIRST");
+    Check(unassignDeleted.Unassigned && !unassignDeleted.AlreadyAbsent,
+        "Unassigning an enrollment with a deleted account did not return Unassigned = true.");
+    Check(Convert.ToInt64(await Scalar("SELECT COUNT(*) FROM student_enrollments WHERE student_no = '26-0021' AND student_user_id IS NULL AND academic_section_id IS NULL")) == 1,
+        "Removing an enrollment with a deleted account did not retain its history and clear only the planning section.");
+
+    Check(Convert.ToInt32(await Scalar("SELECT academic_section_id FROM student_enrollments WHERE student_user_id = 5 AND school_year = '2026-2027' AND semester = 'FIRST'")) == 2,
+        "Removing a student from section 1 mutated an enrollment in section 2.");
+
     // Race two requests for the same unassigned enrollment; exactly one may win.
     await Execute("UPDATE student_enrollments SET academic_section_id = NULL, section = NULL WHERE student_user_id = 9;");
     async Task<bool> AssignConcurrent(int sectionId)
@@ -127,7 +210,66 @@ try
         "An intentional move with the saved previous section was rejected.");
     await Reject(() => EnrollmentSectioningService.AssignAsync(connection, previousSection, new[] { "26-0009" }, "2026-2027", "FIRST", null,
         new Dictionary<string, int> { ["26-0009"] = 999 }), "Stale section move was accepted.");
-    Console.WriteLine("PASS: schema defaults, authoritative period queries, scope, eligibility, Faculty-period guard, atomic rollback, retries, snapshots, and concurrent assignment.");
+    // Bulk unlock spans departments/year levels but never crosses the exact period.
+    await Execute(@"
+        INSERT INTO student_enrollments (student_user_id, student_no, program_id, academic_section_id,
+            school_year, semester, year_level, section, status, enrollment_state, finalized_at, finalized_by)
+        VALUES (1, '26-0001', 2, 3, '2028-2029', 'FIRST', 1, '1-1', 'DROPPED', 'FINALIZED', CURRENT_TIMESTAMP, 1),
+               (2, '26-0002', 1, 4, '2028-2029', 'FIRST', 2, '2-1', 'ENROLLED', 'FINALIZED', CURRENT_TIMESTAMP, 1),
+               (3, '26-0003', 1, 1, '2028-2029', 'FIRST', 1, '1-1', 'ENROLLED', 'PLANNING', NULL, NULL),
+               (4, '26-0004', 1, 4, '2028-2029', 'SECOND', 2, '2-1', 'ENROLLED', 'FINALIZED', CURRENT_TIMESTAMP, 1);");
+    var countBeforeBulk = Convert.ToInt64(await Scalar("SELECT COUNT(*) FROM student_enrollments"));
+    const string preservedEnrollmentData = @"SELECT jsonb_agg(to_jsonb(e) - 'enrollment_state' - 'finalized_at' - 'finalized_by' - 'updated_at' ORDER BY enrollment_id)::text FROM student_enrollments e";
+    var dataBeforeBulk = (string?)await Scalar(preservedEnrollmentData);
+    await using (var rollbackBulk = await connection.BeginTransactionAsync(System.Data.IsolationLevel.Serializable))
+    {
+        var result = await EnrollmentSectioningService.UnlockAllSectionsAsync(connection, rollbackBulk, "2028-2029", "FIRST");
+        Check(result.Count == 2 && result.Select(s => s.ProgramId).Distinct().Count() == 2 && result.Sum(s => s.UnlockedCount) == 2,
+            "Bulk unlock missed departments/year levels or counted already unlocked sections.");
+        await rollbackBulk.RollbackAsync();
+    }
+    Check(Convert.ToInt64(await Scalar("SELECT COUNT(*) FROM student_enrollments WHERE school_year = '2028-2029' AND semester = 'FIRST' AND enrollment_state = 'FINALIZED'")) == 2,
+        "Bulk rollback did not preserve every lock.");
+    await using (var commitBulk = await connection.BeginTransactionAsync(System.Data.IsolationLevel.Serializable))
+    {
+        await EnrollmentSectioningService.UnlockAllSectionsAsync(connection, commitBulk, "2028-2029", "FIRST");
+        await commitBulk.CommitAsync();
+    }
+    Check((string?)await Scalar("SELECT status || ':' || enrollment_state FROM student_enrollments WHERE student_user_id = 1 AND school_year = '2028-2029' AND semester = 'FIRST'") == "DROPPED:PLANNING",
+        "Bulk unlock restored a dropped student.");
+    Check(Convert.ToInt64(await Scalar("SELECT COUNT(*) FROM student_enrollments WHERE school_year = '2028-2029' AND semester = 'SECOND' AND enrollment_state = 'FINALIZED'")) == 1,
+        "Bulk unlock changed another semester.");
+    Check(Convert.ToInt64(await Scalar("SELECT COUNT(*) FROM student_enrollments")) == countBeforeBulk,
+        "Bulk unlock changed enrollment row count.");
+    Check((string?)await Scalar(preservedEnrollmentData) == dataBeforeBulk,
+        "Bulk unlock changed enrollment identity, status, assignment, curriculum, or history data.");
+    Check((string?)await Scalar("SELECT enrollment_state FROM student_enrollments WHERE student_user_id = 5 AND school_year = '2026-2027' AND semester = 'FIRST'") == "FINALIZED",
+        "Bulk unlock changed historical school-year locks.");
+    await using (var retryBulk = await connection.BeginTransactionAsync())
+    {
+        Check((await EnrollmentSectioningService.UnlockAllSectionsAsync(connection, retryBulk, "2028-2029", "FIRST")).Count == 0,
+            "Repeated bulk unlock was not idempotent.");
+        await retryBulk.CommitAsync();
+    }
+    await Execute("UPDATE student_enrollments SET enrollment_state = 'FINALIZED' WHERE school_year = '2028-2029' AND semester = 'FIRST' AND academic_section_id IN (3,4);");
+    async Task<int> ConcurrentBulkUnlock()
+    {
+        await using var other = new NpgsqlConnection(connectionString);
+        await other.OpenAsync();
+        await using (var path = new NpgsqlCommand($"SET search_path TO {schema}", other)) await path.ExecuteNonQueryAsync();
+        await using var transaction = await other.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+        try
+        {
+            var result = await EnrollmentSectioningService.UnlockAllSectionsAsync(other, transaction, "2028-2029", "FIRST");
+            await transaction.CommitAsync();
+            return result.Sum(section => section.UnlockedCount);
+        }
+        catch (PostgresException ex) when (ex.SqlState is "40001" or "40P01") { return 0; }
+    }
+    var bulkRaces = await Task.WhenAll(ConcurrentBulkUnlock(), ConcurrentBulkUnlock());
+    Check(bulkRaces.Sum() == 2,
+        "Concurrent bulk requests double-counted enrollment unlocks or lost committed changes.");
+    Console.WriteLine("PASS: enrollment sectioning, individual unlock, cross-department bulk unlock, period isolation, rollback, retries, and concurrent assignment.");
 }
 finally
 {

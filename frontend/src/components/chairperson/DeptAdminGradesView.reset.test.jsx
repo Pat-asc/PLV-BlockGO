@@ -66,7 +66,7 @@ test('roster remapping uses Student ID before array position', () => {
   expect(resolveRawStudentEntry({ rawStudentEntries: entries, rosterStudentId: 'placeholder', index: 0, allowPositionalFallback: true })).toBe(entries[0]);
 });
 
-test('dashboard uses current workflow labels and removes obsolete labels', async () => {
+test('dashboard shows monitoring metrics without removed or obsolete grade cards', async () => {
   fetchAllGrades.mockResolvedValue({ data: [
     record({ assignment_cycle_id: '1', subject_code: 'IT 101' }),
     record({ assignment_cycle_id: '2', subject_code: 'IT 102', status: 'Returned', returned_at: '2026-10-02T08:00:00Z' }),
@@ -76,11 +76,10 @@ test('dashboard uses current workflow labels and removes obsolete labels', async
   render(<DeptAdminGradesView loggedInEmail="chair@plv.edu.ph" department="BSIT" />);
   expect(await screen.findByText('Grade Review')).toBeInTheDocument();
   await waitFor(() => expect(screen.getByTestId('header-faculty-count')).toHaveTextContent('0'));
-  expect(screen.getByText('Returned Grades')).toBeInTheDocument();
-  expect(screen.getByText('Approved Grades')).toBeInTheDocument();
-  expect(screen.getByText('Finalized Grades')).toBeInTheDocument();
-  for (const title of ['Grade Review', 'Returned Grades', 'Approved Grades', 'Finalized Grades']) {
-    expect(within(screen.getByText(title).closest('div')).getByText('1')).toBeInTheDocument();
+  expect(screen.getByText('Faculty in Department')).toBeInTheDocument();
+  await waitFor(() => expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['0', '1']));
+  for (const title of ['Returned Grades', 'Approved Grades', 'Finalized Grades']) {
+    expect(screen.queryByText(title)).not.toBeInTheDocument();
   }
   expect(screen.queryByText(/Legacy Chairperson/i)).not.toBeInTheDocument();
   expect(screen.queryByText(/Compatibility rows|former approval workflow/i)).not.toBeInTheDocument();

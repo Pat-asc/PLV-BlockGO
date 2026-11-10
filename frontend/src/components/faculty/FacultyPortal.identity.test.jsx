@@ -1,6 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import FacultyPortal from './FacultyPortal';
+import FacultyPortal, { groupSubmittedSnapshotsBySection } from './FacultyPortal';
 import { batchUploadGrades, downloadGradingSheet, fetchFacultySections, fetchFacultyStudents, fetchAllGrades, getSystemSetting, issueGrade, submitSectionGrades } from '../../services/api';
 import { showSystemNotification } from '../../services/NotificationContext';
 
@@ -28,6 +28,17 @@ const gradeWorkbook = (name = 'grades.xlsx') => new File(
   name,
   { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
 );
+
+test('submitted snapshots render from exact section groups without mutating student rows', () => {
+  const snapshots = [
+    { id: 'g2', assignmentCycleId: '77', subjectCode: 'IT 101', section: 'BSIT 1-1', schoolYear: '2026-2027', semester: 'FIRST', term: 'finals', studentId: '26-0002', status: 'Finalized' },
+    { id: 'g1', assignmentCycleId: '77', subjectCode: 'IT 101', section: 'BSIT 1-1', schoolYear: '2026-2027', semester: 'FIRST', term: 'finals', studentId: '26-0001', status: 'Finalized' },
+  ];
+  const groups = groupSubmittedSnapshotsBySection(snapshots);
+  expect(groups).toHaveLength(1);
+  expect(groups[0].records.map((record) => record.id)).toEqual(['g1', 'g2']);
+  expect(snapshots.map((record) => record.id)).toEqual(['g2', 'g1']);
+});
 
 beforeEach(() => {
   jest.clearAllMocks();

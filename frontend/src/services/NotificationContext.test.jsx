@@ -104,3 +104,29 @@ test('provider cleanup cancels notification timers before remount', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Same event' }));
   expect(screen.getByText('Section changed')).toBeInTheDocument();
 });
+
+function TechnicalTrigger() {
+  const { addNotification } = useNotification();
+  return <>
+    <button type="button" onClick={() => addNotification('Error submitting section: 23502: null value in column "year_level" of relation "grade_submission_snapshots" violates not-null constraint', 'error')}>Trigger 23502</button>
+    <button type="button" onClick={() => addNotification('Finalization failed: Fabric endorsement failure in chaincode ledger-service', 'error')}>Trigger Fabric</button>
+  </>;
+}
+
+test('sanitizes 23502 and technical errors to human-readable text and appropriate title', () => {
+  render(<NotificationProvider><TechnicalTrigger /></NotificationProvider>);
+  fireEvent.click(screen.getByRole('button', { name: 'Trigger 23502' }));
+  const alert = screen.getByRole('alert');
+  expect(alert).toHaveTextContent('Submission could not be completed');
+  expect(alert).toHaveTextContent('Some academic information for this section is incomplete. Your encoded grades were preserved. Please refresh and try again.');
+  expect(alert.textContent).not.toMatch(/23502|year_level|grade_submission_snapshots|PostgreSQL|Npgsql|null value|constraint/i);
+});
+
+test('sanitizes Fabric and ledger errors away from academic notifications', () => {
+  render(<NotificationProvider><TechnicalTrigger /></NotificationProvider>);
+  fireEvent.click(screen.getByRole('button', { name: 'Trigger Fabric' }));
+  const alert = screen.getByRole('alert');
+  expect(alert).toHaveTextContent('Finalization could not be completed');
+  expect(alert).toHaveTextContent('The grades could not be finalized right now. Your approved grades were preserved. Please try again.');
+  expect(alert.textContent).not.toMatch(/Fabric|endorsement|chaincode|ledger-service|gRPC/i);
+});

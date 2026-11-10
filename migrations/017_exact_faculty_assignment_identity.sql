@@ -28,8 +28,6 @@ SET academic_section_id = candidate.academic_section_id
 FROM section_candidates candidate
 WHERE fs.id = candidate.faculty_section_id;
 
--- Backfill a period only when exactly one distinct enrollment period exists.
--- No newest-row heuristic is used.
 WITH period_candidates AS (
     SELECT fs.id AS faculty_section_id,
            MIN(e.school_year) AS school_year,

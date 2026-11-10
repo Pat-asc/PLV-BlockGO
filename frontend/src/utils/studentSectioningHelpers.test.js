@@ -1,7 +1,10 @@
 import {
+  areProgramsEquivalent,
   buildCsvContent,
   buildStudentCsvContent,
+  consolidateSectioningBatches,
   downloadCsvFile,
+  getCanonicalProgramName,
   getGregorianCalendarYear,
   getNextStudentId,
   parseCsvRows,
@@ -9,6 +12,73 @@ import {
 } from "./studentSectioningHelpers";
 
 describe("studentSectioningHelpers", () => {
+  it("resolves canonical program names and verifies program equivalence", () => {
+    expect(getCanonicalProgramName("BAC")).toBe("Bachelor of Arts in Communication");
+    expect(getCanonicalProgramName("bac")).toBe("Bachelor of Arts in Communication");
+    expect(getCanonicalProgramName("Bachelor of Arts in Communication")).toBe("Bachelor of Arts in Communication");
+    expect(areProgramsEquivalent("BAC", "Bachelor of Arts in Communication")).toBe(true);
+    expect(areProgramsEquivalent("bac", "BAC")).toBe(true);
+    expect(areProgramsEquivalent("BSIT", "Bachelor of Science in Information Technology")).toBe(true);
+    expect(areProgramsEquivalent("BSIT", "BAC")).toBe(false);
+  });
+
+  it("consolidates duplicate equivalent program batches, deduplicates students generically, and preserves existing removal records without synthetic injection", () => {
+    const rawBatches = [
+      {
+        key: "BAC|2026-2027|1st Semester",
+        program: "BAC",
+        batchYear: "2026",
+        schoolYear: "2026-2027",
+        semester: "1st Semester",
+        sectionPlans: [{ id: 9, academicSectionId: 9, yearLevel: "1st Year", sectionCode: "1-1" }],
+        students: [
+          { studentId: "26-0001", firstName: "Juan", lastName: "Dela Cruz", yearLevel: "1st Year", sectionCode: "1-1" },
+          { studentId: "26-0003", firstName: "Mark", lastName: "Reyes", yearLevel: "1st Year", sectionCode: "1-1", isActive: false },
+          { studentId: "26-0004", firstName: "Ana", lastName: "Lim", yearLevel: "1st Year", sectionCode: "1-1", status: "DROPPED" },
+          { studentId: "26-0005", firstName: "Paul", lastName: "Tan", yearLevel: "1st Year", sectionCode: "1-1" },
+        ],
+        removedStudents: [
+          {
+            studentId: "26-0005",
+            removalReason: "Duplicate student record",
+            removalNote: "Duplicate student record",
+            removedAt: "2026-11-10T08:00:00.000Z",
+          },
+        ],
+      },
+      {
+        key: "Bachelor of Arts in Communication|2026-2027|1st Semester",
+        program: "Bachelor of Arts in Communication",
+        batchYear: "2026",
+        schoolYear: "2026-2027",
+        semester: "1st Semester",
+        sectionPlans: [{ id: 9, academicSectionId: 9, yearLevel: "1st Year", sectionCode: "1-1" }],
+        students: [
+          { studentId: "26-0001", firstName: "Juan", lastName: "Dela Cruz", yearLevel: "1st Year", sectionCode: "1-1" },
+          { studentId: "26-0002", firstName: "Maria", lastName: "Santos", yearLevel: "1st Year", sectionCode: "1-1" },
+        ],
+        removedStudents: [
+          {
+            studentId: "26-0005",
+            removalReason: "Duplicate student record",
+            removalNote: "Duplicate student record",
+            removedAt: "2026-11-10T08:00:00.000Z",
+          },
+        ],
+      },
+    ];
+
+    const consolidated = consolidateSectioningBatches(rawBatches);
+    expect(consolidated).toHaveLength(1);
+    expect(consolidated[0].program).toBe("Bachelor of Arts in Communication");
+    expect(consolidated[0].students.map((s) => s.studentId)).toEqual(["26-0001", "26-0002"]);
+    expect(consolidated[0].removedStudents).toHaveLength(1);
+    expect(consolidated[0].removedStudents[0]).toMatchObject({
+      studentId: "26-0005",
+      removalReason: "Duplicate student record",
+      removedAt: "2026-11-10T08:00:00.000Z",
+    });
+  });
   it("parses Excel CSV rows with quoted commas and CRLF line endings", () => {
     const csv =
       'Student ID,Sex,Last Name,First Name,Middle Name\r\n' +

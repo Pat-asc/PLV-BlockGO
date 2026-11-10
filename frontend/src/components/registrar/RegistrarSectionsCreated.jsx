@@ -1,12 +1,15 @@
 import { showSystemNotification } from '../../services/NotificationContext';
 import { requestSystemConfirmation } from '../../services/SystemDialogContext';
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import BackButton from "../shared/BackButton";
 import {
   AVAILABLE_YEAR_LEVELS,
   STUDENT_BATCHES_KEY,
   YEAR_LEVEL_PREFIXES,
+  areProgramsEquivalent,
+  consolidateSectioningBatches,
   downloadStudentCsvFile,
+  getCanonicalProgramName,
   getDefaultSectionName,
   getNextStudentId,
   getStudentMiddleName,
@@ -15,15 +18,27 @@ import {
 } from "../../utils/studentSectioningHelpers";
 import {
   getNextAcademicSchoolYear,
+  mergePromotionResultIntoBatches,
   persistPromotedBatchesToBackend,
+  refreshSectioningBatchFromBackend,
+  syncSectioningBatchToBackend,
   syncSectioningBatchesToBackend,
 } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
-import { deleteAcademicSection, fetchDepartmentSections, fetchNextStudentId } from "../../services/api";
+import { deleteAcademicSection, fetchDepartmentSections, fetchNextStudentId, removeStudentFromSection, unlockEnrollmentSection, unlockAllEnrollmentSections } from "../../services/api";
 
 const GRADUATING_STUDENTS_KEY = "graduatingStudents";
 const IRREGULAR_SUBJECTS_KEY = "irregularSubjectAssignments";
 const TARGET_SEMESTER = "1st Semester";
+const batchSchoolYear = (batch) => batch.schoolYear || (/^\d{4}$/.test(String(batch.batchYear || ""))
+  ? `${batch.batchYear}-${Number(batch.batchYear) + 1}` : batch.batchYear || "");
+const canonicalSemester = (value = "") => {
+  const term = String(value).trim().toUpperCase();
+  if (['FIRST', '1ST SEMESTER', 'FIRST SEMESTER', '1'].includes(term)) return 'FIRST';
+  if (['SECOND', '2ND SEMESTER', 'SECOND SEMESTER', '2'].includes(term)) return 'SECOND';
+  if (['MIDYEAR', 'SUMMER'].includes(term)) return 'MIDYEAR';
+  return '';
+};
 const REMOVAL_REASONS = [
   "Duplicate student record",
   "Wrong program",
@@ -104,7 +119,7 @@ const getCurrentRolloverBatches = (batches = []) => {
 };
 
 function RegistrarSectionsCreated() {
-  const [batches, setBatches] = useState(() => getStoredArray(STUDENT_BATCHES_KEY));
+  const [batches, setBatches] = useState(() => consolidateSectioningBatches(getStoredArray(STUDENT_BATCHES_KEY)));
   const [graduatingStudents, setGraduatingStudents] = useState(() =>
     getStoredArray(GRADUATING_STUDENTS_KEY)
   );
@@ -130,11 +145,17 @@ function RegistrarSectionsCreated() {
   const [studentIdError, setStudentIdError] = useState("");
   const [changedDepartments, setChangedDepartments] = useState(() => new Set());
   const [promoting, setPromoting] = useState(false);
+  const [savingRoster, setSavingRoster] = useState(false);
+  const [unlockSchoolYear, setUnlockSchoolYear] = useState(() => batchSchoolYear(batches[0] || {}));
+  const [unlockSemester, setUnlockSemester] = useState(() => canonicalSemester(batches[0]?.semester));
+  const [unlockingAll, setUnlockingAll] = useState(false);
+  const bulkUnlockPending = useRef(false);
 
   const persistBatches = (nextBatches) => {
-    setBatches(nextBatches);
-    localStorage.setItem(STUDENT_BATCHES_KEY, JSON.stringify(nextBatches));
-    syncSectionedStudentsToStorage(nextBatches);
+    const consolidated = consolidateSectioningBatches(nextBatches);
+    setBatches(consolidated);
+    localStorage.setItem(STUDENT_BATCHES_KEY, JSON.stringify(consolidated));
+    syncSectionedStudentsToStorage(consolidated);
     pushSectioningSharedState();
   };
 
@@ -145,7 +166,7 @@ function RegistrarSectionsCreated() {
 
       try {
         const saved = localStorage.getItem(STUDENT_BATCHES_KEY);
-        setBatches(saved ? JSON.parse(saved) : []);
+        setBatches(consolidateSectioningBatches(saved ? JSON.parse(saved) : []));
       } catch (error) {
         console.warn("Failed to refresh created sections from shared state.", error);
       }
@@ -163,25 +184,17 @@ function RegistrarSectionsCreated() {
       );
   }, []);
 
-  const markDepartmentChanged = (department) => {
-    if (!department) return;
-    setChangedDepartments((current) => {
-      const nextDepartments = new Set(current);
-      nextDepartments.add(department);
-      return nextDepartments;
-    });
-  };
-
   const handleApplyDepartmentChanges = async () => {
     if (!selectedDepartment) return;
 
-    localStorage.setItem(STUDENT_BATCHES_KEY, JSON.stringify(batches));
-    syncSectionedStudentsToStorage(batches);
-    pushSectioningSharedState();
     try {
       await syncSectioningBatchesToBackend(
-        batches.filter((batch) => batch.program === selectedDepartment)
+        JSON.parse(JSON.stringify(batches.filter((batch) => areProgramsEquivalent(batch.program, selectedDepartment))))
       );
+      const refreshed = await Promise.all(batches.filter((batch) => areProgramsEquivalent(batch.program, selectedDepartment))
+        .map(refreshSectioningBatchFromBackend));
+      const byKey = new Map(refreshed.map((batch) => [batch.key, batch]));
+      persistBatches(batches.map((batch) => byKey.get(batch.key) || batch));
       setChangedDepartments((current) => {
         const nextDepartments = new Set(current);
         nextDepartments.delete(selectedDepartment);
@@ -190,7 +203,7 @@ function RegistrarSectionsCreated() {
       showSystemNotification(`${selectedDepartment} section changes applied and synced.`);
     } catch (error) {
       showSystemNotification(
-        `Changes were saved locally, but backend sync failed: ${error.message || "Please try applying again."}`
+        `Changes were not saved: ${error.message || "Please try applying again."}`, "error"
       );
     }
   };
@@ -206,13 +219,15 @@ function RegistrarSectionsCreated() {
   );
 
   const departments = useMemo(
-    () => [...new Set(sectionedBatches.map((batch) => batch.program))].sort(),
+    () => [...new Set(sectionedBatches.map((batch) => getCanonicalProgramName(batch.program)))].sort(),
     [sectionedBatches]
   );
 
-  const selectedDepartment = activeDepartment || departments[0] || "";
+  const selectedDepartment = departments.includes(activeDepartment)
+    ? activeDepartment
+    : departments[0] || "";
   const departmentBatches = sectionedBatches.filter(
-    (batch) => batch.program === selectedDepartment
+    (batch) => areProgramsEquivalent(batch.program, selectedDepartment)
   );
   const selectedBatch =
     departmentBatches.find((batch) => batch.key === selectedBatchKey) ||
@@ -322,12 +337,94 @@ function RegistrarSectionsCreated() {
     return !query || sectionName.toLowerCase().includes(query) || String(section.sectionCode).toLowerCase().includes(query);
   });
 
-  const updateSelectedBatch = (updater) => {
-    if (!selectedBatch) return;
-    persistBatches(
-      batches.map((batch) => (batch.key === selectedBatch.key ? updater(batch) : batch))
-    );
-    markDepartmentChanged(selectedBatch.program);
+  const updateSelectedBatch = async (updater) => {
+    if (!selectedBatch || savingRoster || bulkUnlockPending.current) return false;
+    setSavingRoster(true);
+    try {
+      const requested = updater(JSON.parse(JSON.stringify(selectedBatch)));
+      await syncSectioningBatchToBackend(requested);
+      const refreshed = await refreshSectioningBatchFromBackend(requested);
+      persistBatches(batches.map((batch) => batch.key === selectedBatch.key ? refreshed : batch));
+      return true;
+    } catch (error) {
+      showSystemNotification(`Changes were not saved: ${error.message}`, "error");
+      return false;
+    } finally {
+      setSavingRoster(false);
+    }
+  };
+
+  const resolveSelectedSectionId = async () => {
+    const exactId = Number(selectedSection?.academicSectionId || selectedSection?.id);
+    if (Number.isInteger(exactId) && exactId > 0) return exactId;
+    const response = await fetchDepartmentSections(selectedBatch.program);
+    const [year, number] = String(selectedSection.sectionCode).split("-");
+    const matches = (response.data || response.sections || []).filter((section) =>
+      String(section.yearLevel) === year && String(section.sectionNum) === number);
+    if (matches.length !== 1) throw new Error("Refresh sections to resolve the exact academic section.");
+    return Number(matches[0].id);
+  };
+
+  const handleUnlockSection = async () => {
+    if (!selectedBatch || !selectedSection || savingRoster || bulkUnlockPending.current) return;
+    if (!await requestSystemConfirmation("Unlock this section for enrollment planning? Grades and enrollment history will be retained.")) return;
+    setSavingRoster(true);
+    try {
+      const id = await resolveSelectedSectionId();
+      const response = await unlockEnrollmentSection(id, {
+        schoolYear: selectedBatch.schoolYear || `${selectedBatch.batchYear}-${Number(selectedBatch.batchYear) + 1}`,
+        semester: selectedBatch.semester,
+      });
+      const refreshed = await refreshSectioningBatchFromBackend(selectedBatch);
+      persistBatches(batches.map((batch) => batch.key === selectedBatch.key ? refreshed : batch));
+      setPendingRemoval(null);
+      showSystemNotification(response.message || "Section unlocked successfully.", "success");
+    } catch (error) {
+      showSystemNotification(error.message, "error");
+    } finally {
+      setSavingRoster(false);
+    }
+  };
+
+  const handleUnlockAllSections = async () => {
+    if (bulkUnlockPending.current || savingRoster || !unlockSchoolYear || !unlockSemester) return;
+    bulkUnlockPending.current = true;
+    setUnlockingAll(true);
+    const period = { schoolYear: unlockSchoolYear, semester: unlockSemester };
+    try {
+      const confirmed = await requestSystemConfirmation({
+        title: 'Unlock All Sections?',
+        message: 'You are about to unlock all finalized enrollment sections across all departments for the selected school year and semester. This will allow authorized enrollment and sectioning modifications. Do you want to continue?'
+          + ` (${period.schoolYear}, ${period.semester})`,
+        confirmLabel: 'Confirm Unlock All',
+        cancelLabel: 'Cancel',
+      });
+      if (!confirmed) return;
+      const result = await unlockAllEnrollmentSections(period);
+      // Broadcast immediately after commit, even if a subsequent roster read fails.
+      window.dispatchEvent(new CustomEvent('blockgo:academic-data-changed', {
+        detail: { reason: 'enrollment_sections_bulk_unlocked', ...period },
+      }));
+      try {
+        const refreshed = await Promise.all(batches.filter((batch) =>
+          batchSchoolYear(batch) === period.schoolYear && canonicalSemester(batch.semester) === period.semester
+        ).map(refreshSectioningBatchFromBackend));
+        const byKey = new Map(refreshed.map((batch) => [batch.key, batch]));
+        persistBatches(batches.map((batch) => byKey.get(batch.key) || batch));
+        setPendingRemoval(null);
+      } catch (error) {
+        showSystemNotification(`Sections were unlocked, but the roster could not be refreshed. Please reload the page. ${error.message}`, 'error');
+        return;
+      }
+      showSystemNotification(
+        `Successfully unlocked ${result.sectionCount} sections across ${result.departmentCount} departments.`, 'success'
+      );
+    } catch (error) {
+      showSystemNotification(error.message || 'Sections could not be unlocked. Please try again.', 'error');
+    } finally {
+      bulkUnlockPending.current = false;
+      setUnlockingAll(false);
+    }
   };
 
   const handleMoveStudent = (studentId, sectionCode) => {
@@ -355,6 +452,7 @@ function RegistrarSectionsCreated() {
   };
 
   const handleDeleteSection = async () => {
+    if (bulkUnlockPending.current) return;
     if (!selectedBatch || !selectedSection) return;
 
     const sectionName =
@@ -388,20 +486,17 @@ function RegistrarSectionsCreated() {
       }
     }
 
-    updateSelectedBatch((batch) => ({
-      ...batch,
-      sectionPlans: (batch.sectionPlans || []).filter(
-        (section) => section.sectionCode !== selectedSection.sectionCode
-      ),
-      students: (batch.students || []).filter(
-        (student) => student.sectionCode !== selectedSection.sectionCode
-      ),
-      removedStudents: (batch.removedStudents || []).filter(
-        (student) =>
-          student.removedFromSectionCode !== selectedSection.sectionCode
-      ),
-      lastSectionedAt: new Date().toISOString(),
-    }));
+    if (!canonicalId) {
+      showSystemNotification("Refresh sections to resolve the exact academic section.", "error");
+      return;
+    }
+    try {
+      const refreshed = await refreshSectioningBatchFromBackend(selectedBatch);
+      persistBatches(batches.map((batch) => batch.key === selectedBatch.key ? refreshed : batch));
+    } catch (error) {
+      showSystemNotification(`Could not refresh sections: ${error.message}`, "error");
+      return;
+    }
     setSelectedSectionCode("");
     setPendingRemoval(null);
   };
@@ -480,7 +575,7 @@ function RegistrarSectionsCreated() {
           sectionName,
         }));
 
-        updateSelectedBatch((batch) => ({
+        const saved = await updateSelectedBatch((batch) => ({
           ...batch,
           students: [
             ...(batch.students || []).filter((student) => {
@@ -497,7 +592,7 @@ function RegistrarSectionsCreated() {
           ],
           lastSectionedAt: new Date().toISOString(),
         }));
-        showSystemNotification(
+        if (saved) showSystemNotification(
           `${importedStudents.length} student${importedStudents.length === 1 ? "" : "s"} imported into ${sectionName}.`
         );
       };
@@ -508,48 +603,83 @@ function RegistrarSectionsCreated() {
     input.click();
   };
 
-  const handleConfirmRemoveStudent = () => {
+  const handleConfirmRemoveStudent = async () => {
     if (!pendingRemoval?.reason) {
       showSystemNotification("Please choose a removal reason.");
       return;
     }
 
-    updateSelectedBatch((batch) => {
-      const studentToRemove = (batch.students || []).find(
-        (student) => student.studentId === pendingRemoval.studentId
+    if (savingRoster || bulkUnlockPending.current || !selectedBatch || !selectedSection) return;
+    setSavingRoster(true);
+    try {
+      const id = await resolveSelectedSectionId();
+      const response = await removeStudentFromSection(id, pendingRemoval.studentId, {
+        schoolYear: selectedBatch.schoolYear || `${selectedBatch.batchYear}-${Number(selectedBatch.batchYear) + 1}`,
+        semester: selectedBatch.semester,
+      });
+      const refreshed = await refreshSectioningBatchFromBackend(selectedBatch);
+      const studentToRemove = (selectedBatch.students || []).find(
+        (s) => String(s.studentId).toLowerCase() === String(pendingRemoval.studentId).toLowerCase()
       );
-
-      if (!studentToRemove) return batch;
-
-      return {
-        ...batch,
-        students: (batch.students || []).filter(
-          (student) => student.studentId !== pendingRemoval.studentId
+      const cleanRefreshed = {
+        ...refreshed,
+        students: (refreshed.students || []).filter(
+          (student) => String(student.studentId || student.studentNo || "").trim().toLowerCase() !== String(pendingRemoval.studentId).trim().toLowerCase()
         ),
         removedStudents: [
+          ...(refreshed.removedStudents || selectedBatch.removedStudents || []).filter(
+            (s) => String(s.studentId).toLowerCase() !== String(pendingRemoval.studentId).toLowerCase()
+          ),
           {
-            ...studentToRemove,
+            ...(studentToRemove || {}),
+            studentId: pendingRemoval.studentId,
             removedAt: new Date().toISOString(),
             removalReason: pendingRemoval.reason,
-            removalNote: pendingRemoval.note.trim(),
-            removedFromSectionCode: studentToRemove.sectionCode || "",
-            removedFromSectionName: studentToRemove.sectionName || "",
+            removalNote: (pendingRemoval.note || "").trim(),
+            removedFromSectionCode: studentToRemove?.sectionCode || selectedSection?.sectionCode || "",
+            removedFromSectionName: studentToRemove?.sectionName || selectedSection?.sectionName || "",
           },
-          ...(batch.removedStudents || []),
         ],
-        lastSectionedAt: new Date().toISOString(),
       };
-    });
-    setPendingRemoval(null);
+      persistBatches(batches.map((batch) => batch.key === selectedBatch.key ? cleanRefreshed : batch));
+      setPendingRemoval(null);
+      const message = response?.alreadyAbsent
+        ? (response.message || "The student is already absent from the authoritative section roster.")
+        : (response?.message || "Student removed from the section.");
+      showSystemNotification(message, "success");
+    } catch (error) {
+      showSystemNotification(error.message || "Student removal failed.", "error");
+    } finally {
+      setSavingRoster(false);
+    }
   };
 
   const handleRestoreStudent = (studentId) => {
-    updateSelectedBatch((batch) => {
-      const removedStudent = (batch.removedStudents || []).find(
-        (student) => student.studentId === studentId
-      );
-      if (!removedStudent) return batch;
+    const removedStudent = (selectedBatch?.removedStudents || []).find(
+      (student) => String(student.studentId).toLowerCase() === String(studentId).toLowerCase()
+    );
+    if (!removedStudent) return;
 
+    if (
+      removedStudent.removalReason === "Duplicate student record" ||
+      removedStudent.isActive === false ||
+      removedStudent.is_active === false ||
+      String(removedStudent.status || "").toUpperCase() === "DROPPED" ||
+      String(removedStudent.accountStatus || "").toUpperCase() === "REVOKED"
+    ) {
+      showSystemNotification("Duplicate or revoked student records cannot be restored to active sections.", "error");
+      return;
+    }
+
+    const alreadyActive = (selectedBatch?.students || []).some(
+      (student) => String(student.studentId).toLowerCase() === String(studentId).toLowerCase()
+    );
+    if (alreadyActive) {
+      showSystemNotification("This student ID already exists in the active roster.");
+      return;
+    }
+
+    updateSelectedBatch((batch) => {
       const restoredSectionExists = (batch.sectionPlans || []).some(
         (section) => section.sectionCode === removedStudent.removedFromSectionCode
       );
@@ -577,7 +707,7 @@ function RegistrarSectionsCreated() {
           },
         ],
         removedStudents: (batch.removedStudents || []).filter(
-          (student) => student.studentId !== studentId
+          (student) => String(student.studentId).toLowerCase() !== String(studentId).toLowerCase()
         ),
         lastSectionedAt: new Date().toISOString(),
       };
@@ -636,9 +766,22 @@ function RegistrarSectionsCreated() {
   };
 
   const handlePromoteStudents = async () => {
+    if (bulkUnlockPending.current) return;
     const rolloverBatches = getCurrentRolloverBatches(batches);
     if (!rolloverBatches.length) {
       showSystemNotification("No saved section lists are ready for promotion.");
+      return;
+    }
+
+    try {
+      rolloverBatches.forEach((batch) => {
+        const sourceSchoolYear = batch.schoolYear || (/^\d{4}$/.test(String(batch.batchYear || ""))
+          ? `${batch.batchYear}-${Number(batch.batchYear) + 1}`
+          : "");
+        getNextAcademicSchoolYear(sourceSchoolYear);
+      });
+    } catch (error) {
+      showSystemNotification(`Promotion was not saved: ${error.message || "Refresh sections and try again."}`, "error");
       return;
     }
 
@@ -784,24 +927,29 @@ function RegistrarSectionsCreated() {
     });
 
     setPromoting(true);
+    let confirmedTargetBatches = targetBatches;
+    let confirmedPromotedCount = 0;
     try {
       const result = await persistPromotedBatchesToBackend(targetBatches);
-      if (Number(result?.promotedCount) !== allPromotedStudents.length) {
+      confirmedTargetBatches = mergePromotionResultIntoBatches(targetBatches, result.students || []);
+      confirmedPromotedCount = confirmedTargetBatches.reduce((total, batch) => total + (batch.students || []).length, 0);
+      if (Number(result?.promotedCount) !== confirmedPromotedCount) {
         throw new Error("The server did not confirm every promoted student.");
       }
     } catch (error) {
-      showSystemNotification(`Promotion was not saved: ${error.message || "Please retry."}`);
+      showSystemNotification(`Promotion was not saved: ${error.message || "Please retry."}`, "error");
       setPromoting(false);
       return;
     }
 
-    persistBatches(nextBatches);
+    const confirmedTargetsByKey = new Map(confirmedTargetBatches.map((batch) => [batch.key, batch]));
+    persistBatches(nextBatches.map((batch) => confirmedTargetsByKey.get(batch.key) || batch));
     setGraduatingStudents(nextGraduatingStudents);
     setIrregularAssignments(nextIrregularAssignments);
     localStorage.setItem(GRADUATING_STUDENTS_KEY, JSON.stringify(nextGraduatingStudents));
     localStorage.setItem(IRREGULAR_SUBJECTS_KEY, JSON.stringify(nextIrregularAssignments));
     setPromoting(false);
-    showSystemNotification(`${allPromotedStudents.length} students promoted successfully.`);
+    showSystemNotification(`${confirmedPromotedCount} students promoted successfully.`, "success");
   };
 
   return (
@@ -840,6 +988,30 @@ function RegistrarSectionsCreated() {
           <div>
             <h3 className="text-xl font-bold text-[#003366]">Sections Created</h3>
           </div>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-3 rounded-lg border border-slate-200 p-3 sm:flex-row sm:flex-wrap sm:items-end dark:border-slate-700">
+          <label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+            School year for unlocking
+            <input value={unlockSchoolYear} onChange={(event) => setUnlockSchoolYear(event.target.value)}
+              disabled={unlockingAll} placeholder="2026-2027"
+              className="mt-1 block h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100" />
+          </label>
+          <label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+            Semester for unlocking
+            <select value={unlockSemester} onChange={(event) => setUnlockSemester(event.target.value)} disabled={unlockingAll}
+              className="mt-1 block h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+              <option value="">Select semester</option>
+              <option value="FIRST">First Semester</option>
+              <option value="SECOND">Second Semester</option>
+              <option value="MIDYEAR">Midyear</option>
+            </select>
+          </label>
+          <button type="button" onClick={handleUnlockAllSections}
+            disabled={unlockingAll || savingRoster || !/^\d{4}-\d{4}$/.test(unlockSchoolYear) || !unlockSemester}
+            className="min-h-10 rounded-lg border border-amber-400 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 disabled:cursor-wait disabled:opacity-50 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+            {unlockingAll ? 'Unlocking all sections...' : 'Unlock All Sections'}
+          </button>
         </div>
 
         {departments.length ? (
@@ -1103,6 +1275,14 @@ function RegistrarSectionsCreated() {
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
+                            onClick={handleUnlockSection}
+                            disabled={savingRoster || unlockingAll}
+                            className="rounded-lg border border-amber-300 px-3 py-2 text-sm font-semibold text-amber-800 disabled:opacity-50 dark:text-amber-200"
+                          >
+                            {savingRoster ? "Saving..." : "Unlock Section"}
+                          </button>
+                          <button
+                            type="button"
                             onClick={handleExportSectionCsv}
                             className="rounded-lg border border-[#003366] px-3 py-2 text-sm font-semibold text-[#003366] hover:bg-[#003366] hover:text-white"
                           >
@@ -1170,6 +1350,7 @@ function RegistrarSectionsCreated() {
                           <button
                             type="button"
                             onClick={handleConfirmRemoveStudent}
+                            disabled={savingRoster}
                             className="rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white"
                           >
                             Confirm Remove

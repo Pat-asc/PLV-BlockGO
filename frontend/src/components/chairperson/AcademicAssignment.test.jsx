@@ -2,6 +2,8 @@ import React from "react";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import userEvent from "@testing-library/user-event";
+import fs from "fs";
+import path from "path";
 import AcademicAssignment from "./AcademicAssignment";
 import { blockFaculty, fetchApprovedFaculties, fetchCurriculums, fetchFacultyAccessControls, fetchFacultyAssignmentOptions, assignFacultyLoadToBackend, unblockFaculty } from "../../services/api";
 jest.mock("../../services/api", () => ({ fetchApprovedFaculties: jest.fn(), fetchCurriculums: jest.fn(), fetchFacultyAccessControls: jest.fn(), fetchFacultyAssignmentOptions: jest.fn(), assignFacultyLoadToBackend: jest.fn(), blockFaculty: jest.fn(), unblockFaculty: jest.fn() }));
@@ -46,6 +48,40 @@ const savedAssignment = (overrides = {}) => ({
   semesterCode: "SECOND", subjectCode: "IT 100", subjectTitle: "Saved Subject",
   units: "3", schedule: "Monday 8:00 AM", ...overrides,
 });
+
+test("dark mode keeps academic period and workload summaries muted with readable text", async () => {
+  const styles = document.createElement("style");
+  // JSDOM cannot evaluate these focus selectors; they do not style the summary surfaces.
+  styles.textContent = fs.readFileSync(path.join(__dirname, "SubjectAssignment.css"), "utf8")
+    .replace(/^.*:focus-(?:within|visible).*$/gm, "");
+  document.head.appendChild(styles);
+  const luminance = (color) => {
+    const channels = color.match(/\d+/g).slice(0, 3).map(Number).map((value) => {
+      const channel = value / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+
+  try {
+    const { container } = render(<div className="dark"><AcademicAssignment chairpersonDepartment="Bachelor of Science in Information Technology"/></div>);
+    await screen.findByRole("button", { name: /Carlos Reyes/ });
+    const period = screen.getByRole("region", { name: "Current academic period" });
+    expect(period).toHaveTextContent("2026-2027");
+    for (const surface of [period, ...container.querySelectorAll(".sa-totals > div, .sa-badge, .sa-heading .sa-icon")]) {
+      const style = window.getComputedStyle(surface);
+      const backgroundLuminance = luminance(style.backgroundColor);
+      const foregroundLuminance = luminance(style.color);
+      expect(backgroundLuminance).toBeLessThan(0.1);
+      expect((foregroundLuminance + 0.05) / (backgroundLuminance + 0.05)).toBeGreaterThanOrEqual(4.5);
+    }
+    const periodText = window.getComputedStyle(period.querySelector("strong"));
+    expect((luminance(periodText.color) + 0.05) / (luminance(window.getComputedStyle(period).backgroundColor) + 0.05)).toBeGreaterThanOrEqual(4.5);
+  } finally {
+    styles.remove();
+  }
+});
+
 test("offers approved cross-department professors while keeping target programs scoped", async () => {
   fetchApprovedFaculties.mockResolvedValue({ faculties: [
     { id: 1, fullname: "Carlos Reyes", department: "Bachelor of Science in Information Technology" },

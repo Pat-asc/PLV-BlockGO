@@ -9,6 +9,8 @@ import {
   fetchUnassignedEnrolledStudents,
   finalizeEnrollmentRoster,
   getSystemSetting,
+  removeStudentFromSection,
+  unlockEnrollmentSection,
 } from '../../services/api';
 import { syncSectioningBatchToBackend } from '../../utils/registrarSectioningBackendSync';
 import { STUDENT_BATCHES_KEY } from '../../utils/studentSectioningHelpers';
@@ -23,8 +25,19 @@ jest.mock('../../services/api', () => ({
   fetchUnassignedEnrolledStudents: jest.fn(),
   finalizeEnrollmentRoster: jest.fn(),
   getSystemSetting: jest.fn(),
+  unlockEnrollmentSection: jest.fn(),
+  removeStudentFromSection: jest.fn(),
 }));
-jest.mock('../../utils/registrarSectioningBackendSync', () => ({ syncSectioningBatchToBackend: jest.fn() }));
+jest.mock('../../utils/registrarSectioningBackendSync', () => ({
+  refreshSectioningBatchFromBackend: jest.requireActual('../../utils/registrarSectioningBackendSync').refreshSectioningBatchFromBackend,
+  getNextAcademicSchoolYear: jest.fn((schoolYear) => {
+    const [start, end] = schoolYear.split('-').map(Number);
+    return `${start + 1}-${end + 1}`;
+  }),
+  mergePromotionResultIntoBatches: jest.fn((batches) => batches),
+  persistPromotedBatchesToBackend: jest.fn(),
+  syncSectioningBatchToBackend: jest.fn(),
+}));
 jest.mock('../../utils/sharedClientState', () => ({ pushSectioningSharedState: jest.fn() }));
 jest.mock('../../services/NotificationContext', () => ({
   ...jest.requireActual('../../services/NotificationContext'),
@@ -42,6 +55,7 @@ beforeEach(() => {
   deleteAcademicSection.mockResolvedValue({ status: 'Success', mode: 'deleted' });
   fetchNextStudentId.mockResolvedValue({ highestSequence: 42 });
   finalizeEnrollmentRoster.mockResolvedValue({ finalized: 1 });
+  unlockEnrollmentSection.mockResolvedValue({ status: 'Success', message: 'Section unlocked for 1 enrolled student.' });
   getSystemSetting.mockResolvedValue({ status: 'Success', value: { schoolYear: '2026-2027', semester: 'FIRST' } });
   fetchUnassignedEnrolledStudents.mockImplementation(async (period) => ({ data: [{ ...student, ...period }] }));
   fetchSectionedEnrolledStudents.mockResolvedValue({ data: [] });
@@ -189,6 +203,41 @@ test('rehydrates the Section List from the exact persisted academic section ID',
   ]));
 });
 
+test('shows locked state and explicitly unlocks the exact section before refreshing', async () => {
+  fetchUnassignedEnrolledStudents.mockResolvedValue({ data: [] });
+  fetchSectionedEnrolledStudents
+    .mockResolvedValueOnce({ data: [{
+      ...student, academicSectionId: 1, section: '1-1', enrollmentState: 'FINALIZED',
+    }] })
+    .mockResolvedValue({ data: [{
+      ...student, academicSectionId: 1, section: '1-1', enrollmentState: 'PLANNING',
+      finalizedAt: null, finalizedBy: null, updatedAt: '2026-11-10T10:00:00Z',
+    }] });
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+
+  const unlock = await screen.findByRole('button', { name: 'Unlock Section' });
+  expect(screen.getByText('Locked')).toBeInTheDocument();
+  fireEvent.click(unlock);
+  await waitFor(() => expect(requestSystemConfirmation).toHaveBeenCalled());
+  await waitFor(() => expect(unlockEnrollmentSection).toHaveBeenCalledWith(1, {
+    schoolYear: '2026-2027', semester: 'FIRST',
+  }));
+  await waitFor(() => expect(fetchSectionedEnrolledStudents).toHaveBeenCalledTimes(2));
+  await waitFor(() => {
+    const workspace = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY))[0];
+    expect(workspace.students).toEqual([
+      expect.objectContaining({
+        enrollmentId: 73,
+        id: 42,
+        academicSectionId: 1,
+        enrollmentState: 'PLANNING',
+      }),
+    ]);
+  });
+  expect(screen.queryByRole('button', { name: 'Unlock Section' })).not.toBeInTheDocument();
+  expect(showSystemNotification).toHaveBeenCalledWith('Section unlocked for 1 enrolled student.', 'success');
+});
+
 test('refetches authoritative enrollment membership immediately after assignment', async () => {
   fetchUnassignedEnrolledStudents
     .mockResolvedValueOnce({ data: [student] })
@@ -308,4 +357,67 @@ test('custom section template round-trips the exact uploader headers', () => {
   const download = buildCustomSectionTemplateDownload();
   expect(download.fileName).toBe('custom-section-template.csv');
   expect(download.content).toBe('Student ID,Sex,Last Name,First Name,Middle Name,Year Level');
+});
+
+test('locked section orphan removal in sectioning dialog is rejected and preserves local state', async () => {
+  removeStudentFromSection.mockRejectedValue(new Error('This section is finalized and locked. Unlock the section before removing students.'));
+  fetchUnassignedEnrolledStudents.mockResolvedValue({ data: [] });
+  fetchSectionedEnrolledStudents.mockResolvedValue({ data: [
+    { ...student, id: 21, studentNo: '26-0021', fullName: 'Leandro Emilio Salazar', academicSectionId: 1, section: '1-1' },
+  ] });
+
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  const rosterButtons = await screen.findAllByRole('button', { name: 'View Roster' });
+  fireEvent.click(rosterButtons[0]);
+  const dialog = screen.getByRole('dialog', { name: /1-1.*Student Roster/i });
+
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm Remove' }));
+
+  await waitFor(() => expect(removeStudentFromSection).toHaveBeenCalledWith(1, '26-0021', {
+    schoolYear: '2026-2027', semester: 'FIRST',
+  }));
+  await waitFor(() => expect(showSystemNotification).toHaveBeenCalledWith(
+    expect.stringContaining('finalized and locked'),
+    'error'
+  ));
+  const saved = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY));
+  expect(saved[0].students.some((s) => s.studentId === '26-0021')).toBe(true);
+});
+
+test('alreadyAbsent=true removes orphan and refreshes workspace in RegistrarStudentSectioning', async () => {
+  removeStudentFromSection.mockResolvedValue({
+    status: 'Success',
+    code: 'STUDENT_ALREADY_ABSENT',
+    alreadyAbsent: true,
+    studentId: '26-0021',
+    sectionId: 1,
+    message: 'The student is already absent from the authoritative section roster.',
+  });
+  fetchUnassignedEnrolledStudents.mockResolvedValue({ data: [] });
+  fetchSectionedEnrolledStudents
+    .mockResolvedValueOnce({ data: [
+      { ...student, id: 21, studentNo: '26-0021', fullName: 'Leandro Emilio Salazar', academicSectionId: 1, section: '1-1' },
+    ] })
+    .mockResolvedValue({ data: [] });
+
+  render(<RegistrarStudentSectioning chairpersonDepartment="BSIT" />);
+  const rosterButtons = await screen.findAllByRole('button', { name: 'View Roster' });
+  fireEvent.click(rosterButtons[0]);
+  const dialog = screen.getByRole('dialog', { name: /1-1.*Student Roster/i });
+
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm Remove' }));
+
+  await waitFor(() => expect(removeStudentFromSection).toHaveBeenCalledWith(1, '26-0021', {
+    schoolYear: '2026-2027', semester: 'FIRST',
+  }));
+  await waitFor(() => {
+    const saved = JSON.parse(localStorage.getItem(STUDENT_BATCHES_KEY));
+    expect(saved[0].students.some((s) => s.studentId === '26-0021')).toBe(false);
+  });
+  expect(showSystemNotification).toHaveBeenCalledWith(
+    'The student is already absent from the authoritative section roster.',
+    'success'
+  );
 });

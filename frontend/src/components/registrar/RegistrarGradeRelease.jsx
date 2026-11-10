@@ -22,13 +22,55 @@ const gradeValues = (rawGrade) => {
   }
 };
 
+export const buildGradeReleaseHierarchy = (candidates = []) => {
+  const departments = new Map();
+  candidates.forEach((candidate) => {
+    const departmentName = String(candidate.program || 'Department unavailable').trim();
+    const departmentKey = departmentName.toLowerCase();
+    if (!departments.has(departmentKey)) departments.set(departmentKey, { key: departmentKey, name: departmentName, facultyMap: new Map() });
+    const department = departments.get(departmentKey);
+
+    (candidate.subjects || []).forEach((subject) => {
+      const facultyName = subject.professorName || subject.faculty || subject.facultyId || 'Assigned Faculty';
+      const facultyKey = String(subject.facultyId || facultyName).trim().toLowerCase();
+      if (!department.facultyMap.has(facultyKey)) department.facultyMap.set(facultyKey, { key: facultyKey, name: facultyName, sectionMap: new Map() });
+      const faculty = department.facultyMap.get(facultyKey);
+      const sectionName = subject.section || candidate.section || 'Section unavailable';
+      const sectionKey = String(subject.assignmentCycleId || [subject.academicSectionId, sectionName, subject.subjectCode, candidate.schoolYear, candidate.semester, candidate.term].join('|')).toLowerCase();
+      if (!faculty.sectionMap.has(sectionKey)) faculty.sectionMap.set(sectionKey, {
+        key: sectionKey,
+        section: sectionName,
+        subjectCode: subject.subjectCode,
+        subjectTitle: subject.subjectTitle,
+        schoolYear: candidate.schoolYear,
+        semester: candidate.semester,
+        term: candidate.term,
+        studentMap: new Map(),
+      });
+      faculty.sectionMap.get(sectionKey).studentMap.set(subject.recordId, { ...candidate, subject });
+    });
+  });
+
+  return [...departments.values()].map((department) => ({
+    key: department.key,
+    name: department.name,
+    faculties: [...department.facultyMap.values()].map((faculty) => ({
+      ...faculty,
+      sections: [...faculty.sectionMap.values()].map((section) => ({
+        ...section,
+        students: [...section.studentMap.values()].sort((left, right) => String(left.studentId || '').localeCompare(String(right.studentId || ''), undefined, { numeric: true })),
+      })).sort((left, right) => [left.section, left.subjectCode, left.term].join('|').localeCompare([right.section, right.subjectCode, right.term].join('|'), undefined, { numeric: true })),
+    })).sort((left, right) => left.name.localeCompare(right.name)),
+  })).sort((left, right) => left.name.localeCompare(right.name));
+};
+
 const initialFilters = { program: '', schoolYear: '', semester: '', term: '' };
 
 const RegistrarGradeRelease = () => {
   const [candidates, setCandidates] = useState([]);
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState(initialFilters);
-  const [selectedGroupKey, setSelectedGroupKey] = useState('');
+  const [selectedSectionKey, setSelectedSectionKey] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [releasingKey, setReleasingKey] = useState('');
@@ -59,42 +101,45 @@ const RegistrarGradeRelease = () => {
     });
   }, [candidates, filters, search]);
 
-  const releaseGroups = useMemo(() => Object.values(filtered.reduce((groups, candidate) => {
-    const key = [candidate.program, candidate.schoolYear, candidate.semester, candidate.term].join('|');
-    if (!groups[key]) groups[key] = {
-      key,
-      program: candidate.program,
-      schoolYear: candidate.schoolYear,
-      semester: candidate.semester,
-      term: candidate.term,
-      candidates: [],
+  const hierarchy = useMemo(() => buildGradeReleaseHierarchy(filtered), [filtered]);
+  const releaseContexts = useMemo(() => Object.values(candidates.reduce((contexts, candidate) => {
+    if (candidate.releaseStatus === 'Released') return contexts;
+    const key = [candidate.program, candidate.schoolYear, candidate.semester, candidate.term].join('|').toLowerCase();
+    if (!contexts[key]) contexts[key] = {
+      key, program: candidate.program, schoolYear: candidate.schoolYear,
+      semester: candidate.semester, term: candidate.term,
     };
-    groups[key].candidates.push(candidate);
-    return groups;
-  }, {})), [filtered]);
-  const selectedGroup = releaseGroups.find((group) => group.key === selectedGroupKey) || null;
+    return contexts;
+  }, {})), [candidates]);
+  const allSections = hierarchy.flatMap((department) => department.faculties.flatMap((faculty) => faculty.sections));
+  const selectedSection = allSections.find((section) => section.key === selectedSectionKey) || null;
 
-  const release = async (group) => {
+  const releaseAll = async () => {
+    if (releaseContexts.length === 0) return;
+    const readyStudents = candidates.filter((candidate) => candidate.releaseStatus !== 'Released').length;
     const confirmed = await requestSystemConfirmation({
-      title: `Release ${group.program} grades?`,
-      message: `${group.schoolYear} · ${group.semester} · ${group.term}\n${group.candidates.length} student(s)\n\nOnly finalized grades in this exact program and period will be released.`,
-      confirmLabel: `Release ${group.program} Grades`,
+      title: 'Release grades for everyone?',
+      message: `${readyStudents} student-period record(s) across ${releaseContexts.length} academic context(s) are ready.\n\nOnly finalized grade versions will become visible to students.`,
+      confirmLabel: 'Release Grades for Everyone',
       tone: 'primary',
     });
     if (!confirmed) return;
 
-    setReleasingKey(group.key);
+    setReleasingKey('all');
     try {
-      const response = await releaseProgramGrades({
-        program: group.program,
-        schoolYear: group.schoolYear,
-        semester: group.semester,
-        term: group.term,
-      });
-      showSystemNotification(response?.message || 'Finalized program grades released successfully.', 'success');
+      for (const context of releaseContexts) {
+        await releaseProgramGrades({
+          program: context.program,
+          schoolYear: context.schoolYear,
+          semester: context.semester,
+          term: context.term,
+        });
+      }
+      showSystemNotification('Finalized grades were released for everyone successfully.', 'success');
       await load(true);
     } catch (releaseError) {
-      showSystemNotification(releaseError.message || 'Finalized program grades could not be released right now.', 'error');
+      showSystemNotification(releaseError.message || 'Some finalized grades could not be released right now. Already released grades remain available; please retry.', 'error');
+      await load(true);
     } finally {
       setReleasingKey('');
     }
@@ -111,7 +156,10 @@ const RegistrarGradeRelease = () => {
             <h2 className="text-xl font-bold text-[#003366]">Grade Release</h2>
             <p className="mt-1 max-w-3xl text-sm text-slate-600">Release finalized Fabric records once per program and exact academic period. This controls visibility only and does not approve, edit, or finalize grades.</p>
           </div>
-          <button type="button" onClick={() => load()} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Refresh</button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => load()} disabled={Boolean(releasingKey)} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">Refresh</button>
+            <button type="button" onClick={releaseAll} disabled={releaseContexts.length === 0 || Boolean(releasingKey)} className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{releasingKey === 'all' ? 'Releasing…' : 'Release Grades for Everyone'}</button>
+          </div>
         </div>
       </header>
 
@@ -130,38 +178,38 @@ const RegistrarGradeRelease = () => {
       {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div> : null}
       {!error && filtered.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500">No students currently have finalized grades ready for release.</div> : null}
 
-      <div className="space-y-3">
-        {releaseGroups.map((group) => {
-          const key = group.key;
-          const isReleased = group.candidates.every((candidate) => candidate.releaseStatus === 'Released');
-          const subjectCount = group.candidates.reduce((sum, candidate) => sum + (candidate.subjects?.length || 0), 0);
-          return <article key={key} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="grid gap-4 p-4 lg:grid-cols-[minmax(220px,1.3fr)_repeat(4,minmax(110px,0.7fr))_auto] lg:items-center">
-              <div><p className="font-bold text-[#003366]">{group.program || 'Program unavailable'}</p><p className="text-sm font-semibold text-slate-700">{group.candidates.length} student(s)</p><p className="mt-1 text-xs text-slate-500">{subjectCount} finalized subject record(s)</p></div>
-              <div><p className="text-xs font-semibold uppercase text-slate-400">Scope</p><p className="mt-1 text-sm text-slate-700">Entire program batch</p></div>
-              <div><p className="text-xs font-semibold uppercase text-slate-400">School year</p><p className="mt-1 text-sm text-slate-700">{group.schoolYear || '—'}</p></div>
-              <div><p className="text-xs font-semibold uppercase text-slate-400">Period</p><p className="mt-1 text-sm capitalize text-slate-700">{group.semester || '—'} · {group.term || '—'}</p></div>
-              <div><p className="text-xs font-semibold uppercase text-slate-400">Status</p><div className="mt-1"><StatusBadge status={isReleased ? 'Released' : 'Ready for Release'} /></div></div>
-              <div className="flex flex-wrap gap-2 lg:justify-end"><button type="button" onClick={() => setSelectedGroupKey(key)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">{`View Students (${group.candidates.length})`}</button><button type="button" onClick={() => release(group)} disabled={isReleased || releasingKey === key} className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#00264d] disabled:cursor-not-allowed disabled:bg-slate-300">{releasingKey === key ? 'Releasing…' : isReleased ? 'Released' : `Release ${group.program} Grades`}</button></div>
-            </div>
-          </article>;
-        })}
-      </div>
+      <div className="space-y-4">{hierarchy.map((department) => (
+        <article key={department.key} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <header className="border-b border-slate-200 bg-[#003366] px-5 py-4 text-white dark:border-slate-700 dark:bg-slate-800"><h3 className="text-lg font-bold">{department.name}</h3><p className="text-sm text-blue-100">{department.faculties.length} faculty</p></header>
+          <div className="divide-y divide-slate-200 dark:divide-slate-700">{department.faculties.map((faculty) => (
+            <section key={faculty.key} className="p-4">
+              <div className="mb-3"><h4 className="font-bold text-slate-900 dark:text-slate-100">{faculty.name}</h4><p className="text-xs text-slate-500 dark:text-slate-400">{faculty.sections.length} encoded section(s)</p></div>
+              <div className="grid gap-3">{faculty.sections.map((section) => {
+                const isReleased = section.students.every((student) => student.releaseStatus === 'Released');
+                return <div key={section.key} className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700 dark:bg-slate-800">
+                  <div><p className="font-bold text-[#003366] dark:text-sky-300">{section.section} · {section.subjectCode}</p><p className="text-sm text-slate-600 dark:text-slate-300">{section.subjectTitle || 'Subject title unavailable'}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{section.schoolYear} · {section.semester} · {section.term} · {section.students.length} student(s)</p></div>
+                  <div className="flex items-center gap-3"><StatusBadge status={isReleased ? 'Released' : 'Ready for Release'} /><button type="button" onClick={() => setSelectedSectionKey(section.key)} className="rounded-lg border border-[#003366] px-3 py-2 text-sm font-bold text-[#003366] dark:border-sky-500 dark:text-sky-300">View Students</button></div>
+                </div>;
+              })}</div>
+            </section>
+          ))}</div>
+        </article>
+      ))}</div>
 
       <Modal
-        isOpen={Boolean(selectedGroup)}
-        onClose={() => setSelectedGroupKey('')}
-        title={selectedGroup ? `${selectedGroup.program} Finalized Students` : 'Finalized Students'}
-        description={selectedGroup ? `${selectedGroup.schoolYear} · ${selectedGroup.semester} · ${selectedGroup.term}` : ''}
+        isOpen={Boolean(selectedSection)}
+        onClose={() => setSelectedSectionKey('')}
+        title={selectedSection ? `${selectedSection.section} · ${selectedSection.subjectCode}` : 'Finalized Students'}
+        description={selectedSection ? `${selectedSection.schoolYear} · ${selectedSection.semester} · ${selectedSection.term}` : ''}
         panelClassName="max-h-[calc(100dvh-1rem)] max-w-6xl overflow-y-auto"
       >
         <div className="max-h-[70vh] overflow-auto rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900" data-testid="grade-release-modal-details">
           <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-700">
-            <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-300"><tr><th className="px-4 py-3">Student</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Units</th><th className="px-4 py-3">Midterm</th><th className="px-4 py-3">Final</th><th className="px-4 py-3">Final Grade</th><th className="px-4 py-3">Ledger Status</th></tr></thead>
+            <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-300"><tr><th className="px-4 py-3">Student</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Units</th><th className="px-4 py-3">Midterm</th><th className="px-4 py-3">Final</th><th className="px-4 py-3">Final Grade</th></tr></thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {(selectedGroup?.candidates || []).flatMap((candidate) => (candidate.subjects || []).map((subject) => ({ ...subject, studentId: candidate.studentId, studentName: candidate.studentName }))).map((subject) => {
-                const values = gradeValues(subject.grade);
-                return <tr key={subject.recordId} className="text-slate-700 dark:text-slate-200"><td className="px-4 py-3"><span className="block font-semibold">{subject.studentName || 'Student'}</span><span className="text-xs text-slate-500 dark:text-slate-400">{subject.studentId}</span></td><td className="px-4 py-3"><span className="block font-bold text-[#003366] dark:text-sky-300">{subject.subjectCode}</span><span>{subject.subjectTitle}</span></td><td className="px-4 py-3">{subject.units || '—'}</td><td className="px-4 py-3">{values.midterm}</td><td className="px-4 py-3">{values.finals}</td><td className="px-4 py-3 font-bold text-[#003366] dark:text-sky-300">{values.finalAverage}</td><td className="px-4 py-3"><StatusBadge status={subject.status} /></td></tr>;
+              {(selectedSection?.students || []).map((student) => {
+                const values = gradeValues(student.subject.grade);
+                return <tr key={student.subject.recordId} className="text-slate-700 dark:text-slate-200"><td className="px-4 py-3"><span className="block font-semibold">{student.studentName || 'Student'}</span><span className="text-xs text-slate-500 dark:text-slate-400">{student.studentId}</span></td><td className="px-4 py-3"><span className="block font-bold text-[#003366] dark:text-sky-300">{student.subject.subjectCode}</span><span>{student.subject.subjectTitle}</span></td><td className="px-4 py-3">{student.subject.units || '—'}</td><td className="px-4 py-3">{values.midterm}</td><td className="px-4 py-3">{values.finals}</td><td className="px-4 py-3 font-bold text-[#003366] dark:text-sky-300">{values.finalAverage}</td></tr>;
               })}
             </tbody>
           </table>

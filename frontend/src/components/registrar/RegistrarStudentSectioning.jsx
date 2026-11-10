@@ -7,9 +7,12 @@ import {
   AVAILABLE_YEAR_LEVELS,
   STUDENT_BATCHES_KEY,
   YEAR_LEVEL_PREFIXES,
+  areProgramsEquivalent,
   buildStudentCsvContent,
+  consolidateSectioningBatches,
   downloadCsvFile,
   downloadStudentCsvFile,
+  getCanonicalProgramName,
   getDefaultSectionName,
   getGregorianCalendarYear,
   getNextStudentId,
@@ -17,8 +20,8 @@ import {
   parseStudentIdSpreadsheet,
   syncSectionedStudentsToStorage,
 } from "../../utils/studentSectioningHelpers";
-import { deleteAcademicSection, fetchDepartmentSections, fetchNextStudentId, fetchSectionedEnrolledStudents, fetchUnassignedEnrolledStudents, finalizeEnrollmentRoster, getSystemSetting, removeStudentFromSection } from "../../services/api";
-import { persistPromotedBatchesToBackend, syncSectioningBatchToBackend } from "../../utils/registrarSectioningBackendSync";
+import { deleteAcademicSection, fetchDepartmentSections, fetchNextStudentId, fetchSectionedEnrolledStudents, fetchUnassignedEnrolledStudents, finalizeEnrollmentRoster, getSystemSetting, removeStudentFromSection, unlockEnrollmentSection } from "../../services/api";
+import { getNextAcademicSchoolYear, mergePromotionResultIntoBatches, persistPromotedBatchesToBackend, refreshSectioningBatchFromBackend, syncSectioningBatchToBackend } from "../../utils/registrarSectioningBackendSync";
 import { pushSectioningSharedState } from "../../utils/sharedClientState";
 import { validateCsvUpload } from "../../utils/csvUploadValidation";
 
@@ -175,24 +178,45 @@ const getBatchUpdatedTime = (batch = {}) =>
   new Date(batch.lastSectionedAt || batch.submittedAt || 0).getTime();
 
 const getCurrentRolloverBatches = (workspaces = []) => {
-  const latestByBatchYear = {};
+  const latestByWorkspace = {};
 
   workspaces
     .filter(
       (batch) =>
-        (batch.students || []).length > 0 && (batch.sectionPlans || []).length > 0
+        (batch.students || []).length > 0 &&
+        (batch.sectionPlans || []).length > 0
     )
     .forEach((batch) => {
-      const batchYear = batch.batchYear || "Unassigned";
-      const current = latestByBatchYear[batchYear];
+      const workspaceKey = [
+        batch.program || "Unassigned",
+        batch.schoolYear || batch.batchYear || "Unassigned",
+        batch.semester || "Unassigned",
+      ].join("|");
 
-      if (!current || getBatchUpdatedTime(batch) > getBatchUpdatedTime(current)) {
-        latestByBatchYear[batchYear] = batch;
+      const current = latestByWorkspace[workspaceKey];
+
+      if (
+        !current ||
+        getBatchUpdatedTime(batch) > getBatchUpdatedTime(current)
+      ) {
+        latestByWorkspace[workspaceKey] = batch;
       }
     });
 
-  return Object.values(latestByBatchYear).sort((left, right) =>
-    String(left.batchYear || "").localeCompare(String(right.batchYear || ""))
+  return Object.values(latestByWorkspace).sort((left, right) =>
+    [
+      left.program || "",
+      left.schoolYear || left.batchYear || "",
+      left.semester || "",
+    ]
+      .join("|")
+      .localeCompare(
+        [
+          right.program || "",
+          right.schoolYear || right.batchYear || "",
+          right.semester || "",
+        ].join("|")
+      )
   );
 };
 
@@ -208,7 +232,7 @@ function RegistrarStudentSectioning({
   const isChairpersonMode = false;
   const [batches, setBatches] = useState(() => {
     const saved = localStorage.getItem(STUDENT_BATCHES_KEY);
-    return saved ? JSON.parse(saved) : [];
+    return consolidateSectioningBatches(saved ? JSON.parse(saved) : []);
   });
   const [activeWorkspace] = useState("sectioning");
   const [selectedBatchKey, setSelectedBatchKey] = useState("");
@@ -225,6 +249,7 @@ function RegistrarStudentSectioning({
   const [enrollmentRefresh, setEnrollmentRefresh] = useState(0);
   const [sectionCapacity, setSectionCapacity] = useState("40");
   const [savingSections, setSavingSections] = useState(false);
+  const [unlockingSectionId, setUnlockingSectionId] = useState(null);
   const [targetSemester] = useState("1st Semester");
   const [promotionSummary, setPromotionSummary] = useState(null);
   const [graduatingStudents, setGraduatingStudents] = useState(() =>
@@ -289,12 +314,12 @@ function RegistrarStudentSectioning({
     if (!batch || !isRegistrarMode) return false;
 
     try {
-      await syncSectioningBatchToBackend(batch);
+      await syncSectioningBatchToBackend(JSON.parse(JSON.stringify(batch)));
       if (successMessage) showSystemNotification(successMessage);
       return true;
     } catch (error) {
       showSystemNotification(
-        `Saved locally, but backend sync failed: ${error.message || "Please try saving again."}`
+        `Changes were not saved: ${error.message || "Please try saving again."}`, "error"
       );
       return false;
     }
@@ -304,14 +329,19 @@ function RegistrarStudentSectioning({
     () =>
       batches.filter(
         (batch) =>
-          batch.program === chairpersonDepartment &&
+          areProgramsEquivalent(batch.program, chairpersonDepartment) &&
           batch.schoolYear === schoolYear && batch.semester === sectioningSemester &&
           batch.status !== "Promoted"
       ),
     [batches, chairpersonDepartment, schoolYear, sectioningSemester]
   );
   const rolloverWorkspaces = isRegistrarMode
-    ? batches.filter((batch) => batch.status !== "Promoted")
+    ? batches.filter(
+        (batch) =>
+          batch.status !== "Promoted" &&
+          batch.schoolYear === schoolYear &&
+          batch.semester === sectioningSemester
+      )
     : departmentWorkspaces;
   const savedAssignments = useMemo(() => {
     const saved = localStorage.getItem("registrarAssignments");
@@ -401,6 +431,7 @@ function RegistrarStudentSectioning({
         getDefaultSectionName(selectedBatch?.program, section.sectionCode),
       assigned: sectionStudents.length,
       students: sectionStudents,
+      isLocked: sectionStudents.some((student) => String(student.enrollmentState || "").toUpperCase() === "FINALIZED"),
     };
   });
 
@@ -672,20 +703,20 @@ function RegistrarStudentSectioning({
           .filter((section) => String(section.yearLevel) === String(YEAR_LEVEL_PREFIXES[selectedYearLevel]));
         setEnrolledCount(unassigned.length);
         setEligibleStudents(unassigned);
-        const key = [chairpersonDepartment, schoolYear, sectioningSemester, "sectioning"].join("|");
+        const canonicalDepartment = getCanonicalProgramName(chairpersonDepartment);
+        const key = [canonicalDepartment, schoolYear, sectioningSemester, "sectioning"].join("|");
         setBatches((current) => {
-          const existing = current.find((batch) => batch.key === key);
+          const existing = current.find((batch) => batch.key === key || areProgramsEquivalent(batch.program, canonicalDepartment));
           if (!existing && !unassigned.length && !sectioned.length && !backendSections.length) return current;
           const retained = (existing?.students || []).filter((student) => student.yearLevel !== selectedYearLevel);
           const authoritativeStudents = sectioned.map((student) => ({
             ...student,
             studentId: student.studentNo,
-            // Preserve the official full name; do not guess its component parts.
             firstName: student.fullName, lastName: "", middleName: "",
             yearLevel: AVAILABLE_YEAR_LEVELS[Number(student.yearLevel) - 1],
             sectionCode: student.section || "",
             sectionName: student.section
-              ? getDefaultSectionName(chairpersonDepartment, student.section)
+              ? getDefaultSectionName(canonicalDepartment, student.section)
               : "",
           }));
           const authoritativePlans = backendSections.map((section) => {
@@ -694,18 +725,18 @@ function RegistrarStudentSectioning({
               id: Number(section.id),
               academicSectionId: Number(section.id),
               sectionCode,
-              sectionName: getDefaultSectionName(chairpersonDepartment, sectionCode),
+              sectionName: getDefaultSectionName(canonicalDepartment, sectionCode),
               yearLevel: selectedYearLevel,
             };
           });
           const retainedPlans = (existing?.sectionPlans || [])
             .filter((section) => !sectionMatchesYearLevel(section, selectedYearLevel));
-          const workspace = { id: Date.now(), status: "Sectioning", removedStudents: [],
-            ...existing, key, program: chairpersonDepartment, batchYear: sectioningBatchYear,
+          const workspace = { id: Date.now(), status: "Sectioning", removedStudents: existing?.removedStudents || [],
+            ...existing, key, program: canonicalDepartment, batchYear: sectioningBatchYear,
             schoolYear, semester: sectioningSemester,
             sectionPlans: [...retainedPlans, ...authoritativePlans],
             students: [...retained, ...authoritativeStudents] };
-          const next = [...current.filter((batch) => batch.key !== key), workspace];
+          const next = consolidateSectioningBatches([...current.filter((batch) => batch.key !== key && !areProgramsEquivalent(batch.program, canonicalDepartment)), workspace]);
           localStorage.setItem(STUDENT_BATCHES_KEY, JSON.stringify(next));
           syncSectionedStudentsToStorage(next);
           return next;
@@ -752,7 +783,7 @@ function RegistrarStudentSectioning({
 
       try {
         const saved = localStorage.getItem(STUDENT_BATCHES_KEY);
-        setBatches(saved ? JSON.parse(saved) : []);
+        setBatches(consolidateSectioningBatches(saved ? JSON.parse(saved) : []));
       } catch (error) {
         console.warn("Failed to refresh sectioning batches from shared state.", error);
       }
@@ -785,20 +816,28 @@ function RegistrarStudentSectioning({
     };
   }, [isBatchYearPickerOpen]);
 
-  const updateSelectedBatch = (updater) => {
-    if (!activeBatchKey) return;
-
-    setBatches((previousBatches) =>
-      previousBatches.map((batch) =>
-        batch.key === activeBatchKey ? updater(batch) : batch
-      )
-    );
+  const updateSelectedBatch = async (updater) => {
+    if (!selectedBatch || savingSections) return false;
+    setSavingSections(true);
+    try {
+      const requested = updater(JSON.parse(JSON.stringify(selectedBatch)));
+      await syncSectioningBatchToBackend(requested);
+      const refreshed = await refreshSectioningBatchFromBackend(requested);
+      persistBatches(batches.map((batch) => batch.key === activeBatchKey ? refreshed : batch));
+      return true;
+    } catch (error) {
+      showSystemNotification(`Changes were not saved: ${error.message}`, "error");
+      return false;
+    } finally {
+      setSavingSections(false);
+    }
   };
 
   const persistBatches = (nextBatches) => {
-    setBatches(nextBatches);
-    localStorage.setItem(STUDENT_BATCHES_KEY, JSON.stringify(nextBatches));
-    syncSectionedStudentsToStorage(nextBatches);
+    const consolidated = consolidateSectioningBatches(nextBatches);
+    setBatches(consolidated);
+    localStorage.setItem(STUDENT_BATCHES_KEY, JSON.stringify(consolidated));
+    syncSectionedStudentsToStorage(consolidated);
     pushSectioningSharedState();
     onSectioningSaved?.();
   };
@@ -968,14 +1007,20 @@ function RegistrarStudentSectioning({
 
     setSavingSections(true);
     try {
-      await syncSectioningBatchToBackend(nextWorkspace);
+      await syncSectioningBatchToBackend(JSON.parse(JSON.stringify(nextWorkspace)));
     } catch (error) {
       showSystemNotification(`Section assignment failed: ${error.message}`);
       setSavingSections(false);
       return;
     }
     setSavingSections(false);
-    persistBatches(nextBatches);
+    try {
+      const refreshed = await refreshSectioningBatchFromBackend(nextWorkspace);
+      persistBatches(nextBatches.map((batch) => batch.key === nextWorkspace.key ? refreshed : batch));
+    } catch (error) {
+      showSystemNotification(`Could not refresh sections: ${error.message}`, "error");
+      return;
+    }
     setEnrollmentRefresh((current) => current + 1);
     if (populateEligible) setEnrolledCount((count) => Math.max(0, count - studentsNeedingSection.length));
     setSelectedBatchKey(workspaceKey);
@@ -1049,26 +1094,23 @@ function RegistrarStudentSectioning({
     if (canonicalId) {
       try {
         await deleteAcademicSection(canonicalId);
-        setEnrollmentRefresh((current) => current + 1);
       } catch (error) {
         showSystemNotification(error.message || "The section could not be deleted.");
         return;
       }
     }
 
-    updateSelectedBatch((batch) => ({
-      ...batch,
-      sectionPlans: (batch.sectionPlans || []).filter(
-        (plan) => plan.sectionCode !== sectionCode
-      ),
-      students: (batch.students || []).filter(
-        (student) => student.sectionCode !== sectionCode
-      ),
-      removedStudents: (batch.removedStudents || []).filter(
-        (student) => student.removedFromSectionCode !== sectionCode
-      ),
-      lastSectionedAt: new Date().toISOString(),
-    }));
+    if (!canonicalId) {
+      showSystemNotification("Refresh sections to resolve the exact academic section.", "error");
+      return;
+    }
+    try {
+      const refreshed = await refreshSectioningBatchFromBackend(selectedBatch);
+      persistBatches(batches.map((batch) => batch.key === activeBatchKey ? refreshed : batch));
+    } catch (error) {
+      showSystemNotification(`Could not refresh sections: ${error.message}`, "error");
+      return;
+    }
 
     if (selectedSectionCode === sectionCode) {
       const nextSection = yearSectionPlans.find(
@@ -1121,72 +1163,81 @@ function RegistrarStudentSectioning({
       return;
     }
 
-    const studentToRemove = students.find((student) => student.studentId === pendingRemoval.studentId);
-    if (studentToRemove?.academicSectionId) {
-      try {
-        await removeStudentFromSection(studentToRemove.academicSectionId, studentToRemove.studentId, {
+    if (savingSections || !selectedBatch || !selectedSection) return;
+    setSavingSections(true);
+    try {
+        const exactId = Number(selectedSection.academicSectionId || selectedSection.id);
+        if (!Number.isInteger(exactId) || exactId <= 0) throw new Error("Refresh sections to resolve the exact academic section.");
+        const response = await removeStudentFromSection(exactId, pendingRemoval.studentId, {
           schoolYear: selectedBatch.schoolYear || schoolYear,
           semester: selectedBatch.semester || sectioningSemester,
         });
-      } catch (error) {
-        showSystemNotification(`Student removal failed: ${error.message}`);
-        return;
-      }
+        const refreshed = await refreshSectioningBatchFromBackend(selectedBatch);
+        const studentToRemove = (selectedBatch.students || []).find(
+          (s) => String(s.studentId).toLowerCase() === String(pendingRemoval.studentId).toLowerCase()
+        );
+        const cleanRefreshed = {
+          ...refreshed,
+          students: (refreshed.students || []).filter(
+            (student) => String(student.studentId || student.studentNo || "").trim().toLowerCase() !== String(pendingRemoval.studentId).trim().toLowerCase()
+          ),
+          removedStudents: [
+            ...(refreshed.removedStudents || selectedBatch.removedStudents || []).filter(
+              (s) => String(s.studentId).toLowerCase() !== String(pendingRemoval.studentId).toLowerCase()
+            ),
+            {
+              ...(studentToRemove || {}),
+              studentId: pendingRemoval.studentId,
+              removedAt: new Date().toISOString(),
+              removalReason: pendingRemoval.reason,
+              removalNote: (pendingRemoval.note || "").trim(),
+              removedFromSectionCode: studentToRemove?.sectionCode || selectedSection?.sectionCode || "",
+              removedFromSectionName: studentToRemove?.sectionName || selectedSection?.sectionName || "",
+            },
+          ],
+        };
+        persistBatches(batches.map((batch) => batch.key === activeBatchKey ? cleanRefreshed : batch));
+        setPendingRemoval(null);
+        const message = response?.alreadyAbsent
+          ? (response.message || "The student is already absent from the authoritative section roster.")
+          : (response?.message || "Student removed from the section.");
+        showSystemNotification(message, "success");
+    } catch (error) {
+        showSystemNotification(`Student removal failed: ${error.message}`, "error");
+    } finally {
+        setSavingSections(false);
     }
-
-    updateSelectedBatch((batch) => {
-      const studentToRemove = (batch.students || []).find(
-        (student) => student.studentId === pendingRemoval.studentId
-      );
-
-      if (!studentToRemove) return batch;
-
-      return {
-        ...batch,
-        students: (batch.students || []).filter(
-          (student) => student.studentId !== pendingRemoval.studentId
-        ),
-        removedStudents: [
-          {
-            ...studentToRemove,
-            removedAt: new Date().toISOString(),
-            removalReason: pendingRemoval.reason,
-            removalNote: pendingRemoval.note.trim(),
-            removedFromSectionCode: studentToRemove.sectionCode || "",
-            removedFromSectionName: studentToRemove.sectionName || "",
-          },
-          ...(batch.removedStudents || []),
-        ],
-        lastSectionedAt: new Date().toISOString(),
-      };
-    });
-
-    setPendingRemoval(null);
-    setEnrollmentRefresh((current) => current + 1);
   };
 
   const handleRestoreStudent = (studentId) => {
+    const removedStudent = (selectedBatch?.removedStudents || []).find(
+      (student) => String(student.studentId).toLowerCase() === String(studentId).toLowerCase()
+    );
+    if (!removedStudent) return;
+
+    if (
+      removedStudent.removalReason === "Duplicate student record" ||
+      removedStudent.isActive === false ||
+      removedStudent.is_active === false ||
+      String(removedStudent.status || "").toUpperCase() === "DROPPED" ||
+      String(removedStudent.accountStatus || "").toUpperCase() === "REVOKED"
+    ) {
+      showSystemNotification("Duplicate or revoked student records cannot be restored to active sections.", "error");
+      return;
+    }
+
+    const alreadyActive = (selectedBatch?.students || []).some(
+      (student) => String(student.studentId).toLowerCase() === String(studentId).toLowerCase()
+    );
+    if (alreadyActive) {
+      showSystemNotification("This student ID already exists in the active roster.");
+      return;
+    }
+
     updateSelectedBatch((batch) => {
-      const removedStudent = (batch.removedStudents || []).find(
-        (student) => student.studentId === studentId
-      );
-
-      if (!removedStudent) return batch;
-
-      const alreadyActive = (batch.students || []).some(
-        (student) =>
-          student.studentId.toLowerCase() === removedStudent.studentId.toLowerCase()
-      );
-
-      if (alreadyActive) {
-        showSystemNotification("This student ID already exists in the active roster.");
-        return batch;
-      }
-
       const originalSectionExists = (batch.sectionPlans || []).some(
         (section) => section.sectionCode === removedStudent.removedFromSectionCode
       );
-
       const restoredStudent = {
         studentId: removedStudent.studentId,
         sex: removedStudent.sex || "",
@@ -1409,11 +1460,15 @@ function RegistrarStudentSectioning({
             : batch
         );
 
-        persistBatches(nextBatches);
         const updatedBatch = nextBatches.find((batch) => batch.key === selectedBatch.key);
-        syncBatchToBackend(updatedBatch).then((synced) => {
-          if (synced) setEnrollmentRefresh((current) => current + 1);
-        });
+        if (!await syncBatchToBackend(updatedBatch)) return;
+        try {
+          const refreshed = await refreshSectioningBatchFromBackend(updatedBatch);
+          persistBatches(batches.map((batch) => batch.key === selectedBatch.key ? refreshed : batch));
+        } catch (error) {
+          showSystemNotification(`Could not refresh the section: ${error.message}`, "error");
+          return;
+        }
         setSelectedSectionCode(section.sectionCode);
         showSystemNotification(
           `${importedStudents.length} student${importedStudents.length === 1 ? "" : "s"} imported into ${sectionName}.`
@@ -1442,9 +1497,13 @@ function RegistrarStudentSectioning({
     const synced = await syncBatchToBackend(batchToSync);
     setSavingSections(false);
     if (synced) {
-      persistBatches(nextBatches);
-      setEnrollmentRefresh((current) => current + 1);
-      showSystemNotification("Sections saved and synced successfully.");
+      try {
+        const refreshed = await refreshSectioningBatchFromBackend(batchToSync);
+        persistBatches(nextBatches.map((batch) => batch.key === batchToSync.key ? refreshed : batch));
+        showSystemNotification("Sections saved and synced successfully.");
+      } catch (error) {
+        showSystemNotification(`Could not refresh sections: ${error.message}`, "error");
+      }
     }
   };
 
@@ -1466,6 +1525,37 @@ function RegistrarStudentSectioning({
       showSystemNotification(`Enrollment finalization failed: ${error.message}`);
     } finally {
       setSavingSections(false);
+    }
+  };
+
+  const handleUnlockSection = async (section) => {
+    const sectionId = Number(section.academicSectionId || section.id);
+    if (!Number.isInteger(sectionId) || sectionId <= 0 || unlockingSectionId) {
+      showSystemNotification("The exact academic section could not be resolved. Refresh sections and try again.", "error");
+      return;
+    }
+    const confirmed = await requestSystemConfirmation(
+      `Unlock ${section.sectionName || section.sectionCode} for ${selectedBatch?.schoolYear || schoolYear} ${selectedBatch?.semester || sectioningSemester}? This reopens enrollment planning but does not remove grades or history.`
+    );
+    if (!confirmed) return;
+
+    setUnlockingSectionId(sectionId);
+    try {
+      const response = await unlockEnrollmentSection(sectionId, {
+        schoolYear: selectedBatch?.schoolYear || schoolYear,
+        semester: selectedBatch?.semester || sectioningSemester,
+      });
+      const refreshed = await refreshSectioningBatchFromBackend(selectedBatch);
+      persistBatches(batches.map((batch) => batch.key === selectedBatch.key ? refreshed : batch));
+      setPromotionSummary(null);
+      setPendingRemoval(null);
+      setSelectedRosterSectionId("");
+      setSelectedSectionCode("");
+      showSystemNotification(response.message || "Section unlocked successfully.", "success");
+    } catch (error) {
+      showSystemNotification(error?.message || "The section could not be unlocked. Please refresh and try again.", "error");
+    } finally {
+      setUnlockingSectionId(null);
     }
   };
 
@@ -1576,6 +1666,11 @@ function RegistrarStudentSectioning({
     const targetBatches = [];
 
     currentRolloverBatches.forEach((sourceBatch) => {
+      const sourceSchoolYear = sourceBatch.schoolYear ||
+        (/^\d{4}$/.test(String(sourceBatch.batchYear || ""))
+          ? `${sourceBatch.batchYear}-${Number(sourceBatch.batchYear) + 1}`
+          : "");
+      const targetSchoolYear = getNextAcademicSchoolYear(sourceSchoolYear);
       const promotedStudents = [];
       const promotedSectionsByCode = new Map();
       const graduatingReviewList = [];
@@ -1589,12 +1684,12 @@ function RegistrarStudentSectioning({
             ...student,
             program: sourceBatch.program,
             sourceBatchKey: sourceBatch.key,
-            sourceSchoolYear: sourceBatch.batchYear,
+            sourceSchoolYear,
             originBatchYear: sourceBatch.batchYear,
             originYearLevel: student.yearLevel,
             originSectionCode: student.sectionCode || "",
             originSectionName: student.sectionName || "",
-            targetSchoolYear: sourceBatch.batchYear,
+            targetSchoolYear,
             targetSemester,
             status: (student.irregularSubjects || []).some(
               (subject) => (subject.status || "Pending") !== "Completed"
@@ -1644,7 +1739,10 @@ function RegistrarStudentSectioning({
           promotedFromYearLevel: student.yearLevel,
           promotedFromSectionCode: student.sectionCode || "",
           promotedFromSectionName: student.sectionName || "",
-          promotedFromSchoolYear: sourceBatch.batchYear,
+          promotedFromSchoolYear: sourceSchoolYear,
+          sourceSchoolYear,
+          sourceSemester: sourceBatch.semester,
+          sourceYearLevel: student.yearLevel,
           promotedFromBatchKey: sourceBatch.key,
           promotedAt: new Date().toISOString(),
         });
@@ -1657,7 +1755,7 @@ function RegistrarStudentSectioning({
 
       const targetBatchKey = [
         sourceBatch.program,
-        sourceBatch.batchYear,
+        targetSchoolYear,
         targetSemester,
         "promotion",
       ].join("|");
@@ -1667,7 +1765,8 @@ function RegistrarStudentSectioning({
         id: Number(`${createdAt.replace(/\D/g, "").slice(0, 13)}${targetBatches.length}`),
         key: targetBatchKey,
         program: sourceBatch.program,
-        batchYear: sourceBatch.batchYear,
+        batchYear: targetSchoolYear.slice(0, 4),
+        schoolYear: targetSchoolYear,
         semester: targetSemester,
         submittedTo: `${sourceBatch.program} Chairperson`,
         fileName: "Academic year promoted section list",
@@ -1743,17 +1842,25 @@ function RegistrarStudentSectioning({
       ...targetBatches,
     ];
 
+    let confirmedTargetBatches = targetBatches;
+    let confirmedPromotedCount = 0;
     try {
       const result = await persistPromotedBatchesToBackend(targetBatches);
-      if (Number(result?.promotedCount) !== allPromotedStudents.length) {
+      confirmedTargetBatches = mergePromotionResultIntoBatches(targetBatches, result.students || []);
+      confirmedPromotedCount = confirmedTargetBatches.reduce((total, batch) => total + (batch.students || []).length, 0);
+      if (Number(result?.promotedCount) !== confirmedPromotedCount) {
         throw new Error("The server did not confirm every promoted student.");
       }
     } catch (error) {
-      showSystemNotification(`Promotion was not saved: ${error.message || "Please retry."}`);
+      showSystemNotification(`Promotion was not saved: ${error.message || "Please retry."}`, "error");
       return;
     }
 
-    persistSectioningData(nextBatches, nextGraduatingStudents);
+    const confirmedTargetsByKey = new Map(confirmedTargetBatches.map((batch) => [batch.key, batch]));
+    persistSectioningData(
+      nextBatches.map((batch) => confirmedTargetsByKey.get(batch.key) || batch),
+      nextGraduatingStudents
+    );
     setIrregularSubjectAssignments(nextIrregularAssignments);
     localStorage.setItem(
       IRREGULAR_SUBJECTS_KEY,
@@ -1765,19 +1872,20 @@ function RegistrarStudentSectioning({
     setSelectedYearLevel(firstTargetBatch?.sectionPlans[0]?.yearLevel || "2nd Year");
     setSelectedSectionCode(firstTargetBatch?.sectionPlans[0]?.sectionCode || "");
     setPromotionSummary({
-      promoted: allPromotedStudents.length,
+      promoted: confirmedPromotedCount,
       sections: targetBatches.reduce(
         (total, batch) => total + (batch.sectionPlans || []).length,
         0
       ),
       graduating: allGraduatingReviewList.length,
-      irregular: allPromotedStudents.filter(
+      irregular: confirmedTargetBatches.flatMap((batch) => batch.students || []).filter(
         (student) => student.studentType === "Irregular"
       ).length,
       batches: currentRolloverBatches.length,
     });
     showSystemNotification(
-      `${allPromotedStudents.length} student${allPromotedStudents.length === 1 ? "" : "s"} promoted successfully across all available departments.`
+      `${confirmedPromotedCount} student${confirmedPromotedCount === 1 ? "" : "s"} promoted successfully across all available departments.`,
+      "success"
     );
   };
 
@@ -2924,10 +3032,14 @@ function RegistrarStudentSectioning({
                           </p>
                         </button>
 
-                        <span className="whitespace-nowrap rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-600">
-                          {section.assigned} student
-                          {section.assigned === 1 ? "" : "s"}
-                        </span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="whitespace-nowrap rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-600">
+                            {section.assigned} student{section.assigned === 1 ? "" : "s"}
+                          </span>
+                          <span className={`whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold ${section.isLocked ? "bg-amber-100 text-amber-800" : "bg-blue-50 text-blue-700"}`}>
+                            {section.isLocked ? "Locked" : "Unlocked"}
+                          </span>
+                        </div>
                       </div>
 
                       {isRegistrarMode ? (
@@ -2975,6 +3087,16 @@ function RegistrarStudentSectioning({
                         >
                           Upload CSV
                         </button>
+                        {isRegistrarMode && section.isLocked ? (
+                          <button
+                            type="button"
+                            onClick={() => handleUnlockSection(section)}
+                            disabled={unlockingSectionId === Number(section.academicSectionId || section.id)}
+                            className="rounded-md border border-amber-300 px-3 py-1.5 text-[10px] font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {unlockingSectionId === Number(section.academicSectionId || section.id) ? "Unlocking..." : "Unlock Section"}
+                          </button>
+                        ) : null}
                         {isRegistrarMode ? (
                           <button
                             type="button"

@@ -191,6 +191,11 @@ namespace BlockGo.Controllers
                                 grade = record.Grade,
                                 units = record.Units,
                                 faculty = string.IsNullOrWhiteSpace(record.ProfessorName) ? record.FacultyId : record.ProfessorName,
+                                facultyId = record.FacultyId,
+                                professorName = record.ProfessorName,
+                                assignmentCycleId = record.AssignmentCycleId,
+                                academicSectionId = record.AcademicSectionId,
+                                section = record.Section,
                                 status = record.Status,
                                 gradeVersion = FinalizedGradeVersion(record)
                             }).ToArray();
@@ -1052,6 +1057,18 @@ namespace BlockGo.Controllers
                         ? Conflict(new { status = "Ambiguous", message = assignmentResolution.Message })
                         : BadRequest(new { status = "Error", message = assignmentResolution.Message });
                 var facultyAssignment = assignmentResolution.Value;
+                if (string.IsNullOrWhiteSpace(facultyAssignment.YearLevel) || facultyAssignment.AcademicSectionId <= 0)
+                {
+                    _logger.LogError(
+                        "SubmitSection rejected for faculty {FacultyId}: incomplete academic assignment metadata. AssignmentId: {AssignmentId}, YearLevel: '{YearLevel}', AcademicSectionId: {AcademicSectionId}",
+                        facultyId, facultyAssignment.Id, facultyAssignment.YearLevel, facultyAssignment.AcademicSectionId);
+                    return BadRequest(new
+                    {
+                        status = "Error",
+                        code = "SUBMISSION_METADATA_INCOMPLETE",
+                        message = "Unable to submit this section because some academic information is incomplete. Please refresh and try again."
+                    });
+                }
                 if (!FacultyAssignmentRosterService.IsOwnedBy(facultyAssignment, facultyId))
                     return Forbid();
                 if (!string.Equals(facultyAssignment.SchoolYear, canonicalSchoolYear, StringComparison.OrdinalIgnoreCase) ||
@@ -1132,6 +1149,7 @@ namespace BlockGo.Controllers
                     });
 
                 var submittedRows = new List<(string RecordId, string AssignmentCycleId, int SubmissionVersion, string StudentId, string StudentName, string Course, string SubjectCode, string SubjectTitle, string SchoolYear, string Semester, string Term, string Section, string FacultyId, string BeforeGrade, string SubmittedGrade, DateTimeOffset SubmittedAt)>();
+                await using var submissionTransaction = await conn.BeginTransactionAsync(HttpContext.RequestAborted);
 
                 using (var cmd = new NpgsqlCommand(@"
                     UPDATE pending_grade_records
@@ -1200,7 +1218,7 @@ namespace BlockGo.Controllers
                               COALESCE(faculty_id, ''),
                               COALESCE(before_submission_grade, grade, ''),
                               COALESCE(submitted_grade_snapshot, grade, ''),
-                              COALESCE(submitted_at, CURRENT_TIMESTAMP);", conn))
+                              COALESCE(submitted_at, CURRENT_TIMESTAMP);", conn, submissionTransaction))
                 {
                     cmd.Parameters.AddWithValue("faculty", effectiveFacultyId);
                     cmd.Parameters.AddWithValue("submittedBy", effectiveFacultyId);
@@ -1244,6 +1262,7 @@ namespace BlockGo.Controllers
                 var updated = submittedRows.Count;
                 if (updated == 0)
                 {
+                    await submissionTransaction.RollbackAsync(HttpContext.RequestAborted);
                     _logger.LogWarning(
                         "SubmitSection matched no staged rows for faculty {FacultyId} and section {Section}",
                         effectiveFacultyId,
@@ -1263,22 +1282,35 @@ namespace BlockGo.Controllers
                         INSERT INTO grade_submission_snapshots (
                             record_id, assignment_cycle_id, submission_version,
                             student_id, student_name, course, subject_code, subject_name,
-                            school_year, semester, term, section, academic_section_id,
+                            school_year, semester, term, year_level, section, academic_section_id,
                             faculty_id, before_grade, submitted_grade, status, submitted_at
                         )
                         VALUES (
                             @recordId, @assignmentCycleId, @submissionVersion,
                             @studentId, @studentName, @course, @subjectCode, @subjectName,
-                            @schoolYear, @semester, @term, @section, @academicSectionId,
+                            @schoolYear, @semester, @term, @yearLevel, @section, @academicSectionId,
                             @facultyId, @beforeGrade, @submittedGrade, 'SubmittedToRegistrar', @submittedAt
                         )
                         ON CONFLICT (record_id, submission_version) DO UPDATE
-                        SET before_grade = EXCLUDED.before_grade,
+                        SET assignment_cycle_id = EXCLUDED.assignment_cycle_id,
+                            student_id = EXCLUDED.student_id,
+                            student_name = EXCLUDED.student_name,
+                            course = EXCLUDED.course,
+                            subject_code = EXCLUDED.subject_code,
+                            subject_name = EXCLUDED.subject_name,
+                            school_year = EXCLUDED.school_year,
+                            semester = EXCLUDED.semester,
+                            term = EXCLUDED.term,
+                            year_level = EXCLUDED.year_level,
+                            section = EXCLUDED.section,
+                            academic_section_id = EXCLUDED.academic_section_id,
+                            faculty_id = EXCLUDED.faculty_id,
+                            before_grade = EXCLUDED.before_grade,
                             submitted_grade = EXCLUDED.submitted_grade,
                             status = 'SubmittedToRegistrar',
                             submitted_at = EXCLUDED.submitted_at,
                             returned_at = NULL,
-                            return_reason = NULL;", conn))
+                            return_reason = NULL;", conn, submissionTransaction))
                     {
                         snapCmd.Parameters.AddWithValue("recordId", row.RecordId);
                         snapCmd.Parameters.AddWithValue("assignmentCycleId", row.AssignmentCycleId);
@@ -1291,6 +1323,7 @@ namespace BlockGo.Controllers
                         snapCmd.Parameters.AddWithValue("schoolYear", row.SchoolYear);
                         snapCmd.Parameters.AddWithValue("semester", row.Semester);
                         snapCmd.Parameters.AddWithValue("term", row.Term);
+                        snapCmd.Parameters.AddWithValue("yearLevel", facultyAssignment.YearLevel);
                         snapCmd.Parameters.AddWithValue("section", row.Section);
                         snapCmd.Parameters.AddWithValue("academicSectionId", facultyAssignment.AcademicSectionId > 0 ? facultyAssignment.AcademicSectionId : (object)DBNull.Value);
                         snapCmd.Parameters.AddWithValue("facultyId", row.FacultyId);
@@ -1302,7 +1335,7 @@ namespace BlockGo.Controllers
 
                     using (var logCmd = new NpgsqlCommand(@"
                         INSERT INTO gradecorrectionlogs (recordid, oldgrade, newgrade, reasontext, approvedby, timestamp)
-                        VALUES (@rid, @old, @new, @reason, @appr, @ts);", conn))
+                        VALUES (@rid, @old, @new, @reason, @appr, @ts);", conn, submissionTransaction))
                     {
                         logCmd.Parameters.AddWithValue("rid", row.RecordId);
                         logCmd.Parameters.AddWithValue("old", string.IsNullOrWhiteSpace(row.BeforeGrade) ? (object)DBNull.Value : row.BeforeGrade);
@@ -1315,7 +1348,19 @@ namespace BlockGo.Controllers
                 }
 
                 var submittedAtIso = submittedRows[0].SubmittedAt.ToUniversalTime().ToString("O");
-                await NotifyAcademicDataChangedAsync("section_submitted_to_registrar", subjectDepartment, facultyId);
+                await submissionTransaction.CommitAsync(HttpContext.RequestAborted);
+                try
+                {
+                    await NotifyAcademicDataChangedAsync("section_submitted_to_registrar", subjectDepartment, facultyId);
+                }
+                catch (Exception notificationException)
+                {
+                    _logger.LogWarning(
+                        notificationException,
+                        "Section {Section} was submitted by {FacultyId}, but its refresh notification failed",
+                        section,
+                        facultyId);
+                }
                 return Ok(new { status = "Success", message = "Section submitted to the Registrar for review.", updated, submittedAt = submittedAtIso });
             }
             catch (GradeEncodingPeriodException ex)
@@ -1334,7 +1379,15 @@ namespace BlockGo.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error submitting section {Section} for {FacultyId}", section, facultyId);
-                return StatusCode(500, new { status = "Error", message = ex.Message });
+                var isMetadataError = ex is Npgsql.PostgresException pge && (pge.SqlState == "23502" || pge.SqlState == "23503" || pge.SqlState == "23505" || pge.SqlState == "23514");
+                return StatusCode(500, new
+                {
+                    status = "Error",
+                    code = isMetadataError ? "SUBMISSION_METADATA_INCOMPLETE" : "SECTION_SUBMISSION_FAILED",
+                    message = isMetadataError
+                        ? "Unable to submit this section because some academic information is incomplete. Please refresh and try again."
+                        : "Unable to submit this section right now. Your encoded grades were preserved. Please refresh and try again."
+                });
             }
         }
 
@@ -1470,10 +1523,10 @@ namespace BlockGo.Controllers
                 school_year VARCHAR(50),
                 semester VARCHAR(50),
                 term VARCHAR(30),
-                year_level VARCHAR(50),
-                section VARCHAR(100),
+                year_level VARCHAR(50) NOT NULL,
+                section VARCHAR(100) NOT NULL,
                 academic_section_id INTEGER,
-                faculty_id VARCHAR(255),
+                faculty_id VARCHAR(255) NOT NULL,
                 before_grade TEXT,
                 submitted_grade TEXT NOT NULL,
                 status VARCHAR(64) NOT NULL DEFAULT 'SubmittedToRegistrar',
@@ -1484,6 +1537,9 @@ namespace BlockGo.Controllers
                 transaction_id VARCHAR(255),
                 UNIQUE (record_id, submission_version)
             );
+            ALTER TABLE grade_submission_snapshots ADD COLUMN IF NOT EXISTS year_level VARCHAR(50);
+            ALTER TABLE grade_submission_snapshots ADD COLUMN IF NOT EXISTS academic_section_id INTEGER;
+            ALTER TABLE grade_submission_snapshots ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(255);
             CREATE INDEX IF NOT EXISTS idx_grade_submission_snapshots_record_id
                 ON grade_submission_snapshots (record_id, submission_version DESC);
             CREATE INDEX IF NOT EXISTS idx_grade_submission_snapshots_faculty_id
@@ -2808,7 +2864,7 @@ namespace BlockGo.Controllers
                            COALESCE(student_name, ''), COALESCE(course, ''),
                            COALESCE(subject_code, ''), COALESCE(subject_name, ''),
                            COALESCE(school_year, ''), COALESCE(semester, ''),
-                           COALESCE(term, ''), COALESCE(section, ''),
+                           COALESCE(term, ''), COALESCE(year_level, ''), COALESCE(section, ''),
                            academic_section_id, COALESCE(faculty_id, ''),
                            COALESCE(before_grade, ''), COALESCE(submitted_grade, ''),
                            COALESCE(status, 'SubmittedToRegistrar'),
@@ -2868,7 +2924,8 @@ namespace BlockGo.Controllers
                 while (await reader.ReadAsync(HttpContext.RequestAborted))
                 {
                     var course = reader.GetString(6);
-                    var sec = reader.GetString(12);
+                    var yearLvl = reader.GetString(12);
+                    var sec = reader.GetString(13);
                     if (actorRole == "department_admin")
                     {
                         var inDepartment =
@@ -2892,17 +2949,18 @@ namespace BlockGo.Controllers
                         schoolYear = reader.GetString(9),
                         semester = reader.GetString(10),
                         term = reader.GetString(11),
+                        yearLevel = yearLvl,
                         section = sec,
-                        academicSectionId = reader.IsDBNull(13) ? (int?)null : reader.GetInt32(13),
-                        facultyId = reader.GetString(14),
-                        beforeGrade = reader.GetString(15),
-                        submittedGrade = reader.GetString(16),
-                        status = reader.GetString(17),
-                        submittedAt = reader.IsDBNull(18) ? "" : reader.GetFieldValue<DateTimeOffset>(18).ToUniversalTime().ToString("O"),
-                        returnedAt = reader.IsDBNull(19) ? "" : reader.GetFieldValue<DateTimeOffset>(19).ToUniversalTime().ToString("O"),
-                        returnReason = reader.GetString(20),
-                        finalizedAt = reader.IsDBNull(21) ? "" : reader.GetFieldValue<DateTimeOffset>(21).ToUniversalTime().ToString("O"),
-                        transactionId = reader.GetString(22)
+                        academicSectionId = reader.IsDBNull(14) ? (int?)null : reader.GetInt32(14),
+                        facultyId = reader.GetString(15),
+                        beforeGrade = reader.GetString(16),
+                        submittedGrade = reader.GetString(17),
+                        status = reader.GetString(18),
+                        submittedAt = reader.IsDBNull(19) ? "" : reader.GetFieldValue<DateTimeOffset>(19).ToUniversalTime().ToString("O"),
+                        returnedAt = reader.IsDBNull(20) ? "" : reader.GetFieldValue<DateTimeOffset>(20).ToUniversalTime().ToString("O"),
+                        returnReason = reader.GetString(21),
+                        finalizedAt = reader.IsDBNull(22) ? "" : reader.GetFieldValue<DateTimeOffset>(22).ToUniversalTime().ToString("O"),
+                        transactionId = reader.GetString(23)
                     });
                 }
 
@@ -3858,7 +3916,7 @@ namespace BlockGo.Controllers
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             if (recordIds.Length == 0)
-                return BadRequest(new { status = "Error", message = "At least one approved grade record is required." });
+                return BadRequest(new { status = "Error", code = "FINALIZATION_RECORD_REQUIRED", message = "At least one approved grade record is required." });
 
             try
             {
@@ -3871,46 +3929,467 @@ namespace BlockGo.Controllers
                 var queue = await RegistrarFinalizationScopeService.GetCurrentApprovedAsync(
                     connection, activePeriod.Term, activePeriod.Semester, HttpContext.RequestAborted);
                 var requested = new HashSet<string>(recordIds, StringComparer.OrdinalIgnoreCase);
+                var queueById = queue.ToDictionary(r => r.Id, StringComparer.OrdinalIgnoreCase);
                 var approvedRecords = queue.Where(record => requested.Contains(record.Id)).ToArray();
-                if (approvedRecords.Length != recordIds.Length)
+
+                foreach (var id in recordIds)
                 {
-                    var finalizedLedgerRecords = await LoadFinalizedLedgerRecordsAsync(invokerId);
-                    var finalizedRequested = finalizedLedgerRecords
-                        .Where(record => requested.Contains(record.Id))
-                        .ToArray();
-                    if (finalizedRequested.Length == recordIds.Length)
-                    {
-                        if (finalizedRequested.Any(record => !SameFinalizedWorkload(finalizedRequested[0], record)))
-                            return Conflict(new { status = "Error", message = "The finalized records do not belong to one academic workload." });
-                        var finalizedWorkload = finalizedLedgerRecords
-                            .Where(record => SameFinalizedWorkload(finalizedRequested[0], record))
-                            .ToArray();
-                        var existingArchive = await TryArchiveFinalizedRecordsAsync(
-                            connection, finalizedWorkload, invokerId, HttpContext.RequestAborted);
-                        return Ok(new
-                        {
-                            status = "Success",
-                            message = existingArchive.Status == "AVAILABLE"
-                                ? "The approved section was already finalized on the ledger and its grading sheet is available in the IPFS Vault."
-                                : "The approved section was already finalized on the ledger; grading-sheet archival is pending and can be retried without re-finalizing Fabric.",
-                            finalizedCount = finalizedWorkload.Length,
-                            idempotent = true,
-                            ipfsArchiveStatus = existingArchive.Status,
-                            ipfsCid = existingArchive.Cid,
-                            archiveFailureCode = existingArchive.FailureCode,
-                            transactionIds = finalizedWorkload
-                                .Select(record => record.TransactionId)
-                                .Where(transactionId => !string.IsNullOrWhiteSpace(transactionId))
-                                .Distinct(StringComparer.OrdinalIgnoreCase)
-                                .ToArray()
-                        });
-                    }
-                    return Conflict(new { status = "Error", message = "One or more grades are no longer in the current Finalize queue. Refresh before retrying." });
+                    if (!await CanAccessGradeRecordAsync(connection, id, invokerId, "registrar"))
+                        return Forbid();
                 }
 
-                foreach (var record in approvedRecords)
-                    if (!await CanAccessGradeRecordAsync(connection, record.Id, invokerId, "registrar"))
-                        return Forbid();
+                // Read staging directly instead of trusting the assignment-filtered queue.
+                // A broken assignment join must fail closed before any Fabric submission,
+                // while an already-cleaned idempotent retry may legitimately have no row.
+                var stagedRequested = await GradeSubmissionSnapshotService.LoadStagedAsync(
+                    connection, recordIds, cancellationToken: HttpContext.RequestAborted);
+                var stagedById = stagedRequested.ToDictionary(record => record.Id, StringComparer.OrdinalIgnoreCase);
+                var incompleteStaged = stagedRequested
+                    .Select(record => new
+                    {
+                        Record = record,
+                        Missing = GradeSubmissionSnapshotService.MissingRequiredMetadata(record)
+                    })
+                    .FirstOrDefault(result => result.Missing.Count > 0);
+                if (incompleteStaged != null)
+                {
+                    _logger.LogError(
+                        "FinalizeGrades aborted before Fabric access: staged record {RecordId} is missing {MissingFields}. Requested records: {RecordIds}",
+                        incompleteStaged.Record.Id,
+                        string.Join(", ", incompleteStaged.Missing),
+                        recordIds);
+                    return BadRequest(new
+                    {
+                        status = "Error",
+                        code = "FINALIZATION_METADATA_INCOMPLETE",
+                        message = "Unable to finalize this section because some academic information is incomplete. No approved grades were lost. Please refresh and try again."
+                    });
+                }
+
+                // CHECK FABRIC BEFORE ANY NEW FINALIZATION ATTEMPT (IDEMPOTENCY & SAFE RETRY)
+                var finalizedLedgerRecords = await LoadFinalizedLedgerRecordsAsync(invokerId);
+                var finalizedById = finalizedLedgerRecords
+                    .Where(r => !string.IsNullOrWhiteSpace(r.Id))
+                    .ToDictionary(r => r.Id, StringComparer.OrdinalIgnoreCase);
+
+                var alreadyFinalizedRequested = recordIds
+                    .Where(id => finalizedById.ContainsKey(id))
+                    .Select(id => finalizedById[id])
+                    .ToArray();
+                var unfinalizedRecordIds = recordIds
+                    .Where(id => !finalizedById.ContainsKey(id))
+                    .ToArray();
+
+                // Case 1: ALL requested records are already finalized on Fabric
+                if (alreadyFinalizedRequested.Length == recordIds.Length)
+                {
+                    if (alreadyFinalizedRequested.Any(r => !SameFinalizedWorkload(alreadyFinalizedRequested[0], r)))
+                        return Conflict(new { status = "Error", code = "FINALIZATION_WORKLOAD_MISMATCH", message = "The finalized records do not belong to one academic workload." });
+
+                    // Reconcile against staging if still present in pending_grade_records
+                    foreach (var finalized in alreadyFinalizedRequested)
+                    {
+                        if (stagedById.TryGetValue(finalized.Id, out var staged) && !GradeLedgerMatch.IsSameGrade(staged, finalized))
+                        {
+                            return Conflict(new
+                            {
+                                status = "Error",
+                                code = "FINALIZATION_RECONCILIATION_REQUIRED",
+                                message = "This section requires reconciliation before it can be finalized. No approved grades were lost."
+                            });
+                        }
+                    }
+
+                    // Repair grade_submission_snapshots and clean up pending_grade_records
+                    await using var reconcileTransaction = await connection.BeginTransactionAsync(HttpContext.RequestAborted);
+                    var currentReconcileStaging = await GradeSubmissionSnapshotService.LoadStagedAsync(
+                        connection, recordIds, reconcileTransaction, HttpContext.RequestAborted);
+                    if (currentReconcileStaging.Count != stagedRequested.Count)
+                        throw new InvalidOperationException("Approved staging changed before already-finalized reconciliation.");
+                    await GradeSubmissionSnapshotService.PersistVerifiedFinalizationAsync(
+                        connection,
+                        reconcileTransaction,
+                        currentReconcileStaging,
+                        alreadyFinalizedRequested,
+                        HttpContext.RequestAborted);
+                    await using (var archiveSnapshots = new NpgsqlCommand(@"
+                        INSERT INTO grade_submission_snapshots (
+                            record_id, assignment_cycle_id, submission_version,
+                            student_id, student_name, course, subject_code, subject_name,
+                            school_year, semester, term, year_level, section, academic_section_id,
+                            faculty_id, before_grade, submitted_grade, status,
+                            submitted_at, returned_at, return_reason, finalized_at, transaction_id
+                        )
+                        SELECT
+                            pgr.id,
+                            pgr.assignment_cycle_id,
+                            GREATEST(COALESCE(pgr.submission_version, 1), 1),
+                            COALESCE(NULLIF(BTRIM(pgr.student_no), ''), pgr.student_hash, ''),
+                            COALESCE(pgr.student_name, ''),
+                            COALESCE(pgr.course, ''),
+                            COALESCE(pgr.subject_code, ''),
+                            COALESCE(pgr.subject_title, ''),
+                            COALESCE(pgr.school_year, ''),
+                            COALESCE(pgr.semester, ''),
+                            COALESCE(pgr.term, ''),
+                            COALESCE(NULLIF(BTRIM(academic_section.year_level::text), ''), NULLIF(BTRIM(fs.year_level), '')),
+                            COALESCE(pgr.section, ''),
+                            fs.academic_section_id,
+                            COALESCE(pgr.faculty_id, ''),
+                            COALESCE(NULLIF(pgr.before_submission_grade, ''), pgr.grade, ''),
+                            COALESCE(NULLIF(pgr.submitted_grade_snapshot, ''), pgr.grade, ''),
+                            'Finalized',
+                            COALESCE(pgr.submitted_at, pgr.recorded_at, CURRENT_TIMESTAMP),
+                            pgr.returned_at,
+                            COALESCE(pgr.return_reason, pgr.note),
+                            CURRENT_TIMESTAMP,
+                            @transactionId
+                        FROM pending_grade_records pgr
+                        LEFT JOIN facultysections fs
+                            ON fs.id::text = pgr.assignment_cycle_id
+                        LEFT JOIN academicsections academic_section
+                            ON academic_section.id = fs.academic_section_id
+                        WHERE pgr.id = ANY(@recordIds)
+                        ON CONFLICT (record_id, submission_version) DO UPDATE
+                        SET status = 'Finalized',
+                            finalized_at = CURRENT_TIMESTAMP,
+                            transaction_id = COALESCE(NULLIF(EXCLUDED.transaction_id, ''), grade_submission_snapshots.transaction_id),
+                            assignment_cycle_id = COALESCE(NULLIF(EXCLUDED.assignment_cycle_id, ''), grade_submission_snapshots.assignment_cycle_id),
+                            course = COALESCE(NULLIF(EXCLUDED.course, ''), grade_submission_snapshots.course),
+                            subject_code = COALESCE(NULLIF(EXCLUDED.subject_code, ''), grade_submission_snapshots.subject_code),
+                            subject_name = COALESCE(NULLIF(EXCLUDED.subject_name, ''), grade_submission_snapshots.subject_name),
+                            school_year = COALESCE(NULLIF(EXCLUDED.school_year, ''), grade_submission_snapshots.school_year),
+                            semester = COALESCE(NULLIF(EXCLUDED.semester, ''), grade_submission_snapshots.semester),
+                            term = COALESCE(NULLIF(EXCLUDED.term, ''), grade_submission_snapshots.term),
+                            year_level = COALESCE(NULLIF(EXCLUDED.year_level, ''), grade_submission_snapshots.year_level),
+                            section = COALESCE(NULLIF(EXCLUDED.section, ''), grade_submission_snapshots.section),
+                            academic_section_id = COALESCE(EXCLUDED.academic_section_id, grade_submission_snapshots.academic_section_id),
+                            faculty_id = COALESCE(NULLIF(EXCLUDED.faculty_id, ''), grade_submission_snapshots.faculty_id);", connection, reconcileTransaction))
+                    {
+                        archiveSnapshots.Parameters.AddWithValue("recordIds", recordIds);
+                        var txId = alreadyFinalizedRequested.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.TransactionId))?.TransactionId ?? string.Empty;
+                        archiveSnapshots.Parameters.AddWithValue("transactionId", txId);
+                        await archiveSnapshots.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+                    }
+
+                    // Repair transaction_id and academic metadata from finalized records
+                    foreach (var fr in alreadyFinalizedRequested)
+                    {
+                        await using var repairCmd = new NpgsqlCommand(@"
+                            UPDATE grade_submission_snapshots
+                            SET status = 'Finalized',
+                                finalized_at = COALESCE(finalized_at, CURRENT_TIMESTAMP),
+                                transaction_id = COALESCE(NULLIF(@txId, ''), transaction_id),
+                                year_level = CASE WHEN COALESCE(year_level, '') = '' THEN @yearLevel ELSE year_level END,
+                                academic_section_id = COALESCE(academic_section_id, @academicSectionId)
+                            WHERE record_id = @recId;", connection, reconcileTransaction);
+                        repairCmd.Parameters.AddWithValue("txId", fr.TransactionId ?? string.Empty);
+                        repairCmd.Parameters.AddWithValue("yearLevel", fr.YearLevel ?? string.Empty);
+                        repairCmd.Parameters.AddWithValue("academicSectionId", fr.AcademicSectionId.HasValue && fr.AcademicSectionId.Value > 0 ? (object)fr.AcademicSectionId.Value : DBNull.Value);
+                        repairCmd.Parameters.AddWithValue("recId", fr.Id);
+                        await repairCmd.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+                    }
+
+                    await using (var cleanup = new NpgsqlCommand(@"
+                        DELETE FROM pending_grade_records
+                        WHERE id = ANY(@recordIds)
+                          AND LOWER(TRIM(status)) IN ('submittedtoregistrar', 'departmentapproved');", connection, reconcileTransaction))
+                    {
+                        cleanup.Parameters.AddWithValue("recordIds", recordIds);
+                        await cleanup.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+                    }
+                    await reconcileTransaction.CommitAsync(HttpContext.RequestAborted);
+
+                    var finalizedWorkload = finalizedLedgerRecords
+                        .Where(record => SameFinalizedWorkload(alreadyFinalizedRequested[0], record))
+                        .ToArray();
+                    var reconcileArchive = await TryArchiveFinalizedRecordsAsync(
+                        connection, finalizedWorkload, invokerId, HttpContext.RequestAborted);
+
+                    try
+                    {
+                        await NotifyAcademicDataChangedAsync("grade_finalized", alreadyFinalizedRequested[0].Course, invokerId);
+                    }
+                    catch (Exception notificationException)
+                    {
+                        _logger.LogWarning(notificationException, "Already-finalized grade batch was reconciled, but its notification failed");
+                    }
+
+                    return Ok(new
+                    {
+                        status = "Success",
+                        code = reconcileArchive.Status == "AVAILABLE" ? "FINALIZATION_SUCCESS" : "FINALIZATION_ARCHIVE_PENDING",
+                        message = reconcileArchive.Status == "AVAILABLE"
+                            ? "This section was already finalized successfully. The Grades Ledger has been updated."
+                            : "Grades were finalized successfully, but the grading sheet is still being prepared. You can retry the document attachment without finalizing the grades again.",
+                        finalizedCount = alreadyFinalizedRequested.Length,
+                        idempotent = true,
+                        ipfsArchiveStatus = reconcileArchive.Status,
+                        ipfsCid = reconcileArchive.Cid,
+                        archiveFailureCode = reconcileArchive.FailureCode,
+                        transactionIds = finalizedWorkload
+                            .Select(record => record.TransactionId)
+                            .Where(transactionId => !string.IsNullOrWhiteSpace(transactionId))
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToArray()
+                    });
+                }
+
+                // Case 2: PARTIAL Fabric finalization
+                if (alreadyFinalizedRequested.Length > 0 && unfinalizedRecordIds.Length > 0)
+                {
+                    // Reconcile already-finalized records against staging
+                    foreach (var finalized in alreadyFinalizedRequested)
+                    {
+                        if (stagedById.TryGetValue(finalized.Id, out var staged) && !GradeLedgerMatch.IsSameGrade(staged, finalized))
+                        {
+                            return Conflict(new
+                            {
+                                status = "Error",
+                                code = "FINALIZATION_RECONCILIATION_REQUIRED",
+                                message = "This section requires reconciliation before it can be finalized. No approved grades were lost."
+                            });
+                        }
+                    }
+
+                    // Check unfinalized records in queue
+                    var unfinalizedApproved = unfinalizedRecordIds
+                        .Where(id => queueById.ContainsKey(id))
+                        .Select(id => queueById[id])
+                        .ToArray();
+                    if (unfinalizedApproved.Length != unfinalizedRecordIds.Length)
+                    {
+                        return Conflict(new
+                        {
+                            status = "Error",
+                            code = "FINALIZATION_STATE_CHANGED",
+                            message = "This section was updated while you were working. Please refresh the page before trying again."
+                        });
+                    }
+
+                    // Validate metadata for unfinalized records
+                    var incompleteUnfinalized = unfinalizedApproved.FirstOrDefault(r =>
+                        string.IsNullOrWhiteSpace(r.AssignmentCycleId) ||
+                        string.IsNullOrWhiteSpace(r.YearLevel) ||
+                        string.IsNullOrWhiteSpace(r.Section) ||
+                        string.IsNullOrWhiteSpace(r.SchoolYear) ||
+                        string.IsNullOrWhiteSpace(r.Semester) ||
+                        string.IsNullOrWhiteSpace(r.Term) ||
+                        string.IsNullOrWhiteSpace(r.SubjectCode));
+                    if (incompleteUnfinalized != null)
+                    {
+                        _logger.LogError(
+                            "FinalizeGrades aborted (partial batch): unfinalized record {RecordId} has incomplete metadata.",
+                            incompleteUnfinalized.Id);
+                        return BadRequest(new
+                        {
+                            status = "Error",
+                            code = "FINALIZATION_METADATA_INCOMPLETE",
+                            message = "Unable to finalize this section because some academic information is incomplete. No approved grades were lost. Please refresh and try again."
+                        });
+                    }
+
+                    // Finalize only the genuinely unfinalized records on Fabric
+                    var partialResponse = await _blockchainService.FinalizeApprovedGradesAsync(unfinalizedApproved, invokerId);
+                    using var partialDoc = JsonDocument.Parse(partialResponse);
+                    var partialRoot = partialDoc.RootElement;
+                    var partialJson = partialRoot.TryGetProperty("details", out var pDetails) ? pDetails.GetString() : partialRoot.GetRawText();
+                    if (string.IsNullOrWhiteSpace(partialJson))
+                        throw new InvalidOperationException("Fabric did not return the finalized grade batch for verification.");
+
+                    var newlyFinalized = JsonSerializer.Deserialize<List<AcademicRecord>>(
+                        partialJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<AcademicRecord>();
+                    var newlyById = newlyFinalized.Where(r => !string.IsNullOrWhiteSpace(r.Id)).ToDictionary(r => r.Id, StringComparer.OrdinalIgnoreCase);
+                    var unverifiedPartial = unfinalizedApproved.FirstOrDefault(staged =>
+                        !newlyById.TryGetValue(staged.Id, out var finalized) ||
+                        !GradeLedgerMatch.IsSameGrade(staged, finalized) ||
+                        !string.Equals(finalized.Status, "Finalized", StringComparison.OrdinalIgnoreCase));
+                    if (unverifiedPartial != null)
+                        throw new InvalidOperationException($"Fabric grade {unverifiedPartial.Id} did not verify against its approved staging snapshot.");
+
+                    // Combine all finalized records for cleanup and archive
+                    var allCommitted = alreadyFinalizedRequested.Concat(newlyFinalized).ToList();
+
+                    await using var partialTransaction = await connection.BeginTransactionAsync(HttpContext.RequestAborted);
+                    var currentPartialStaging = await GradeSubmissionSnapshotService.LoadStagedAsync(
+                        connection, recordIds, partialTransaction, HttpContext.RequestAborted);
+                    if (currentPartialStaging.Count != stagedRequested.Count)
+                        throw new InvalidOperationException("Approved staging changed before partial finalization cleanup.");
+                    await GradeSubmissionSnapshotService.PersistVerifiedFinalizationAsync(
+                        connection,
+                        partialTransaction,
+                        currentPartialStaging,
+                        allCommitted,
+                        HttpContext.RequestAborted);
+                    await using (var archiveSnapshots = new NpgsqlCommand(@"
+                        INSERT INTO grade_submission_snapshots (
+                            record_id, assignment_cycle_id, submission_version,
+                            student_id, student_name, course, subject_code, subject_name,
+                            school_year, semester, term, year_level, section, academic_section_id,
+                            faculty_id, before_grade, submitted_grade, status,
+                            submitted_at, returned_at, return_reason, finalized_at, transaction_id
+                        )
+                        SELECT
+                            pgr.id,
+                            pgr.assignment_cycle_id,
+                            GREATEST(COALESCE(pgr.submission_version, 1), 1),
+                            COALESCE(NULLIF(BTRIM(pgr.student_no), ''), pgr.student_hash, ''),
+                            COALESCE(pgr.student_name, ''),
+                            COALESCE(pgr.course, ''),
+                            COALESCE(pgr.subject_code, ''),
+                            COALESCE(pgr.subject_title, ''),
+                            COALESCE(pgr.school_year, ''),
+                            COALESCE(pgr.semester, ''),
+                            COALESCE(pgr.term, ''),
+                            COALESCE(NULLIF(BTRIM(academic_section.year_level::text), ''), NULLIF(BTRIM(fs.year_level), '')),
+                            COALESCE(pgr.section, ''),
+                            fs.academic_section_id,
+                            COALESCE(pgr.faculty_id, ''),
+                            COALESCE(NULLIF(pgr.before_submission_grade, ''), pgr.grade, ''),
+                            COALESCE(NULLIF(pgr.submitted_grade_snapshot, ''), pgr.grade, ''),
+                            'Finalized',
+                            COALESCE(pgr.submitted_at, pgr.recorded_at, CURRENT_TIMESTAMP),
+                            pgr.returned_at,
+                            COALESCE(pgr.return_reason, pgr.note),
+                            CURRENT_TIMESTAMP,
+                            @transactionId
+                        FROM pending_grade_records pgr
+                        LEFT JOIN facultysections fs
+                            ON fs.id::text = pgr.assignment_cycle_id
+                        LEFT JOIN academicsections academic_section
+                            ON academic_section.id = fs.academic_section_id
+                        WHERE pgr.id = ANY(@recordIds)
+                        ON CONFLICT (record_id, submission_version) DO UPDATE
+                        SET status = 'Finalized',
+                            finalized_at = CURRENT_TIMESTAMP,
+                            transaction_id = COALESCE(NULLIF(EXCLUDED.transaction_id, ''), grade_submission_snapshots.transaction_id),
+                            assignment_cycle_id = COALESCE(NULLIF(EXCLUDED.assignment_cycle_id, ''), grade_submission_snapshots.assignment_cycle_id),
+                            course = COALESCE(NULLIF(EXCLUDED.course, ''), grade_submission_snapshots.course),
+                            subject_code = COALESCE(NULLIF(EXCLUDED.subject_code, ''), grade_submission_snapshots.subject_code),
+                            subject_name = COALESCE(NULLIF(EXCLUDED.subject_name, ''), grade_submission_snapshots.subject_name),
+                            school_year = COALESCE(NULLIF(EXCLUDED.school_year, ''), grade_submission_snapshots.school_year),
+                            semester = COALESCE(NULLIF(EXCLUDED.semester, ''), grade_submission_snapshots.semester),
+                            term = COALESCE(NULLIF(EXCLUDED.term, ''), grade_submission_snapshots.term),
+                            year_level = COALESCE(NULLIF(EXCLUDED.year_level, ''), grade_submission_snapshots.year_level),
+                            section = COALESCE(NULLIF(EXCLUDED.section, ''), grade_submission_snapshots.section),
+                            academic_section_id = COALESCE(EXCLUDED.academic_section_id, grade_submission_snapshots.academic_section_id),
+                            faculty_id = COALESCE(NULLIF(EXCLUDED.faculty_id, ''), grade_submission_snapshots.faculty_id);", connection, partialTransaction))
+                    {
+                        archiveSnapshots.Parameters.AddWithValue("recordIds", recordIds);
+                        var txId = allCommitted.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.TransactionId))?.TransactionId ?? string.Empty;
+                        archiveSnapshots.Parameters.AddWithValue("transactionId", txId);
+                        await archiveSnapshots.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+                    }
+
+                    foreach (var fr in allCommitted.Where(r => !string.IsNullOrWhiteSpace(r.TransactionId)))
+                    {
+                        await using var updateTx = new NpgsqlCommand(@"
+                            UPDATE grade_submission_snapshots
+                            SET transaction_id = @txId
+                            WHERE record_id = @recId AND status = 'Finalized';", connection, partialTransaction);
+                        updateTx.Parameters.AddWithValue("txId", fr.TransactionId);
+                        updateTx.Parameters.AddWithValue("recId", fr.Id);
+                        await updateTx.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+                    }
+
+                    await using (var cleanup = new NpgsqlCommand(@"
+                        DELETE FROM pending_grade_records
+                        WHERE id = ANY(@recordIds)
+                          AND LOWER(TRIM(status)) IN ('submittedtoregistrar', 'departmentapproved');", connection, partialTransaction))
+                    {
+                        cleanup.Parameters.AddWithValue("recordIds", recordIds);
+                        await cleanup.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+                    }
+                    await partialTransaction.CommitAsync(HttpContext.RequestAborted);
+
+                    var partialArchive = await TryArchiveFinalizedRecordsAsync(
+                        connection, allCommitted, invokerId, HttpContext.RequestAborted);
+
+                    try
+                    {
+                        await NotifyAcademicDataChangedAsync("grade_finalized", allCommitted[0].Course, invokerId);
+                    }
+                    catch (Exception notificationException)
+                    {
+                        _logger.LogWarning(notificationException, "Partial batch finalized, but notification could not be delivered");
+                    }
+
+                    return Ok(new
+                    {
+                        status = "Success",
+                        code = partialArchive.Status == "AVAILABLE" ? "FINALIZATION_SUCCESS" : "FINALIZATION_ARCHIVE_PENDING",
+                        message = partialArchive.Status == "AVAILABLE"
+                            ? "Grades finalized successfully. The finalized grades are now available in the Grades Ledger."
+                            : "Grades were finalized successfully, but the grading sheet is still being prepared. You can retry the document attachment without finalizing the grades again.",
+                        finalizedCount = allCommitted.Count,
+                        ipfsArchiveStatus = partialArchive.Status,
+                        ipfsCid = partialArchive.Cid,
+                        archiveFailureCode = partialArchive.FailureCode,
+                        transactionIds = allCommitted
+                            .Select(record => record.TransactionId)
+                            .Where(transactionId => !string.IsNullOrWhiteSpace(transactionId))
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToArray()
+                    });
+                }
+
+                // Case 3: ALL requested records are UNFINALIZED on Fabric (Standard Path)
+                if (approvedRecords.Length != recordIds.Length)
+                {
+                    // Check if requested records exist in pending_grade_records but failed to resolve assignment metadata
+                    var missingIds = recordIds.Where(id => !queueById.ContainsKey(id)).ToArray();
+                    await using var checkMissingCmd = new NpgsqlCommand(@"
+                        SELECT COUNT(*) FROM pending_grade_records pgr
+                        WHERE pgr.id = ANY(@missingIds)
+                          AND LOWER(TRIM(pgr.status)) IN ('submittedtoregistrar', 'departmentapproved')
+                          AND LOWER(TRIM(pgr.semester)) = LOWER(TRIM(@semester))
+                          AND LOWER(TRIM(pgr.term)) = LOWER(TRIM(@term));", connection);
+                    checkMissingCmd.Parameters.AddWithValue("missingIds", missingIds);
+                    checkMissingCmd.Parameters.AddWithValue("semester", activePeriod.Semester);
+                    checkMissingCmd.Parameters.AddWithValue("term", activePeriod.Term);
+                    var stagedWithMissingMetadataCount = Convert.ToInt32(await checkMissingCmd.ExecuteScalarAsync(HttpContext.RequestAborted));
+                    if (stagedWithMissingMetadataCount > 0)
+                    {
+                        _logger.LogError(
+                            "FinalizeGrades aborted: {Count} requested record(s) exist in pending_grade_records but could not resolve active facultysections or academic section metadata",
+                            stagedWithMissingMetadataCount);
+                        return BadRequest(new
+                        {
+                            status = "Error",
+                            code = "FINALIZATION_METADATA_INCOMPLETE",
+                            message = "Unable to finalize this section because some academic information is incomplete. No approved grades were lost. Please refresh and try again."
+                        });
+                    }
+
+                    return Conflict(new
+                    {
+                        status = "Error",
+                        code = "FINALIZATION_STATE_CHANGED",
+                        message = "This section was updated while you were working. Please refresh the page before trying again."
+                    });
+                }
+
+                // Validate complete metadata for all approved records before touching Fabric
+                var incompleteRecord = approvedRecords.FirstOrDefault(r =>
+                    string.IsNullOrWhiteSpace(r.AssignmentCycleId) ||
+                    string.IsNullOrWhiteSpace(r.YearLevel) ||
+                    string.IsNullOrWhiteSpace(r.Section) ||
+                    string.IsNullOrWhiteSpace(r.SchoolYear) ||
+                    string.IsNullOrWhiteSpace(r.Semester) ||
+                    string.IsNullOrWhiteSpace(r.Term) ||
+                    string.IsNullOrWhiteSpace(r.SubjectCode));
+                if (incompleteRecord != null)
+                {
+                    _logger.LogError(
+                        "FinalizeGrades aborted: record {RecordId} has incomplete academic metadata. AssignmentCycleId: '{AssignmentCycleId}', YearLevel: '{YearLevel}', Section: '{Section}', SchoolYear: '{SchoolYear}', Semester: '{Semester}', Term: '{Term}', Subject: '{SubjectCode}'",
+                        incompleteRecord.Id, incompleteRecord.AssignmentCycleId, incompleteRecord.YearLevel, incompleteRecord.Section, incompleteRecord.SchoolYear, incompleteRecord.Semester, incompleteRecord.Term, incompleteRecord.SubjectCode);
+                    return BadRequest(new
+                    {
+                        status = "Error",
+                        code = "FINALIZATION_METADATA_INCOMPLETE",
+                        message = "Unable to finalize this section because some academic information is incomplete. No approved grades were lost. Please refresh and try again."
+                    });
+                }
 
                 var middlewareResponse = await _blockchainService.FinalizeApprovedGradesAsync(approvedRecords, invokerId);
                 using var responseDocument = JsonDocument.Parse(middlewareResponse);
@@ -3924,24 +4403,34 @@ namespace BlockGo.Controllers
                 var finalizedRecords = JsonSerializer.Deserialize<List<AcademicRecord>>(
                     detailsJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                     ?? new List<AcademicRecord>();
-                var finalizedById = finalizedRecords
+                var finalizedByIdVerification = finalizedRecords
                     .Where(record => !string.IsNullOrWhiteSpace(record.Id))
                     .ToDictionary(record => record.Id, StringComparer.OrdinalIgnoreCase);
                 var unverified = approvedRecords.FirstOrDefault(staged =>
-                    !finalizedById.TryGetValue(staged.Id, out var finalized) ||
+                    !finalizedByIdVerification.TryGetValue(staged.Id, out var finalized) ||
                     !GradeLedgerMatch.IsSameGrade(staged, finalized) ||
                     !string.Equals(finalized.Status, "Finalized", StringComparison.OrdinalIgnoreCase));
                 if (unverified != null)
                     throw new InvalidOperationException($"Fabric grade {unverified.Id} did not verify against its approved staging snapshot.");
 
                 await using var cleanupTransaction = await connection.BeginTransactionAsync(HttpContext.RequestAborted);
+                var currentFinalizationStaging = await GradeSubmissionSnapshotService.LoadStagedAsync(
+                    connection, recordIds, cleanupTransaction, HttpContext.RequestAborted);
+                if (currentFinalizationStaging.Count != stagedRequested.Count)
+                    throw new InvalidOperationException("Approved staging changed before finalization cleanup.");
+                await GradeSubmissionSnapshotService.PersistVerifiedFinalizationAsync(
+                    connection,
+                    cleanupTransaction,
+                    currentFinalizationStaging,
+                    finalizedRecords,
+                    HttpContext.RequestAborted);
                 await using (var archiveSnapshots = new NpgsqlCommand(@"
                     INSERT INTO grade_submission_snapshots (
                         record_id, assignment_cycle_id, submission_version,
                         student_id, student_name, course, subject_code, subject_name,
-                        school_year, semester, term, section,
+                        school_year, semester, term, year_level, section, academic_section_id,
                         faculty_id, before_grade, submitted_grade, status,
-                        submitted_at, returned_at, return_reason, finalized_at
+                        submitted_at, returned_at, return_reason, finalized_at, transaction_id
                     )
                     SELECT
                         pgr.id,
@@ -3955,7 +4444,9 @@ namespace BlockGo.Controllers
                         COALESCE(pgr.school_year, ''),
                         COALESCE(pgr.semester, ''),
                         COALESCE(pgr.term, ''),
+                        COALESCE(NULLIF(BTRIM(academic_section.year_level::text), ''), NULLIF(BTRIM(fs.year_level), '')),
                         COALESCE(pgr.section, ''),
+                        fs.academic_section_id,
                         COALESCE(pgr.faculty_id, ''),
                         COALESCE(NULLIF(pgr.before_submission_grade, ''), pgr.grade, ''),
                         COALESCE(NULLIF(pgr.submitted_grade_snapshot, ''), pgr.grade, ''),
@@ -3963,16 +4454,47 @@ namespace BlockGo.Controllers
                         COALESCE(pgr.submitted_at, pgr.recorded_at, CURRENT_TIMESTAMP),
                         pgr.returned_at,
                         COALESCE(pgr.return_reason, pgr.note),
-                        CURRENT_TIMESTAMP
+                        CURRENT_TIMESTAMP,
+                        @transactionId
                     FROM pending_grade_records pgr
+                    LEFT JOIN facultysections fs
+                        ON fs.id::text = pgr.assignment_cycle_id
+                    LEFT JOIN academicsections academic_section
+                        ON academic_section.id = fs.academic_section_id
                     WHERE pgr.id = ANY(@recordIds)
                     ON CONFLICT (record_id, submission_version) DO UPDATE
                     SET status = 'Finalized',
-                        finalized_at = CURRENT_TIMESTAMP;", connection, cleanupTransaction))
+                        finalized_at = CURRENT_TIMESTAMP,
+                        transaction_id = COALESCE(NULLIF(EXCLUDED.transaction_id, ''), grade_submission_snapshots.transaction_id),
+                        assignment_cycle_id = COALESCE(NULLIF(EXCLUDED.assignment_cycle_id, ''), grade_submission_snapshots.assignment_cycle_id),
+                        course = COALESCE(NULLIF(EXCLUDED.course, ''), grade_submission_snapshots.course),
+                        subject_code = COALESCE(NULLIF(EXCLUDED.subject_code, ''), grade_submission_snapshots.subject_code),
+                        subject_name = COALESCE(NULLIF(EXCLUDED.subject_name, ''), grade_submission_snapshots.subject_name),
+                        school_year = COALESCE(NULLIF(EXCLUDED.school_year, ''), grade_submission_snapshots.school_year),
+                        semester = COALESCE(NULLIF(EXCLUDED.semester, ''), grade_submission_snapshots.semester),
+                        term = COALESCE(NULLIF(EXCLUDED.term, ''), grade_submission_snapshots.term),
+                        year_level = COALESCE(NULLIF(EXCLUDED.year_level, ''), grade_submission_snapshots.year_level),
+                        section = COALESCE(NULLIF(EXCLUDED.section, ''), grade_submission_snapshots.section),
+                        academic_section_id = COALESCE(EXCLUDED.academic_section_id, grade_submission_snapshots.academic_section_id),
+                        faculty_id = COALESCE(NULLIF(EXCLUDED.faculty_id, ''), grade_submission_snapshots.faculty_id);", connection, cleanupTransaction))
                 {
                     archiveSnapshots.Parameters.AddWithValue("recordIds", recordIds);
+                    var txId = finalizedRecords.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.TransactionId))?.TransactionId ?? string.Empty;
+                    archiveSnapshots.Parameters.AddWithValue("transactionId", txId);
                     await archiveSnapshots.ExecuteNonQueryAsync(HttpContext.RequestAborted);
                 }
+
+                foreach (var fr in finalizedRecords.Where(r => !string.IsNullOrWhiteSpace(r.TransactionId)))
+                {
+                    await using var updateTx = new NpgsqlCommand(@"
+                        UPDATE grade_submission_snapshots
+                        SET transaction_id = @txId
+                        WHERE record_id = @recId AND status = 'Finalized';", connection, cleanupTransaction);
+                    updateTx.Parameters.AddWithValue("txId", fr.TransactionId);
+                    updateTx.Parameters.AddWithValue("recId", fr.Id);
+                    await updateTx.ExecuteNonQueryAsync(HttpContext.RequestAborted);
+                }
+
                 await using (var cleanup = new NpgsqlCommand(@"
                     DELETE FROM pending_grade_records
                     WHERE id = ANY(@recordIds)
@@ -4013,9 +4535,10 @@ namespace BlockGo.Controllers
                 return Ok(new
                 {
                     status = "Success",
+                    code = archive.Status == "AVAILABLE" ? "FINALIZATION_SUCCESS" : "FINALIZATION_ARCHIVE_PENDING",
                     message = archive.Status == "AVAILABLE"
-                        ? "Approved section finalized and verified on the ledger. The finalized grading sheet is available in the IPFS Vault."
-                        : "Approved section finalized and verified on the ledger. Grading-sheet archival is pending and can be retried without re-finalizing Fabric.",
+                        ? "Grades finalized successfully. The finalized grades are now available in the Grades Ledger."
+                        : "Grades were finalized successfully, but the grading sheet is still being prepared. You can retry the document attachment without finalizing the grades again.",
                     finalizedCount = approvedRecords.Length,
                     ipfsArchiveStatus = archive.Status,
                     ipfsCid = archive.Cid,
@@ -4029,13 +4552,26 @@ namespace BlockGo.Controllers
             }
             catch (LedgerMiddlewareException ex)
             {
-                _logger.LogError(ex, "Fabric batch finalization failed; approved staging remains retryable");
-                return StatusCode((int)ex.StatusCode, new { status = "Error", code = ex.Code, message = ex.Message });
+                _logger.LogError(ex, "Fabric batch finalization failed with code {Code}: {Message}; approved staging remains retryable", ex.Code, ex.Message);
+                return StatusCode((int)ex.StatusCode, new
+                {
+                    status = "Error",
+                    code = "FINALIZATION_LEDGER_UNAVAILABLE",
+                    message = "The grades could not be finalized right now. Your approved grades were preserved. Please try again."
+                });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Registrar batch finalization failed; approved staging was retained unless ledger verification completed");
-                return StatusCode(500, new { status = "Error", message = "The section could not be finalized. Its approved data was preserved; refresh before retrying." });
+                var isMetadataError = ex is Npgsql.PostgresException pge && (pge.SqlState == "23502" || pge.SqlState == "23503" || pge.SqlState == "23505" || pge.SqlState == "23514");
+                return StatusCode(500, new
+                {
+                    status = "Error",
+                    code = isMetadataError ? "FINALIZATION_METADATA_INCOMPLETE" : "FINALIZATION_FAILED",
+                    message = isMetadataError
+                        ? "Unable to finalize this section because some academic information is incomplete. No approved grades were lost. Please refresh and try again."
+                        : "The grades could not be finalized right now. Your approved grades were preserved. Please try again."
+                });
             }
         }
 
@@ -4095,7 +4631,17 @@ namespace BlockGo.Controllers
             }
             catch (LedgerMiddlewareException exception)
             {
-                return StatusCode((int)exception.StatusCode, new { status = "Error", code = exception.Code, message = exception.Message });
+                _logger.LogError(exception,
+                    "Finalized grading-sheet archival retry failed in the ledger/archive service for actor {Actor}; code {Code}",
+                    actor,
+                    exception.Code);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    status = "Error",
+                    code = "FINALIZATION_ARCHIVE_PENDING",
+                    finalized = true,
+                    message = "Grades were finalized successfully, but the grading sheet is still being prepared. You can retry the document attachment without finalizing the grades again."
+                });
             }
             catch (Exception exception)
             {
@@ -4254,7 +4800,12 @@ namespace BlockGo.Controllers
             catch (LedgerMiddlewareException ex)
             {
                 _logger.LogError(ex, "Fabric finalization failed for {RecordId}; approved staging remains retryable", recordId);
-                return StatusCode((int)ex.StatusCode, new { status = "Error", code = ex.Code, message = ex.Message });
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    status = "Error",
+                    code = "FINALIZATION_LEDGER_UNAVAILABLE",
+                    message = "The grades could not be finalized right now. Your approved grades were preserved. Please try again."
+                });
             }
             catch (Exception ex)
             {

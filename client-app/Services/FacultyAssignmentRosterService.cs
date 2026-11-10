@@ -78,7 +78,8 @@ public static class FacultyAssignmentRosterService
     {
         await using var command = new NpgsqlCommand(@"
             SELECT fs.id, fs.user_id, u.email, fs.department, fs.section,
-                   COALESCE(fs.year_level, ''), COALESCE(fs.subject, ''),
+                   COALESCE(NULLIF(BTRIM(s.year_level::text), ''), NULLIF(BTRIM(fs.year_level), ''), ''),
+                   COALESCE(fs.subject, ''),
                    fs.academic_section_id, fs.school_year, fs.semester,
                    fs.is_active AND (fs.academic_section_id IS NULL OR COALESCE(s.is_active, FALSE)),
                    CASE WHEN s.id IS NULL THEN fs.section
@@ -113,13 +114,13 @@ public static class FacultyAssignmentRosterService
         if (string.IsNullOrWhiteSpace(subject))
             return new(ResolutionStatus.PendingSubject, null,
                 "Faculty placement is pending a curriculum subject and is not available for roster or grade workflows.");
-        if (academicSectionId.HasValue && !string.IsNullOrWhiteSpace(schoolYear) && !string.IsNullOrWhiteSpace(semester))
+        if (academicSectionId.HasValue && !string.IsNullOrWhiteSpace(schoolYear) && !string.IsNullOrWhiteSpace(semester) && !string.IsNullOrWhiteSpace(yearLevel))
             return new(ResolutionStatus.Resolved,
                 new(id, facultyUserId, facultyEmail, department, section, yearLevel, subject,
                     academicSectionId.Value, schoolYear, semester, canonicalSection, false), null);
 
         return new(ResolutionStatus.UnresolvedLegacy, null,
-            "Faculty assignment is missing its exact academic section or period. Ask the Registrar to recreate the assignment before grading.");
+            "Faculty assignment is missing its exact academic section, year level, or period. Ask the Registrar to recreate the assignment before grading.");
     }
 
     public static async Task<List<RosterStudent>> GetRosterAsync(

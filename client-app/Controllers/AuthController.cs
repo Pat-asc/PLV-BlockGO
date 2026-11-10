@@ -2559,6 +2559,9 @@ namespace Client_app.Controllers
 
         public sealed class PromoteStudentEnrollmentItem
         {
+            public long SourceEnrollmentId { get; set; }
+            public int StudentUserId { get; set; }
+            public int? SourceAcademicSectionId { get; set; }
             public string StudentId { get; set; } = "";
             public string Program { get; set; } = "";
             public string SourceSchoolYear { get; set; } = "";
@@ -2576,6 +2579,41 @@ namespace Client_app.Controllers
             public List<PromoteStudentEnrollmentItem> Students { get; set; } = new();
         }
 
+        private void LogPromotionSourceMismatch(
+            PromoteStudentEnrollmentItem request,
+            EnrollmentSectioningService.PromotionSourceEnrollment? source,
+            string mismatchField)
+        {
+            _logger.LogWarning(
+                "Promotion source mismatch {@PromotionSourceMismatch}",
+                new
+                {
+                    requestEnrollmentId = request.SourceEnrollmentId,
+                    dbEnrollmentId = source?.EnrollmentId,
+                    requestStudentId = request.StudentUserId,
+                    dbStudentId = source?.StudentUserId,
+                    requestStudentNo = request.StudentId,
+                    dbStudentNo = source?.ProfileStudentNo ?? source?.EnrollmentStudentNo,
+                    requestAcademicSectionId = request.SourceAcademicSectionId,
+                    dbAcademicSectionId = source?.AcademicSectionId,
+                    requestProgram = request.Program,
+                    dbProgramId = source?.ProgramId,
+                    dbProgramCode = source?.ProgramCode,
+                    requestYearLevel = request.SourceYearLevel,
+                    dbYearLevel = source?.YearLevel,
+                    requestSchoolYear = request.SourceSchoolYear,
+                    dbSchoolYear = source?.SchoolYear,
+                    requestSemester = request.SourceSemester,
+                    dbSemester = source?.Semester,
+                    dbEnrollmentStatus = source?.EnrollmentStatus,
+                    dbEnrollmentState = source?.EnrollmentState,
+                    dbFinalizedAt = source?.FinalizedAt,
+                    dbFinalizedBy = source?.FinalizedBy,
+                    dbUpdatedAt = source?.UpdatedAt,
+                    mismatchField
+                });
+        }
+
         public sealed class ChangeEnrollmentProgramRequest
         {
             public string Program { get; set; } = "";
@@ -2586,6 +2624,12 @@ namespace Client_app.Controllers
         public sealed class FinalizeEnrollmentRequest
         {
             public string Program { get; set; } = "";
+            public string SchoolYear { get; set; } = "";
+            public string Semester { get; set; } = "";
+        }
+
+        public sealed class UnlockEnrollmentSectionRequest
+        {
             public string SchoolYear { get; set; } = "";
             public string Semester { get; set; } = "";
         }
@@ -2788,25 +2832,102 @@ namespace Client_app.Controllers
                 await using var connection = new NpgsqlConnection(_connectionString);
                 await connection.OpenAsync(cancellationToken);
                 await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-                var seenStudents = new HashSet<int>();
+                var seenEnrollments = new Dictionary<long, string>();
                 var promoted = new List<object>();
+                var newlyPromoted = 0;
+                var alreadyPromoted = 0;
 
-                foreach (var item in request.Students.OrderBy(value => value.StudentId, StringComparer.OrdinalIgnoreCase))
+                foreach (var item in request.Students.OrderBy(value => value.SourceEnrollmentId))
                 {
-                    if (string.IsNullOrWhiteSpace(item.StudentId) || string.IsNullOrWhiteSpace(item.Program))
-                        throw new ArgumentException("Every promotion must identify a student and academic program.");
+                    if (item.SourceEnrollmentId <= 0 || item.StudentUserId <= 0 ||
+                        string.IsNullOrWhiteSpace(item.StudentId) || string.IsNullOrWhiteSpace(item.Program))
+                        throw new ArgumentException("Every promotion must include the current enrollment, student, and academic program identity.");
 
-                    var program = await ResolveEnrollmentProgramAsync(
+                    var requestSignature = string.Join('|', item.StudentUserId, item.TargetSchoolYear,
+                        item.TargetSemester, item.TargetYearLevel, item.TargetSection).ToLowerInvariant();
+                    if (seenEnrollments.TryGetValue(item.SourceEnrollmentId, out var priorSignature))
+                    {
+                        if (priorSignature != requestSignature)
+                            throw new ArgumentException($"Student '{item.StudentId}' appears in conflicting promotion targets.");
+                        continue;
+                    }
+                    seenEnrollments[item.SourceEnrollmentId] = requestSignature;
+
+                    var source = await EnrollmentSectioningService.GetPromotionSourceForUpdateAsync(
+                        connection, transaction, item.SourceEnrollmentId, cancellationToken);
+                    if (source is null)
+                    {
+                        LogPromotionSourceMismatch(item, null, "enrollment_id");
+                        throw new InvalidOperationException(
+                            $"Student '{item.StudentId}' no longer matches the current source enrollment. Refresh sections before promoting.");
+                    }
+
+                    if (source.StudentUserId != item.StudentUserId)
+                    {
+                        LogPromotionSourceMismatch(item, source, "student_user_id");
+                        throw new InvalidOperationException(
+                            $"Student '{item.StudentId}' no longer matches the current source enrollment. Refresh sections before promoting.");
+                    }
+
+                    var studentNo = string.IsNullOrWhiteSpace(source.ProfileStudentNo)
+                        ? source.EnrollmentStudentNo
+                        : source.ProfileStudentNo.Trim();
+                    if (!string.Equals(studentNo, item.StudentId.Trim(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        LogPromotionSourceMismatch(item, source, "student_number");
+                        throw new InvalidOperationException(
+                            $"Student '{item.StudentId}' no longer matches the current source enrollment. Refresh sections before promoting.");
+                    }
+
+                    if (!string.Equals(source.UserRole, "student", StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(source.UserStatus, "approved", StringComparison.OrdinalIgnoreCase) ||
+                        !source.UserIsActive)
+                    {
+                        LogPromotionSourceMismatch(item, source, "student_account_state");
+                        throw new InvalidOperationException(
+                            $"Student '{item.StudentId}' is not currently eligible for promotion.");
+                    }
+                    if (!string.Equals(source.EnrollmentStatus.Trim(), "ENROLLED", StringComparison.OrdinalIgnoreCase))
+                    {
+                        LogPromotionSourceMismatch(item, source, "enrollment_status");
+                        throw new InvalidOperationException(
+                            $"Student '{item.StudentId}' is not currently eligible for promotion.");
+                    }
+
+                    var userId = source.StudentUserId;
+                    var programId = source.ProgramId;
+                    var programCode = source.ProgramCode;
+                    var programName = source.ProgramName;
+                    var curriculumId = source.CurriculumId;
+                    var sourceSchoolYear = source.SchoolYear;
+                    var sourceSemester = source.Semester;
+                    var sourceYearLevel = source.YearLevel;
+                    var sourceAcademicSectionId = source.AcademicSectionId;
+                    var sourceSection = source.Section;
+                    var sourceEnrollmentState = source.EnrollmentState;
+
+                    var requestedProgram = await ResolveEnrollmentProgramAsync(
                         connection, transaction, item.Program, cancellationToken);
-
-                    var sourceSchoolYear = NormalizeSchoolYear(item.SourceSchoolYear);
-                    var sourceSemester = NormalizeEnrollmentSemester(item.SourceSemester);
-                    var sourceYearLevel = NormalizeYearLevel(item.SourceYearLevel, item.SourceSection);
-                    var (_, sourceSection) = await ResolveOptionalSectionForProgramAsync(
-                        connection, transaction, program, sourceYearLevel, null, item.SourceSection, cancellationToken);
+                    var expectedSourceYear = NormalizeSchoolYear(item.SourceSchoolYear);
+                    var expectedSourceSemester = NormalizeEnrollmentSemester(item.SourceSemester);
+                    var expectedSourceLevel = NormalizeYearLevel(item.SourceYearLevel, item.SourceSection);
+                    string? mismatchField = null;
+                    if (requestedProgram.Id != programId) mismatchField = "program_id";
+                    else if (expectedSourceYear != sourceSchoolYear) mismatchField = "school_year";
+                    else if (expectedSourceSemester != sourceSemester) mismatchField = "semester";
+                    else if (expectedSourceLevel != sourceYearLevel) mismatchField = "year_level";
+                    else if (item.SourceAcademicSectionId.HasValue &&
+                             item.SourceAcademicSectionId != sourceAcademicSectionId)
+                        mismatchField = "academic_section_id";
+                    if (mismatchField is not null)
+                    {
+                        LogPromotionSourceMismatch(item, source, mismatchField);
+                        throw new InvalidOperationException(
+                            $"Student '{studentNo}' enrollment changed while promotion was being prepared. Refresh sections before promoting.");
+                    }
 
                     var targetSchoolYear = string.IsNullOrWhiteSpace(item.TargetSchoolYear)
-                        ? sourceSchoolYear
+                        ? throw new ArgumentException("The next academic school year is required.")
                         : NormalizeSchoolYear(item.TargetSchoolYear);
                     var targetSemester = string.IsNullOrWhiteSpace(item.TargetSemester)
                         ? sourceSemester
@@ -2819,58 +2940,61 @@ namespace Client_app.Controllers
                         throw new ArgumentException($"Student '{item.StudentId}' must advance exactly one year level (up to Year 4).");
                     var sourceStart = int.Parse(sourceSchoolYear[..4]);
                     var targetStart = int.Parse(targetSchoolYear[..4]);
-                    if (targetStart != sourceStart && targetStart != sourceStart + 1)
-                        throw new ArgumentException($"Student '{item.StudentId}' must advance within the active academic year or to the next academic year.");
+                    if (targetStart != sourceStart + 1)
+                        throw new ArgumentException($"Student '{item.StudentId}' must advance to the next consecutive academic year.");
 
                     var (sectionId, targetSection) = await ResolveOptionalSectionForProgramAsync(
-                        connection, transaction, program, targetYearLevel, null, item.TargetSection, cancellationToken);
+                        connection, transaction,
+                        (programId, programCode, programName),
+                        targetYearLevel, null, item.TargetSection, cancellationToken);
 
-                    int userId;
-                    string studentNo;
-                    long? curriculumId;
-                    await using (var current = new NpgsqlCommand(@"
-                        SELECT u.id, COALESCE(NULLIF(TRIM(profile.student_no), ''), enrollment.student_no), enrollment.curriculum_id
-                        FROM student_enrollments enrollment
-                        JOIN users u ON u.id = enrollment.student_user_id
-                        JOIN studentprofiles profile ON profile.user_id = u.id
-                        LEFT JOIN academicsections sec ON sec.id = enrollment.academic_section_id
-                        WHERE LOWER(u.role) = 'student' AND LOWER(u.status) = 'approved' AND u.is_active
-                          AND (LOWER(profile.student_no) = LOWER(@studentId) OR LOWER(enrollment.student_no) = LOWER(@studentId) OR u.id::text = @studentId)
-                          AND enrollment.program_id = @programId
-                          AND enrollment.school_year = @sourceSchoolYear
-                          AND enrollment.semester = @sourceSemester
-                          AND enrollment.year_level = @sourceYearLevel
-                          AND (
-                              @sourceSection IS NULL
-                              OR COALESCE(NULLIF(TRIM(enrollment.section), ''), CASE WHEN sec.id IS NOT NULL THEN CONCAT(sec.year_level, '-', sec.section_num) ELSE '' END) = @sourceSection
-                          )
-                          AND UPPER(BTRIM(enrollment.status)) = 'ENROLLED'
-                        FOR UPDATE OF u, enrollment;", connection, transaction))
+                    long? targetEnrollmentId = null;
+                    int? existingProgramId = null;
+                    short? existingYearLevel = null;
+                    int? existingSectionId = null;
+                    string? existingStatus = null;
+                    await using (var target = new NpgsqlCommand(@"
+                        SELECT enrollment_id, program_id, year_level, academic_section_id, status
+                        FROM student_enrollments
+                        WHERE student_user_id = @userId AND school_year = @schoolYear AND semester = @semester
+                        FOR UPDATE;", connection, transaction))
                     {
-                        current.Parameters.AddWithValue("studentId", item.StudentId.Trim());
-                        current.Parameters.AddWithValue("programId", program.Id);
-                        current.Parameters.AddWithValue("sourceSchoolYear", sourceSchoolYear);
-                        current.Parameters.AddWithValue("sourceSemester", sourceSemester);
-                        current.Parameters.AddWithValue("sourceYearLevel", sourceYearLevel);
-                        current.Parameters.Add("sourceSection", NpgsqlDbType.Text).Value = (object?)sourceSection ?? DBNull.Value;
-                        await using var reader = await current.ExecuteReaderAsync(cancellationToken);
-                        if (!await reader.ReadAsync(cancellationToken))
-                            throw new InvalidOperationException(
-                                $"Student '{item.StudentId}' no longer matches the saved source enrollment. Refresh sections before promoting.");
-                        userId = reader.GetInt32(0);
-                        studentNo = reader.GetString(1);
-                        curriculumId = reader.IsDBNull(2) ? null : reader.GetInt64(2);
+                        target.Parameters.AddWithValue("userId", userId);
+                        target.Parameters.AddWithValue("schoolYear", targetSchoolYear);
+                        target.Parameters.AddWithValue("semester", targetSemester);
+                        await using var reader = await target.ExecuteReaderAsync(cancellationToken);
                         if (await reader.ReadAsync(cancellationToken))
-                            throw new InvalidOperationException($"Student '{item.StudentId}' has duplicate source enrollments.");
+                        {
+                            targetEnrollmentId = reader.GetInt64(0);
+                            existingProgramId = reader.GetInt32(1);
+                            existingYearLevel = reader.GetInt16(2);
+                            existingSectionId = reader.IsDBNull(3) ? null : reader.GetInt32(3);
+                            existingStatus = reader.GetString(4);
+                        }
                     }
 
-                    if (!seenStudents.Add(userId))
-                        throw new ArgumentException($"Student '{item.StudentId}' appears more than once in the promotion request.");
+                    if (targetEnrollmentId.HasValue)
+                    {
+                        if (existingProgramId != programId || existingYearLevel != targetYearLevel ||
+                            existingSectionId != sectionId || !string.Equals(existingStatus?.Trim(), "ENROLLED", StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidOperationException(
+                                $"Student '{studentNo}' already has a conflicting enrollment in the target academic period.");
+                        alreadyPromoted++;
+                        promoted.Add(new { userId, studentNo, sourceEnrollmentId = item.SourceEnrollmentId,
+                            targetEnrollmentId, academicSectionId = sectionId, schoolYear = targetSchoolYear,
+                            semester = targetSemester, yearLevel = targetYearLevel, section = targetSection,
+                            idempotent = true });
+                        continue;
+                    }
+
+                    if (!string.Equals(sourceEnrollmentState, "PLANNING", StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException(
+                            $"The section containing student '{studentNo}' is locked. Unlock the section before promoting.");
 
                     curriculumId ??= await ResolveEnrollmentCurriculumAsync(
-                        connection, transaction, program.Id, null, null, cancellationToken);
+                        connection, transaction, programId, null, null, cancellationToken);
                     await UpsertStudentEnrollmentAsync(
-                        connection, transaction, userId, studentNo, program.Id, curriculumId,
+                        connection, transaction, userId, studentNo, programId, curriculumId,
                         sectionId, targetSchoolYear, targetSemester, targetYearLevel, targetSection,
                         User.Identity?.Name ?? "registrar", cancellationToken: cancellationToken, allowClearingSection: true);
                     await _auditLog.LogAsync(
@@ -2880,10 +3004,24 @@ namespace Client_app.Controllers
                         new { schoolYear = targetSchoolYear, semester = targetSemester, yearLevel = targetYearLevel, section = targetSection },
                         "Registrar promoted the student to the next academic year.",
                         ClientIpResolver.Resolve(HttpContext), connection, transaction, cancellationToken);
+                    await using (var targetId = new NpgsqlCommand(@"
+                        SELECT enrollment_id FROM student_enrollments
+                        WHERE student_user_id = @userId AND school_year = @schoolYear AND semester = @semester;",
+                        connection, transaction))
+                    {
+                        targetId.Parameters.AddWithValue("userId", userId);
+                        targetId.Parameters.AddWithValue("schoolYear", targetSchoolYear);
+                        targetId.Parameters.AddWithValue("semester", targetSemester);
+                        targetEnrollmentId = Convert.ToInt64(await targetId.ExecuteScalarAsync(cancellationToken));
+                    }
+                    newlyPromoted++;
                     promoted.Add(new
                     {
                         userId,
                         studentNo,
+                        sourceEnrollmentId = item.SourceEnrollmentId,
+                        targetEnrollmentId,
+                        academicSectionId = sectionId,
                         schoolYear = targetSchoolYear,
                         semester = targetSemester,
                         yearLevel = targetYearLevel,
@@ -2894,10 +3032,147 @@ namespace Client_app.Controllers
                 await transaction.CommitAsync(cancellationToken);
                 _cache.Remove("approved_students");
                 await SafeNotifyAcademicDataChangedAsync("students_promoted", null, User.Identity?.Name);
-                return Ok(new { status = "Success", promotedCount = promoted.Count, students = promoted });
+                return Ok(new { status = "Success", promotedCount = promoted.Count,
+                    newlyPromotedCount = newlyPromoted, alreadyPromotedCount = alreadyPromoted,
+                    processedCount = promoted.Count, students = promoted });
             }
-            catch (ArgumentException ex) { return BadRequest(new { status = "Error", message = ex.Message }); }
-            catch (InvalidOperationException ex) { return Conflict(new { status = "Error", message = ex.Message }); }
+            catch (ArgumentException ex) { return BadRequest(new { status = "Error", code = "PROMOTION_INVALID_REQUEST", message = ex.Message }); }
+            catch (InvalidOperationException ex) { return Conflict(new { status = "Error", code = "PROMOTION_SOURCE_CHANGED", message = ex.Message }); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected student promotion failure for {Count} requested enrollment(s).", request.Students.Count);
+                return StatusCode(500, new { status = "Error", code = "PROMOTION_FAILED",
+                    message = "Student promotion could not be saved. No enrollment changes were made. Please refresh and try again." });
+            }
+        }
+
+        [HttpPost("sections/unlock-all-enrollments")]
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> UnlockAllEnrollmentSections(
+            [FromBody] UnlockEnrollmentSectionRequest request, CancellationToken cancellationToken)
+        {
+            try
+            {
+                if (request is null || string.IsNullOrWhiteSpace(request.SchoolYear) ||
+                    string.IsNullOrWhiteSpace(request.Semester))
+                    throw new ArgumentException("Select the school year and semester before unlocking sections.");
+                var schoolYear = NormalizeSchoolYear(request.SchoolYear);
+                var semester = NormalizeEnrollmentSemester(request.Semester);
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(cancellationToken);
+                await using var transaction = await connection.BeginTransactionAsync(
+                    System.Data.IsolationLevel.Serializable, cancellationToken);
+                var sections = await EnrollmentSectioningService.UnlockAllSectionsAsync(
+                    connection, transaction, schoolYear, semester, cancellationToken);
+                var departmentCount = sections.Select(section => section.ProgramId).Distinct().Count();
+                var enrollmentCount = sections.Sum(section => section.UnlockedCount);
+                if (sections.Count > 0)
+                    await _auditLog.LogAsync(User.Identity?.Name ?? "registrar", "registrar",
+                        "STUDENT_ENROLLMENT_SECTIONS_BULK_UNLOCKED", "student_enrollment", $"{schoolYear}:{semester}",
+                        new { schoolYear, semester, enrollmentState = "FINALIZED" },
+                        new { schoolYear, semester, sections, departmentCount, enrollmentCount, timestamp = DateTime.UtcNow },
+                        "Registrar unlocked enrollment sections across all departments in the selected academic period.",
+                        ClientIpResolver.Resolve(HttpContext), connection, transaction, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                _cache.Remove("approved_students");
+                await SafeNotifyAcademicDataChangedAsync("enrollment_sections_bulk_unlocked", null, User.Identity?.Name);
+                return Ok(new { status = "Success", schoolYear, semester, sections,
+                    sectionCount = sections.Count, departmentCount, enrollmentCount,
+                    message = $"Successfully unlocked {sections.Count} sections across {departmentCount} departments." });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { status = "Error", code = "SECTION_UNLOCK_INVALID", message = ex.Message });
+            }
+            catch (PostgresException ex) when (ex.SqlState is "40001" or "40P01")
+            {
+                _logger.LogWarning(ex, "Concurrent enrollment change during bulk section unlock.");
+                return Conflict(new { status = "Error", code = "SECTION_UNLOCK_STATE_CHANGED",
+                    message = "Sections changed while unlocking. No changes were saved. Refresh and try again." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unable to bulk unlock enrollment sections.");
+                return StatusCode(500, new { status = "Error", code = "SECTION_UNLOCK_FAILED",
+                    message = "Sections could not be unlocked. No changes were saved. Please try again." });
+            }
+        }
+
+        [HttpPost("sections/{id:int}/unlock-enrollments")]
+        [Authorize(Roles = "registrar")]
+        public async Task<IActionResult> UnlockEnrollmentSection(
+            int id,
+            [FromBody] UnlockEnrollmentSectionRequest request,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                if (id <= 0) throw new ArgumentException("A valid academic section is required.");
+                var schoolYear = NormalizeSchoolYear(request.SchoolYear);
+                var semester = NormalizeEnrollmentSemester(request.Semester);
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync(cancellationToken);
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+                string department;
+                await using (var section = new NpgsqlCommand(@"
+                    SELECT department FROM academicsections
+                    WHERE id = @id AND is_active = TRUE
+                    FOR SHARE;", connection, transaction))
+                {
+                    section.Parameters.AddWithValue("id", id);
+                    department = Convert.ToString(await section.ExecuteScalarAsync(cancellationToken)) ?? "";
+                    if (string.IsNullOrWhiteSpace(department))
+                        return NotFound(new { status = "Error", code = "SECTION_NOT_FOUND",
+                            message = "The academic section was not found." });
+                }
+
+                var unlockResult = await EnrollmentSectioningService.UnlockSectionAsync(
+                    connection, transaction, id, schoolYear, semester, cancellationToken);
+                var matched = unlockResult.MatchedCount;
+                var unlocked = unlockResult.UnlockedCount;
+
+                if (unlocked > 0)
+                {
+                    await _auditLog.LogAsync(User.Identity?.Name ?? "registrar", "registrar",
+                        "STUDENT_ENROLLMENT_SECTION_UNLOCKED", "academic_section", id.ToString(),
+                        new { schoolYear, semester, enrollmentState = "FINALIZED", matched },
+                        new { schoolYear, semester, enrollmentState = "PLANNING", unlocked },
+                        "Registrar unlocked the exact section roster for enrollment planning and promotion.",
+                        ClientIpResolver.Resolve(HttpContext), connection, transaction, cancellationToken);
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+                _cache.Remove("approved_students");
+                await SafeNotifyAcademicDataChangedAsync("enrollment_section_unlocked", department, User.Identity?.Name);
+                return Ok(new
+                {
+                    status = "Success",
+                    message = unlocked > 0
+                        ? $"Section unlocked for {unlocked} enrolled student(s)."
+                        : "The section is already unlocked.",
+                    sectionId = id,
+                    schoolYear,
+                    semester,
+                    matchedCount = matched,
+                    unlockedCount = unlocked,
+                    alreadyUnlocked = unlocked == 0
+                });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { status = "Error", code = "SECTION_UNLOCK_INVALID", message = ex.Message });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { status = "Error", code = "SECTION_ENROLLMENT_NOT_FOUND", message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unable to unlock enrollment section {SectionId}.", id);
+                return StatusCode(500, new { status = "Error", code = "SECTION_UNLOCK_FAILED",
+                    message = "The section could not be unlocked. No enrollment records were changed. Please try again." });
+            }
         }
 
         [HttpDelete("sections/{id:int}/students/{studentId}")]
@@ -2907,15 +3182,42 @@ namespace Client_app.Controllers
         {
             try
             {
+                if (id <= 0 || string.IsNullOrWhiteSpace(studentId) ||
+                    string.IsNullOrWhiteSpace(schoolYear) || string.IsNullOrWhiteSpace(semester))
+                {
+                    return BadRequest(new { status = "Error", message = "An exact section, student ID, school year, and semester are required." });
+                }
+
                 var normalizedYear = NormalizeSchoolYear(schoolYear);
                 var normalizedSemester = NormalizeEnrollmentSemester(semester);
                 await using var connection = new NpgsqlConnection(_connectionString);
                 await connection.OpenAsync(HttpContext.RequestAborted);
-                await EnrollmentSectioningService.UnassignAsync(connection, id, studentId,
+                var result = await EnrollmentSectioningService.UnassignAsync(connection, id, studentId,
                     normalizedYear, normalizedSemester);
                 _cache.Remove("approved_students");
                 await SafeNotifyAcademicDataChangedAsync("student_section_removed", null, User.Identity?.Name);
-                return Ok(new { status = "Success", message = "Student removed from the planning section." });
+
+                if (result.AlreadyAbsent)
+                {
+                    return Ok(new
+                    {
+                        status = "Success",
+                        code = "STUDENT_ALREADY_ABSENT",
+                        alreadyAbsent = true,
+                        studentId = studentId.Trim(),
+                        sectionId = id,
+                        message = "The student is already absent from the authoritative section roster."
+                    });
+                }
+
+                return Ok(new
+                {
+                    status = "Success",
+                    code = "STUDENT_REMOVED",
+                    studentId = studentId.Trim(),
+                    sectionId = id,
+                    message = "Student removed from the planning section."
+                });
             }
             catch (InvalidOperationException ex) { return Conflict(new { status = "Error", message = ex.Message }); }
             catch (ArgumentException ex) { return BadRequest(new { status = "Error", message = ex.Message }); }
@@ -6262,14 +6564,20 @@ namespace Client_app.Controllers
                     return Forbid();
 
                 using var cmd = new NpgsqlCommand(@"
-                    SELECT s.id, s.department, s.year_level, s.section_num, s.max_capacity,
+                    SELECT s.id,
+                           COALESCE(p.program_name, s.department) AS department,
+                           s.year_level, s.section_num, s.max_capacity,
                            (SELECT COUNT(*) FROM student_enrollments enrollment
                             WHERE enrollment.academic_section_id = s.id AND enrollment.status = 'ENROLLED')
                     FROM academicsections s
+                    LEFT JOIN academic_programs p
+                      ON (LOWER(BTRIM(s.department)) = LOWER(BTRIM(p.program_code))
+                          OR LOWER(BTRIM(s.department)) = LOWER(BTRIM(p.program_name)))
+                     AND p.is_active = TRUE
                     WHERE s.is_active = TRUE AND (LOWER(s.department) = LOWER(@dept) OR EXISTS (
-                        SELECT 1 FROM academic_programs p
-                        WHERE LOWER(@dept) IN (LOWER(p.program_code), LOWER(p.program_name))
-                          AND LOWER(s.department) IN (LOWER(p.program_code), LOWER(p.program_name))))
+                        SELECT 1 FROM academic_programs p2
+                        WHERE LOWER(@dept) IN (LOWER(p2.program_code), LOWER(p2.program_name))
+                          AND LOWER(s.department) IN (LOWER(p2.program_code), LOWER(p2.program_name))))
                     ORDER BY s.year_level, s.section_num", conn);
                 cmd.Parameters.AddWithValue("dept", department);
 
@@ -6324,9 +6632,6 @@ namespace Client_app.Controllers
                 var yearLevel = reader.GetInt32(1).ToString();
                 var section = $"{yearLevel}-{reader.GetInt32(2)}";
 
-                // Reuse the official bulk-enrollment pipeline. Existing students
-                // can be sectioned with ID-only rosters; unknown students must
-                // still provide their real name and birthday.
                 return await BulkUploadStudents(
                     file,
                     department,

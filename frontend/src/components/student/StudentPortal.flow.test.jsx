@@ -46,6 +46,23 @@ test('student subjects and checklist load independently when grade retrieval fai
   expect(screen.getByText('IT 101')).toBeInTheDocument();
 });
 
+test('does not expose technical finalization storage errors to the student', async () => {
+  fetchStudentHistoricalGrades.mockRejectedValue(new Error(
+    '23502: null value in column "year_level" of relation "grade_submission_snapshots" violates not-null constraint'
+  ));
+  fetchStudentCurrentSubjects.mockRejectedValue(new Error(
+    'Npgsql.PostgresException: grade_submission_snapshots constraint violation'
+  ));
+
+  render(<StudentPortal studentData={{ name: 'Juan Dela Cruz', studentNo: '26-0035',
+    email: '26-0035', department: 'BSIT' }} onLogout={() => {}} />);
+
+  expect(await screen.findByText('Unable to finalize this section because some academic information is incomplete. No approved grades were lost. Please refresh and try again.')).toBeInTheDocument();
+  openSecondaryView('Current Subjects');
+  expect(await screen.findAllByText('Unable to finalize this section because some academic information is incomplete. No approved grades were lost. Please refresh and try again.')).toHaveLength(1);
+  expect(screen.queryByText(/23502|year_level|grade_submission_snapshots|Npgsql|null value|constraint/i)).not.toBeInTheDocument();
+});
+
 test('missing published curriculum data shows an explicit error while Current Subjects stays visible', async () => {
   fetchStudentHistoricalGrades.mockResolvedValue({ data: [] });
   fetchStudentCurriculum.mockResolvedValue({ status: 'Success', data: null });

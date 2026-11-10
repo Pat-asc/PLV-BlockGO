@@ -13,25 +13,10 @@ function ChairpersonOverview({ metrics }) {
       value: metrics.submittedSections,
       subtitle: "Faculty submissions waiting for Registrar review",
     },
-    {
-      title: "Returned Grades",
-      value: metrics.returnedSections,
-      subtitle: "Sections returned to Faculty",
-    },
-    {
-      title: "Approved Grades",
-      value: metrics.approvedSections,
-      subtitle: "Approved submissions waiting for finalization",
-    },
-    {
-      title: "Finalized Grades",
-      value: metrics.forwardedSections,
-      subtitle: "Sections finalized by the Registrar",
-    },
   ];
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {cards.map((card) => (
         <div
           key={card.title}

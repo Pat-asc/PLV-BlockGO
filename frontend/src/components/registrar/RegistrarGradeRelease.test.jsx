@@ -1,6 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import RegistrarGradeRelease from './RegistrarGradeRelease';
+import RegistrarGradeRelease, { buildGradeReleaseHierarchy } from './RegistrarGradeRelease';
 import { fetchGradeReleaseCandidates, releaseProgramGrades } from '../../services/api';
 import { requestSystemConfirmation } from '../../services/SystemDialogContext';
 
@@ -16,7 +16,8 @@ const candidate = {
   program: 'BSIT', yearLevel: '1', section: 'BSIT 1-1', schoolYear: '2026-2027',
   semester: 'FIRST', term: 'finals', releaseStatus: 'Ready for Release',
   subjects: [{ recordId: 'grade-1', subjectCode: 'IT 101', subjectTitle: 'Introduction to Computing',
-    grade: '{"midterm":"90","finals":"92","finalAverage":"91"}', units: 3, faculty: 'Faculty One', status: 'Finalized' }],
+    grade: '{"midterm":"90","finals":"92","finalAverage":"91"}', units: 3, faculty: 'Faculty One',
+    facultyId: 'faculty@plv.edu.ph', assignmentCycleId: '41', academicSectionId: 11, section: 'BSIT 1-1', status: 'Finalized' }],
 };
 
 beforeEach(() => {
@@ -26,24 +27,36 @@ beforeEach(() => {
   releaseProgramGrades.mockResolvedValue({ message: 'Finalized program grades released successfully.' });
 });
 
-test('previews finalized students and releases the exact program batch after confirmation', async () => {
+test('previews Department to Faculty to section students and releases everyone from one action', async () => {
   render(<RegistrarGradeRelease />);
-  expect(await screen.findByRole('button', { name: 'Release BSIT Grades' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Release Grades for Everyone' })).toBeInTheDocument();
   const search = screen.getByPlaceholderText('Program name');
   fireEvent.change(search, { target: { value: 'bs' } });
-  fireEvent.click(screen.getByRole('button', { name: 'View Students (1)' }));
-  expect(screen.getByRole('dialog', { name: 'BSIT Finalized Students' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'View Students' }));
+  expect(screen.getByRole('dialog', { name: 'BSIT 1-1 · IT 101' })).toBeInTheDocument();
   expect(screen.getAllByTestId('grade-release-modal-details')).toHaveLength(1);
   expect(screen.getByText('Juan Dela Cruz')).toBeInTheDocument();
   expect(screen.getByText('IT 101')).toBeInTheDocument();
+  expect(screen.queryByRole('columnheader', { name: /status/i })).not.toBeInTheDocument();
   expect(screen.getByRole('article', { hidden: true })).not.toHaveTextContent('Juan Dela Cruz');
-  fireEvent.click(screen.getByRole('button', { name: 'Close BSIT Finalized Students' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Close BSIT 1-1 · IT 101' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(search).toHaveValue('bs');
-  fireEvent.click(screen.getByRole('button', { name: 'Release BSIT Grades' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Release Grades for Everyone' }));
 
   await waitFor(() => expect(releaseProgramGrades).toHaveBeenCalledWith({
     program: 'BSIT', schoolYear: '2026-2027', semester: 'FIRST', term: 'finals',
   }));
-  expect(requestSystemConfirmation).toHaveBeenCalled();
+  expect(requestSystemConfirmation).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: 'Release Grades for Everyone' }));
+});
+
+test('keeps one department group when the same program has multiple finalized periods', () => {
+  const hierarchy = buildGradeReleaseHierarchy([
+    candidate,
+    { ...candidate, term: 'midterm', studentId: '26-0002', studentName: 'Student Two', subjects: [{ ...candidate.subjects[0], recordId: 'grade-2', assignmentCycleId: '42', subjectCode: 'IT 102' }] },
+  ]);
+  expect(hierarchy).toHaveLength(1);
+  expect(hierarchy[0].name).toBe('BSIT');
+  expect(hierarchy[0].faculties).toHaveLength(1);
+  expect(hierarchy[0].faculties[0].sections).toHaveLength(2);
 });

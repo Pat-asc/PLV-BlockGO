@@ -103,6 +103,11 @@
 .dark .sa-search,.dark .sa-filters select,.dark .sa-program select,.dark .sa-filters>div:first-child>button,.dark .sa-schedule{border-color:#475569;background:#1e293b;color:#f1f5f9}
 .dark .sa-search input{color:#f1f5f9}
 .dark .sa-professor{background:#1e293b}
+.dark .subject-assignment .sa-icon{background:#1e3a5f;color:#bfdbfe}
+.dark .subject-assignment .sa-info{border-color:#334155;background:#172a45;color:#bfdbfe}
+.dark .subject-assignment .sa-current-period strong{color:#bae6fd}
+.dark .subject-assignment .sa-totals>div{background:#172a45;color:#bfdbfe}
+.dark .subject-assignment .sa-totals>div:last-child,.dark .subject-assignment .sa-badge{background:#332b1d;color:#fde68a}
 .dark .sa-professors button{border-color:#334155}
 .dark .sa-professors button:hover{background:#1e3a5f}
 .dark .subject-assignment th{background:#1e293b;color:#f1f5f9}

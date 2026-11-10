@@ -3,7 +3,6 @@
 
 ALTER TABLE studentprofiles
     ADD COLUMN IF NOT EXISTS is_irregular BOOLEAN NOT NULL DEFAULT FALSE;
-
 ALTER TABLE pending_grade_records
     ADD COLUMN IF NOT EXISTS submission_version INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE pending_grade_records

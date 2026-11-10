@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchAcademicPrograms, fetchAllGrades } from '../../services/api';
 import { buildLedgerHierarchy, canonicalizeLedgerPrograms, filterLedgerRecords, getLedgerFilterOptions } from '../../utils/registrarGradesLedger';
 import { selectLedgerExportRecords } from '../../utils/registrarGradesLedgerPdf';
+import { sanitizeAcademicErrorMessage } from '../../utils/academicErrorSanitizer';
 import SearchField from '../shared/SearchField';
 import StatusBadge from '../shared/StatusBadge';
 import GradeVersionHistory from '../shared/GradeVersionHistory';
@@ -57,7 +58,7 @@ const StudentLedgerTable = ({ subject, onViewIpfs }) => {
           <thead className="bg-[#003366] text-white"><tr>
             <th className="p-3">Student No.</th><th className="p-3">Student Name</th>
             <th className="p-3">Midterm</th><th className="p-3">Final</th><th className="p-3">Final Rating</th>
-            <th className="p-3">Status</th><th className="p-3">Submitted / Finalized</th>
+            <th className="p-3">Submitted / Finalized</th>
             <th className="p-3">File</th><th className="p-3">History</th>
           </tr></thead>
           <tbody>{students.map((student) => (
@@ -67,7 +68,6 @@ const StudentLedgerTable = ({ subject, onViewIpfs }) => {
               <td className="p-3">{displayValue(student.gradePayload?.midterm)}</td>
               <td className="p-3">{displayValue(student.gradePayload?.finals ?? student.gradePayload?.final)}</td>
               <td className="p-3 font-bold text-[#003366]">{displayValue(student.gradePayload?.finalAverage ?? student.gradePayload?.grade)}</td>
-              <td className="p-3"><StatusBadge status={student.status || 'Unavailable'} /></td>
               <td className="p-3 text-xs text-slate-600">{displayDate(student)}</td>
               <td className="p-3">{(student.ipfs_cid || student.IpfsCID) && onViewIpfs ? <button type="button" onClick={() => onViewIpfs(student.ipfs_cid || student.IpfsCID)} className="font-bold text-blue-700 hover:underline">View File</button> : <span className="text-xs text-slate-400">No File</span>}</td>
               <td className="p-3"><GradeVersionHistory recordId={student.id || student.recordId} /></td>
@@ -135,7 +135,7 @@ const RegistrarGradesLedger = ({ loggedInEmail, onViewIpfs, onExport }) => {
       setRecords(Array.isArray(gradeResponse) ? gradeResponse : (gradeResponse.data || []));
       setPrograms(Array.isArray(programResponse) ? programResponse : (programResponse.data || []));
     } catch (requestError) {
-      setError(requestError.message || 'Unable to load the Grades Ledger.');
+      setError(sanitizeAcademicErrorMessage(requestError, 'Unable to load the Grades Ledger. Please refresh and try again.'));
     } finally { setLoading(false); }
   }, [loggedInEmail]);
 

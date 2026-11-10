@@ -324,6 +324,40 @@ Check(visibleResolution.IsFinalized && visibleResolution.FinalizedGrade == 92m,
 
 Pass(92, "released Registrar Finalized grade is student-visible");
 
+var finalizedMidtermForCurrentSubject = new AcademicRecord
+{
+    Id = "released-midterm", StudentHash = "student@plv.edu.ph", StudentNo = "26-0042",
+    SubjectCode = "IT 101", SchoolYear = "2026-2027", Semester = "FIRST", Term = "midterm",
+    Section = "BSIT 1-1", AssignmentCycleId = "104", Status = "Finalized", Grade = "88"
+};
+var finalizedFinalsForCurrentSubject = new AcademicRecord
+{
+    Id = "released-finals", StudentHash = "student@plv.edu.ph", StudentNo = "26-0042",
+    SubjectCode = "IT 101", SchoolYear = "2026-2027", Semester = "FIRST", Term = "finals",
+    Section = "BSIT 1-1", AssignmentCycleId = "104", Status = "Finalized", Grade = "92"
+};
+var currentSubjectTermResolution = StudentSubjectGradeResolver.Resolve(
+    studentAttempt, new[] { finalizedMidtermForCurrentSubject, finalizedFinalsForCurrentSubject });
+Check(currentSubjectTermResolution.Record?.Id == "released-finals" &&
+      currentSubjectTermResolution.Availability == StudentSubjectGradeResolver.Finalized,
+    "Separate finalized Midterm and Finals records were incorrectly classified as an ambiguous current subject.");
+Pass(279, "Student Current Subjects prefers Finals within the exact finalized assignment");
+
+var conflictingFinalsResolution = StudentSubjectGradeResolver.Resolve(studentAttempt, new[]
+{
+    finalizedFinalsForCurrentSubject,
+    new AcademicRecord
+    {
+        Id = "released-finals-conflict", StudentHash = "student@plv.edu.ph", StudentNo = "26-0042",
+        SubjectCode = "IT 101", SchoolYear = "2026-2027", Semester = "FIRST", Term = "finals",
+        Section = "BSIT 1-1", AssignmentCycleId = "104", Status = "Finalized", Grade = "93"
+    }
+});
+Check(!conflictingFinalsResolution.IsFinalized &&
+      conflictingFinalsResolution.Availability == StudentSubjectGradeResolver.Ambiguous,
+    "Competing finalized Finals records were silently selected instead of remaining ambiguous.");
+Pass(280, "Student Current Subjects preserves ambiguity for competing Finals records");
+
 Check(!GradeReleasePolicy.IsVisibleToStudent(finalizedStudentGrade, new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
 
     "An unreleased Finalized grade became student-visible.");
@@ -681,6 +715,7 @@ Check(testCurriculumSeed.Contains("ON CONFLICT (curriculum_code) DO NOTHING") &&
 Pass(167, "QA curriculum seed is idempotent and does not overwrite production curricula");
 
 var enrollmentControllerSource = await File.ReadAllTextAsync(FindRepositoryFile("client-app", "Controllers", "AuthController.cs"));
+var enrollmentSectioningServiceSource = await File.ReadAllTextAsync(FindRepositoryFile("client-app", "Services", "EnrollmentSectioningService.cs"));
 
 Check(enrollmentControllerSource.Contains("var studentAssignmentStatus = shouldSaveEnrollment ? \"Enrolled\" : null") &&
       enrollmentControllerSource.Contains("curriculum_id = @curriculumId, section = NULL, assignment_status = 'Enrolled'") &&
@@ -692,8 +727,10 @@ var promotionStart = enrollmentControllerSource.IndexOf("PromoteStudentEnrollmen
 var promotionEnd = enrollmentControllerSource.IndexOf("[HttpDelete(\"sections/{id:int}/students/{studentId}\")]", promotionStart, StringComparison.Ordinal);
 var promotionSource = enrollmentControllerSource[promotionStart..promotionEnd];
 Check(promotionSource.Contains("BeginTransactionAsync") &&
-      promotionSource.Contains("FOR UPDATE OF u, enrollment") &&
-      promotionSource.Contains("JOIN users u ON u.id = enrollment.student_user_id") &&
+      promotionSource.Contains("GetPromotionSourceForUpdateAsync") &&
+      enrollmentSectioningServiceSource.Contains("WHERE enrollment.enrollment_id = @enrollmentId") &&
+      enrollmentSectioningServiceSource.Contains("LEFT JOIN users app_user ON app_user.id = enrollment.student_user_id") &&
+      enrollmentSectioningServiceSource.Contains("FOR UPDATE OF enrollment") &&
       !promotionSource.Contains("INSERT INTO Users", StringComparison.OrdinalIgnoreCase) &&
       promotionSource.Contains("UpsertStudentEnrollmentAsync") &&
       promotionSource.Contains("await transaction.CommitAsync"),
@@ -1355,6 +1392,55 @@ Check(gradeControllerSource.Contains("before_submission_grade") &&
 
 Pass(232, "direct-to-Registrar submission persists immutable before and after grade snapshots in PostgreSQL");
 
+var snapshotServiceSource = await File.ReadAllTextAsync(
+    FindRepositoryFile("client-app", "Services", "GradeSubmissionSnapshotService.cs"));
+Check(snapshotServiceSource.Contains("NULLIF(BTRIM(academic_section.year_level::text), '')") &&
+      snapshotServiceSource.Contains("NULLIF(BTRIM(fs.year_level), '')") &&
+      snapshotServiceSource.Contains("fs.academic_section_id") &&
+      snapshotServiceSource.Contains("year_level = EXCLUDED.year_level") &&
+      snapshotServiceSource.Contains("academic_section_id = COALESCE(EXCLUDED.academic_section_id") &&
+      snapshotServiceSource.Contains("before_grade = EXCLUDED.before_grade") &&
+      snapshotServiceSource.Contains("submitted_grade = EXCLUDED.submitted_grade"),
+    "Finalized snapshot persistence does not prefer the academic section year, retain the assignment section ID, or repair all snapshot metadata.");
+Pass(275, "snapshot upsert preserves and repairs authoritative academic identity");
+
+var completeSnapshotMetadata = new AcademicRecord
+{
+    Id = "metadata-complete",
+    AssignmentCycleId = "410",
+    YearLevel = "1",
+    Section = "BSA 1-1",
+    SchoolYear = "2026-2027",
+    Semester = "FIRST",
+    Term = "finals",
+    SubjectCode = "FIN 101"
+};
+Check(GradeSubmissionSnapshotService.MissingRequiredMetadata(completeSnapshotMetadata).Count == 0,
+    "Complete finalization metadata was rejected.");
+completeSnapshotMetadata.YearLevel = string.Empty;
+Check(GradeSubmissionSnapshotService.MissingRequiredMetadata(completeSnapshotMetadata).Contains("year_level"),
+    "A missing authoritative year level was not rejected before finalization.");
+Pass(276, "missing assignment metadata fails closed before Fabric finalization");
+
+var directStagingReadIndex = gradeControllerSource.IndexOf(
+    "GradeSubmissionSnapshotService.LoadStagedAsync", StringComparison.Ordinal);
+var ledgerPrecheckIndex = gradeControllerSource.IndexOf(
+    "LoadFinalizedLedgerRecordsAsync(invokerId)", directStagingReadIndex, StringComparison.Ordinal);
+var newFabricFinalizationIndex = gradeControllerSource.IndexOf(
+    "FinalizeApprovedGradesAsync(unfinalizedApproved", ledgerPrecheckIndex, StringComparison.Ordinal);
+Check(directStagingReadIndex >= 0 && ledgerPrecheckIndex > directStagingReadIndex &&
+      newFabricFinalizationIndex > ledgerPrecheckIndex &&
+      gradeControllerSource.Contains("PersistVerifiedFinalizationAsync") &&
+      gradeControllerSource.Contains("idempotent = true"),
+    "Registrar finalization does not validate direct staging, reconcile Fabric first, or persist cleanup idempotently.");
+Pass(277, "Fabric precheck prevents duplicate finalization and repairs verified staging");
+
+Check(gradeControllerSource.Contains("BeginTransactionAsync(HttpContext.RequestAborted)") &&
+      gradeControllerSource.Contains("conn, submissionTransaction") &&
+      gradeControllerSource.Contains("submissionTransaction.CommitAsync"),
+    "Faculty submission status and snapshot persistence are not atomic.");
+Pass(278, "Faculty submission status and immutable snapshot commit atomically");
+
 
 
 Check(enrollmentControllerSource.Contains("[HttpGet(\"cross-curriculum/options\")]") &&
@@ -1442,10 +1528,26 @@ Pass(267, "Program Shift atomically updates program, published curriculum, secti
 
 Check(enrollmentControllerSource.Contains("STUDENT_PROMOTED") &&
       enrollmentControllerSource.Contains("allowClearingSection: true") &&
-      enrollmentControllerSource.Contains("@sourceSection IS NULL") &&
-      enrollmentControllerSource.Contains("if (targetStart != sourceStart && targetStart != sourceStart + 1)"),
-    "Year-level promotion does not support unsectioned promotion or same-period promotion.");
-Pass(268, "year-level promotion supports sectioned and unsectioned students across active or next school year");
+      enrollmentControllerSource.Contains("SourceEnrollmentId") &&
+      enrollmentControllerSource.Contains("StudentUserId") &&
+      enrollmentControllerSource.Contains("GetPromotionSourceForUpdateAsync") &&
+      enrollmentControllerSource.Contains("LogPromotionSourceMismatch") &&
+      enrollmentSectioningServiceSource.Contains("WHERE enrollment.enrollment_id = @enrollmentId") &&
+      enrollmentSectioningServiceSource.Contains("FOR UPDATE OF enrollment") &&
+      enrollmentControllerSource.Contains("if (targetStart != sourceStart + 1)") &&
+      enrollmentControllerSource.Contains("alreadyPromotedCount") &&
+      enrollmentControllerSource.Contains("UnlockEnrollmentSection") &&
+      enrollmentControllerSource.Contains("STUDENT_ENROLLMENT_SECTION_UNLOCKED") &&
+      enrollmentControllerSource.Contains("PROMOTION_FAILED"),
+    "Year-level promotion is missing authoritative identity, next-year validation, idempotency, unlock audit, or sanitized failure handling.");
+Pass(268, "year-level promotion uses authoritative enrollment identity, preserves history, supports idempotent retry, and requires explicit audited unlock");
+
+var bulkUnlockMethod = typeof(AuthController).GetMethod("UnlockAllEnrollmentSections");
+Check(bulkUnlockMethod is not null &&
+      bulkUnlockMethod.GetCustomAttributes<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>()
+          .Any(attribute => attribute.Roles == "registrar"),
+    "Bulk section unlocking must require the Registrar role.");
+Pass(281, "bulk section unlock is Registrar-only");
 
 var cs = Environment.GetEnvironmentVariable("SECTIONING_TEST_CONNECTION");
 
@@ -1469,9 +1571,27 @@ CREATE TEMP TABLE users(id INT PRIMARY KEY,username TEXT,email TEXT,role TEXT,st
 
 CREATE TEMP TABLE academic_programs(program_id INT PRIMARY KEY,program_code TEXT,program_name TEXT,is_active BOOLEAN);
 
-CREATE TEMP TABLE curriculums(curriculum_id INT PRIMARY KEY,program_id INT,status TEXT);
+CREATE TEMP TABLE curriculums(
+    curriculum_id INT PRIMARY KEY,
+    program_id INT,
+    status TEXT,
+    published_at TIMESTAMPTZ
+);
 
-CREATE TEMP TABLE curriculum_subjects(id SERIAL,curriculum_id INT,subject_code TEXT,prerequisite TEXT,year_level INT,semester TEXT);
+CREATE TEMP TABLE curriculum_subjects(
+    id SERIAL,
+    subject_id BIGINT,
+    curriculum_id INT,
+    subject_code TEXT,
+    subject_title TEXT DEFAULT 'Subject',
+    units NUMERIC DEFAULT 3,
+    lecture_hours NUMERIC DEFAULT 3,
+    laboratory_hours NUMERIC DEFAULT 0,
+    prerequisite TEXT,
+    year_level INT,
+    semester TEXT,
+    subject_type TEXT DEFAULT 'Major'
+);
 
 CREATE TEMP TABLE academicsections(id SERIAL PRIMARY KEY,department TEXT,year_level INT,section_num INT,max_capacity INT DEFAULT 40,is_active BOOLEAN DEFAULT TRUE,archived_at TIMESTAMPTZ,archived_by TEXT);
 
@@ -1553,11 +1673,13 @@ Pass(114,"migration repairs missing enrollment-period uniqueness idempotently");
 
 await Exec(@"
 
-INSERT INTO academic_programs VALUES(1,'BSIT','BS Information Technology',TRUE),(2,'BSCS','BS Computer Science',TRUE); INSERT INTO curriculums VALUES(1,1,'PUBLISHED'),(2,2,'PUBLISHED');
+INSERT INTO academic_programs VALUES(1,'BSIT','BS Information Technology',TRUE),(2,'BSCS','BS Computer Science',TRUE); INSERT INTO curriculums(curriculum_id,program_id,status) VALUES(1,1,'PUBLISHED'),(2,2,'PUBLISHED');
 
 INSERT INTO academic_periods(school_year,semester,term,status) VALUES('2026-2027','FIRST','midterm','ACTIVE');
 
 INSERT INTO curriculum_subjects(curriculum_id,subject_code,prerequisite,year_level,semester) VALUES(1,'IT 101',NULL,1,'FIRST'),(1,'IT 102','IT 101',1,'FIRST'),(1,'IT 103',NULL,1,'SECOND'),(1,'IT 201','IT 102',2,'SECOND'),(2,'CS 101',NULL,1,'FIRST');
+
+UPDATE curriculum_subjects SET subject_id = id WHERE subject_id IS NULL;
 
 INSERT INTO academicsections(id,department,year_level,section_num) VALUES(1,'BS Information Technology',1,1),(2,'BS Information Technology',1,2),(3,'BS Computer Science',1,1);
 
@@ -1699,7 +1821,7 @@ Check(await StudentCurriculumResolver.ResolveAsync(db, "stale@plv.edu.ph") is nu
 
 Pass(129, "student without an assigned curriculum receives no fallback");
 
-await Exec(@"INSERT INTO curriculums VALUES(3,1,'DRAFT'),(4,1,'RETURNED');
+await Exec(@"INSERT INTO curriculums(curriculum_id,program_id,status) VALUES(3,1,'DRAFT'),(4,1,'RETURNED');
 
 INSERT INTO users VALUES(14,'draft','draft@plv.edu.ph','student','APPROVED',TRUE),(15,'returned','returned@plv.edu.ph','student','APPROVED',TRUE);
 
@@ -2747,7 +2869,7 @@ Check(computerScienceSectioned.Select(student=>student.StudentNo).SequenceEqual(
 // Cross-department subject roster & curriculum checklist crediting after Program Shift & 25-student Year 1 -> Year 2 promotion
 await Exec(@"
 INSERT INTO academic_programs VALUES(3,'BSA','Bachelor of Science in Accountancy',TRUE) ON CONFLICT (program_id) DO NOTHING;
-INSERT INTO curriculums VALUES(10,3,'PUBLISHED') ON CONFLICT (curriculum_id) DO NOTHING;
+INSERT INTO curriculums(curriculum_id,program_id,status) VALUES(10,3,'PUBLISHED') ON CONFLICT (curriculum_id) DO NOTHING;
 INSERT INTO curriculum_subjects(id,curriculum_id,subject_code,prerequisite,year_level,semester) VALUES
   (501,10,'GE 101',NULL,1,'FIRST'),
   (502,10,'PE 101',NULL,1,'FIRST'),
@@ -2757,12 +2879,6 @@ INSERT INTO curriculum_subjects(id,curriculum_id,subject_code,prerequisite,year_
   (506,10,'BSA 201',NULL,3,'FIRST'),
   (507,10,'BSA 202',NULL,3,'FIRST')
 ON CONFLICT DO NOTHING;
-ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS subject_id BIGINT;
-ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS subject_title TEXT DEFAULT 'Subject';
-ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS units NUMERIC DEFAULT 3;
-ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS lecture_hours NUMERIC DEFAULT 3;
-ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS laboratory_hours NUMERIC DEFAULT 0;
-ALTER TABLE curriculum_subjects ADD COLUMN IF NOT EXISTS subject_type TEXT DEFAULT 'Major';
 UPDATE curriculum_subjects SET subject_id = id WHERE subject_id IS NULL;
 ALTER TABLE student_non_regular_subjects ADD COLUMN IF NOT EXISTS subject_id BIGINT;
 INSERT INTO academicsections(id,department,year_level,section_num) VALUES

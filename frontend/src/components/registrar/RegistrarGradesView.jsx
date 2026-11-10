@@ -1,5 +1,7 @@
 import { showSystemNotification } from '../../services/NotificationContext';
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { fetchAcademicPeriodOptions } from '../../services/api';
+import StudentAccountList, { mergeStudentAccountEnrollments, resolveStudentAccountPeriod } from './StudentAccountList';
 import { fetchAllGrades, fetchPendingRequests, approveRegistrationRequest, denyRegistrationRequest, fetchApprovedStudents, assignStudent, fetchApprovedAdmins, assignDepartmentAdmin, revokeDepartmentAdmin, fetchApprovedFaculties, assignFaculty, dropStudent, revokeFaculty, openDecryptedIpfsFile, getSystemSetting, resetEncodingSeason, fetchAcademicPrograms } from '../../services/api';
 import RegistrarHeader from './RegistrarHeader';
 import RegistrarSidebar from './RegistrarSidebar';
@@ -78,6 +80,12 @@ const RegistrarGradesView = ({
     const [requestSearchTerm, setRequestSearchTerm] = useState('');
 
     const [approvedStudents, setApprovedStudents] = useState([]);
+    const [studentAccountLoading, setStudentAccountLoading] = useState(false);
+    const [studentAccountError, setStudentAccountError] = useState('');
+    const [studentAccountPeriod, setStudentAccountPeriod] = useState(null);
+    const [studentAccountPeriodSelection, setStudentAccountPeriodSelection] = useState(null);
+    const [studentAccountSchoolYears, setStudentAccountSchoolYears] = useState([]);
+    const studentAccountRequest = useRef(0);
     const [studentAssignments, setStudentAssignments] = useState({});
     const [approvedAdmins, setApprovedAdmins] = useState([]);
     const [adminAssignments, setAdminAssignments] = useState({});
@@ -290,11 +298,44 @@ const RegistrarGradesView = ({
     }, []);
 
     const loadApprovedStudents = useCallback(async () => {
+        const requestId = ++studentAccountRequest.current;
+        const scoped = mainTab === 'assigning';
+        if (scoped) { setStudentAccountLoading(true); setStudentAccountError(''); }
         try {
-            const response = await fetchApprovedStudents();
-            if (response.status === 'Success') setApprovedStudents(response.students || []);
-        } catch (error) { console.error('Error loading students:', error); }
-    }, []);
+            let period = null;
+            let accounts = null;
+            if (scoped) {
+                const [options, accountResponse] = await Promise.all([fetchAcademicPeriodOptions(), fetchApprovedStudents()]);
+                accounts = accountResponse;
+                if (accounts.status !== 'Success') throw new Error('Approved accounts could not be loaded.');
+                period = studentAccountPeriodSelection || resolveStudentAccountPeriod(accounts.students || [], options?.activeAcademicPeriod);
+                if (!period?.schoolYear || !period?.semester)
+                    throw new Error('Configure the active academic period before viewing student account assignments.');
+                if (requestId !== studentAccountRequest.current) return;
+                setStudentAccountSchoolYears([...new Set([...(options?.schoolYears || []), period.schoolYear,
+                    ...(accounts.students || []).map((student) => student.schoolYear).filter(Boolean)])].sort().reverse());
+            }
+            const response = await fetchApprovedStudents(scoped ? period : undefined);
+            if (requestId !== studentAccountRequest.current) return;
+            if (scoped && response.status !== 'Success') throw new Error('Selected enrollments could not be loaded.');
+            if (response.status === 'Success') {
+                if (scoped && accounts.status !== 'Success') throw new Error('Approved accounts could not be loaded.');
+                setApprovedStudents(scoped
+                    ? mergeStudentAccountEnrollments(accounts.students || [], response.students || [], period)
+                    : response.students || []);
+                if (scoped) setStudentAccountPeriod(period);
+            }
+        } catch (error) {
+            if (requestId !== studentAccountRequest.current) return;
+            console.error('Error loading students:', error);
+            if (scoped) {
+                setApprovedStudents([]);
+                setStudentAccountError('Student accounts could not be loaded for the selected academic period. Please refresh and try again.');
+            }
+        } finally {
+            if (requestId === studentAccountRequest.current) setStudentAccountLoading(false);
+        }
+    }, [mainTab, studentAccountPeriodSelection]);
 
     const loadAcademicPrograms = useCallback(async () => {
         try {
@@ -335,7 +376,7 @@ const RegistrarGradesView = ({
                 next[student.id] = {
                     ...existing,
                     department: importedDepartment || existing.department || '',
-                    yearLevel: importedYear || existing.yearLevel || '',
+                    yearLevel: importedYear,
                     sectionNum: importedSection,
                 };
             });
@@ -1164,13 +1205,27 @@ const RegistrarGradesView = ({
                                 <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
                                     <div className="border-b border-slate-200 px-5 py-4">
                                         <h4 className="text-lg font-bold text-[#003366]">Assign Students</h4>
+                                        {studentAccountPeriod && <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">{studentAccountPeriod.schoolYear} · {studentAccountPeriod.semester}</p>}
+                                        {studentAccountPeriod && <div className="mt-3 flex flex-wrap gap-3">
+                                            <label className="text-sm">School Year
+                                                <select aria-label="Account assignment school year" value={studentAccountPeriodSelection?.schoolYear || studentAccountPeriod.schoolYear}
+                                                    onChange={(event) => setStudentAccountPeriodSelection((current) => ({ ...(current || studentAccountPeriod), schoolYear: event.target.value }))}
+                                                    className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                                                    {studentAccountSchoolYears.map((year) => <option key={year} value={year}>{year}</option>)}
+                                                </select>
+                                            </label>
+                                            <label className="text-sm">Semester
+                                                <select aria-label="Account assignment semester" value={studentAccountPeriodSelection?.semester || studentAccountPeriod.semester}
+                                                    onChange={(event) => setStudentAccountPeriodSelection((current) => ({ ...(current || studentAccountPeriod), semester: event.target.value }))}
+                                                    className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                                                    <option value="FIRST">1st Semester</option><option value="SECOND">2nd Semester</option><option value="MIDYEAR">Midyear</option>
+                                                </select>
+                                            </label>
+                                        </div>}
                                     </div>
-                                    <div className="space-y-4 p-4">
-                                        {approvedStudents.length === 0 ? (
-                                            <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-slate-500">
-                                                No approved students waiting for assignment.
-                                            </div>
-                                        ) : approvedStudents.map((student) => {
+                                    {studentAccountError && <p role="alert" className="p-4 text-sm text-red-700 dark:text-red-300">{studentAccountError}</p>}
+                                    <StudentAccountList students={studentAccountLoading ? [] : approvedStudents} programs={academicPrograms} loading={studentAccountLoading}>
+                                        {(student) => {
                                             const crossList = Array.isArray(student.crossSubjects) && student.crossSubjects.length > 0
                                                 ? student.crossSubjects
                                                 : Array.isArray(student.nonRegularSubjects) && student.nonRegularSubjects.length > 0
@@ -1243,8 +1298,8 @@ const RegistrarGradesView = ({
                                                 </div>
                                             </div>
                                             );
-                                        })}
-                                    </div>
+                                        }}
+                                    </StudentAccountList>
                                 </div>
                             )}
 
