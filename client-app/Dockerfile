@@ -17,7 +17,7 @@ RUN dotnet publish For_Testing_Only_Capstone.csproj \
         /p:UseAppHost=false
 
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS final
 
 USER root
 
